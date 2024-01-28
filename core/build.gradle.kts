@@ -22,6 +22,7 @@ android {
 
     buildFeatures {
         resValues = false
+        shaders = false
     }
 }
 
