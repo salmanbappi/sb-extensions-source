@@ -1,16 +1,15 @@
-package eu.kanade.tachiyomi.animeextension.es.pelisplushd
+package eu.kanade.tachiyomi.animeextension.es.pelisplusto
 
 import android.util.Base64
-import androidx.preference.ListPreference
-import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.multisrc.pelisplus.Filters
+import eu.kanade.tachiyomi.multisrc.pelisplus.PelisPlus
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -19,25 +18,14 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.injectLazy
 
-class Pelisplusto(override val name: String, override val baseUrl: String) : Pelisplushd(name, baseUrl) {
+class Pelisplusto : PelisPlus() {
+
+    override val name = "PelisPlusTo"
+
+    override val baseUrl = "https://tioplus.app"
 
     override val id: Long = 1705636111422561130L
-
-    private val json: Json by injectLazy()
-
-    override val supportsLatest = false
-
-    companion object {
-        private const val PREF_SERVER_KEY = "preferred_server"
-        private const val PREF_SERVER_DEFAULT = "Voe"
-        private val SERVER_LIST = arrayOf(
-            "YourUpload", "BurstCloud", "Voe", "Mp4Upload", "Doodstream",
-            "Upload", "BurstCloud", "Upstream", "StreamTape", "Amazon",
-            "Fastream", "Filemoon", "StreamWish", "Okru", "Streamlare",
-        )
-    }
 
     override fun popularAnimeSelector(): String = "article.item"
 
@@ -106,20 +94,13 @@ class Pelisplusto(override val name: String, override val baseUrl: String) : Pel
         }
     }
 
-    private fun fetchUrls(text: String?): List<String> {
-        if (text.isNullOrEmpty()) return listOf()
-        val linkRegex = "(http|ftp|https):\\/\\/([\\w_-]+(?:(?:\\.[\\w_-]+)+))([\\w.,@?^=%&:\\/~+#-]*[\\w@?^=%&\\/~+#-])".toRegex()
-        return linkRegex.findAll(text).map { it.value.trim().removeSurrounding("\"") }.toList()
-    }
-
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val regIsUrl = "https?:\\/\\/(www\\.)?[-a-zA-Z0-9@:%._\\+~#=]{1,256}\\.[a-zA-Z0-9()]{1,6}\\b([-a-zA-Z0-9()@:%_\\+.~#?&//=]*)".toRegex()
         return document.select(".bg-tabs ul li").flatMap {
             val prefix = it.parent()?.parent()?.selectFirst("button")?.ownText()?.lowercase()?.getLang()
             val decode = String(Base64.decode(it.attr("data-server"), Base64.DEFAULT))
 
-            val url = if (!regIsUrl.containsMatchIn(decode)) {
+            val url = if (!REGEX_LINK.containsMatchIn(decode)) {
                 "$baseUrl/player/${String(Base64.encode(it.attr("data-server").toByteArray(), Base64.DEFAULT))}"
             } else { decode }
 
@@ -129,22 +110,10 @@ class Pelisplusto(override val name: String, override val baseUrl: String) : Pel
             } else {
                 url
             }.replace("https://sblanh.com", "https://lvturbo.com")
-                .replace(Regex("([a-zA-Z0-9]{0,8}[a-zA-Z0-9_-]+)=https:\\/\\/ww3.pelisplus.to.*"), "")
+                .replace(Regex("([a-zA-Z0-9]{0,8}[a-zA-Z0-9_-]+)=https://ww3.pelisplus.to.*"), "")
 
             serverVideoResolver(videoUrl, prefix ?: "")
         }
-    }
-
-    override fun List<Video>.sort(): List<Video> {
-        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
-        val server = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT)!!
-        return this.sortedWith(
-            compareBy(
-                { it.quality.contains(server, true) },
-                { it.quality.contains(quality) },
-                { Regex("""(\d+)p""").find(it.quality)?.groupValues?.get(1)?.toIntOrNull() ?: 0 },
-            ),
-        ).reversed()
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
@@ -152,7 +121,7 @@ class Pelisplusto(override val name: String, override val baseUrl: String) : Pel
         GenreFilter(),
     )
 
-    private class GenreFilter : UriPartFilter(
+    private class GenreFilter : Filters.UriPartFilter(
         "Géneros",
         arrayOf(
             Pair("<selecionar>", ""),
@@ -191,38 +160,4 @@ class Pelisplusto(override val name: String, override val baseUrl: String) : Pel
             Pair("Western", "genres/western"),
         ),
     )
-
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        ListPreference(screen.context).apply {
-            key = PREF_SERVER_KEY
-            title = "Preferred server"
-            entries = SERVER_LIST
-            entryValues = SERVER_LIST
-            setDefaultValue(PREF_SERVER_DEFAULT)
-            summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
-        }.also(screen::addPreference)
-
-        ListPreference(screen.context).apply {
-            key = PREF_QUALITY_KEY
-            title = "Preferred quality"
-            entries = QUALITY_LIST
-            entryValues = QUALITY_LIST
-            setDefaultValue(PREF_QUALITY_DEFAULT)
-            summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
-        }.also(screen::addPreference)
-    }
 }

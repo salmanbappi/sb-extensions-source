@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.es.pelisplushd
+package eu.kanade.tachiyomi.animeextension.es.pelisplusph
 
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
@@ -7,6 +7,8 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.multisrc.pelisplus.Filters
+import eu.kanade.tachiyomi.multisrc.pelisplus.PelisPlus
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Request
@@ -14,47 +16,40 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class Pelisplusph(override val name: String, override val baseUrl: String) : Pelisplushd(name, baseUrl) {
+class Pelisplusph : PelisPlus() {
+
+    override val name = "PelisPlusPh"
+
+    override val baseUrl = "https://www25.pelisplushd.to"
 
     override val id: Long = 4917265654298497443L
-
-    override val supportsLatest = false
 
     companion object {
         private const val PREF_LANGUAGE_KEY = "preferred_language"
         private const val PREF_LANGUAGE_DEFAULT = "[LAT]"
         private val LANGUAGE_LIST = arrayOf("[LAT]", "[SUB]", "[CAST]")
-
-        private const val PREF_SERVER_KEY = "preferred_server"
-        private const val PREF_SERVER_DEFAULT = "Voe"
-        private val SERVER_LIST = arrayOf(
-            "YourUpload", "BurstCloud", "Voe", "Mp4Upload", "Doodstream",
-            "Upload", "BurstCloud", "Upstream", "StreamTape", "Amazon",
-            "Fastream", "Filemoon", "StreamWish", "Okru", "Streamlare",
-            "StreamHide", "Tomatomatela",
-        )
     }
 
-    override fun popularAnimeSelector(): String = ".items-peliculas .item-pelicula"
+    override fun popularAnimeSelector(): String = ".Posters-link"
 
-    override fun popularAnimeNextPageSelector(): String = ".items-peliculas > a"
+    override fun popularAnimeNextPageSelector(): String = "body"
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/peliculas?page=$page")
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
-        anime.setUrlWithoutDomain(baseUrl + element.selectFirst("a")?.attr("href"))
-        anime.title = element.select("a .item-detail > p").text()
-        anime.thumbnail_url = baseUrl + element.select("a .item-picture img").attr("src")
+        anime.setUrlWithoutDomain(element.absUrl("href"))
+        anime.title = element.select(".listing-content > p").text()
+        anime.thumbnail_url = element.selectFirst("img")?.absUrl("src")
         return anime
     }
 
     override fun animeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
-        anime.title = document.selectFirst(".info-content h1")!!.text()
-        document.select(".info-content p").map { p ->
-            if (p.select(".content-type").text().contains("Sinópsis:")) {
-                anime.description = p.select(".sinopsis").text()
+        document.selectFirst(".card-body h1")?.text()?.let { anime.title = it }
+        document.select(".card-body p").map { p ->
+            if (p.text().contains("Sinopsis:")) {
+                anime.description = p.nextElementSibling()?.text()
             }
             if (p.select(".content-type").text().contains("Géneros:")) {
                 anime.genre = p.select(".content-type-a a").joinToString { it.text() }
@@ -83,25 +78,13 @@ class Pelisplusph(override val name: String, override val baseUrl: String) : Pel
             }
             episodes.add(episode)
         } else {
-            var index = 0
-            jsoup.select(".item-season").reversed().mapIndexed { idxSeas, season ->
-                val seasonNumber = runCatching {
-                    getNumberFromString(season.selectFirst(".item-season-title")!!.ownText())
-                }.getOrElse { idxSeas + 1 }
-                season.select(".item-season-episodes a").reversed().mapIndexed { idx, ep ->
-                    index += 1
-                    val noEp = try {
-                        getNumberFromString(ep.ownText())
-                    } catch (_: Exception) {
-                        idx + 1
-                    }
-                    val episode = SEpisode.create().apply {
-                        episode_number = index.toFloat()
-                        name = "T$seasonNumber - E$noEp - ${ep.ownText()}"
-                        setUrlWithoutDomain(ep.attr("abs:href"))
-                    }
-                    episodes.add(episode)
+            jsoup.select(".tab-content a").mapIndexed { idx, ep ->
+                val episode = SEpisode.create().apply {
+                    episode_number = (idx + 1).toFloat()
+                    name = ep.ownText()
+                    setUrlWithoutDomain(ep.attr("abs:href"))
                 }
+                episodes.add(episode)
             }
         }
         return episodes.reversed()
@@ -111,22 +94,22 @@ class Pelisplusph(override val name: String, override val baseUrl: String) : Pel
         val filterList = if (filters.isEmpty()) getFilterList() else filters
         val genreFilter = filterList.find { it is GenreFilter } as GenreFilter
         return when {
-            query.isNotBlank() -> GET("$baseUrl/search/$query", headers)
+            query.isNotBlank() -> GET("$baseUrl/search?s=$query&page=$page", headers)
             genreFilter.state != 0 -> GET("$baseUrl/${genreFilter.toUriPart()}?page=$page")
-            else -> popularAnimeRequest(page)
+            else -> throw IllegalStateException("Invalid query or filters")
         }
     }
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        return document.select("[class*=server-item-]").flatMap { serverItem ->
-            val langIdx = getNumberFromString(serverItem.attr("class").substringAfter("server-item-"))
-            val langItem = document.select("li[data-id=\"$langIdx\"] a").text()
-            val lang = if (langItem.contains("Subtitulado")) "[SUB]" else if (langItem.contains("Latino")) "[LAT]" else "[CAST]"
+        return document.select(".TbVideoNv").flatMap { serverItem ->
+            serverItem.select(".TbVideoNv li").map { videoItem ->
+                val langItem = videoItem.attr("data-name")
+                val lang = if (langItem.contains("Subtitulado")) "[SUB]" else if (langItem.contains("Latino")) "[LAT]" else "[CAST]"
 
-            serverItem.select("li.tab-video").map { videoItem ->
-                val url = videoItem.attr("data-video")
-                serverVideoResolver(url, lang)
+                val url = videoItem.attr("data-url")
+                val name = videoItem.text()
+                serverVideoResolver(url, lang, name)
             }.flatten()
         }
     }
@@ -150,7 +133,7 @@ class Pelisplusph(override val name: String, override val baseUrl: String) : Pel
         GenreFilter(),
     )
 
-    private class GenreFilter : UriPartFilter(
+    private class GenreFilter : Filters.UriPartFilter(
         "Géneros",
         arrayOf(
             Pair("<selecionar>", ""),
@@ -263,37 +246,7 @@ class Pelisplusph(override val name: String, override val baseUrl: String) : Pel
     )
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        ListPreference(screen.context).apply {
-            key = PREF_SERVER_KEY
-            title = "Preferred server"
-            entries = SERVER_LIST
-            entryValues = SERVER_LIST
-            setDefaultValue(PREF_SERVER_DEFAULT)
-            summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
-        }.also(screen::addPreference)
-
-        ListPreference(screen.context).apply {
-            key = PREF_QUALITY_KEY
-            title = "Preferred quality"
-            entries = QUALITY_LIST
-            entryValues = QUALITY_LIST
-            setDefaultValue(PREF_QUALITY_DEFAULT)
-            summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
-        }.also(screen::addPreference)
+        super.setupPreferenceScreen(screen)
 
         ListPreference(screen.context).apply {
             key = PREF_LANGUAGE_KEY
@@ -302,13 +255,6 @@ class Pelisplusph(override val name: String, override val baseUrl: String) : Pel
             entryValues = LANGUAGE_LIST
             setDefaultValue(PREF_LANGUAGE_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
     }
 }
