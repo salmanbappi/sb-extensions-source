@@ -1,6 +1,5 @@
 plugins {
     id("com.android.library")
-    kotlin("android")
     id("kotlinx-serialization")
 }
 
@@ -13,16 +12,15 @@ android {
 
     namespace = "extensions.core"
 
-    sourceSets {
-        named("main") {
-            manifest.srcFile("AndroidManifest.xml")
-            res.setSrcDirs(listOf("src/main/res"))
-        }
-    }
-
     buildFeatures {
         resValues = false
         shaders = false
+    }
+}
+
+kotlin {
+    compilerOptions {
+        freeCompilerArgs.add("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
     }
 }
 
