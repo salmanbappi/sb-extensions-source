@@ -42,12 +42,10 @@ class NeoNime : ConfigurableAnimeSource, ParsedAnimeHttpSource() {
         return runCatching { pattern.parse(Str)?.time }
             .getOrNull() ?: 0L
     }
-    private fun parseStatus(statusString: String): Int {
-        return when {
-            statusString.toLowerCase(Locale.US).contains("ongoing") -> SAnime.ONGOING
-            statusString.toLowerCase(Locale.US).contains("completed") -> SAnime.COMPLETED
-            else -> SAnime.UNKNOWN
-        }
+    private fun parseStatus(statusString: String): Int = when {
+        statusString.lowercase(Locale.US).contains("ongoing") -> SAnime.ONGOING
+        statusString.lowercase(Locale.US).contains("completed") -> SAnime.COMPLETED
+        else -> SAnime.UNKNOWN
     }
 
     private fun getAnimeFromAnimeElement(element: Element): SAnime {

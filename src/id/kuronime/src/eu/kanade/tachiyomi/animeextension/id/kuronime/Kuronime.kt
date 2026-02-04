@@ -47,12 +47,10 @@ class Kuronime : ConfigurableAnimeSource, ParsedAnimeHttpSource() {
         return anime
     }
 
-    private fun parseStatus(statusString: String): Int {
-        return when (statusString.toLowerCase(Locale.US)) {
-            "ongoing" -> SAnime.ONGOING
-            "completed" -> SAnime.COMPLETED
-            else -> SAnime.UNKNOWN
-        }
+    private fun parseStatus(statusString: String): Int = when (statusString.lowercase(Locale.US)) {
+        "ongoing" -> SAnime.ONGOING
+        "completed" -> SAnime.COMPLETED
+        else -> SAnime.UNKNOWN
     }
 
     override fun episodeFromElement(element: Element): SEpisode {
