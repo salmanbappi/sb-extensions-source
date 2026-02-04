@@ -21,10 +21,10 @@ import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
-import extensions.utils.LazyMutable
-import extensions.utils.addEditTextPreference
-import extensions.utils.delegate
-import extensions.utils.getPreferencesLazy
+import keiyoushi.utils.LazyMutable
+import keiyoushi.utils.addEditTextPreference
+import keiyoushi.utils.delegate
+import keiyoushi.utils.getPreferencesLazy
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.Interceptor

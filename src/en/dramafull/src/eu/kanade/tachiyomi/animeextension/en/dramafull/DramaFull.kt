@@ -15,11 +15,11 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
-import extensions.utils.UrlUtils
-import extensions.utils.addListPreference
-import extensions.utils.getPreferencesLazy
-import extensions.utils.parseAs
-import extensions.utils.toRequestBody
+import keiyoushi.utils.UrlUtils
+import keiyoushi.utils.addListPreference
+import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parseAs
+import keiyoushi.utils.toRequestBody
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject

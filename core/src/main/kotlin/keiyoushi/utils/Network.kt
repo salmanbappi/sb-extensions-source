@@ -1,4 +1,4 @@
-package extensions.utils
+package keiyoushi.utils
 
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -49,7 +49,7 @@ suspend fun OkHttpClient.post(
  * Empty [okhttp3] headers used by the source.
  *
  * Provides backward compatibility with the older internal `okhttp3.internal.commonEmptyHeaders`
- * by lazily returning an instance equivalent to [okhttp3.Headers.EMPTY].
+ * by lazily returning an instance equivalent to [Headers.EMPTY].
  *
  * If app is still using [okhttp3] (ver 5.0.0-alpha.14) then even if extensions
  * are updated to new API, the call would fail to look for actual instance.
@@ -63,7 +63,7 @@ val commonEmptyHeaders by lazy { Headers.Builder().build() }
  * Empty [okhttp3] request body used by the source.
  *
  * Provides backward compatibility with the older internal `okhttp3.internal.commonEmptyRequestBody`
- * by lazily returning an instance equivalent to [okhttp3.RequestBody.EMPTY].
+ * by lazily returning an instance equivalent to [RequestBody.EMPTY].
  *
  * If app is still using [okhttp3] (ver 5.0.0-alpha.14) then even if extensions
  * are updated to new API, the call would fail to look for actual instance.

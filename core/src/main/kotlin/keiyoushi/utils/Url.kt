@@ -1,4 +1,4 @@
-package extensions.utils
+package keiyoushi.utils
 
 object UrlUtils {
 

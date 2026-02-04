@@ -1,4 +1,4 @@
-package extensions.utils
+package keiyoushi.utils
 
 import android.app.Application
 import android.content.SharedPreferences

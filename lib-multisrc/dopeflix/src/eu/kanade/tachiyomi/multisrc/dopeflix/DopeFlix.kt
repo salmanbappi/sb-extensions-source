@@ -22,10 +22,10 @@ import eu.kanade.tachiyomi.util.parallelCatchingFlatMap
 import eu.kanade.tachiyomi.util.parallelFlatMap
 import eu.kanade.tachiyomi.util.parallelMapNotNull
 import eu.kanade.tachiyomi.util.parseAs
-import extensions.utils.LazyMutable
-import extensions.utils.addListPreference
-import extensions.utils.addSetPreference
-import extensions.utils.getPreferencesLazy
+import keiyoushi.utils.LazyMutable
+import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSetPreference
+import keiyoushi.utils.getPreferencesLazy
 import okhttp3.CacheControl
 import okhttp3.Headers
 import okhttp3.HttpUrl

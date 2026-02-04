@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.dramafull
 
 import eu.kanade.tachiyomi.animesource.model.SAnime
-import extensions.utils.UrlUtils
+import keiyoushi.utils.UrlUtils
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
