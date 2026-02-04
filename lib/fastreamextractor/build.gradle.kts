@@ -3,9 +3,7 @@ plugins {
 }
 
 dependencies {
-    implementation(libs.jsunpacker) {
-        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk8")
-    }
+    implementation(libs.jsunpacker)
     implementation(project(":lib:playlistutils"))
     implementation(project(":core"))
 }
