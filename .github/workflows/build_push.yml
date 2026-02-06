@@ -139,7 +139,7 @@ jobs:
 
       - name: Upload APKs (${{ matrix.chunk.number }})
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        if: github.repository == 'yuzono/aniyomi-extensions'
+        if: github.repository == 'yuzono/anime-extensions'
         with:
           name: "individual-apks-${{ matrix.chunk.number }}"
           path: "**/*.apk"
@@ -151,7 +151,7 @@ jobs:
   publish:
     name: Publish extension repo
     needs: [prepare, build]
-    if: github.repository == 'yuzono/aniyomi-extensions'
+    if: github.repository == 'yuzono/anime-extensions'
     runs-on: 'ubuntu-24.04'
     steps:
       - name: Download APK artifacts
