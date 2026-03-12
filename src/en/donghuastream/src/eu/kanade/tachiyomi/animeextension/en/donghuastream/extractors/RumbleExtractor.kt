@@ -10,12 +10,12 @@ class RumbleExtractor(private val client: OkHttpClient, private val headers: Hea
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     fun videosFromUrl(url: String, prefix: String = ""): List<Video> {
-        val sourceUrl = "https://rumble.com/hls-vod/${extractRumbleId(url)!!}/playlist.m3u8"
+        val id = extractRumbleId(url) ?: return emptyList()
+        val sourceUrl = "https://rumble.com/hls-vod/$id/playlist.m3u8"
         return playlistUtils.extractFromHls(sourceUrl, referer = url, subtitleList = emptyList(), videoNameGen = { q -> "$prefix $q" })
     }
 
-    fun extractRumbleId(url: String): String? {
-        val regex = Regex("""rumble\.com/embed/v([a-zA-Z0-9]+)""")
-        return regex.find(url)?.groupValues?.get(1)
-    }
+    private val regex by lazy { Regex("""rumble\.com/embed/v([a-zA-Z0-9]+)""") }
+
+    private fun extractRumbleId(url: String): String? = regex.find(url)?.groupValues?.get(1)
 }

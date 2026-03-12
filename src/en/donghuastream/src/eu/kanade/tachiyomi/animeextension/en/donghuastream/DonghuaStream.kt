@@ -12,10 +12,14 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 import eu.kanade.tachiyomi.network.GET
 import keiyoushi.utils.LazyMutable
+import keiyoushi.utils.UrlUtils
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
+import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import kotlin.getValue
 
 class DonghuaStream :
     AnimeStream(
@@ -28,22 +32,30 @@ class DonghuaStream :
 
     // ============================ Manual Changes ==========================
 
-    override fun popularAnimeNextPageSelector(): String? = "div.mrgn a.r"
+    override fun popularAnimeNextPageSelector() = "div.mrgn a.r"
 
-    override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
+    override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = GET("$baseUrl/pagg/$page/?s=$query")
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        val url = baseUrl.toHttpUrl().newBuilder().apply {
+            addPathSegment("pagg")
+            addPathSegment(page.toString())
+            addPathSegment("")
+            addQueryParameter("s", query)
+        }.build()
+        return GET(url)
+    }
 
     private var SharedPreferences.ignorePreview
         by LazyMutable { preferences.getBoolean(IGNORE_PREVIEW_KEY, IGNORE_PREVIEW_DEFAULT) }
 
-    private var SharedPreferences.getHosters
+    private var SharedPreferences.enabledHosters
         by LazyMutable { preferences.getStringSet(PREF_HOSTER_KEY, PREF_HOSTER_DEFAULT)!! }
 
     private companion object {
         private const val PREF_HOSTER_KEY = "dm_hoster_selection"
         private val INTERNAL_HOSTER_NAMES = listOf("Dailymotion", "Streamplay", "Rumble", "Ok.ru")
-        private val PREF_HOSTER_ENTRY_VALUES = INTERNAL_HOSTER_NAMES.map { it.lowercase() }.toList()
+        private val PREF_HOSTER_ENTRY_VALUES = INTERNAL_HOSTER_NAMES.map { it.lowercase() }
         private val PREF_HOSTER_DEFAULT = INTERNAL_HOSTER_NAMES.map { it.lowercase() }.toSet()
 
         private const val IGNORE_PREVIEW_KEY = "dm_ignore_preview"
@@ -61,7 +73,7 @@ class DonghuaStream :
             entryValues = PREF_HOSTER_ENTRY_VALUES,
             default = PREF_HOSTER_DEFAULT,
         ) {
-            preferences.getHosters = it
+            preferences.enabledHosters = it
         }
 
         screen.addSwitchPreference(
@@ -78,7 +90,7 @@ class DonghuaStream :
     override val prefQualityEntries = prefQualityValues
 
     override fun episodeListParse(response: Response): List<SEpisode> = super.episodeListParse(response)
-        .filter { !it.name.contains("Preview") || !preferences.ignorePreview }
+        .filter { !it.name.contains("Preview", ignoreCase = true) || !preferences.ignorePreview }
 
     // ============================ Video Links =============================
 
@@ -90,24 +102,33 @@ class DonghuaStream :
 
     override fun getVideoList(url: String, name: String): List<Video> {
         val prefix = "$name - "
-        return when {
-            preferences.getHosters.contains("dailymotion") and url.contains("dailymotion") -> dailymotionExtractor.videosFromUrl(url, prefix = prefix)
-            preferences.getHosters.contains("streamplay") and url.contains("streamplay") -> streamPlayExtractor.videosFromUrl(url, prefix = prefix)
-            preferences.getHosters.contains("ok.ru") and url.contains("ok.ru") -> okruExtractor.videosFromUrl(url = if (url.startsWith("//")) "https:$url" else url, prefix = prefix)
-            preferences.getHosters.contains("rumble") and url.contains("rumble") -> rumbleExtractor.videosFromUrl(url, prefix = prefix)
-            else -> emptyList()
+        return runBlocking {
+            when {
+                preferences.enabledHosters.contains("dailymotion") && url.contains("dailymotion") ->
+                    dailymotionExtractor.videosFromUrl(url, prefix = prefix)
+                preferences.enabledHosters.contains("streamplay") && url.contains("streamplay") ->
+                    streamPlayExtractor.videosFromUrl(url, prefix = prefix)
+                preferences.enabledHosters.contains("ok.ru") && url.contains("ok.ru") ->
+                    UrlUtils.fixUrl(url)?.let { okruExtractor.videosFromUrl(url = it, prefix = prefix) }
+                        ?: emptyList()
+                preferences.enabledHosters.contains("rumble") && url.contains("rumble") ->
+                    rumbleExtractor.videosFromUrl(url, prefix = prefix)
+                else -> emptyList()
+            }
         }
     }
 
     // ============================= Utilities ==============================
 
+    private val qualityRegex by lazy { Regex("""(\d+)p""") }
+
     override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(videoSortPrefKey, videoSortPrefDefault)!!
         return sortedWith(
-            compareBy(
-                { it.quality.contains(quality) },
-                { Regex("""(\d+)p""").find(it.quality)?.groupValues?.get(1)?.toIntOrNull() ?: 0 },
-            ),
+            compareBy<Video>(
+                { it.quality.contains(quality, true) },
+                { qualityRegex.find(it.quality)?.groupValues?.get(1)?.toIntOrNull() ?: 0 },
+            ).thenByDescending { it.quality },
         ).reversed()
     }
 }
