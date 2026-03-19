@@ -1,13 +1,14 @@
 package aniyomi.lib.unpacker
 
+import aniyomi.lib.autoUnpacker
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
-class JsUnpackerUnpackerUnitTest {
+class AutoUnpackerUnpackerUnitTest {
 
     @Test
     fun callUnpackedCorrectly() {
-        val unpacked = Unpacker.unpack(PACKED_CALL)
+        val unpacked = autoUnpacker(PACKED_CALL)
         assertTrue(callUnpackCheck(unpacked), "Unpacker did not unpack call correctly")
     }
 
@@ -15,7 +16,7 @@ class JsUnpackerUnpackerUnitTest {
 
     @Test
     fun functionUnpackedCorrectly() {
-        val unpacked = Unpacker.unpack(PACKED_FUNCTION)
+        val unpacked = autoUnpacker(PACKED_FUNCTION)
         assertTrue(functionUnpackCheck(unpacked), "Unpacker did not unpack function correctly")
     }
 
