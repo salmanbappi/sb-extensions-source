@@ -1,10 +1,10 @@
-package eu.kanade.tachiyomi.animeextension.en.movhub
+package eu.kanade.tachiyomi.multisrc.yflix
 
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import okhttp3.HttpUrl
 
-object MovHubFilters {
+object YFlixThemeFilters {
 
     fun getFilters(filters: AnimeFilterList) = filters.filterIsInstance<Filter>()
 
@@ -51,12 +51,12 @@ object MovHubFilters {
         }
     }
 
-    internal class TypesFilter : CheckBoxFilterList("Type", "type", MovHubFiltersData.TYPES)
-    internal class QualitiesFilter : CheckBoxFilterList("Quality", "quality", MovHubFiltersData.QUALITIES)
-    internal class YearsFilter : CheckBoxFilterList("Released", "year", MovHubFiltersData.YEARS)
-    internal class GenresFilter : CheckBoxFilterList("Genre", "genre", MovHubFiltersData.GENRES)
-    internal class CountriesFilter : CheckBoxFilterList("Country", "country", MovHubFiltersData.COUNTRIES)
-    internal class SortByFilter : QueryPartFilter("Sort By", "sort", MovHubFiltersData.SORT_BY)
+    internal class TypesFilter : CheckBoxFilterList("Type", "type", YFlixFiltersData.TYPES)
+    internal class QualitiesFilter : CheckBoxFilterList("Quality", "quality", YFlixFiltersData.QUALITIES)
+    internal class YearsFilter : CheckBoxFilterList("Released", "year", YFlixFiltersData.YEARS)
+    internal class GenresFilter : CheckBoxFilterList("Genre", "genre", YFlixFiltersData.GENRES)
+    internal class CountriesFilter : CheckBoxFilterList("Country", "country", YFlixFiltersData.COUNTRIES)
+    internal class SortByFilter : QueryPartFilter("Sort By", "sort", YFlixFiltersData.SORT_BY)
 
     val FILTER_LIST
         get() = AnimeFilterList(
@@ -68,7 +68,7 @@ object MovHubFilters {
             SortByFilter(),
         )
 
-    private object MovHubFiltersData {
+    private object YFlixFiltersData {
         val TYPES = listOf(
             Pair("Movie", "movie"),
             Pair("TV-Shows", "tv"),
