@@ -13,6 +13,7 @@ package keiyoushi.lib.cryptoaes
 import android.annotation.SuppressLint
 import android.util.Base64
 import android.util.Log
+import keiyoushi.utils.decodeHex
 import java.security.MessageDigest
 import java.util.Arrays
 import javax.crypto.Cipher
@@ -243,13 +244,5 @@ object CryptoAES {
     } catch (ex: Exception) {
         Log.e("CryptoAES", "Decryption error: ${ex.message}")
         null
-    }
-
-    // Stolen from AnimixPlay(EN) / GogoCdnExtractor
-    fun String.decodeHex(): ByteArray {
-        check(length % 2 == 0) { "Must have an even length" }
-        return chunked(2)
-            .map { it.toInt(16).toByte() }
-            .toByteArray()
     }
 }

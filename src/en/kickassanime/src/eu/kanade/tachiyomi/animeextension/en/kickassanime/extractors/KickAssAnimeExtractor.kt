@@ -7,8 +7,8 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.lib.cryptoaes.CryptoAES
-import keiyoushi.lib.cryptoaes.CryptoAES.decodeHex
 import keiyoushi.utils.bodyString
+import keiyoushi.utils.decodeHex
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl

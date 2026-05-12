@@ -16,4 +16,5 @@ dependencies {
     implementation(project(':lib:doodextractor'))
     implementation(project(':lib:playlistutils'))
     implementation(project(":lib:unpacker"))
+    implementation(project(":lib:cryptoaes"))
 }
