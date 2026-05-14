@@ -29,16 +29,17 @@ import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.toJsonBody
 import keiyoushi.utils.toJsonString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.jsoup.Jsoup
 import java.security.MessageDigest
@@ -61,6 +62,11 @@ class AllAnime :
     override val supportsLatest = true
 
     private val preferences by getPreferencesLazy()
+
+    // ============================== Headers ===============================
+    override fun headersBuilder() = super.headersBuilder()
+        .add("Origin", GRAPHQL_ORIGIN)
+        .add("Referer", "$GRAPHQL_ORIGIN/")
 
     // ============================== Popular ===============================
 
@@ -251,7 +257,6 @@ class AllAnime :
                         put("translationType", subPref)
                         put("episodeString", ep)
                     }
-                    put("query", STREAMS_QUERY)
                 }.toJsonString()
             }
         }
@@ -260,19 +265,41 @@ class AllAnime :
     // ============================ Video Links =============================
 
     override fun videoListRequest(episode: SEpisode): Request {
-        val payload = episode.url
-            .toRequestBody("application/json; charset=utf-8".toMediaType())
+        val episodeData = Json.parseToJsonElement(episode.url).jsonObject
+        val variablesObj = episodeData["variables"]!!.jsonObject
 
-        val postHeaders = headers.newBuilder().apply {
+        val showId = variablesObj["showId"]?.jsonPrimitive?.content ?: ""
+        val episodeString = variablesObj["episodeString"]?.jsonPrimitive?.content ?: ""
+        val translationType = variablesObj["translationType"]?.jsonPrimitive?.content ?: "sub"
+
+        val variables = buildJsonObject {
+            put("showId", showId)
+            put("translationType", translationType)
+            put("episodeString", episodeString)
+        }.toString()
+
+        val extensions = buildJsonObject {
+            putJsonObject("persistedQuery") {
+                put("version", 1)
+                put(
+                    "sha256Hash",
+                    STREAMS_QUERY,
+                )
+            }
+        }.toString()
+
+        val url = apiUrl.toHttpUrl()
+            .newBuilder()
+            .addPathSegment("api")
+            .addQueryParameter("variables", variables)
+            .addQueryParameter("extensions", extensions)
+            .build()
+
+        val getHeaders = headers.newBuilder().apply {
             add("Accept", "*/*")
-            add("Content-Length", payload.contentLength().toString())
-            add("Content-Type", payload.contentType().toString())
-            add("Host", apiUrl.toHttpUrl().host)
-            add("Origin", GRAPHQL_ORIGIN)
-            add("Referer", "$GRAPHQL_ORIGIN/")
         }.build()
 
-        return POST("$apiUrl/api", headers = postHeaders, body = payload)
+        return GET(url.toString(), headers = getHeaders)
     }
 
     private val allAnimeExtractor by lazy { AllAnimeExtractor(client, headers) }
@@ -358,7 +385,16 @@ class AllAnime :
                     val videoHeaders = headers.newBuilder().apply {
                         add("Accept", "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5")
                         add("Host", server.sourceUrl.toHttpUrl().host)
-                        add("Referer", "$iframeEndpoint/")
+
+                        val playerName = server.sourceName.substringAfter("player@")
+                        add(
+                            "Referer",
+                            if (playerName.contains("yt-mp4", ignoreCase = true)) {
+                                "https://allanime.day/" // only for yt-mp4 playback
+                            } else {
+                                "$iframeEndpoint/"
+                            },
+                        )
                     }.build()
 
                     Video(
@@ -531,7 +567,7 @@ class AllAnime :
 
     companion object {
         private const val PAGE_SIZE = 26 // number of items to retrieve when calling API
-        private const val GRAPHQL_ORIGIN = "https://youtu-chan.com"
+        private const val GRAPHQL_ORIGIN = "https://allmanga.to"
         private val INTERAL_HOSTER_NAMES = arrayOf(
             "Default", "Ac", "Ak", "Kir", "Rab", "Luf-mp4",
             "Si-Hls", "S-mp4", "Ac-Hls", "Uv-mp4", "Pn-Hls",
