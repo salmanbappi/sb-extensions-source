@@ -35,8 +35,7 @@ inline fun AnimeHttpSource.getPreferencesLazy(
 /**
  * Returns the [SharedPreferences] associated with passed source id
  */
-@Suppress("NOTHING_TO_INLINE")
-inline fun getPreferences(sourceId: Long): SharedPreferences = Injekt.get<Application>().getSharedPreferences("source_$sourceId", 0x0000)
+fun getPreferences(sourceId: Long): SharedPreferences = Injekt.get<Application>().getSharedPreferences("source_$sourceId", 0x0000)
 
 // From https://al-e-shevelev.medium.com/mutable-lazy-in-kotlin-14233bed116d
 class LazyMutable<T>(
