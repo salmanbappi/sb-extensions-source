@@ -145,7 +145,7 @@ open class ZipInterceptor {
             .mapNotNull {
                 val entryName = it.name
                 val splitEntryName = entryName.split('.')
-                val entryIndex = splitEntryName.first().toInt()
+                val entryIndex = splitEntryName.first().toIntOrNull() ?: return@mapNotNull null
                 val entryType = splitEntryName.last()
 
                 val imageData = if (entryType == "avif" || splitEntryName.size == 1) {
@@ -167,10 +167,15 @@ open class ZipInterceptor {
         zis.closeEntry()
         zis.close()
 
+        if (images.isEmpty()) {
+            return response
+        }
+
         val totalWidth = images.maxOf { it.second.width }
         val totalHeight = images.sumOf { it.second.height }
 
-        val result = Bitmap.createBitmap(totalWidth, totalHeight, Bitmap.Config.ARGB_8888)
+        val config = if (isLowRamDevice) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
+        val result = Bitmap.createBitmap(totalWidth, totalHeight, config)
         val canvas = Canvas(result)
 
         var dy = 0

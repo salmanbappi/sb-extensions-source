@@ -20,9 +20,10 @@ typealias ReactFlightDate =
 
 object ReactFlightDateSerializer : KSerializer<Date> {
     override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("ReactFlightDate", PrimitiveKind.STRING)
-    private val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
-    }
+    private val format: SimpleDateFormat
+        get() = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
 
     override fun serialize(encoder: Encoder, value: Date): Unit = throw SerializationException("Stub !")
 
