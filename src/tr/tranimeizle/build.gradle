@@ -1,7 +1,7 @@
 ext {
     extName = 'TR Anime Izle'
     extClass = '.TRAnimeIzle'
-    extVersionCode = 31
+    extVersionCode = 32
 }
 
 apply plugin: "kei.plugins.extension.legacy"

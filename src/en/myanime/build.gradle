@@ -1,7 +1,7 @@
 ext {
     extName = 'Myanime'
     extClass = '.Myanime'
-    extVersionCode = 14
+    extVersionCode = 15
 }
 
 apply plugin: "kei.plugins.extension.legacy"

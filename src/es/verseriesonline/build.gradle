@@ -1,7 +1,7 @@
 ext {
     extName = 'VerSeriesOnline'
     extClass = '.VerSeriesOnline'
-    extVersionCode = 16
+    extVersionCode = 17
 }
 
 apply plugin: "kei.plugins.extension.legacy"

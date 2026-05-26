@@ -1,7 +1,7 @@
 ext {
     extName = 'ANIMEWORLD.tv'
     extClass = '.ANIMEWORLD'
-    extVersionCode = 57
+    extVersionCode = 58
 }
 
 apply plugin: "kei.plugins.extension.legacy"

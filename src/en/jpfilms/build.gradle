@@ -1,7 +1,7 @@
 ext {
     extName = 'JPFilms'
     extClass = '.JPFilms'
-    extVersionCode = 4
+    extVersionCode = 5
     isNsfw = true
 }
 

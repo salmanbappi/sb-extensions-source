@@ -1,7 +1,7 @@
 ext {
     extName = 'My Running Man'
     extClass = '.MyRunningMan'
-    extVersionCode = 10
+    extVersionCode = 11
 }
 
 apply plugin: "kei.plugins.extension.legacy"

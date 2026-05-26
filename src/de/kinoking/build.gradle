@@ -3,7 +3,7 @@ ext {
     extClass = '.Kinoking'
     themePkg = 'dooplay'
     baseUrl = 'https://kinoking.cc'
-    overrideVersionCode = 30
+    overrideVersionCode = 31
 }
 
 apply plugin: "kei.plugins.extension.legacy"
