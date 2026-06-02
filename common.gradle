@@ -42,7 +42,7 @@ android {
         manifestPlaceholders = [
                 appName : "Aniyomi: $extName",
                 author  : "salmanbappi",
-                extClass: "." + project.parent.name + "." + project.name + extClass,
+                extClass: "eu.kanade.tachiyomi.animeextension." + project.parent.name + "." + project.name + extClass,
                 nsfw    : project.ext.find("isNsfw") ? 1 : 0,
         ]
         String baseUrl = project.ext.find("baseUrl") ?: ""
