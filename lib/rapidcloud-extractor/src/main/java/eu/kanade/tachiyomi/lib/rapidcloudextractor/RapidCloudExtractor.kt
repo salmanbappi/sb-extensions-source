@@ -189,18 +189,17 @@ class RapidCloudExtractor(
         }
     }
 
-    private fun requestNewKey(): String =
-        client.newCall(GET("https://raw.githubusercontent.com/yogesh-hacker/MegacloudKeys/refs/heads/main/keys.json"))
-            .execute()
-            .use { response ->
-                if (!response.isSuccessful) throw IllegalStateException("Failed to fetch keys.json")
-                val jsonStr = response.body.string()
-                if (jsonStr.isEmpty()) throw IllegalStateException("keys.json is empty")
-                val key = json.decodeFromString<Map<String, String>>(jsonStr)["mega"]
-                    ?: throw IllegalStateException("Rapid key not found in keys.json")
-                Log.i("RapidCloudExtractor", "Using Rapid Key: $key")
-                key
-            }
+    private fun requestNewKey(): String = client.newCall(GET("https://raw.githubusercontent.com/yogesh-hacker/MegacloudKeys/refs/heads/main/keys.json"))
+        .execute()
+        .use { response ->
+            if (!response.isSuccessful) throw IllegalStateException("Failed to fetch keys.json")
+            val jsonStr = response.body.string()
+            if (jsonStr.isEmpty()) throw IllegalStateException("keys.json is empty")
+            val key = json.decodeFromString<Map<String, String>>(jsonStr)["mega"]
+                ?: throw IllegalStateException("Rapid key not found in keys.json")
+            Log.i("RapidCloudExtractor", "Using Rapid Key: $key")
+            key
+        }
 
     private fun decryptOpenSSL(encBase64: String, password: String): String {
         try {
@@ -249,7 +248,7 @@ class RapidCloudExtractor(
     @Serializable
     data class SourceDto(
         val file: String,
-        val type: String,   // 'hls'
+        val type: String, // 'hls'
     )
 
     @Serializable

@@ -33,7 +33,9 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 
 @OptIn(ExperimentalSerializationApi::class)
-class Nagordola : ConfigurableAnimeSource, AnimeHttpSource() {
+class Nagordola :
+    AnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     override val name = "Nagordola"
 
@@ -48,10 +50,12 @@ class Nagordola : ConfigurableAnimeSource, AnimeHttpSource() {
     override val client: okhttp3.OkHttpClient = super.client.newBuilder()
         .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-        .dispatcher(okhttp3.Dispatcher().apply {
-            maxRequests = 100
-            maxRequestsPerHost = 100
-        })
+        .dispatcher(
+            okhttp3.Dispatcher().apply {
+                maxRequests = 100
+                maxRequestsPerHost = 100
+            },
+        )
         .build()
 
     private val json: Json by injectLazy()
@@ -175,9 +179,7 @@ class Nagordola : ConfigurableAnimeSource, AnimeHttpSource() {
         return popularAnimeParse(response).also { enrichAnimes(it.animes) }
     }
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return searchAnimeRequest(page, "", getFilterList())
-    }
+    override fun popularAnimeRequest(page: Int): Request = searchAnimeRequest(page, "", getFilterList())
 
     override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
 
@@ -316,19 +318,15 @@ class Nagordola : ConfigurableAnimeSource, AnimeHttpSource() {
 
     override fun episodeListParse(response: Response): List<SEpisode> = throw UnsupportedOperationException()
 
-    private fun parseEpisodeNumber(name: String): Float {
-        return fileNameRegex.find(name)?.groupValues?.get(1)?.toFloatOrNull()
-            ?: fallbackNumberRegex.find(name)?.groupValues?.get(1)?.toFloatOrNull()
-            ?: -1f
-    }
+    private fun parseEpisodeNumber(name: String): Float = fileNameRegex.find(name)?.groupValues?.get(1)?.toFloatOrNull()
+        ?: fallbackNumberRegex.find(name)?.groupValues?.get(1)?.toFloatOrNull()
+        ?: -1f
 
     private val fileNameRegex = Regex("""(?i)(?:s\d+e|e|part|ep|episode|第)\s?(\d+)""", RegexOption.IGNORE_CASE)
     private val fallbackNumberRegex = Regex("""(\d+)""")
 
-    private fun isVideoFile(fileName: String): Boolean {
-        return fileName.lowercase().let {
-            it.endsWith(".mp4") || it.endsWith(".mkv") || it.endsWith(".avi") || it.endsWith(".webm")
-        }
+    private fun isVideoFile(fileName: String): Boolean = fileName.lowercase().let {
+        it.endsWith(".mp4") || it.endsWith(".mkv") || it.endsWith(".avi") || it.endsWith(".webm")
     }
 
     // ============================ Video Links =============================
@@ -391,17 +389,17 @@ class Nagordola : ConfigurableAnimeSource, AnimeHttpSource() {
 data class OMDbResponse(
     val Response: String,
     val Poster: String? = null,
-    val Error: String? = null
+    val Error: String? = null,
 )
 
 @Serializable
 data class TMDbResponse(
-    val results: List<TMDbResult>? = null
+    val results: List<TMDbResult>? = null,
 )
 
 @Serializable
 data class TMDbResult(
-    val poster_path: String? = null
+    val poster_path: String? = null,
 )
 
 @Serializable

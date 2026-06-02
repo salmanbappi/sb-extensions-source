@@ -16,7 +16,10 @@ import okhttp3.OkHttpClient
 
 class StreamWishExtractor(private val client: OkHttpClient, private val headers: Headers) {
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-    private val json = Json { isLenient = true; ignoreUnknownKeys = true }
+    private val json = Json {
+        isLenient = true
+        ignoreUnknownKeys = true
+    }
 
     private val dmcaServersRegex = """dmca\s*=\s*\[(.*?)]""".toRegex(RegexOption.DOT_MATCHES_ALL)
     private val mainServersRegex = """main\s*=\s*\[(.*?)]""".toRegex(RegexOption.DOT_MATCHES_ALL)
@@ -79,39 +82,33 @@ class StreamWishExtractor(private val client: OkHttpClient, private val headers:
         )
     }
 
-    private fun extractServerList(regex: Regex, script: String): List<String> {
-        return regex.find(script)?.groupValues?.get(1)
-            ?.split(",")
-            ?.map { it.trim().removeSurrounding("\"").removeSurrounding("'") }
-            ?.filter { it.isNotEmpty() }
-            ?: emptyList()
+    private fun extractServerList(regex: Regex, script: String): List<String> = regex.find(script)?.groupValues?.get(1)
+        ?.split(",")
+        ?.map { it.trim().removeSurrounding("\"").removeSurrounding("'") }
+        ?.filter { it.isNotEmpty() }
+        ?: emptyList()
+
+    private fun getEmbedUrl(url: String): String = if (url.contains("/f/")) {
+        val videoId = url.substringAfter("/f/")
+        "https://streamwish.com/$videoId"
+    } else {
+        url
     }
 
-    private fun getEmbedUrl(url: String): String {
-        return if (url.contains("/f/")) {
-            val videoId = url.substringAfter("/f/")
-            "https://streamwish.com/$videoId"
-        } else {
-            url
+    private fun extractSubtitles(script: String): List<Track> = try {
+        val subtitleStr = script
+            .substringAfter("tracks")
+            .substringAfter("[")
+            .substringBefore("]")
+        val fixedSubtitleStr = fixTracksRegex.replace(subtitleStr) { match ->
+            "\"${match.value}\""
         }
-    }
 
-    private fun extractSubtitles(script: String): List<Track> {
-        return try {
-            val subtitleStr = script
-                .substringAfter("tracks")
-                .substringAfter("[")
-                .substringBefore("]")
-            val fixedSubtitleStr = fixTracksRegex.replace(subtitleStr) { match ->
-                "\"${match.value}\""
-            }
-
-            json.decodeFromString<List<TrackDto>>("[$fixedSubtitleStr]")
-                .filter { it.kind.equals("captions", true) }
-                .map { Track(it.file, it.label ?: "") }
-        } catch (e: SerializationException) {
-            emptyList()
-        }
+        json.decodeFromString<List<TrackDto>>("[$fixedSubtitleStr]")
+            .filter { it.kind.equals("captions", true) }
+            .map { Track(it.file, it.label ?: "") }
+    } catch (e: SerializationException) {
+        emptyList()
     }
 
     @Serializable

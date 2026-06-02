@@ -43,7 +43,9 @@ import java.util.UUID
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
+class MovieBox :
+    AnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     override val name = "MovieBox"
     override val baseUrl = "https://moviebox.ph"
@@ -58,7 +60,7 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
     private val apiHosts = listOf(
         "https://api3.aoneroom.com",
         "https://netfilm.world",
-        "https://h5-api.aoneroom.com"
+        "https://h5-api.aoneroom.com",
     )
 
     private val secretKeyDefault = "NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw=="
@@ -74,7 +76,7 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
     private fun getApiHeaders(url: String, method: String = "GET", body: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false): Headers {
         val timestamp = System.currentTimeMillis()
         val contentType = if (method == "POST") "application/json; charset=utf-8" else "application/json"
-        
+
         return Headers.Builder()
             .add("user-agent", "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; Samsung; Build/TQ3A.230901.001; Cronet/145.0.7582.0)")
             .add("accept", "application/json")
@@ -94,8 +96,8 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
             .build()
     }
 
-    private fun getClientInfo(): String {
-        return JsonObject(mapOf(
+    private fun getClientInfo(): String = JsonObject(
+        mapOf(
             "package_name" to kotlinx.serialization.json.JsonPrimitive("com.community.oneroom"),
             "version_name" to kotlinx.serialization.json.JsonPrimitive("3.0.13.0325.03"),
             "version_code" to kotlinx.serialization.json.JsonPrimitive(50020088),
@@ -115,8 +117,8 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
             "X-Idle-Data" to kotlinx.serialization.json.JsonPrimitive("1"),
             "X-Family-Mode" to kotlinx.serialization.json.JsonPrimitive("0"),
             "X-Content-Mode" to kotlinx.serialization.json.JsonPrimitive("0"),
-        )).toString()
-    }
+        ),
+    ).toString()
 
     private fun generateXClientToken(timestamp: Long): String {
         val tsStr = timestamp.toString()
@@ -124,7 +126,7 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
         return "$tsStr,$hash"
     }
 
-    private val deviceId by lazy { 
+    private val deviceId by lazy {
         val bytes = ByteArray(16)
         SecureRandom().nextBytes(bytes)
         bytes.joinToString("") { "%02x".format(it) }
@@ -132,10 +134,8 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
 
     private fun String.md5(): String = toByteArray().md5()
 
-    private fun ByteArray.md5(): String {
-        return MessageDigest.getInstance("MD5").digest(this)
-            .joinToString("") { "%02x".format(it) }
-    }
+    private fun ByteArray.md5(): String = MessageDigest.getInstance("MD5").digest(this)
+        .joinToString("") { "%02x".format(it) }
 
     private fun buildCanonicalString(
         method: String,
@@ -143,35 +143,37 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
         contentType: String?,
         url: String,
         body: String?,
-        timestamp: Long
+        timestamp: Long,
     ): String {
         val parsed = Uri.parse(url)
         val path = parsed.path ?: ""
-        
+
         val query = if (!parsed.queryParameterNames.isNullOrEmpty()) {
             parsed.queryParameterNames.sorted().joinToString("&") { key ->
                 parsed.getQueryParameters(key).joinToString("&") { value ->
                     "$key=$value"
                 }
             }
-        } else ""
-        
+        } else {
+            ""
+        }
+
         val canonicalUrl = if (query.isNotEmpty()) "$path?$query" else path
 
         val bodyBytes = body?.toByteArray(Charsets.UTF_8)
         val bodyHash = if (bodyBytes != null) {
             val trimmed = if (bodyBytes.size > 102400) bodyBytes.copyOfRange(0, 102400) else bodyBytes
             md5ByteArray(trimmed)
-        } else ""
+        } else {
+            ""
+        }
 
         val bodyLength = bodyBytes?.size?.toString() ?: ""
         return "${method.uppercase()}\n${accept ?: ""}\n${contentType ?: ""}\n$bodyLength\n$timestamp\n$bodyHash\n$canonicalUrl"
     }
 
-    private fun md5ByteArray(input: ByteArray): String {
-        return MessageDigest.getInstance("MD5").digest(input)
-            .joinToString("") { "%02x".format(it) }
-    }
+    private fun md5ByteArray(input: ByteArray): String = MessageDigest.getInstance("MD5").digest(input)
+        .joinToString("") { "%02x".format(it) }
 
     private fun generateXTrSignature(
         method: String,
@@ -179,10 +181,10 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
         contentType: String?,
         url: String,
         body: String? = null,
-        timestamp: Long
+        timestamp: Long,
     ): String {
         val canonical = buildCanonicalString(method, accept, contentType, url, body, timestamp)
-        
+
         val secretStr = String(Base64.decode(secretKeyDefault, Base64.DEFAULT))
         val secretBytes = Base64.decode(secretStr, Base64.DEFAULT)
 
@@ -194,26 +196,27 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
         return "$timestamp|2|$signatureB64"
     }
 
-    private fun getPreferredHost(): String {
-        return preferences.getString(PREF_HOST_KEY, apiHosts[0]) ?: apiHosts[0]
-    }
+    private fun getPreferredHost(): String = preferences.getString(PREF_HOST_KEY, apiHosts[0]) ?: apiHosts[0]
 
     private fun safeGetJsonWithHeaders(urlPath: String, isPost: Boolean = false, bodyData: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false): Pair<JsonElement, Headers>? {
         for (host in apiHosts) {
             val adaptivePath = when {
-                host.contains("api3") -> urlPath
-                    .replace("/wefeed-h5api-bff/detail", "/wefeed-mobile-bff/subject-api/get")
-                    .replace("/wefeed-h5api-bff/subject/play", "/wefeed-mobile-bff/subject-api/play-info")
-                    .replace("/wefeed-h5api-bff/subject/search", "/wefeed-mobile-bff/subject-api/search/v2")
-                    .replace("/wefeed-h5api-bff/subject/filter", "/wefeed-mobile-bff/subject-api/list")
-                else -> urlPath
-                    .replace("/wefeed-mobile-bff/subject-api/get", "/wefeed-h5api-bff/detail")
-                    .replace("/wefeed-mobile-bff/subject-api/season-info", "/wefeed-h5api-bff/detail")
-                    .replace("/wefeed-mobile-bff/subject-api/play-info", "/wefeed-h5api-bff/subject/play")
-                    .replace("/wefeed-mobile-bff/subject-api/search/v2", "/wefeed-h5api-bff/subject/search")
-                    .replace("/wefeed-mobile-bff/subject-api/list", "/wefeed-h5api-bff/subject/filter")
+                host.contains("api3") ->
+                    urlPath
+                        .replace("/wefeed-h5api-bff/detail", "/wefeed-mobile-bff/subject-api/get")
+                        .replace("/wefeed-h5api-bff/subject/play", "/wefeed-mobile-bff/subject-api/play-info")
+                        .replace("/wefeed-h5api-bff/subject/search", "/wefeed-mobile-bff/subject-api/search/v2")
+                        .replace("/wefeed-h5api-bff/subject/filter", "/wefeed-mobile-bff/subject-api/list")
+
+                else ->
+                    urlPath
+                        .replace("/wefeed-mobile-bff/subject-api/get", "/wefeed-h5api-bff/detail")
+                        .replace("/wefeed-mobile-bff/subject-api/season-info", "/wefeed-h5api-bff/detail")
+                        .replace("/wefeed-mobile-bff/subject-api/play-info", "/wefeed-h5api-bff/subject/play")
+                        .replace("/wefeed-mobile-bff/subject-api/search/v2", "/wefeed-h5api-bff/subject/search")
+                        .replace("/wefeed-mobile-bff/subject-api/list", "/wefeed-h5api-bff/subject/filter")
             }
-            
+
             val url = host + adaptivePath
             val request = if (isPost) {
                 val body = bodyData.orEmpty().toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -228,7 +231,9 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
                 val jsonRes = json.parseToJsonElement(body)
                 if (jsonRes.obj?.get("code")?.jsonPrimitive?.intOrNull != 0) continue
                 return Pair(jsonRes, response.headers)
-            } catch (e: Exception) { continue }
+            } catch (e: Exception) {
+                continue
+            }
         }
         return null
     }
@@ -247,7 +252,9 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
             val url = response.request.url.toString()
             val path = "/" + url.substringAfter(".com/").substringAfter(".world/")
             safeGetJsonWithHeaders(path)?.first
-        } else json.parseToJsonElement(body)
+        } else {
+            json.parseToJsonElement(body)
+        }
         val data = jsonRes?.obj?.get("data")?.obj ?: return AnimesPage(emptyList(), false)
         return parseSubjectListPage(data)
     }
@@ -255,7 +262,7 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
     // Search & Filters
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val host = getPreferredHost()
-        
+
         // 1. Search with keyword
         if (query.isNotBlank()) {
             val path = if (host.contains("api3")) "/wefeed-mobile-bff/subject-api/search/v2" else "/wefeed-h5api-bff/subject/search"
@@ -264,7 +271,7 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
             val body = bodyData.toRequestBody("application/json; charset=utf-8".toMediaType())
             return POST(url, getApiHeaders(url, "POST", bodyData), body)
         }
-        
+
         // 2. Filtered Browse or Ranking
         val rankingFilter = filters.find { it is RankingFilter } as? RankingFilter
         if (rankingFilter != null && rankingFilter.state > 0) {
@@ -281,7 +288,7 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
         val yearFilter = filters.find { it is YearFilter } as? YearFilter
         val countryFilter = filters.find { it is CountryFilter } as? CountryFilter
         val sortFilter = filters.find { it is SortFilter } as? SortFilter
-        
+
         val typeId = typeFilter?.toId() ?: "0"
         val bodyMap = mutableMapOf<String, JsonElement>(
             "page" to kotlinx.serialization.json.JsonPrimitive(page),
@@ -294,7 +301,7 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
             "year" to kotlinx.serialization.json.JsonPrimitive(yearFilter?.toId() ?: "All"),
             "country" to kotlinx.serialization.json.JsonPrimitive(countryFilter?.toId() ?: "All"),
         )
-        
+
         val path = if (host.contains("api3")) "/wefeed-mobile-bff/subject-api/list" else "/wefeed-h5api-bff/subject/filter"
         val url = "$host$path"
         val bodyData = JsonObject(bodyMap).toString()
@@ -316,7 +323,9 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
             } else {
                 safeGetJsonWithHeaders(path)?.first
             }
-        } else json.parseToJsonElement(body)
+        } else {
+            json.parseToJsonElement(body)
+        }
         val data = jsonRes?.obj?.get("data")?.obj ?: return AnimesPage(emptyList(), false)
         return parseSubjectListPage(data)
     }
@@ -334,15 +343,17 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
     override fun animeDetailsParse(response: Response): SAnime {
         val xUser = response.header("x-user")
         var token = xUser?.let { runCatching { json.parseToJsonElement(it).obj?.get("token")?.str }.getOrNull() }
-        
+
         val body = response.body.string()
         val jsonRes = if (!body.trim().startsWith("{")) {
             val id = response.request.url.queryParameter("subjectId") ?: response.request.url.toString().substringAfterLast("/")
             val result = safeGetJsonWithHeaders("/wefeed-mobile-bff/subject-api/get?subjectId=$id", isDetails = true)
             token = result?.second?.get("x-user")?.let { runCatching { json.parseToJsonElement(it).obj?.get("token")?.str }.getOrNull() }
             result?.first
-        } else json.parseToJsonElement(body)
-        
+        } else {
+            json.parseToJsonElement(body)
+        }
+
         val data = jsonRes?.obj?.get("data")?.obj ?: throw Exception("Details not found")
         val subject = data["subject"]?.obj ?: data
 
@@ -364,21 +375,23 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
         val headerToken = xUser?.let { runCatching { json.parseToJsonElement(it).obj?.get("token")?.str }.getOrNull() }
         val urlParts = response.request.url.toString().split("|")
         val token = headerToken ?: (if (urlParts.size > 1) urlParts[1] else null)
-        
+
         val body = response.body.string()
         val jsonRes = if (!body.trim().startsWith("{")) {
             val id = response.request.url.queryParameter("subjectId") ?: response.request.url.toString().substringAfterLast("/")
             safeGetJsonWithHeaders("/wefeed-mobile-bff/subject-api/get?subjectId=$id", token = token, isDetails = true)?.first
-        } else json.parseToJsonElement(body)
-        
+        } else {
+            json.parseToJsonElement(body)
+        }
+
         val data = jsonRes?.obj?.get("data")?.obj ?: return emptyList()
-        val mainSubjectId = data["subject"]?.obj?.get("subjectId")?.str 
+        val mainSubjectId = data["subject"]?.obj?.get("subjectId")?.str
             ?: data["subjectId"]?.str ?: return emptyList()
         val detailPath = data["subject"]?.obj?.get("detailPath")?.str ?: mainSubjectId
-        
+
         val allIds = mutableListOf<Pair<String, String>>()
         allIds.add(Pair(mainSubjectId, data["subject"]?.obj?.get("lanName")?.str ?: "Original"))
-        data["subject"]?.obj?.get("dubs")?.arr?.forEach { 
+        data["subject"]?.obj?.get("dubs")?.arr?.forEach {
             val sid = it.obj?.get("subjectId")?.str
             val lang = it.obj?.get("lanName")?.str ?: "Unknown"
             if (sid != null && allIds.none { p -> p.first == sid }) allIds.add(Pair(sid, lang))
@@ -400,43 +413,55 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
                 val allEpRaw = season["allEp"]?.str.orEmpty()
                 val maxEp = if (allEpRaw.isNotBlank()) allEpRaw.split(",").filter { it.isNotBlank() }.size else season["maxEp"]?.jsonPrimitive?.intOrNull ?: 1
                 val epSet = seasonsMap.getOrPut(seNum) { mutableSetOf() }
-                if (maxEp > 0) { for (i in 1..maxEp) epSet.add(i) }
+                if (maxEp > 0) {
+                    for (i in 1..maxEp) epSet.add(i)
+                }
             }
         }
 
         val idsString = allIds.joinToString(",") { "${it.first}:${it.second}" }
         seasonsMap.forEach { (seNum, epSet) ->
             epSet.sorted().forEach { epNum ->
-                episodes.add(SEpisode.create().apply {
-                    name = "Season $seNum - Episode $epNum"
-                    episode_number = epNum.toFloat()
-                    url = "$seNum|$epNum|$idsString|$detailPath" + if (!token.isNullOrBlank()) "|$token" else ""
-                    date_upload = System.currentTimeMillis()
-                })
+                episodes.add(
+                    SEpisode.create().apply {
+                        name = "Season $seNum - Episode $epNum"
+                        episode_number = epNum.toFloat()
+                        url = "$seNum|$epNum|$idsString|$detailPath" + if (!token.isNullOrBlank()) "|$token" else ""
+                        date_upload = System.currentTimeMillis()
+                    },
+                )
             }
         }
 
-        return if (episodes.isNotEmpty()) episodes.reversed() else listOf(
-            SEpisode.create().apply {
-                name = "Play Movie"
-                episode_number = 1f
-                url = "0|0|$idsString|$detailPath" + if (!token.isNullOrBlank()) "|$token" else ""
-                date_upload = System.currentTimeMillis()
-            }
-        )
+        return if (episodes.isNotEmpty()) {
+            episodes.reversed()
+        } else {
+            listOf(
+                SEpisode.create().apply {
+                    name = "Play Movie"
+                    episode_number = 1f
+                    url = "0|0|$idsString|$detailPath" + if (!token.isNullOrBlank()) "|$token" else ""
+                    date_upload = System.currentTimeMillis()
+                },
+            )
+        }
     }
 
-    override fun videoListRequest(episode: SEpisode): Request {
-        return GET(baseUrl, headersBuilder().add("X-Tachiyomi-Episode-Url", episode.url).build())
-    }
+    override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl, headersBuilder().add("X-Tachiyomi-Episode-Url", episode.url).build())
 
     override fun videoListParse(response: Response): List<Video> {
         val episodeUrl = response.request.header("X-Tachiyomi-Episode-Url") ?: return emptyList()
         val parts = episodeUrl.split("|")
         if (parts.size < 4) return emptyList()
-        
-        val se = parts[0]; val ep = parts[1]; val idsString = parts[2]; val token = if (parts.size > 4) parts[4] else null
-        val subjectIds = idsString.split(",").mapNotNull { val p = it.split(":"); if (p.size == 2) Pair(p[0], p[1]) else null }
+
+        val se = parts[0]
+        val ep = parts[1]
+        val idsString = parts[2]
+        val token = if (parts.size > 4) parts[4] else null
+        val subjectIds = idsString.split(",").mapNotNull {
+            val p = it.split(":")
+            if (p.size == 2) Pair(p[0], p[1]) else null
+        }
 
         val videos = mutableListOf<Video>()
         for ((sid, lang) in subjectIds) {
@@ -449,7 +474,7 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
                 val signCookie = obj["signCookie"]?.str
                 val streamId = obj["id"]?.str ?: ""
                 val headers = Headers.Builder().add("Referer", "https://h5.aoneroom.com/").add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36").apply { if (!signCookie.isNullOrBlank()) add("Cookie", signCookie) }.build()
-                
+
                 val subtitleTracks = mutableListOf<Track>()
                 if (streamId.isNotBlank()) {
                     val subUrl = "/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=$sid&streamId=$streamId"
@@ -504,9 +529,9 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
         val totalCount = pager?.get("totalCount")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
         val hasMore = (animes.isNotEmpty()) && (
             (totalCount > (currentPage * 20)) ||
-            (pager?.get("hasMore")?.jsonPrimitive?.booleanOrNull == true) ||
-            (pager?.get("nextPage")?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.let { it > currentPage && it != 0 } ?: false)
-        )
+                (pager?.get("hasMore")?.jsonPrimitive?.booleanOrNull == true) ||
+                (pager?.get("nextPage")?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.let { it > currentPage && it != 0 } ?: false)
+            )
         return AnimesPage(animes, hasMore)
     }
 
@@ -516,7 +541,14 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
     private val JsonElement?.bool get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        ListPreference(screen.context).apply { key = PREF_HOST_KEY; title = "API Host"; entries = arrayOf("Official (Aoneroom)", "Mirror (Netfilm)", "H5 API"); entryValues = apiHosts.toTypedArray(); setDefaultValue(apiHosts[0]); summary = "%s" }.also { screen.addPreference(it) }
+        ListPreference(screen.context).apply {
+            key = PREF_HOST_KEY
+            title = "API Host"
+            entries = arrayOf("Official (Aoneroom)", "Mirror (Netfilm)", "H5 API")
+            entryValues = apiHosts.toTypedArray()
+            setDefaultValue(apiHosts[0])
+            summary = "%s"
+        }.also { screen.addPreference(it) }
     }
     override fun latestUpdatesRequest(page: Int): Request = throw Exception("Not used")
     override fun latestUpdatesParse(response: Response): AnimesPage = throw Exception("Not used")
@@ -528,7 +560,7 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
         YearFilter(),
         CountryFilter(),
         AnimeFilter.Separator(),
-        RankingFilter()
+        RankingFilter(),
     )
 
     private class SortFilter : AnimeFilter.Select<String>("Sort", arrayOf("Default", "ForYou", "Hottest", "Rating", "Latest")) {
@@ -543,22 +575,35 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
 
     private class TypeFilter : AnimeFilter.Select<String>("Type", arrayOf("All", "Movie", "TV Series", "Animation")) {
         fun toId() = when (state) {
-            1 -> "1" // Movie
-            2 -> "2" // TV Series
+            1 -> "1"
+
+            // Movie
+            2 -> "2"
+
+            // TV Series
             3 -> "ANIMATION"
+
             else -> "0"
         }
     }
 
-    private class LanguageFilter : AnimeFilter.Select<String>("Language/Dub", arrayOf(
-        "All", "English Dub", "Hindi Dub", "Bangla dub", "French Dub", "Urdu Dub", "Tamil Dub", "Telugu Dub", "Punjabi Dub", "Malayalam Dub", "Kannada Dub", "Arabic Dub", "Arabic Sub", "Tagalog Dub", "Indonesian Dub", "Russian Dub", "Kurdish Sub", "Spanish Dub", "Spanish Sub", "SpanishLatam Dub"
-    )) {
+    private class LanguageFilter :
+        AnimeFilter.Select<String>(
+            "Language/Dub",
+            arrayOf(
+                "All", "English Dub", "Hindi Dub", "Bangla dub", "French Dub", "Urdu Dub", "Tamil Dub", "Telugu Dub", "Punjabi Dub", "Malayalam Dub", "Kannada Dub", "Arabic Dub", "Arabic Sub", "Tagalog Dub", "Indonesian Dub", "Russian Dub", "Kurdish Sub", "Spanish Dub", "Spanish Sub", "SpanishLatam Dub",
+            ),
+        ) {
         fun toId() = if (state == 0) "All" else values[state]
     }
 
-    private class GenreFilter : AnimeFilter.Select<String>("Genre", arrayOf(
-        "All", "Action", "Adventure", "Animation", "Biography", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Film-Noir", "Game-Show", "History", "Horror", "Music", "Musical", "Mystery", "News", "Reality-TV", "Romance", "Sci-Fi", "Short", "Sport", "Talk-Show", "Thriller", "War", "Western", "Other"
-    )) {
+    private class GenreFilter :
+        AnimeFilter.Select<String>(
+            "Genre",
+            arrayOf(
+                "All", "Action", "Adventure", "Animation", "Biography", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Film-Noir", "Game-Show", "History", "Horror", "Music", "Musical", "Mystery", "News", "Reality-TV", "Romance", "Sci-Fi", "Short", "Sport", "Talk-Show", "Thriller", "War", "Western", "Other",
+            ),
+        ) {
         fun toId() = if (state == 0) "All" else values[state]
     }
 
@@ -566,32 +611,40 @@ class MovieBox : ConfigurableAnimeSource, AnimeHttpSource() {
         fun toId() = if (state == 0) "All" else values[state]
     }
 
-    private class CountryFilter : AnimeFilter.Select<String>("Country", arrayOf(
-        "All", "United States", "United Kingdom", "Korea", "Japan", "Bangladesh", "China", "Egypt", "France", "Germany", "India", "Indonesia", "Iraq", "Italy", "Ivory Coast", "Kenya", "Lebanon", "Mexico", "Morocco", "Nigeria", "Pakistan", "Philippines", "Russia", "Saudi Arabia", "South Africa", "Spain", "Syria", "Thailand", "Malaysia", "Turkey", "Other"
-    )) {
+    private class CountryFilter :
+        AnimeFilter.Select<String>(
+            "Country",
+            arrayOf(
+                "All", "United States", "United Kingdom", "Korea", "Japan", "Bangladesh", "China", "Egypt", "France", "Germany", "India", "Indonesia", "Iraq", "Italy", "Ivory Coast", "Kenya", "Lebanon", "Mexico", "Morocco", "Nigeria", "Pakistan", "Philippines", "Russia", "Saudi Arabia", "South Africa", "Spain", "Syria", "Thailand", "Malaysia", "Turkey", "Other",
+            ),
+        ) {
         fun toId() = if (state == 0) "All" else values[state]
     }
 
-    private class RankingFilter : AnimeFilter.Select<String>("Ranking List (Global)", arrayOf(
-        "None",
-        "Trending Now",
-        "Cinema",
-        "Bollywood",
-        "Hollywood",
-        "South Indian",
-        "Hot Short TV",
-        "Trending Bengali Movies",
-        "Trending Bengali TV",
-        "Asian",
-        "Top Series This Week",
-        "Anime",
-        "Korean Drama",
-        "Chinese Drama",
-        "Indian Drama",
-        "Reality-TV",
-        "Western TV",
-        "Turkish Drama"
-    )) {
+    private class RankingFilter :
+        AnimeFilter.Select<String>(
+            "Ranking List (Global)",
+            arrayOf(
+                "None",
+                "Trending Now",
+                "Cinema",
+                "Bollywood",
+                "Hollywood",
+                "South Indian",
+                "Hot Short TV",
+                "Trending Bengali Movies",
+                "Trending Bengali TV",
+                "Asian",
+                "Top Series This Week",
+                "Anime",
+                "Korean Drama",
+                "Chinese Drama",
+                "Indian Drama",
+                "Reality-TV",
+                "Western TV",
+                "Turkish Drama",
+            ),
+        ) {
         fun toId() = when (state) {
             1 -> "8610422883619422240"
             2 -> "5692654647815587592"
