@@ -14,9 +14,9 @@ import java.nio.charset.Charset
 
 class LycorisCafeExtractor(private val client: OkHttpClient) {
 
-    private val GETSECONDARYURL = "https://www.lycoris.cafe/api/watch/getSecondaryLink"
+    private val getSecondaryUrl = "https://www.lycoris.cafe/api/watch/getSecondaryLink"
 
-    private val GETLNKURL = "https://www.lycoris.cafe/api/watch/getLink"
+    private val getLnkUrl = "https://www.lycoris.cafe/api/watch/getLink"
 
     private val wordsRegex by lazy {
         Regex(
@@ -127,11 +127,11 @@ class LycorisCafeExtractor(private val client: OkHttpClient) {
             val unicodeEscape = decodePythonEscape(convertedText)
             val finalText = unicodeEscape.toByteArray(Charsets.ISO_8859_1).toString(Charsets.UTF_8)
 
-            url = GETLNKURL.toHttpUrl().newBuilder()
+            url = getLnkUrl.toHttpUrl().newBuilder()
                 .addQueryParameter("link", finalText)
                 .build()
         } else {
-            url = GETSECONDARYURL.toHttpUrl().newBuilder()
+            url = getSecondaryUrl.toHttpUrl().newBuilder()
                 .addQueryParameter("id", episodeId)
                 .build()
         }
