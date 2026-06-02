@@ -208,26 +208,26 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
             .map { (_, video) -> video }
     }
 
-    private fun getAbsoluteUrl(url: String, playlistUrl: String, masterBase: String): String? {
-        return when {
-            url.isEmpty() -> null
-            url.startsWith("http") -> url
-            url.startsWith("//") -> "https:$url"
-            url.startsWith("/") -> playlistUrl.toHttpUrl().newBuilder().encodedPath("/").build().toString()
-                .substringBeforeLast("/") + url
-            else -> masterBase + url
-        }
+    private fun getAbsoluteUrl(url: String, playlistUrl: String, masterBase: String): String? = when {
+        url.isEmpty() -> null
+
+        url.startsWith("http") -> url
+
+        url.startsWith("//") -> "https:$url"
+
+        url.startsWith("/") -> playlistUrl.toHttpUrl().newBuilder().encodedPath("/").build().toString()
+            .substringBeforeLast("/") + url
+
+        else -> masterBase + url
     }
 
-    fun generateMasterHeaders(baseHeaders: Headers, referer: String): Headers {
-        return baseHeaders.newBuilder().apply {
-            set("Accept", "*/*")
-            if (referer.isNotEmpty()) {
-                set("Origin", "https://${referer.toHttpUrl().host}")
-                set("Referer", referer)
-            }
-        }.build()
-    }
+    fun generateMasterHeaders(baseHeaders: Headers, referer: String): Headers = baseHeaders.newBuilder().apply {
+        set("Accept", "*/*")
+        if (referer.isNotEmpty()) {
+            set("Origin", "https://${referer.toHttpUrl().host}")
+            set("Referer", referer)
+        }
+    }.build()
 
     // ================================ DASH ================================
 
