@@ -19,7 +19,8 @@ if (theme != null) evaluationDependsOn(theme.path)
 android {
     compileSdk 34
 
-    namespace "eu.kanade.tachiyomi.animeextension"
+    def pkgName = "eu.kanade.tachiyomi.animeextension.${project.parent.name}.${project.name}"
+    namespace pkgName
     sourceSets {
         main {
             manifest.srcFile "AndroidManifest.xml"
@@ -32,17 +33,17 @@ android {
     defaultConfig {
         minSdk 21
         targetSdk 34
-        applicationIdSuffix project.parent.name + "." + project.name
+        applicationId pkgName
         versionCode theme == null ? extVersionCode : theme.baseVersionCode + overrideVersionCode
         versionName "14.$versionCode"
         base {
-            archivesName = "aniyomi-$applicationIdSuffix-v$versionName"
+            archivesName = "aniyomi-${project.parent.name}.${project.name}-v$versionName"
         }
         assert extClass.startsWith(".")
         manifestPlaceholders = [
                 appName : "Aniyomi: $extName",
                 author  : "salmanbappi",
-                extClass: "eu.kanade.tachiyomi.animeextension." + project.parent.name + "." + project.name + extClass,
+                extClass: extClass,
                 nsfw    : project.ext.find("isNsfw") ? 1 : 0,
         ]
         String baseUrl = project.ext.find("baseUrl") ?: ""
