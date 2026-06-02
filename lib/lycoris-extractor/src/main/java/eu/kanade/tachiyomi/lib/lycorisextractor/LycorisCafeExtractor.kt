@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.lib.lycorisextractor
 
+import android.util.Base64
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
-import android.util.Base64
 import eu.kanade.tachiyomi.util.asJsoup
 import eu.kanade.tachiyomi.util.parseAs
 import kotlinx.serialization.Serializable
@@ -20,17 +20,16 @@ class LycorisCafeExtractor(private val client: OkHttpClient) {
 
     private val wordsRegex by lazy {
         Regex(
-        """\\U([0-9a-fA-F]{8})|""" +     // \UXXXXXXXX
-            """\\u([0-9a-fA-F]{4})|""" +     // \uXXXX
-            """\\x([0-9a-fA-F]{2})|""" +     // \xHH
-            """\\([0-7]{1,3})|""" +          // \OOO (octal)
-            """\\([btnfr"'$\\])"""         // \n, \t, itd.
+            """\\U([0-9a-fA-F]{8})|""" + // \UXXXXXXXX
+                """\\u([0-9a-fA-F]{4})|""" + // \uXXXX
+                """\\x([0-9a-fA-F]{2})|""" + // \xHH
+                """\\([0-7]{1,3})|""" + // \OOO (octal)
+                """\\([btnfr"'$\\])""", // \n, \t, itd.
         )
     }
 
     // Credit: https://github.com/skoruppa/docchi-stremio-addon/blob/main/app/players/lycoris.py
     fun getVideosFromUrl(url: String, headers: Headers, prefix: String): List<Video> {
-
         val videos = mutableListOf<Video>()
         val embedHeaders = headers.newBuilder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36")
@@ -92,7 +91,6 @@ class LycorisCafeExtractor(private val client: OkHttpClient) {
             }
         }
         return videos
-
     }
 
     private fun decodeVideoLinks(encodedUrl: String): String? {
@@ -150,7 +148,8 @@ class LycorisCafeExtractor(private val client: OkHttpClient) {
             return response.code.toString() == "200"
         }
     }
-    //thx deepseek
+
+    // thx deepseek
     private fun decodePythonEscape(text: String): String {
         // 1. Obsługa kontynuacji linii (backslash + newline)
         val withoutLineContinuation = text.replace("\\\n", "")
@@ -200,12 +199,12 @@ class LycorisCafeExtractor(private val client: OkHttpClient) {
 
     @Serializable
     data class ScriptBody(
-        val body: String
+        val body: String,
     )
 
     @Serializable
     data class ScriptEpisode(
-        val episodeInfo: EpisodeInfo
+        val episodeInfo: EpisodeInfo,
     )
 
     @Serializable
@@ -222,7 +221,6 @@ class LycorisCafeExtractor(private val client: OkHttpClient) {
         val SD: String? = null,
         val FHD: String? = null,
         val Source: String? = null,
-        val SourceMKV: String? = null
+        val SourceMKV: String? = null,
     )
-
 }
