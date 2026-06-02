@@ -40,7 +40,7 @@ jobs:
           existing-check-enabled: true
           existing-check-labels: |
             ["Source request", "Domain changed"]
-          existing-check-repo-url: https://raw.githubusercontent.com/yuzono/anime-repo/repo/index.min.json
+          existing-check-repo-url: https://raw.githubusercontent.com/salmanbappi/extensions-repo/main/index.min.json
 
           url-search-sections: |
             ["Source link", "Source new URL"]
