@@ -15,16 +15,12 @@ android {
     sourceSets {
         named("main") {
             manifest.srcFile("AndroidManifest.xml")
-            res.setSrcDirs(listOf("src/main/res"))
+            res.srcDirs("src/main/res")
         }
     }
 
     buildFeatures {
         resValues = false
-    }
-
-    kotlinOptions {
-        jvmTarget = "1.8"
     }
 }
 
