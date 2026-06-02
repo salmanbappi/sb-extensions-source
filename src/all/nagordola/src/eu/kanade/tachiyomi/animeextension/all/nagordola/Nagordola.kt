@@ -252,7 +252,7 @@ class Nagordola : ConfigurableAnimeSource, AnimeHttpSource() {
                     url = "$currentPath/${it.name}".replace("//", "/")
                 }
             } ?: emptyList()
-            return AnimesPage(animeList, (res.data?.total ?: 0) > pageLimit * 30) // Simplified pagination check
+            return AnimesPage(animeList, (res.data?.total ?: 0) > PAGE_LIMIT * 30) // Simplified pagination check
         }
     }
 
@@ -380,7 +380,7 @@ class Nagordola : ConfigurableAnimeSource, AnimeHttpSource() {
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-        private const val pageLimit = 1 // Simplified
+        private const val PAGE_LIMIT = 1 // Simplified
         private const val PREF_OMDB_API_KEY = "omdb_api_key"
         private const val PREF_TMDB_API_KEY = "tmdb_api_key"
         private const val PREF_POSTER_SOURCE = "poster_source"

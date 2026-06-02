@@ -224,11 +224,11 @@ class RapidCloudExtractor(
 
     private fun opensslKeyIv(password: ByteArray, salt: ByteArray, keyLen: Int = 32, ivLen: Int = 16): Pair<ByteArray, ByteArray> {
         var d = ByteArray(0)
-        var d_i = ByteArray(0)
+        var di = ByteArray(0)
         while (d.size < keyLen + ivLen) {
             val md = MessageDigest.getInstance("MD5")
-            d_i = md.digest(d_i + password + salt)
-            d += d_i
+            di = md.digest(di + password + salt)
+            d += di
         }
         return Pair(d.copyOfRange(0, keyLen), d.copyOfRange(keyLen, keyLen + ivLen))
     }
