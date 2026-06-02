@@ -15,7 +15,7 @@ android {
     sourceSets {
         named("main") {
             manifest.srcFile("AndroidManifest.xml")
-            res.srcDirs += listOf("src/main/res")
+            res.srcDirs("src/main/res")
         }
     }
 
@@ -30,9 +30,9 @@ android {
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
-        freeCompilerArgs.add("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
+    kotlinOptions {
+        jvmTarget = "11"
+        freeCompilerArgs += listOf("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
     }
 }
 
