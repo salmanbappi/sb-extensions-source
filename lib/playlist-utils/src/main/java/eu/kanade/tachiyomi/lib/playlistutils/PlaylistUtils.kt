@@ -383,16 +383,14 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         }
     }
 
-    private fun formatBytes(bytes: Long?): String {
-        return when {
-            bytes == null -> ""
-            bytes >= 1_000_000_000 -> "%.2f GB/s".format(bytes / 1_000_000_000.0)
-            bytes >= 1_000_000 -> "%.2f MB/s".format(bytes / 1_000_000.0)
-            bytes >= 1_000 -> "%.2f KB/s".format(bytes / 1_000.0)
-            bytes > 1 -> "$bytes bytes/s"
-            bytes == 1L -> "$bytes byte/s"
-            else -> ""
-        }
+    private fun formatBytes(bytes: Long?): String = when {
+        bytes == null -> ""
+        bytes >= 1_000_000_000 -> "%.2f GB/s".format(bytes / 1_000_000_000.0)
+        bytes >= 1_000_000 -> "%.2f MB/s".format(bytes / 1_000_000.0)
+        bytes >= 1_000 -> "%.2f KB/s".format(bytes / 1_000.0)
+        bytes > 1 -> "$bytes bytes/s"
+        bytes == 1L -> "$bytes byte/s"
+        else -> ""
     }
 
     // ============================= Utilities ==============================
