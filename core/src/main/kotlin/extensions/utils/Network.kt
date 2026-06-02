@@ -3,6 +3,7 @@ package extensions.utils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
+import eu.kanade.tachiyomi.util.asJsoup as asJsoupInternal
 import okhttp3.CacheControl
 import okhttp3.FormBody
 import okhttp3.Headers
@@ -44,6 +45,8 @@ suspend fun OkHttpClient.post(
 ): Response {
     return newCall(POST(url, headers, body, cache)).awaitSuccess()
 }
+
+fun Response.asJsoup() = asJsoupInternal()
 
 /**
  * Empty [okhttp3] headers used by the source.
