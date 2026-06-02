@@ -395,12 +395,10 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
 
     // ============================= Utilities ==============================
 
-    private fun String.toDefaultReferer(): String {
-        return try {
-            toHttpUrl().run { "$scheme://$host/" }
-        } catch (e: IllegalArgumentException) {
-            ""
-        }
+    private fun String.toDefaultReferer(): String = try {
+        toHttpUrl().run { "$scheme://$host/" }
+    } catch (e: IllegalArgumentException) {
+        ""
     }
 
     private fun stnQuality(quality: String): String {
@@ -414,21 +412,19 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         return "\n" + "&nbsp;\n".repeat(lineCount - 1)
     }
 
-    fun fixSubtitles(subtitleList: List<Track>): List<Track> {
-        return subtitleList.mapNotNull {
-            try {
-                val subData = client.newCall(GET(it.url)).execute().body.string()
+    fun fixSubtitles(subtitleList: List<Track>): List<Track> = subtitleList.mapNotNull {
+        try {
+            val subData = client.newCall(GET(it.url)).execute().body.string()
 
-                val file = File.createTempFile("subs", "vtt")
-                    .also(File::deleteOnExit)
+            val file = File.createTempFile("subs", "vtt")
+                .also(File::deleteOnExit)
 
-                file.writeText(FIX_SUBTITLE_REGEX.replace(subData, ::cleanSubtitleData))
-                val uri = Uri.fromFile(file)
+            file.writeText(FIX_SUBTITLE_REGEX.replace(subData, ::cleanSubtitleData))
+            val uri = Uri.fromFile(file)
 
-                Track(uri.toString(), it.lang)
-            } catch (_: Exception) {
-                null
-            }
+            Track(uri.toString(), it.lang)
+        } catch (_: Exception) {
+            null
         }
     }
 
