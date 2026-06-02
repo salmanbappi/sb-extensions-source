@@ -1,11 +1,6 @@
 ext {
     extName = 'Dflix'
-    pkgNameSuffix = 'dflix'
-    applicationId = 'eu.kanade.tachiyomi.animeextension.all.dflix'
-    namespace = 'eu.kanade.tachiyomi.animeextension.all.dflix'
-    author = 'salmanbappi'
     extClass = '.Dflix'
-    baseUrl = 'https://dflix.discoveryftp.net'
     extVersionCode = 1053
 }
 
