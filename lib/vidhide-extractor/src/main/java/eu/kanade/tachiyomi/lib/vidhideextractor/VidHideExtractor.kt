@@ -42,18 +42,16 @@ class VidHideExtractor(private val client: OkHttpClient, private val headers: He
 
     private fun extractVideoUrl(script: String): String? = sourceRegex.find(script)?.groupValues?.get(1)
 
-    private fun extractSubtitles(script: String): List<Track> {
-        return try {
-            val subtitleStr = script
-                .substringAfter("tracks")
-                .substringAfter("[")
-                .substringBefore("]")
-            json.decodeFromString<List<TrackDto>>("[$subtitleStr]")
-                .filter { it.kind.equals("captions", true) }
-                .map { Track(it.file, it.label ?: "") }
-        } catch (e: SerializationException) {
-            emptyList()
-        }
+    private fun extractSubtitles(script: String): List<Track> = try {
+        val subtitleStr = script
+            .substringAfter("tracks")
+            .substringAfter("[")
+            .substringBefore("]")
+        json.decodeFromString<List<TrackDto>>("[$subtitleStr]")
+            .filter { it.kind.equals("captions", true) }
+            .map { Track(it.file, it.label ?: "") }
+    } catch (e: SerializationException) {
+        emptyList()
     }
 
     @Serializable
