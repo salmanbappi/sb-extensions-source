@@ -1,7 +1,0 @@
-ext {
-    extName = 'Anime Saturn'
-    extClass = '.AnimeSaturn'
-    extVersionCode = 11
-}
-
-apply plugin: "kei.plugins.extension.legacy"

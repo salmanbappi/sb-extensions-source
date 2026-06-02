@@ -1,7 +1,0 @@
-ext {
-    extName = 'Oploverz'
-    extClass = '.Oploverz'
-    extVersionCode = 26
-}
-
-apply plugin: "kei.plugins.extension.legacy"

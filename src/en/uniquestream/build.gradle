@@ -1,9 +1,0 @@
-ext {
-    extName = 'UniqueStream'
-    extClass = '.UniqueStream'
-    themePkg = 'dooplay'
-    baseUrl = 'https://uniquestream.net'
-    overrideVersionCode = 3
-}
-
-apply plugin: "kei.plugins.extension.legacy"
