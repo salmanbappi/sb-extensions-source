@@ -8,12 +8,7 @@ ext {
 
 apply from: "$rootDir/common.gradle"
 
-android {
-    namespace = "eu.kanade.tachiyomi.animeextension.all.dhakaflix2"
-    defaultConfig {
-        applicationId = "eu.kanade.tachiyomi.animeextension"
-    }
-}
+
 
 dependencies {
     implementation(libs.coroutines.core)
