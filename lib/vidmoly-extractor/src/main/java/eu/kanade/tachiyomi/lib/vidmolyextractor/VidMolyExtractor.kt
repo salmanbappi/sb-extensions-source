@@ -24,13 +24,14 @@ class VidMolyExtractor(private val client: OkHttpClient, headers: Headers = comm
 
     fun videosFromUrl(url: String, prefix: String = ""): List<Video> {
         val document = client.newCall(
-            GET(url, headers.newBuilder().set("Sec-Fetch-Dest", "iframe").build())
+            GET(url, headers.newBuilder().set("Sec-Fetch-Dest", "iframe").build()),
         ).execute().asJsoup()
         val script = document.selectFirst("script:containsData(sources)")!!.data()
         val sources = sourcesRegex.find(script)!!.groupValues[1]
         val urls = urlsRegex.findAll(sources).map { it.groupValues[1] }.toList()
         return urls.flatMap {
-            playlistUtils.extractFromHls(it,
+            playlistUtils.extractFromHls(
+                it,
                 videoNameGen = { quality -> "${prefix}VidMoly - $quality" },
                 masterHeaders = headers,
                 videoHeaders = headers,
