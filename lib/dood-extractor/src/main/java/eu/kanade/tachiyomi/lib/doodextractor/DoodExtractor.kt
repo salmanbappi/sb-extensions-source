@@ -32,7 +32,7 @@ class DoodExtractor(private val client: OkHttpClient) {
             // Determinar la calidad a usar
             val newQuality = listOfNotNull(
                 prefix,
-                "Doodstream " + (extractedQuality ?: ( if (redirect) "mirror" else "")),
+                "Doodstream " + (extractedQuality ?: (if (redirect) "mirror" else "")),
             ).joinToString(" - ")
 
             // Obtener el hash MD5
@@ -73,10 +73,8 @@ class DoodExtractor(private val client: OkHttpClient) {
     }
 
     // Método para obtener la base de la URL
-    private fun getBaseUrl(url: String): String {
-        return URI(url).let {
-            "${it.scheme}://${it.host}"
-        }
+    private fun getBaseUrl(url: String): String = URI(url).let {
+        "${it.scheme}://${it.host}"
     }
 
     // Método para obtener headers personalizados
