@@ -78,7 +78,7 @@ jobs:
           cache-read-only: true
 
       - name: Run Spotless Apply
-        run: ./gradlew spotlessApply || true
+        run: ./gradlew spotlessApply --continue || true
 
       - name: Commit and push changes
         if: github.repository == github.event.pull_request.head.repo.full_name
@@ -131,7 +131,7 @@ jobs:
           KAISVA: ${{ secrets.KAISVA }}
           TMDB_API: ${{ secrets.TMDB_API }}
         run: |
-          ./gradlew spotlessApply || true
+          ./gradlew spotlessApply --continue || true
           ./gradlew $(echo '${{ toJson(matrix.chunk.modules) }}' | jq -r 'join(" ")')
 
       - name: Upload APKs (${{ matrix.chunk.number }})
