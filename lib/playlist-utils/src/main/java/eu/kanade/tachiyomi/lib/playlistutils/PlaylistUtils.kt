@@ -41,18 +41,16 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         toStandardQuality: (String) -> String = { quality ->
             stnQuality(quality)
         },
-    ): List<Video> {
-        return extractFromHls(
-            playlistUrl,
-            referer,
-            { _, _ -> masterHeaders },
-            { _, _, _ -> videoHeaders },
-            videoNameGen,
-            subtitleList,
-            audioList,
-            toStandardQuality,
-        )
-    }
+    ): List<Video> = extractFromHls(
+        playlistUrl,
+        referer,
+        { _, _ -> masterHeaders },
+        { _, _, _ -> videoHeaders },
+        videoNameGen,
+        subtitleList,
+        audioList,
+        toStandardQuality,
+    )
 
     /**
      * Extracts videos from a .m3u8 file.
@@ -183,10 +181,10 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
                     }
                 }
             val bandwidth = BANDWIDTH_REGEX.find(stream)
-                    ?.groupValues?.get(1)
-                    ?.toLongOrNull()
+                ?.groupValues?.get(1)
+                ?.toLongOrNull()
             val bandwidthFormatted = bandwidth
-                    ?.let(::formatBytes)
+                ?.let(::formatBytes)
             val streamName = listOfNotNull(resolution, bandwidthFormatted).joinToString(" - ")
                 .takeIf { it.isNotBlank() }
                 ?: "Video"
