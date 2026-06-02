@@ -8,7 +8,7 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.jsoup.nodes.Element
 
-/**
+/*
  * If a source provides images via a data:image string instead of a URL, use these functions and interceptor
  */
 
