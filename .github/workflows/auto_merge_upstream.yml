@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   update-kohi-den:
-    if: github.repository == 'yuzono/anime-extensions'
+    if: github.repository == 'salmanbappi/sb-extensions-source'
     name: Update Kohi-den
     runs-on: ubuntu-latest
 

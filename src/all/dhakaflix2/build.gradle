@@ -1,0 +1,20 @@
+ext {
+    extName = 'DhakaFlix 2'
+    extClass = '.DhakaFlixFactory'
+    author = '@salmanbappi'
+    baseUrl = 'http://172.16.50.9'
+    extVersionCode = 1220
+}
+
+apply from: "$rootDir/common.gradle"
+
+android {
+    namespace = "eu.kanade.tachiyomi.animeextension.all.dhakaflix2"
+    defaultConfig {
+        applicationId = "eu.kanade.tachiyomi.animeextension"
+    }
+}
+
+dependencies {
+    implementation(libs.coroutines.core)
+}
