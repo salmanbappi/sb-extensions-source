@@ -1,0 +1,14 @@
+ext {
+    extName = 'Toonitalia'
+    extClass = '.Toonitalia'
+    extVersionCode = 36
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:voeextractor'))
+    implementation(project(':lib:streamtapeextractor'))
+    implementation(project(':lib:playlistutils'))
+    implementation(project(":lib:unpacker"))
+}

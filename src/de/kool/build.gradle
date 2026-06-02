@@ -1,0 +1,13 @@
+ext {
+    extName = 'Kool'
+    extClass = '.Kool'
+    extVersionCode = 23
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:filemoonextractor'))
+    implementation(project(':lib:streamtapeextractor'))
+    implementation(project(':lib:voeextractor'))
+}

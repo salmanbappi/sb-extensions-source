@@ -1,0 +1,14 @@
+ext {
+    extName = 'ANIMEWORLD.tv'
+    extClass = '.ANIMEWORLD'
+    extVersionCode = 58
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:streamtapeextractor'))
+    implementation(project(':lib:doodextractor'))
+    implementation(project(':lib:vidhideextractor'))
+    implementation(project(':lib:vidguardextractor'))
+}

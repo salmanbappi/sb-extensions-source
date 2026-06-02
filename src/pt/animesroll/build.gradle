@@ -1,0 +1,7 @@
+ext {
+    extName = 'AnimesROLL'
+    extClass = '.AnimesROLL'
+    extVersionCode = 6
+}
+
+apply plugin: "kei.plugins.extension.legacy"

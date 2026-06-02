@@ -1,0 +1,8 @@
+ext {
+    extName = 'SuperStream'
+    extClass = '.SuperStream'
+    extVersionCode = 11
+    isNsfw = true
+}
+
+apply plugin: "kei.plugins.extension.legacy"

@@ -1,0 +1,13 @@
+ext {
+    extName = 'FanPelis'
+    extClass = '.FanPelis'
+    extVersionCode = 23
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:streamtapeextractor'))
+    implementation(project(':lib:okruextractor'))
+    implementation(project(':lib:doodextractor'))
+}

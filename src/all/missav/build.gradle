@@ -1,0 +1,14 @@
+ext {
+    extName = 'MissAV'
+    extClass = '.MissAV'
+    extVersionCode = 25
+    isNsfw = true
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:unpacker'))
+    implementation(project(':lib:playlistutils'))
+    implementation(project(':lib:javcoverfetcher'))
+}

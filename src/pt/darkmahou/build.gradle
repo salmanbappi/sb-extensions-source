@@ -1,0 +1,14 @@
+ext {
+    extName = 'DarkMahou'
+    extClass = '.DarkMahou'
+    themePkg = 'animestream'
+    baseUrl = 'https://darkmahou.org'
+    overrideVersionCode = 12
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(":lib:unpacker"))
+    implementation(project(":lib:playlistutils"))
+}

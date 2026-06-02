@@ -1,0 +1,11 @@
+ext {
+    extName = 'Anime Srbija'
+    extClass = '.AnimeSrbija'
+    extVersionCode = 20
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:filemoonextractor'))
+}

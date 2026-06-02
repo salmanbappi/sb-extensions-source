@@ -1,0 +1,11 @@
+ext {
+    extName = 'FilmPalast'
+    extClass = '.FilmPalast'
+    extVersionCode = 26
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:voeextractor'))
+}

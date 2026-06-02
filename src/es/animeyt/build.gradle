@@ -1,0 +1,10 @@
+ext {
+    extName = 'Animeyt'
+    extClass = '.Animeyt'
+    extVersionCode = 18
+}
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:fastreamextractor'))
+}

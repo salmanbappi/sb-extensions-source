@@ -1,0 +1,17 @@
+ext {
+    extName = 'Tiodonghua.com'
+    extClass = '.Tiodonghua'
+    themePkg = 'animestream'
+    baseUrl = 'https://anime.tiodonghua.com'
+    overrideVersionCode = 16
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+
+    implementation(project(":lib:okruextractor"))
+    implementation(project(":lib:mixdropextractor"))
+    implementation(project(":lib:voeextractor"))
+    implementation(project(":lib:youruploadextractor"))
+}

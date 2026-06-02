@@ -1,0 +1,7 @@
+ext {
+    extName = 'KimoiTV'
+    extClass = '.KimoiTV'
+    extVersionCode = 1
+}
+
+apply plugin: "kei.plugins.extension.legacy"

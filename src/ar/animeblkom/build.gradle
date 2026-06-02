@@ -1,0 +1,12 @@
+ext {
+    extName = 'Anime Blkom'
+    extClass = '.AnimeBlkom'
+    extVersionCode = 26
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:mp4uploadextractor'))
+    implementation(project(":lib:okruextractor"))
+}

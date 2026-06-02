@@ -1,0 +1,13 @@
+ext {
+    extName = 'Serienstream'
+    extClass = '.Serienstream'
+    extVersionCode = 32
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:voeextractor'))
+    implementation(project(':lib:streamtapeextractor'))
+    implementation(project(':lib:doodextractor'))
+}

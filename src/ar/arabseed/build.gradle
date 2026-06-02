@@ -1,0 +1,13 @@
+ext {
+    extName = 'Arab Seed'
+    extClass = '.ArabSeed'
+    extVersionCode = 29
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(":lib:doodextractor"))
+    implementation(project(":lib:voeextractor"))
+    implementation(project(":lib:streamwishextractor"))
+}

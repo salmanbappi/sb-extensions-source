@@ -1,0 +1,15 @@
+ext {
+    extName = 'AnimeLatinoHD'
+    extClass = '.AnimeLatinoHD'
+    extVersionCode = 50
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:filemoonextractor'))
+    implementation(project(':lib:streamtapeextractor'))
+    implementation(project(':lib:okruextractor'))
+    implementation(project(':lib:doodextractor'))
+    implementation(project(':lib:streamwishextractor'))
+}

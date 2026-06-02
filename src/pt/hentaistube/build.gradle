@@ -1,0 +1,12 @@
+ext {
+    extName = 'HentaisTube'
+    extClass = '.HentaisTube'
+    extVersionCode = 5
+    isNsfw = true
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:bloggerextractor'))
+}

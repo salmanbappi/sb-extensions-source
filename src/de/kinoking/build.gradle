@@ -1,0 +1,14 @@
+ext {
+    extName = 'Kinoking'
+    extClass = '.Kinoking'
+    themePkg = 'dooplay'
+    baseUrl = 'https://kinoking.cc'
+    overrideVersionCode = 31
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:voeextractor'))
+    implementation(project(':lib:doodextractor'))
+}

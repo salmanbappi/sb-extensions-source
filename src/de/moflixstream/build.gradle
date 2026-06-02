@@ -1,0 +1,16 @@
+ext {
+    extName = 'Moflix-Stream'
+    extClass = '.MoflixStream'
+    extVersionCode = 27
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:vidhideextractor'))
+    implementation(project(':lib:streamwishextractor'))
+    implementation(project(':lib:streamtapeextractor'))
+    implementation(project(':lib:vidguardextractor'))
+    implementation(project(':lib:playlistutils'))
+    implementation(project(":lib:unpacker"))
+}

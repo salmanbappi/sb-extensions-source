@@ -1,0 +1,17 @@
+ext {
+    extName = 'VerAnimes'
+    extClass = '.VerAnimes'
+    extVersionCode = 22
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(':lib:okruextractor'))
+    implementation(project(':lib:streamwishextractor'))
+    implementation(project(':lib:vidhideextractor'))
+    implementation(project(':lib:voeextractor'))
+    implementation(project(':lib:youruploadextractor'))
+    implementation(project(':lib:vidguardextractor'))
+    implementation(project(':lib:universalextractor'))
+}

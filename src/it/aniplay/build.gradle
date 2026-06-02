@@ -1,0 +1,11 @@
+ext {
+    extName = 'AniPlay'
+    extClass = '.AniPlay'
+    extVersionCode = 21
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(":lib:playlistutils"))
+}

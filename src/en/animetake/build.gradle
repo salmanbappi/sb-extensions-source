@@ -1,0 +1,14 @@
+ext {
+    extName = 'AnimeTake'
+    extClass = '.AnimeTake'
+    extVersionCode = 16
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(":lib:doodextractor"))
+    implementation(project(":lib:mp4uploadextractor"))
+    implementation(project(":lib:filemoonextractor"))
+    implementation(project(":lib:gogostreamextractor"))
+}
