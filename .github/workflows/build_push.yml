@@ -215,4 +215,5 @@ jobs:
 
       - name: Purge cached index on jsDelivr
         run: |
-          curl https://purge.jsdelivr.net/gh/salmanbappi/anime-repo@repo/index.min.json
+          curl https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.min.json
+
