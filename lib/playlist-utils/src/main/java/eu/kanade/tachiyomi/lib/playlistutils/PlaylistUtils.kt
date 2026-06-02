@@ -257,20 +257,18 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         toStandardQuality: (String) -> String = { quality ->
             stnQuality(quality)
         },
-    ): List<Video> {
-        return extractFromDash(
-            mpdUrl,
-            { videoRes, bandwidth ->
-                videoNameGen(videoRes) + " - ${formatBytes(bandwidth.toLongOrNull())}"
-            },
-            referer,
-            { _, _ -> mpdHeaders },
-            { _, _, _ -> videoHeaders },
-            subtitleList,
-            audioList,
-            toStandardQuality,
-        )
-    }
+    ): List<Video> = extractFromDash(
+        mpdUrl,
+        { videoRes, bandwidth ->
+            videoNameGen(videoRes) + " - ${formatBytes(bandwidth.toLongOrNull())}"
+        },
+        referer,
+        { _, _ -> mpdHeaders },
+        { _, _, _ -> videoHeaders },
+        subtitleList,
+        audioList,
+        toStandardQuality,
+    )
 
     /**
      * Extracts video information from a DASH .mpd file.
@@ -306,20 +304,18 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         toStandardQuality: (String) -> String = { quality ->
             stnQuality(quality)
         },
-    ): List<Video> {
-        return extractFromDash(
-            mpdUrl,
-            { videoRes, bandwidth ->
-                videoNameGen(videoRes) + " - ${formatBytes(bandwidth.toLongOrNull())}"
-            },
-            referer,
-            mpdHeadersGen,
-            videoHeadersGen,
-            subtitleList,
-            audioList,
-            toStandardQuality,
-        )
-    }
+    ): List<Video> = extractFromDash(
+        mpdUrl,
+        { videoRes, bandwidth ->
+            videoNameGen(videoRes) + " - ${formatBytes(bandwidth.toLongOrNull())}"
+        },
+        referer,
+        mpdHeadersGen,
+        videoHeadersGen,
+        subtitleList,
+        audioList,
+        toStandardQuality,
+    )
 
     /**
      * Extracts video information from a DASH .mpd file.
