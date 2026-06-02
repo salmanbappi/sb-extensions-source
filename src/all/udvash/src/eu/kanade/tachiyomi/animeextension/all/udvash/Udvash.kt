@@ -28,7 +28,9 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.Collections
 
-class Udvash : AnimeHttpSource(), ConfigurableAnimeSource {
+class Udvash :
+    AnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     override val name = "Udvash"
 
@@ -44,10 +46,8 @@ class Udvash : AnimeHttpSource(), ConfigurableAnimeSource {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     }
 
-    override fun headersBuilder(): okhttp3.Headers.Builder {
-        return super.headersBuilder()
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
-    }
+    override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain ->
@@ -187,17 +187,13 @@ class Udvash : AnimeHttpSource(), ConfigurableAnimeSource {
         return super.getSearchAnime(page, query, filters)
     }
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return popularAnimeRequest(page)
-    }
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = popularAnimeRequest(page)
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =========================== Anime Details ============================
 
-    override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        return anime
-    }
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime = anime
 
     override fun animeDetailsParse(response: Response): SAnime = throw UnsupportedOperationException()
 
@@ -389,34 +385,34 @@ class Udvash : AnimeHttpSource(), ConfigurableAnimeSource {
         return list
     }
 
-    private fun getStaticSections(): List<Section> {
-        return listOf(
-            Section("All Sections", 0),
-            Section("Regular Live Class", 3),
-            Section("Archive Class", 9),
-            Section("Master Class", 1),
-            Section("Marathon Live Class", 2),
-            Section("Solve Class", 16),
-        )
-    }
+    private fun getStaticSections(): List<Section> = listOf(
+        Section("All Sections", 0),
+        Section("Regular Live Class", 3),
+        Section("Archive Class", 9),
+        Section("Master Class", 1),
+        Section("Marathon Live Class", 2),
+        Section("Solve Class", 16),
+    )
 
     private data class Section(val name: String, val id: Int) {
         override fun toString(): String = name
     }
 
-    private class SectionFilter(val sections: List<Section>) : AnimeFilter.Select<Section>(
-        "Section",
-        sections.toTypedArray(),
-    )
+    private class SectionFilter(val sections: List<Section>) :
+        AnimeFilter.Select<Section>(
+            "Section",
+            sections.toTypedArray(),
+        )
 
     private data class Course(val name: String, val url: String) {
         override fun toString(): String = name
     }
 
-    private class CourseFilter(val courses: List<Course>) : AnimeFilter.Select<Course>(
-        "My Courses",
-        courses.toTypedArray(),
-    )
+    private class CourseFilter(val courses: List<Course>) :
+        AnimeFilter.Select<Course>(
+            "My Courses",
+            courses.toTypedArray(),
+        )
 
     // ============================== Settings ==============================
 

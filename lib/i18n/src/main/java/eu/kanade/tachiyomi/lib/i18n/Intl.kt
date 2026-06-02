@@ -25,7 +25,7 @@ class Intl(
     availableLanguages: Set<String>,
     private val baseLanguage: String,
     private val classLoader: ClassLoader,
-    private val createMessageFileName: (String) -> String = { createDefaultMessageFileName(it) }
+    private val createMessageFileName: (String) -> String = { createDefaultMessageFileName(it) },
 ) {
 
     val chosenLanguage: String = when (language) {
@@ -60,13 +60,11 @@ class Intl(
      * substituting the specified arguments, using the instance locale.
      */
     @Suppress("InvalidBundleOrProperty")
-    fun format(@PropertyKey(resourceBundle = "i18n.messages") key: String, vararg args: Any?) =
-        get(key).format(locale, *args)
+    fun format(@PropertyKey(resourceBundle = "i18n.messages") key: String, vararg args: Any?) = get(key).format(locale, *args)
 
-    fun languageDisplayName(localeCode: String): String =
-        Locale.forLanguageTag(localeCode)
-            .getDisplayName(locale)
-            .replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
+    fun languageDisplayName(localeCode: String): String = Locale.forLanguageTag(localeCode)
+        .getDisplayName(locale)
+        .replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
 
     /**
      * Creates a [PropertyResourceBundle] instance from the language specified.

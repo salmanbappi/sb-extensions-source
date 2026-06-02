@@ -53,9 +53,7 @@ class GdrivePlayerExtractor(private val client: OkHttpClient) {
         return decryptWithSalt(ciphertext, salt, password)
     }
 
-    private fun Regex.getFirst(item: String): String {
-        return find(item)?.groups?.elementAt(1)?.value!!
-    }
+    private fun Regex.getFirst(item: String): String = find(item)?.groups?.elementAt(1)?.value!!
 
     companion object {
         private const val PLAYER_NAME = "GDRIVE"

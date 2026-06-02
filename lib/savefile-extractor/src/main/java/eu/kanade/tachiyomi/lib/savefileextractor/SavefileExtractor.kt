@@ -46,7 +46,7 @@ class SavefileExtractor(
                 quality = it.quality,
                 videoUrl = it.videoUrl,
                 audioTracks = it.audioTracks,
-                subtitleTracks = it.subtitleTracks.filter { tracks -> tracks.lang.contains(subPref, true) }
+                subtitleTracks = it.subtitleTracks.filter { tracks -> tracks.lang.contains(subPref, true) },
             )
         }
     }

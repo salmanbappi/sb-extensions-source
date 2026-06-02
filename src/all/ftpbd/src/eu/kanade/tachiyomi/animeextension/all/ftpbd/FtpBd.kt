@@ -50,11 +50,16 @@ class FtpBd(
     private val rootSegment: String,
     private val popularPath: String,
     private val searchPaths: List<String>,
-    private val serverCategories: Array<String>
-) : ConfigurableAnimeSource, AnimeHttpSource() {
+    private val serverCategories: Array<String>,
+) : AnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     private val baseDomain: String
-        get() = try { baseUrl.toHttpUrl().host.let { h -> if (h.contains(".") && !h.first().isDigit()) h.substring(h.indexOf(".") + 1) else h } } catch (e: Exception) { "ftpbd.net" }
+        get() = try {
+            baseUrl.toHttpUrl().host.let { h -> if (h.contains(".") && !h.first().isDigit()) h.substring(h.indexOf(".") + 1) else h }
+        } catch (e: Exception) {
+            "ftpbd.net"
+        }
 
     override val lang = "all"
 
@@ -89,15 +94,21 @@ class FtpBd(
     private val cm by lazy { CookieManager(unsafeBaseClient) }
 
     override val client: OkHttpClient = unsafeBaseClient.newBuilder()
-        .dispatcher(okhttp3.Dispatcher().apply {
-            maxRequests = 100
-            maxRequestsPerHost = 100
-        })
+        .dispatcher(
+            okhttp3.Dispatcher().apply {
+                maxRequests = 100
+                maxRequestsPerHost = 100
+            },
+        )
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            val host = try { request.url.host } catch (e: Exception) { "" }
-            
+            val host = try {
+                request.url.host
+            } catch (e: Exception) {
+                ""
+            }
+
             if (host.contains(baseDomain)) {
                 val newRequest = request.newBuilder()
                     .apply {
@@ -117,11 +128,9 @@ class FtpBd(
         }
         .build()
 
-    private fun getGlobalHeaders(): Headers {
-        return Headers.Builder().apply {
-            add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        }.build()
-    }
+    private fun getGlobalHeaders(): Headers = Headers.Builder().apply {
+        add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    }.build()
 
     private suspend fun enrichAnimes(animes: List<SAnime>) {
         val source = preferences.getString(PREF_POSTER_SOURCE, "tmdb")
@@ -149,7 +158,7 @@ class FtpBd(
         val yearRegex = Regex("""(?:\(|\b)(\d{4})(?:\)|\b)""")
         val yearMatch = yearRegex.find(rawTitle)
         val year = yearMatch?.groupValues?.get(1)
-        
+
         var cleanTitle = rawTitle
             .replace(yearRegex, "")
             .replace("-", " ")
@@ -159,7 +168,7 @@ class FtpBd(
             .replace(Regex("""\(.*?\)"""), "")
             .replace(Regex("""\s+"""), " ")
             .trim()
-            
+
         return TitleYear(cleanTitle, year)
     }
 
@@ -176,7 +185,7 @@ class FtpBd(
             val (title, year) = extractTitleYear(anime.title)
             var url = "https://www.omdbapi.com/?apikey=$apiKey&t=${URLEncoder.encode(title, "UTF-8")}"
             if (year != null) url += "&y=$year"
-            
+
             val response = client.newCall(GET(url)).awaitSuccess()
             val body = response.body?.string().orEmpty()
             val omdb = omdbJson.decodeFromString<OMDbResponse>(body)
@@ -203,7 +212,7 @@ class FtpBd(
             val (title, year) = extractTitleYear(anime.title)
             var url = "https://api.themoviedb.org/3/search/multi?api_key=$apiKey&query=${URLEncoder.encode(title, "UTF-8")}"
             if (year != null) url += "&year=$year"
-            
+
             val response = client.newCall(GET(url)).awaitSuccess()
             val body = response.body?.string().orEmpty()
             val tmdb = omdbJson.decodeFromString<TMDbResponse>(body)
@@ -230,9 +239,7 @@ class FtpBd(
         return u.replace(" ", "%20")
     }
 
-    override fun animeDetailsRequest(anime: SAnime): Request {
-        return GET(fixUrl(anime.url), getGlobalHeaders())
-    }
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(fixUrl(anime.url), getGlobalHeaders())
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
@@ -271,7 +278,7 @@ class FtpBd(
         val cacheKey = request.url.toString()
         if (page == 1) directoryCache.remove(cacheKey)
 
-        val allAnimes = directoryCache[cacheKey] ?: fetchAnimesStreaming(request).also { 
+        val allAnimes = directoryCache[cacheKey] ?: fetchAnimesStreaming(request).also {
             if (it.isNotEmpty()) directoryCache[cacheKey] = it.sortedWith(compareBy { anime -> anime.title.naturalOrder() }).reversed()
         }
 
@@ -281,7 +288,7 @@ class FtpBd(
         val chunk = allAnimes.chunked(itemsPerPage)
         val currentPageItems = chunk.getOrNull(page - 1) ?: emptyList()
         val hasNextPage = page < chunk.size
-        
+
         return AnimesPage(currentPageItems, hasNextPage).also { enrichAnimes(it.animes) }
     }
 
@@ -293,27 +300,29 @@ class FtpBd(
                     if (!response.isSuccessful) return@withContext emptyList()
                     val source = response.body?.source() ?: return@withContext emptyList()
                     val linkRegex = Regex("""href="([^"]+)"[^>]*>([^<]+)</a>""", RegexOption.IGNORE_CASE)
-                    
+
                     var line: String?
                     while (source.readUtf8Line().also { line = it } != null) {
                         linkRegex.findAll(line!!).forEach { match ->
                             val href = match.groupValues[1]
                             var title = match.groupValues[2].trim()
-                            
+
                             if (isIgnored(title) || href.contains("?") || href.startsWith("http")) return@forEach
                             if (title.endsWith("/")) title = title.removeSuffix("/")
-                            
+
                             val absoluteUrl = if (href.startsWith("/")) {
-                                "${baseUrl.toHttpUrl().scheme}://${baseUrl.toHttpUrl().host}${href}"
+                                "${baseUrl.toHttpUrl().scheme}://${baseUrl.toHttpUrl().host}$href"
                             } else {
                                 response.request.url.toString().removeSuffix("/") + "/" + href.removePrefix("/")
                             }
-                            
-                            animeList.add(SAnime.create().apply {
-                                this.title = title
-                                this.url = fixUrl(absoluteUrl)
-                                this.thumbnail_url = ""
-                            })
+
+                            animeList.add(
+                                SAnime.create().apply {
+                                    this.title = title
+                                    this.url = fixUrl(absoluteUrl)
+                                    this.thumbnail_url = ""
+                                },
+                            )
                         }
                     }
                 }
@@ -384,21 +393,23 @@ class FtpBd(
     private fun parseSearchDocument(document: Document, query: String): List<SAnime> {
         val animeList = mutableListOf<SAnime>()
         val normalizedQuery = query.lowercase()
-        
+
         document.select("td.fb-n a, div.entry-content a, table tr a").forEach { link ->
             var title = link.text().trim()
             if (title.isBlank() || isIgnored(title)) return@forEach
             if (title.endsWith("/")) title = title.removeSuffix("/")
-            
+
             if (title.lowercase().contains(normalizedQuery)) {
                 val url = link.attr("abs:href")
                 if (url.contains("?") || url.endsWith("..")) return@forEach
-                
-                animeList.add(SAnime.create().apply {
-                    this.title = title
-                    this.url = fixUrl(url)
-                    this.thumbnail_url = ""
-                })
+
+                animeList.add(
+                    SAnime.create().apply {
+                        this.title = title
+                        this.url = fixUrl(url)
+                        this.thumbnail_url = ""
+                    },
+                )
             }
         }
         return animeList
@@ -407,18 +418,21 @@ class FtpBd(
     private fun sortByTitle(list: List<SAnime>, query: String): List<SAnime> {
         val normalizedQuery = query.lowercase()
         return list.sortedWith(
-            compareByDescending<SAnime> { 
-                if (it.title.lowercase() == normalizedQuery) 2.0
-                else if (it.title.lowercase().startsWith(normalizedQuery)) 1.5
-                else if (it.title.lowercase().contains(normalizedQuery)) 1.0
-                else 0.0
-            }.thenByDescending { it.title.naturalOrder() }
+            compareByDescending<SAnime> {
+                if (it.title.lowercase() == normalizedQuery) {
+                    2.0
+                } else if (it.title.lowercase().startsWith(normalizedQuery)) {
+                    1.5
+                } else if (it.title.lowercase().contains(normalizedQuery)) {
+                    1.0
+                } else {
+                    0.0
+                }
+            }.thenByDescending { it.title.naturalOrder() },
         )
     }
 
-    private fun String.naturalOrder(): String {
-        return Regex("""\d+""").replace(this) { it.value.padStart(12, '0') }
-    }
+    private fun String.naturalOrder(): String = Regex("""\d+""").replace(this) { it.value.padStart(12, '0') }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val cat = (filters[1] as CategorySelect).state
@@ -437,6 +451,7 @@ class FtpBd(
                 7 -> "FTP-3/%5BToday%27s%20Upload%5D/"
                 else -> "FTP-3/"
             }
+
             "FTPBD (English)" -> when (cat) {
                 0 -> "FTP-2/English%20Movies/"
                 1 -> "FTP-2/English%20Movies/English-Movies-4K/"
@@ -445,17 +460,20 @@ class FtpBd(
                 4 -> "FTP-2/3D%20Movies/"
                 else -> "FTP-2/"
             }
+
             "FTPBD (Anime)" -> when (cat) {
                 0 -> "FTP-5/Anime--Cartoon-TV-Series/"
                 1 -> "FTP-5/Animation%20Movies/"
                 2 -> "FTP-5/Documentary/"
                 else -> "FTP-5/"
             }
+
             "FTPBD (Series & Tutorial)" -> when (cat) {
                 0 -> "FTP-4/English-Foreign-TV-Series/"
                 1 -> "FTP-4/Tutorial/"
                 else -> "FTP-4/"
             }
+
             "FTPBD (Sports)" -> when (cat) {
                 0 -> "FTP-7/WWE%20Wrestling/"
                 1 -> "FTP-7/All%20Elite%20Wrestling%20%28AEW%29/"
@@ -463,6 +481,7 @@ class FtpBd(
                 3 -> "FTP-7/Awards--TV-Shows/"
                 else -> "FTP-7/"
             }
+
             else -> ""
         }
 
@@ -474,9 +493,13 @@ class FtpBd(
         if (year > 0) {
             val rawYear = FilterData.YEARS[year]
             val formattedYear = if (name == "FTPBD (Anime)" && cat == 1) {
-                if (rawYear == "1990-&-Before") "(2000)%20%26%20Before" 
-                else if (rawYear == "2001--2010") "(2001--2010)"
-                else "($rawYear)"
+                if (rawYear == "1990-&-Before") {
+                    "(2000)%20%26%20Before"
+                } else if (rawYear == "2001--2010") {
+                    "(2001--2010)"
+                } else {
+                    "($rawYear)"
+                }
             } else {
                 rawYear
             }
@@ -514,11 +537,11 @@ class FtpBd(
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val currentUrl = fixUrl(anime.url)
         val cacheKey = "cache_" + currentUrl.hashCode()
-        
+
         val cachedData = preferences.getString(cacheKey, null)
         if (cachedData != null) {
-            return cachedData.split("|").filter { it.contains(">>") }.map { 
-                SEpisode.create().apply { 
+            return cachedData.split("|").filter { it.contains(">>") }.map {
+                SEpisode.create().apply {
                     val parts = it.split(">>")
                     url = parts[0]
                     name = parts[1]
@@ -528,10 +551,10 @@ class FtpBd(
 
         val response = client.newCall(GET(currentUrl, getGlobalHeaders())).awaitSuccess()
         val episodes = getDirectoryEpisodes(response.asJsoup())
-        
+
         val serializable = episodes.joinToString("|") { "${it.url}>>${it.name}" }
         preferences.edit().putString(cacheKey, serializable).apply()
-        
+
         return episodes
     }
 
@@ -539,7 +562,7 @@ class FtpBd(
         val episodes = mutableListOf<SEpisode>()
         val depth = if (name == "FTPBD (Anime)") 5 else 3
         parseDirectoryRecursive(document, depth, episodes, mutableSetOf())
-        
+
         return episodes.sortedWith(compareBy { it.name.naturalOrder() }).reversed()
     }
 
@@ -554,14 +577,16 @@ class FtpBd(
             }
             val text = link.text().trim()
             if (isIgnored(text) || href.contains("?")) return@forEach
-            
+
             val lowerHref = href.lowercase()
             if (listOf(".mkv", ".mp4", ".avi", ".ts", ".m4v", ".webm", ".mov").any { lowerHref.endsWith(it) }) {
-                episodes.add(SEpisode.create().apply {
-                    this.name = text
-                    this.url = href
-                    this.episode_number = -1f
-                })
+                episodes.add(
+                    SEpisode.create().apply {
+                        this.name = text
+                        this.url = href
+                        this.episode_number = -1f
+                    },
+                )
             } else if (depth > 0 && href.endsWith("/") && !href.contains("_h5ai")) {
                 try {
                     val subDoc = client.newCall(GET(href, getGlobalHeaders())).awaitSuccess().asJsoup()
@@ -591,7 +616,7 @@ class FtpBd(
         AnimeFilter.Header("--- Year ---"),
         YearSelect(),
         AnimeFilter.Header("--- Language (Foreign Lang. only) ---"),
-        LanguageSelect()
+        LanguageSelect(),
     )
 
     class CategorySelect(categories: Array<String>) : AnimeFilter.Select<String>("Select Category", categories)
@@ -605,7 +630,11 @@ class FtpBd(
         private val lock = Any()
 
         fun getCookiesHeaders(url: String): String {
-            val host = try { url.toHttpUrl().host } catch (e: Exception) { return "" }
+            val host = try {
+                url.toHttpUrl().host
+            } catch (e: Exception) {
+                return ""
+            }
             val currentCookies = synchronized(lock) {
                 cookies[host] ?: fetchCookies(url).also { cookies[host] = it }
             }
@@ -613,11 +642,13 @@ class FtpBd(
         }
 
         private fun fetchCookies(url: String): List<Cookie> {
-            val hostUrl = try { 
+            val hostUrl = try {
                 val u = url.toHttpUrl()
                 "${u.scheme}://${u.host}/".toHttpUrl()
-            } catch (e: Exception) { return emptyList() }
-            
+            } catch (e: Exception) {
+                return emptyList()
+            }
+
             val req = Request.Builder()
                 .url(hostUrl)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -643,15 +674,15 @@ class FtpBd(
 data class OMDbResponse(
     val Response: String,
     val Poster: String? = null,
-    val Error: String? = null
+    val Error: String? = null,
 )
 
 @Serializable
 data class TMDbResponse(
-    val results: List<TMDbResult>? = null
+    val results: List<TMDbResult>? = null,
 )
 
 @Serializable
 data class TMDbResult(
-    val poster_path: String? = null
+    val poster_path: String? = null,
 )

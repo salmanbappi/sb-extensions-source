@@ -5,8 +5,8 @@ import android.content.SharedPreferences
 import android.os.Build
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
-import eu.kanade.tachiyomi.animesource.UnmeteredSource
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.UnmeteredSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -30,13 +30,13 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNamingStrategy
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import kotlinx.serialization.json.add
 import okhttp3.Dns
 import okhttp3.Headers
 import okhttp3.HttpUrl
@@ -55,10 +55,17 @@ import java.util.UUID
 
 @Serializable(with = ItemTypeSerializer::class)
 enum class ItemType {
-    BoxSet, Movie, Season, Series, Episode, Folder, Other;
+    BoxSet,
+    Movie,
+    Season,
+    Series,
+    Episode,
+    Folder,
+    Other,
+    ;
+
     companion object {
-        fun fromString(value: String): ItemType =
-            values().find { it.name.equals(value, ignoreCase = true) } ?: Other
+        fun fromString(value: String): ItemType = values().find { it.name.equals(value, ignoreCase = true) } ?: Other
     }
 }
 
@@ -97,6 +104,7 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     val officialRating: String? = null,
 ) {
     @Serializable data class ImageDto(val primary: String? = null)
+
     @Serializable data class StudioDto(val name: String)
 
     fun toSAnime(baseUrl: String, userId: String): SAnime = SAnime.create().apply {
@@ -104,7 +112,10 @@ object ItemTypeSerializer : KSerializer<ItemType> {
         thumbnail_url = imageTags.primary?.getImageUrl(baseUrl, id)
         title = name
         description = buildString {
-            overview?.replace("<br>", "\n")?.replace(Regex("<[^>]*>"), "")?.let { append(it); append("\n\n") }
+            overview?.replace("<br>", "\n")?.replace(Regex("<[^>]*>"), "")?.let {
+                append(it)
+                append("\n\n")
+            }
             productionYear?.let { append("📅 Year: $it\n") }
             communityRating?.let { append("⭐ Rating: ${"%.1f".format(it)}\n") }
             officialRating?.let { append("🔞 Rating: $it\n") }
@@ -129,38 +140,45 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     }
 
     private fun Long.formatSeconds(): String {
-        val m = this / 60; val h = m / 60; val s = this % 60; val rm = m % 60
+        val m = this / 60
+        val h = m / 60
+        val s = this % 60
+        val rm = m % 60
         return "${if (h > 0) "${h}h " else ""}${if (rm > 0) "${rm}m " else ""}${s}s".trim()
     }
-    private fun parseDateTime(date: String) =
-        try { FORMATTER.parse(date.substringBefore(".").removeSuffix("Z"))!!.time } catch (_: Exception) { 0L }
-    companion object { private val FORMATTER = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ENGLISH) }
+    private fun parseDateTime(date: String) = try {
+        FORMATTER.parse(date.substringBefore(".").removeSuffix("Z"))!!.time
+    } catch (_: Exception) {
+        0L
+    }
+    companion object {
+        private val FORMATTER = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ENGLISH)
+    }
 }
 
 @Serializable data class LoginDto(val accessToken: String, val sessionInfo: LoginSessionDto) {
     @Serializable data class LoginSessionDto(val userId: String)
 }
+
 @Serializable data class MediaDto(val size: Long? = null, val id: String? = null)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fun Long.formatBytes(): String = when {
     this >= 1_000_000_000L -> "%.2f GB".format(this / 1_000_000_000.0)
-    this >= 1_000_000L    -> "%.2f MB".format(this / 1_000_000.0)
-    this >= 1_000L        -> "%.2f KB".format(this / 1_000.0)
-    else                  -> "$this B"
+    this >= 1_000_000L -> "%.2f MB".format(this / 1_000_000.0)
+    this >= 1_000L -> "%.2f KB".format(this / 1_000.0)
+    else -> "$this B"
 }
 
-fun String.getImageUrl(baseUrl: String, id: String): String =
-    baseUrl.toHttpUrl().newBuilder()
-        .addPathSegment("Items").addPathSegment(id)
-        .addPathSegment("Images").addPathSegment("Primary")
-        .addQueryParameter("tag", this)
-        .build().toString()
+fun String.getImageUrl(baseUrl: String, id: String): String = baseUrl.toHttpUrl().newBuilder()
+    .addPathSegment("Items").addPathSegment(id)
+    .addPathSegment("Images").addPathSegment("Primary")
+    .addQueryParameter("tag", this)
+    .build().toString()
 
 object PascalCaseToCamelCase : JsonNamingStrategy {
-    override fun serialNameForJson(descriptor: SerialDescriptor, elementIndex: Int, serialName: String): String =
-        serialName.replaceFirstChar { it.uppercase() }
+    override fun serialNameForJson(descriptor: SerialDescriptor, elementIndex: Int, serialName: String): String = serialName.replaceFirstChar { it.uppercase() }
 }
 
 fun buildAuthHeader(deviceInfo: AgniSYS.DeviceInfo, token: String? = null): String {
@@ -169,7 +187,7 @@ fun buildAuthHeader(deviceInfo: AgniSYS.DeviceInfo, token: String? = null): Stri
         "Version" to deviceInfo.version,
         "DeviceId" to deviceInfo.id,
         "Device" to deviceInfo.name,
-        "Token" to token
+        "Token" to token,
     )
     return params.filterNot { it.second == null }
         .joinToString(separator = ", ", prefix = "MediaBrowser ") {
@@ -207,25 +225,22 @@ private val GENRES = listOf(
     "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy",
     "History", "Horror", "Music", "Musical", "Mystery", "Reality-TV",
     "Romance", "Science Fiction", "Sci-Fi", "Short", "Sport",
-    "Talk-Show", "Thriller", "TV Movie", "War", "Western"
+    "Talk-Show", "Thriller", "TV Movie", "War", "Western",
 )
 
 private val SORT_OPTIONS = arrayOf("Name", "Date Added", "Rating", "Release Year", "Play Count")
-private val SORT_VALUES  = arrayOf("SortName", "DateCreated,SortName", "CommunityRating,SortName", "ProductionYear,SortName", "PlayCount,SortName")
+private val SORT_VALUES = arrayOf("SortName", "DateCreated,SortName", "CommunityRating,SortName", "ProductionYear,SortName", "PlayCount,SortName")
 
-private class CategoryFilter(cats: List<Pair<String, String>>) :
-    AnimeFilter.Select<String>("Library", cats.map { it.first }.toTypedArray()) {
+private class CategoryFilter(cats: List<Pair<String, String>>) : AnimeFilter.Select<String>("Library", cats.map { it.first }.toTypedArray()) {
     val cats = cats
     fun selectedId() = cats[state].second
 }
 
-private class GenreFilter :
-    AnimeFilter.Select<String>("Genre", GENRES.toTypedArray()) {
+private class GenreFilter : AnimeFilter.Select<String>("Genre", GENRES.toTypedArray()) {
     fun selectedGenre() = if (state == 0) null else GENRES[state]
 }
 
-private class SortFilter :
-    AnimeFilter.Sort("Sort by", SORT_OPTIONS, Selection(0, true)) {
+private class SortFilter : AnimeFilter.Sort("Sort by", SORT_OPTIONS, Selection(0, true)) {
     fun sortValue() = SORT_VALUES[state!!.index]
     fun isAscending() = state!!.ascending
 }
@@ -234,7 +249,10 @@ private class YearFilter : AnimeFilter.Text("Year (e.g. 2024)")
 
 // ─── Source ───────────────────────────────────────────────────────────────────
 
-class AgniSYS : Source(), UnmeteredSource, ConfigurableAnimeSource {
+class AgniSYS :
+    Source(),
+    UnmeteredSource,
+    ConfigurableAnimeSource {
 
     override val name = "AgniSYS"
     override val lang = "all"
@@ -265,8 +283,9 @@ class AgniSYS : Source(), UnmeteredSource, ConfigurableAnimeSource {
         .addInterceptor { chain ->
             val request = chain.request()
             // Skip auth on the login endpoint itself
-            if (request.url.encodedPath.contains("AuthenticateByName"))
+            if (request.url.encodedPath.contains("AuthenticateByName")) {
                 return@addInterceptor chain.proceed(request)
+            }
 
             if (accessToken.isBlank()) synchronized(this) { if (accessToken.isBlank()) login() }
 
@@ -279,11 +298,15 @@ class AgniSYS : Source(), UnmeteredSource, ConfigurableAnimeSource {
                 synchronized(this) {
                     response.close()
                     login()
-                    chain.proceed(request.newBuilder()
-                        .addHeader("Authorization", buildAuthHeader(deviceInfo, accessToken))
-                        .build())
+                    chain.proceed(
+                        request.newBuilder()
+                            .addHeader("Authorization", buildAuthHeader(deviceInfo, accessToken))
+                            .build(),
+                    )
                 }
-            } else response
+            } else {
+                response
+            }
         }.build()
 
     // ── Login ──────────────────────────────────────────────────────────────
@@ -351,18 +374,22 @@ class AgniSYS : Source(), UnmeteredSource, ConfigurableAnimeSource {
             for (filter in filters) {
                 when (filter) {
                     is CategoryFilter -> { /* handled above via parentId */ }
+
                     is GenreFilter -> {
                         val genre = filter.selectedGenre()
                         if (genre != null) setQueryParameter("Genres", genre)
                     }
+
                     is SortFilter -> {
                         setQueryParameter("SortBy", filter.sortValue())
                         setQueryParameter("SortOrder", if (filter.isAscending()) "Ascending" else "Descending")
                     }
+
                     is YearFilter -> {
                         val year = filter.state.trim()
                         if (year.isNotBlank()) setQueryParameter("Years", year)
                     }
+
                     else -> {}
                 }
             }
@@ -406,12 +433,16 @@ class AgniSYS : Source(), UnmeteredSource, ConfigurableAnimeSource {
             listOf(
                 SEpisode.create().apply {
                     name = item.name
-                    url = "${baseUrl}/Users/$userId/Items/${item.id}"
+                    url = "$baseUrl/Users/$userId/Items/${item.id}"
                     episode_number = 1f
                     date_upload = item.premiereDate?.let {
-                        try { SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ENGLISH).parse(it.substringBefore(".").removeSuffix("Z"))?.time ?: 0L } catch (_: Exception) { 0L }
+                        try {
+                            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.ENGLISH).parse(it.substringBefore(".").removeSuffix("Z"))?.time ?: 0L
+                        } catch (_: Exception) {
+                            0L
+                        }
                     } ?: 0L
-                }
+                },
             )
         }
     }
@@ -448,27 +479,26 @@ class AgniSYS : Source(), UnmeteredSource, ConfigurableAnimeSource {
      * This prevents Web Series from flooding the list with 837 individual episodes.
      * Instead, each series shows as one Folder card; tapping it fetches child episodes.
      */
-    private fun baseItemsUrl(startIndex: Int, parentId: String? = null): HttpUrl =
-        "$baseUrl/Users/$userId/Items".toHttpUrl().newBuilder().apply {
-            addQueryParameter("StartIndex", startIndex.toString())
-            addQueryParameter("Limit", PAGE_SIZE.toString())
-            addQueryParameter("ImageTypeLimit", "1")
-            addQueryParameter("EnableImageTypes", "Primary")
-            addQueryParameter("Fields", "Genres,Studios,Overview,ProductionYear,CommunityRating,OfficialRating")
-            addQueryParameter("SortBy", "SortName")
-            addQueryParameter("SortOrder", "Ascending")
+    private fun baseItemsUrl(startIndex: Int, parentId: String? = null): HttpUrl = "$baseUrl/Users/$userId/Items".toHttpUrl().newBuilder().apply {
+        addQueryParameter("StartIndex", startIndex.toString())
+        addQueryParameter("Limit", PAGE_SIZE.toString())
+        addQueryParameter("ImageTypeLimit", "1")
+        addQueryParameter("EnableImageTypes", "Primary")
+        addQueryParameter("Fields", "Genres,Studios,Overview,ProductionYear,CommunityRating,OfficialRating")
+        addQueryParameter("SortBy", "SortName")
+        addQueryParameter("SortOrder", "Ascending")
 
-            if (parentId != null) {
-                // Specific library selected: show direct children (Folder or Movie)
-                // NO Recursive — prevents flooding with all sub-episodes
-                addQueryParameter("ParentId", parentId)
-                addQueryParameter("IncludeItemTypes", "Movie,Folder")
-            } else {
-                // All Libraries: recurse through everything, Movies only
-                addQueryParameter("Recursive", "true")
-                addQueryParameter("IncludeItemTypes", "Movie")
-            }
-        }.build()
+        if (parentId != null) {
+            // Specific library selected: show direct children (Folder or Movie)
+            // NO Recursive — prevents flooding with all sub-episodes
+            addQueryParameter("ParentId", parentId)
+            addQueryParameter("IncludeItemTypes", "Movie,Folder")
+        } else {
+            // All Libraries: recurse through everything, Movies only
+            addQueryParameter("Recursive", "true")
+            addQueryParameter("IncludeItemTypes", "Movie")
+        }
+    }.build()
 
     private suspend fun okhttp3.Call.await(): Response = withContext(Dispatchers.IO) { execute() }
 
@@ -490,7 +520,12 @@ class AgniSYS : Source(), UnmeteredSource, ConfigurableAnimeSource {
             summary = "Default: $DEFAULT_URL"
             setDefaultValue(DEFAULT_URL)
             setOnPreferenceChangeListener { _, newValue ->
-                try { (newValue as String).trim().toHttpUrl(); true } catch (_: Exception) { false }
+                try {
+                    (newValue as String).trim().toHttpUrl()
+                    true
+                } catch (_: Exception) {
+                    false
+                }
             }
         }.also(screen::addPreference)
     }
@@ -509,10 +544,10 @@ class AgniSYS : Source(), UnmeteredSource, ConfigurableAnimeSource {
     // ── Constants ──────────────────────────────────────────────────────────
 
     companion object {
-        private const val PREF_BASE_URL      = "pref_base_url"
-        private const val DEFAULT_URL        = "http://182.252.81.180:8096"
-        private const val DEFAULT_USERNAME   = "vibe"
-        private const val DEFAULT_PASSWORD   = "121121"
-        private const val PAGE_SIZE          = 20
+        private const val PREF_BASE_URL = "pref_base_url"
+        private const val DEFAULT_URL = "http://182.252.81.180:8096"
+        private const val DEFAULT_USERNAME = "vibe"
+        private const val DEFAULT_PASSWORD = "121121"
+        private const val PAGE_SIZE = 20
     }
 }

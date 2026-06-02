@@ -24,12 +24,12 @@ class GoogleDriveExtractor(private val client: OkHttpClient, private val headers
         }.build()
 
         val docResp = client.newCall(
-            GET(url, docHeaders)
+            GET(url, docHeaders),
         ).execute()
 
         if (!docResp.peekBody(15).string().equals("<!DOCTYPE html>", true)) {
             return listOf(
-                Video(url, videoName, url, docHeaders)
+                Video(url, videoName, url, docHeaders),
             )
         }
 
@@ -46,11 +46,9 @@ class GoogleDriveExtractor(private val client: OkHttpClient, private val headers
         }.build().toString()
 
         return listOf(
-            Video(videoUrl, videoName + itemSize, videoUrl, docHeaders)
+            Video(videoUrl, videoName + itemSize, videoUrl, docHeaders),
         )
     }
 
-    private fun List<Cookie>.toStr(): String {
-        return this.joinToString("; ") { "${it.name}=${it.value}" }
-    }
+    private fun List<Cookie>.toStr(): String = this.joinToString("; ") { "${it.name}=${it.value}" }
 }

@@ -15,7 +15,9 @@ import extensions.utils.Source
 import okhttp3.OkHttpClient
 import org.jsoup.nodes.Element
 
-class LiveSports : Source(), ConfigurableAnimeSource {
+class LiveSports :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "Live Sports"
     override val baseUrl = "http://10.20.30.40"
@@ -41,7 +43,7 @@ class LiveSports : Source(), ConfigurableAnimeSource {
             val img = element.selectFirst("img")
             val imgSrc = img?.attr("src")
             val altText = img?.attr("alt")
-            
+
             val title = if (!altText.isNullOrBlank()) {
                 altText
             } else {
@@ -55,7 +57,7 @@ class LiveSports : Source(), ConfigurableAnimeSource {
                 this.thumbnail_url = if (imgSrc != null) fixUrl(imgSrc) else null
             }
         }
-        
+
         return AnimesPage(animeList, false)
     }
 
@@ -68,21 +70,19 @@ class LiveSports : Source(), ConfigurableAnimeSource {
         return AnimesPage(filtered, false)
     }
 
-    override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        return anime.apply {
-            status = SAnime.UNKNOWN
-            description = "Live Sports Channel: ${anime.title}"
-            initialized = true
-        }
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime = anime.apply {
+        status = SAnime.UNKNOWN
+        description = "Live Sports Channel: ${anime.title}"
+        initialized = true
     }
 
-    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        return listOf(SEpisode.create().apply {
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = listOf(
+        SEpisode.create().apply {
             name = anime.title
             url = anime.url
             episode_number = 1F
-        })
-    }
+        },
+    )
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val url = episode.url

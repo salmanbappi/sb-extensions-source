@@ -23,7 +23,12 @@ object Deobfuscator {
             engine.evaluate("globalThis.console = { log: () => {}, warn: () => {}, error: () => {}, trace: () => {} };")
             engine.evaluate(synchronyScript)
 
-            engine.set("source", TestInterface::class.java, object : TestInterface { override fun getValue() = source })
+            engine.set(
+                "source", TestInterface::class.java,
+                object : TestInterface {
+                    override fun getValue() = source
+                },
+            )
             engine.evaluate("new Deobfuscator().deobfuscateSource(source.getValue())") as? String
         }
     }

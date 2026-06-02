@@ -12,26 +12,28 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
-import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
-import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
-import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
-import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
+import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
+import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
+import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
+import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
+class Nepu :
+    ParsedAnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     override val name = "Nepu"
 
@@ -76,9 +78,9 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a") ?: element
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst(".list-title, .jws-post-title, h2, h3, .title, .name")?.text() 
+        title = element.selectFirst(".list-title, .jws-post-title, h2, h3, .title, .name")?.text()
             ?: element.selectFirst("img")?.attr("alt")
-            ?: link.attr("title") 
+            ?: link.attr("title")
             ?: ""
         thumbnail_url = element.extractImageUrl()
     }
@@ -177,7 +179,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         val sheader = document.selectFirst("div.sheader, div.detail-content, .detail-header, .app-section")
-        title = sheader?.selectFirst("div.data > h1, div.caption h1, h1")?.text() 
+        title = sheader?.selectFirst("div.data > h1, div.caption h1, h1")?.text()
             ?: document.selectFirst("h1.title, .entry-title, .m-title, .jws-post-title, h1")?.text() ?: ""
         description = document.selectFirst("div#info p, .description, .entry-content p, .storyline, #edit-2, div.detail div.text, meta[name='description'], meta[property='og:description']")?.let {
             if (it.tagName() == "meta") it.attr("content") else it.text()
@@ -202,50 +204,52 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = response.asJsoup()
         val seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane, div.episodes")
-        
+
         val episodeList = mutableListOf<SEpisode>()
-        
+
         if (seasons.isNotEmpty()) {
             seasons.forEach { season ->
                 val seasonId = season.attr("id")
                 val seasonName = (if (seasonId.isNotEmpty()) doc.selectFirst("a[href='#$seasonId']")?.text() else null)
-                    ?: season.selectFirst("span.se-t")?.text() 
+                    ?: season.selectFirst("span.se-t")?.text()
                     ?: ""
                 val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
                 episodes.forEach { element ->
-                    episodeList.add(episodeFromElement(element).apply {
-                        name = if (seasonName.isNotBlank()) "$seasonName - $name" else name
-                    })
+                    episodeList.add(
+                        episodeFromElement(element).apply {
+                            name = if (seasonName.isNotBlank()) "$seasonName - $name" else name
+                        },
+                    )
                 }
             }
         }
-        
+
         if (episodeList.isEmpty()) {
             val episodes = doc.select(episodeListSelector()).filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
             if (episodes.isNotEmpty()) {
                 episodeList.addAll(episodes.map { episodeFromElement(it) })
             }
         }
-        
+
         // Movie fallback
         if (episodeList.isEmpty()) {
             val playButton = doc.selectFirst("a[href*='/episode/'], a[href*='/movie/'], a[href*='/serie/'], a[href*='/show/'], a.btn-play, a.watch-now, .play-btn a, a:contains(Watch Now)")
             if (playButton != null) {
-                episodeList.add(SEpisode.create().apply {
-                    name = "Movie"
-                    setUrlWithoutDomain(playButton.attr("href"))
-                    episode_number = 1f
-                })
+                episodeList.add(
+                    SEpisode.create().apply {
+                        name = "Movie"
+                        setUrlWithoutDomain(playButton.attr("href"))
+                        episode_number = 1f
+                    },
+                )
             }
         }
-        
+
         return episodeList.distinctBy { it.url }.reversed()
     }
 
-    private fun parseEpisodeNumber(text: String): Float {
-        return Regex("""(?i)(?:Episode|Ep|E|Vol|Temporada)\.?\s*(\d+(\.\d+)?)""").find(text)
-            ?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
-    }
+    private fun parseEpisodeNumber(text: String): Float = Regex("""(?i)(?:Episode|Ep|E|Vol|Temporada)\.?\s*(\d+(\.\d+)?)""").find(text)
+        ?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
 
     private fun buildVideoHeaders(refererUrl: String): okhttp3.Headers {
         val referer = refererUrl.takeIf { it.startsWith("http") } ?: "$baseUrl/"
@@ -278,8 +282,8 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
         document.select(".btn-service").forEach { btn ->
             val embedId = btn.attr("data-embed")
-            var name = btn.selectFirst(".source-selected")?.text() 
-                ?: btn.selectFirst(".name")?.text() 
+            var name = btn.selectFirst(".source-selected")?.text()
+                ?: btn.selectFirst(".name")?.text()
                 ?: btn.text()
             name = name.trim().ifEmpty { "Server" }
 
@@ -301,15 +305,15 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                     client.newCall(request).execute().use { embedResponse ->
                         if (!embedResponse.isSuccessful) return@forEach
                         val embedHtml = embedResponse.body.string()
-                        
+
                         var extractedUrl: String? = null
-                        
+
                         // Try to parse JSON first (Standard Dooplay)
                         try {
                             val jsonMatch = Regex("""["']?embed_url["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
                                 ?: Regex("""["']?link["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
                                 ?: Regex("""["']?url["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
-                            
+
                             if (jsonMatch != null) {
                                 val url = jsonMatch.groupValues[1].replace("\\/", "/")
                                 // Sometimes the JSON embed_url contains an iframe tag instead of a raw URL
@@ -329,14 +333,12 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                                 ?: Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
                         }
 
-                        fun sanitize(url: String): String {
-                            return when {
-                                url.startsWith("http") -> url
-                                url.startsWith("//") -> "https:$url"
-                                url.startsWith("/") -> "$baseUrl$url"
-                                else -> "$baseUrl/$url"
-                            }.trim()
-                        }
+                        fun sanitize(url: String): String = when {
+                            url.startsWith("http") -> url
+                            url.startsWith("//") -> "https:$url"
+                            url.startsWith("/") -> "$baseUrl$url"
+                            else -> "$baseUrl/$url"
+                        }.trim()
 
                         fun extractVideos(finalUrl: String, name: String, refererContext: String) {
                             if (!finalUrl.contains(".")) return
@@ -348,11 +350,17 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                                 try {
                                     when {
                                         finalUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(finalUrl, "DoodStream"))
+
                                         finalUrl.contains("filemoon") || finalUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(finalUrl, "Filemoon", mediaHeaders))
+
                                         finalUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "VidMoly"))
+
                                         finalUrl.contains("vidhide") || finalUrl.contains("guccihide") || finalUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, mediaHeaders).videosFromUrl(finalUrl, { "VidHide - $it" }))
+
                                         finalUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "Voe"))
+
                                         finalUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(finalUrl, "StreamTape"))
+
                                         else -> {
                                             val extracted = UniversalExtractor(client).videosFromUrl(finalUrl, mediaHeaders, prefix = name)
                                             if (extracted.isNotEmpty()) {
@@ -377,24 +385,30 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 }
             }
         }
-        
+
         if (videoList.isEmpty()) {
             document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe, iframe[src*='embed']").forEach { iframe ->
-                    val src = iframe.attr("abs:src")
-                    if (src.isNotBlank() && !src.contains("index.html")) {
+                val src = iframe.attr("abs:src")
+                if (src.isNotBlank() && !src.contains("index.html")) {
                     val videoHeaders = buildVideoHeaders(src)
-                    
+
                     if (src.contains(".mp4") || src.contains(".m3u8")) {
                         videoList.add(Video(src, "Video", src, headers = videoHeaders))
                     } else {
                         try {
                             when {
                                 src.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(src, "DoodStream"))
+
                                 src.contains("filemoon") || src.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(src, "Filemoon", videoHeaders))
+
                                 src.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(src, "VidMoly"))
+
                                 src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(src, { "VidHide - $it" }))
+
                                 src.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(src, "Voe"))
+
                                 src.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(src, "StreamTape"))
+
                                 else -> {
                                     val extracted = UniversalExtractor(client).videosFromUrl(src, videoHeaders, prefix = "Video")
                                     if (extracted.isNotEmpty()) {
@@ -409,12 +423,12 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 }
             }
         }
-        
+
         // Final Fallback for internal player (e.g. Gravity Falls)
         // If the video is not in an iframe but loaded dynamically on the page itself
         if (videoList.isEmpty()) {
             val videoHeaders = buildVideoHeaders(pageUrl)
-                
+
             try {
                 val extracted = UniversalExtractor(client).videosFromUrl(pageUrl, videoHeaders, prefix = "Internal Player")
                 if (extracted.isNotEmpty()) {
@@ -424,7 +438,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 // ignore extraction errors
             }
         }
-        
+
         return videoList.distinctBy { it.videoUrl }
     }
 
@@ -445,10 +459,11 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         GenreFilter(),
     )
 
-    private class ListingFilter : AnimeFilter.Select<String>(
-        "Listing",
-        arrayOf("Discovery", "Trending Now", "Latest Movies", "Latest TV Shows")
-    ) {
+    private class ListingFilter :
+        AnimeFilter.Select<String>(
+            "Listing",
+            arrayOf("Discovery", "Trending Now", "Latest Movies", "Latest TV Shows"),
+        ) {
         fun toPath() = when (state) {
             0 -> "discovery"
             1 -> "trends"
@@ -458,10 +473,11 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         }
     }
 
-    private class TypeFilter : AnimeFilter.Select<String>(
-        "Type",
-        arrayOf("All", "Movies", "TV Shows")
-    ) {
+    private class TypeFilter :
+        AnimeFilter.Select<String>(
+            "Type",
+            arrayOf("All", "Movies", "TV Shows"),
+        ) {
         fun toSlug() = when (state) {
             1 -> "movies"
             2 -> "shows"
@@ -469,10 +485,11 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         }
     }
 
-    private class GenreFilter : AnimeFilter.Select<String>(
-        "Genre",
-        GENRES.map { it.first }.toTypedArray()
-    ) {
+    private class GenreFilter :
+        AnimeFilter.Select<String>(
+            "Genre",
+            GENRES.map { it.first }.toTypedArray(),
+        ) {
         fun toSlug() = GENRES[state].second
     }
 
@@ -485,15 +502,21 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         if (style.contains("url(")) {
             val url = Regex("""url\(\s*['"]?([^'")\s>]+)""").find(style)?.groupValues?.get(1)
                 ?: style.substringAfter("url(").substringBefore(")")
-            
+
             val cleanedUrl = url.replace("&quot;", "")
                 .replace("\"", "")
                 .replace("'", "")
                 .replace(")", "")
                 .trim()
-                
+
             if (cleanedUrl.isNotEmpty()) {
-                val absoluteUrl = if (cleanedUrl.startsWith("http")) cleanedUrl else if (cleanedUrl.startsWith("//")) "https:$cleanedUrl" else "https://${baseUrl.substringAfter("://")}/${cleanedUrl.removePrefix("/")}"
+                val absoluteUrl = if (cleanedUrl.startsWith("http")) {
+                    cleanedUrl
+                } else if (cleanedUrl.startsWith("//")) {
+                    "https:$cleanedUrl"
+                } else {
+                    "https://${baseUrl.substringAfter("://")}/${cleanedUrl.removePrefix("/")}"
+                }
                 return absoluteUrl.replace(" ", "%20")
             }
         }
@@ -549,7 +572,7 @@ class Nepu : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             "TV Movie" to "tv-movie",
             "War" to "war",
             "War & Politics" to "war-politics",
-            "Western" to "western"
+            "Western" to "western",
         )
     }
 }

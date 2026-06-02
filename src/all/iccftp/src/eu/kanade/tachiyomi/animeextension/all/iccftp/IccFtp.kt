@@ -19,6 +19,8 @@ import extensions.utils.addEditTextPreference
 import extensions.utils.delegate
 import extensions.utils.get
 import extensions.utils.parseAs
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import okhttp3.Cookie
 import okhttp3.FormBody
 import okhttp3.Headers
@@ -31,8 +33,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.jsoup.nodes.Document
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.IOException
@@ -43,7 +43,9 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
-class IccFtp : Source(), ConfigurableAnimeSource {
+class IccFtp :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "ICC FTP"
     override val baseUrl: String
@@ -107,7 +109,7 @@ class IccFtp : Source(), ConfigurableAnimeSource {
 
         if (response.request.url.encodedPath.contains("vfw.php") || (response.code == 302 && response.header("Location")?.contains("vfw.php") == true)) {
             response.close()
-            sessionId = "" 
+            sessionId = ""
             fetchSessionId()
             val retryUrl = originalUrl.newBuilder().setQueryParameter("session", sessionId).build()
             return@Interceptor chain.proceed(request.newBuilder().url(retryUrl).build())
@@ -139,7 +141,11 @@ class IccFtp : Source(), ConfigurableAnimeSource {
         private val lock = Any()
 
         fun getCookiesHeaders(url: String): String {
-            val host = try { url.toHttpUrl().host } catch (e: Exception) { return "" }
+            val host = try {
+                url.toHttpUrl().host
+            } catch (e: Exception) {
+                return ""
+            }
             val currentCookies = synchronized(lock) {
                 cookies[host] ?: fetchCookies(url).also { cookies[host] = it }
             }
@@ -147,11 +153,13 @@ class IccFtp : Source(), ConfigurableAnimeSource {
         }
 
         private fun fetchCookies(url: String): List<Cookie> {
-            val hostUrl = try { 
+            val hostUrl = try {
                 val u = url.toHttpUrl()
                 "${u.scheme}://${u.host}/".toHttpUrl()
-            } catch (e: Exception) { return emptyList() }
-            
+            } catch (e: Exception) {
+                return emptyList()
+            }
+
             val req = Request.Builder()
                 .url(hostUrl)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -182,11 +190,19 @@ class IccFtp : Source(), ConfigurableAnimeSource {
 
             if (url.isNotEmpty() && !title.isNullOrEmpty()) {
                 SAnime.create().apply {
-                    this.url = if (url.contains("session=")) url else if(url.contains("?")) "$url&session=$sessionId" else "$url?session=$sessionId"
+                    this.url = if (url.contains("session=")) {
+                        url
+                    } else if (url.contains("?")) {
+                        "$url&session=$sessionId"
+                    } else {
+                        "$url?session=$sessionId"
+                    }
                     this.title = title
                     this.thumbnail_url = if (imgSrc.isNotEmpty()) "$baseUrl/$imgSrc" else null
                 }
-            } else null
+            } else {
+                null
+            }
         }
         return AnimesPage(animeList, false)
     }
@@ -212,7 +228,11 @@ class IccFtp : Source(), ConfigurableAnimeSource {
             val mediaType = "application/x-www-form-urlencoded".toMediaType()
             val body = "cSearch=$query".toRequestBody(mediaType)
             val response = client.newCall(POST("$baseUrl/command.php", body = body)).execute()
-            val searchJson = try { response.parseAs<List<SearchJsonItem>>(json) } catch(e: Exception) { emptyList() }
+            val searchJson = try {
+                response.parseAs<List<SearchJsonItem>>(json)
+            } catch (e: Exception) {
+                emptyList()
+            }
             val animeList = searchJson.map { item ->
                 SAnime.create().apply {
                     this.url = "player.php?play=${item.id}&session=$sessionId"
@@ -226,13 +246,13 @@ class IccFtp : Source(), ConfigurableAnimeSource {
         var category = "0"
         filters.forEach { filter ->
             when (filter) {
-                is CategoryFilter -> if(filter.toValue() != "0") category = filter.toValue()
-                is TVShowFilter -> if(filter.toValue() != "0") category = filter.toValue()
-                is OtherFilter -> if(filter.toValue() != "0") category = filter.toValue()
+                is CategoryFilter -> if (filter.toValue() != "0") category = filter.toValue()
+                is TVShowFilter -> if (filter.toValue() != "0") category = filter.toValue()
+                is OtherFilter -> if (filter.toValue() != "0") category = filter.toValue()
                 else -> {}
             }
         }
-        
+
         // Use dashboard.php for categories
         val request = if (page == 1) {
             GET("$baseUrl/dashboard.php?category=$category")
@@ -248,17 +268,17 @@ class IccFtp : Source(), ConfigurableAnimeSource {
     }
 
     private fun parseAnimeList(document: Document, hasNext: Boolean): AnimesPage {
-        val items = document.select("div.post, div.post-item, div.post-wrapper > a, div.item > a") 
+        val items = document.select("div.post, div.post-item, div.post-wrapper > a, div.item > a")
         val animeList = mutableListOf<SAnime>()
         val seenUrls = mutableSetOf<String>()
 
         items.forEach { item ->
             val url = if (item.tagName() == "a") item.attr("href") else item.selectFirst("a")?.attr("href") ?: ""
             if (url.isBlank()) return@forEach
-            
+
             val normalizedUrl = url.substringBefore("&session=").substringBefore("?session=")
             if (seenUrls.contains(normalizedUrl)) return@forEach
-            
+
             // Skip slider items if present in the document
             if (item.parents().any { it.id() == "post-slider-multipost" }) return@forEach
 
@@ -266,14 +286,24 @@ class IccFtp : Source(), ConfigurableAnimeSource {
             val title = img?.attr("alt") ?: item.selectFirst("div.title")?.text() ?: item.attr("title") ?: item.selectFirst("span")?.text()
 
             if (!title.isNullOrEmpty()) {
-                animeList.add(SAnime.create().apply {
-                    this.url = if (url.contains("session=")) url else if(url.contains("?")) "$url&session=$sessionId" else "$url?session=$sessionId"
-                    this.title = title
-                    val imgSrc = img?.attr("src") ?: img?.attr("style")?.substringAfter("url('")?.substringBefore("')")
-                    this.thumbnail_url = if (imgSrc != null) {
-                        if (imgSrc.startsWith("http")) imgSrc else "$baseUrl/$imgSrc"
-                    } else null
-                })
+                animeList.add(
+                    SAnime.create().apply {
+                        this.url = if (url.contains("session=")) {
+                            url
+                        } else if (url.contains("?")) {
+                            "$url&session=$sessionId"
+                        } else {
+                            "$url?session=$sessionId"
+                        }
+                        this.title = title
+                        val imgSrc = img?.attr("src") ?: img?.attr("style")?.substringAfter("url('")?.substringBefore("')")
+                        this.thumbnail_url = if (imgSrc != null) {
+                            if (imgSrc.startsWith("http")) imgSrc else "$baseUrl/$imgSrc"
+                        } else {
+                            null
+                        }
+                    },
+                )
                 seenUrls.add(normalizedUrl)
             }
         }
@@ -281,7 +311,13 @@ class IccFtp : Source(), ConfigurableAnimeSource {
     }
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val url = if (anime.url.contains("session=")) anime.url else if(anime.url.contains("?")) "${anime.url}&session=$sessionId" else "${anime.url}?session=$sessionId"
+        val url = if (anime.url.contains("session=")) {
+            anime.url
+        } else if (anime.url.contains("?")) {
+            "${anime.url}&session=$sessionId"
+        } else {
+            "${anime.url}?session=$sessionId"
+        }
         val doc = client.newCall(GET("$baseUrl/$url")).execute().asJsoup()
         val table = doc.select(".table > tbody:nth-child(1)")
         return anime.apply {
@@ -293,20 +329,28 @@ class IccFtp : Source(), ConfigurableAnimeSource {
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val url = if (anime.url.contains("session=")) anime.url else if(anime.url.contains("?")) "${anime.url}&session=$sessionId" else "${anime.url}?session=$sessionId"
+        val url = if (anime.url.contains("session=")) {
+            anime.url
+        } else if (anime.url.contains("?")) {
+            "${anime.url}&session=$sessionId"
+        } else {
+            "${anime.url}?session=$sessionId"
+        }
         val doc = client.newCall(GET("$baseUrl/$url")).execute().asJsoup()
         val downloadEpisode = doc.select(".btn-group > ul > li")
-        
+
         if (downloadEpisode.isEmpty()) {
             val videoLink = doc.selectFirst("video source")?.attr("src")
                 ?: doc.selectFirst("a.btn:contains(DOWNLOAD)")?.attr("href")
                 ?: doc.selectFirst("a.btn")?.attr("href") ?: ""
-            
-            return listOf(SEpisode.create().apply {
-                name = "Play Movie"
-                this.url = videoLink
-                episode_number = 1F
-            })
+
+            return listOf(
+                SEpisode.create().apply {
+                    name = "Play Movie"
+                    this.url = videoLink
+                    episode_number = 1F
+                },
+            )
         }
 
         return downloadEpisode.mapIndexed { index, it ->
@@ -331,31 +375,43 @@ class IccFtp : Source(), ConfigurableAnimeSource {
         AnimeFilter.Header("Use only one filter at a time"),
         CategoryFilter(),
         TVShowFilter(),
-        OtherFilter()
+        OtherFilter(),
     )
 
     private open class SelectFilter(name: String, val items: Array<Pair<String, String>>) : AnimeFilter.Select<String>(name, items.map { it.first }.toTypedArray()) {
         fun toValue() = items[state].second
     }
 
-    private class CategoryFilter : SelectFilter("Movies", arrayOf(
-        "None" to "0", "3D" to "9", "4K" to "74", "Animated" to "33", "Anime" to "83", "Bangla (BD)" to "59", 
-        "Bangla (Kolkata)" to "60", "Chinese" to "76", "Documentaries" to "41", "Dual Audio" to "43", 
-        "English" to "19", "Exclusive Full-HD" to "44", "Hindi" to "2", "Indonesian" to "79", 
-        "Japanese" to "80", "Korean" to "75", "Other Foreign" to "64", "Pakistani" to "77", 
-        "Punjabi" to "71", "South Indian (Hindi Dub)" to "32", "South Indian" to "73"
-    ))
+    private class CategoryFilter :
+        SelectFilter(
+            "Movies",
+            arrayOf(
+                "None" to "0", "3D" to "9", "4K" to "74", "Animated" to "33", "Anime" to "83", "Bangla (BD)" to "59",
+                "Bangla (Kolkata)" to "60", "Chinese" to "76", "Documentaries" to "41", "Dual Audio" to "43",
+                "English" to "19", "Exclusive Full-HD" to "44", "Hindi" to "2", "Indonesian" to "79",
+                "Japanese" to "80", "Korean" to "75", "Other Foreign" to "64", "Pakistani" to "77",
+                "Punjabi" to "71", "South Indian (Hindi Dub)" to "32", "South Indian" to "73",
+            ),
+        )
 
-    private class TVShowFilter : SelectFilter("TV Shows", arrayOf(
-        "None" to "0", "Awards" to "38", "Bangla Drama" to "34", "Bangla Telefilm" to "35", 
-        "Serials (Animation)" to "82", "Serials (Anime)" to "78", "Serials (Bangla)" to "39", 
-        "Serials (Documentaries)" to "81", "Serials (Dual Audio)" to "72", "Serials (English)" to "36", 
-        "Serials (Hindi)" to "37", "Serials (Others)" to "70", "WWE" to "52"
-    ))
+    private class TVShowFilter :
+        SelectFilter(
+            "TV Shows",
+            arrayOf(
+                "None" to "0", "Awards" to "38", "Bangla Drama" to "34", "Bangla Telefilm" to "35",
+                "Serials (Animation)" to "82", "Serials (Anime)" to "78", "Serials (Bangla)" to "39",
+                "Serials (Documentaries)" to "81", "Serials (Dual Audio)" to "72", "Serials (English)" to "36",
+                "Serials (Hindi)" to "37", "Serials (Others)" to "70", "WWE" to "52",
+            ),
+        )
 
-    private class OtherFilter : SelectFilter("Others", arrayOf(
-        "None" to "0", "E-Books" to "68", "Kids (Cartoon)" to "66", "Learning" to "53"
-    ))
+    private class OtherFilter :
+        SelectFilter(
+            "Others",
+            arrayOf(
+                "None" to "0", "E-Books" to "68", "Kids (Cartoon)" to "66", "Learning" to "53",
+            ),
+        )
 
     @Serializable data class SearchJsonItem(val id: String? = null, val image: String? = null, val name: String? = null)
 
@@ -367,7 +423,7 @@ class IccFtp : Source(), ConfigurableAnimeSource {
             summary = "The base URL for the ICC FTP server",
             getSummary = { it },
             validate = { it.startsWith("http://") || it.startsWith("https://") },
-            validationMessage = { "The URL must start with http:// or https://" }
+            validationMessage = { "The URL must start with http:// or https://" },
         )
     }
 

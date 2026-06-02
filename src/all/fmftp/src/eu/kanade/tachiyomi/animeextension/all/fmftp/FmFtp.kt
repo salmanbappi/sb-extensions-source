@@ -45,7 +45,7 @@ class FmFtp : Source() {
             val sanitizedQuery = query.replace("'", "").replace("\"", "")
             val response = client.newCall(GET("$apiBaseUrl/search?search=$sanitizedQuery")).execute()
             val bodyString = response.body.string()
-            
+
             // Handle error response gracefully
             if (bodyString.contains("\"success\":false")) {
                 return AnimesPage(emptyList(), false)
@@ -69,10 +69,12 @@ class FmFtp : Source() {
                     libraryId = filter.toValue()
                     contentType = "movies"
                 }
+
                 is TvLibraryFilter -> if (filter.toValue().isNotEmpty()) {
                     libraryId = filter.toValue()
                     contentType = "tv-shows"
                 }
+
                 else -> {}
             }
         }
@@ -110,13 +112,15 @@ class FmFtp : Source() {
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val type = anime.url.substringAfter("type=").substringBefore("&")
         val id = anime.url.substringAfter("id=")
-        
+
         if (type == "MOVIE") {
-            return listOf(SEpisode.create().apply {
-                name = "Play Movie"
-                url = "/watch?type=movies&id=$id"
-                episode_number = 1F
-            })
+            return listOf(
+                SEpisode.create().apply {
+                    name = "Play Movie"
+                    url = "/watch?type=movies&id=$id"
+                    episode_number = 1F
+                },
+            )
         } else {
             val response = client.newCall(GET("$apiBaseUrl/tv-shows/$id?fields=episodes")).execute()
             val content = json.decodeFromString<FmFtpContent>(response.body.string())
@@ -156,33 +160,41 @@ class FmFtp : Source() {
     override fun getFilterList() = AnimeFilterList(
         AnimeFilter.Header("Use only one filter at a time"),
         MovieLibraryFilter(),
-        TvLibraryFilter()
+        TvLibraryFilter(),
     )
 
     private open class SelectFilter(name: String, val items: Array<Pair<String, String>>) : AnimeFilter.Select<String>(name, items.map { it.first }.toTypedArray()) {
         fun toValue() = items[state].second
     }
 
-    private class MovieLibraryFilter : SelectFilter("Movies", arrayOf(
-        "None" to "",
-        "Bollywood" to "1",
-        "Hollywood" to "2",
-        "Indian Bangla" to "7",
-        "Tamil" to "8",
-        "Horror" to "6",
-        "Hindi dubbed" to "5",
-        "Korean" to "4",
-        "Animation" to "3"
-    ))
+    private class MovieLibraryFilter :
+        SelectFilter(
+            "Movies",
+            arrayOf(
+                "None" to "",
+                "Bollywood" to "1",
+                "Hollywood" to "2",
+                "Indian Bangla" to "7",
+                "Tamil" to "8",
+                "Horror" to "6",
+                "Hindi dubbed" to "5",
+                "Korean" to "4",
+                "Animation" to "3",
+            ),
+        )
 
-    private class TvLibraryFilter : SelectFilter("TV Shows", arrayOf(
-        "None" to "",
-        "Turkish Tv Series" to "13",
-        "Bangla Tv Series" to "12",
-        "korean Tv Series" to "11",
-        "Indian Tv Series" to "10",
-        "English tv series" to "9"
-    ))
+    private class TvLibraryFilter :
+        SelectFilter(
+            "TV Shows",
+            arrayOf(
+                "None" to "",
+                "Turkish Tv Series" to "13",
+                "Bangla Tv Series" to "12",
+                "korean Tv Series" to "11",
+                "Indian Tv Series" to "10",
+                "English tv series" to "9",
+            ),
+        )
 
     override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {}
 }

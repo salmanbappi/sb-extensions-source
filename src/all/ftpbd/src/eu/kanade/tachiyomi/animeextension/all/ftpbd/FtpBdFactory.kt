@@ -20,9 +20,9 @@ class FtpBdFactory : AnimeSourceFactory {
                 "FTP-3/South%20Indian%20Movies/2025/",
                 "FTP-3/Foreign%20Language%20Movies/2025/",
                 "FTP-3/Bangla%20Collection/",
-                "FTP-3/%5BToday%27s%20Upload%5D/"
+                "FTP-3/%5BToday%27s%20Upload%5D/",
             ),
-            FilterData.S3_CATEGORIES
+            FilterData.S3_CATEGORIES,
         ),
         FtpBd(
             "FTPBD (English)",
@@ -36,9 +36,9 @@ class FtpBdFactory : AnimeSourceFactory {
                 "FTP-2/English%20Movies/English-Movies-4K/",
                 "FTP-2/English%20Movies/Dual-Audio/",
                 "FTP-2/English%20Movies/IMDB%20TOP%20250/",
-                "FTP-2/3D%20Movies/"
+                "FTP-2/3D%20Movies/",
             ),
-            FilterData.S2_CATEGORIES
+            FilterData.S2_CATEGORIES,
         ),
         FtpBd(
             "FTPBD (Anime)",
@@ -77,9 +77,9 @@ class FtpBdFactory : AnimeSourceFactory {
                 "FTP-5/Animation%20Movies/%282000%29%20%26%20Before/",
                 "FTP-5/Animation%20Movies/4K%20Movies/",
                 "FTP-5/Animation%20Movies/Dual%20Audio/",
-                "FTP-5/Documentary/"
+                "FTP-5/Documentary/",
             ),
-            FilterData.S5_CATEGORIES
+            FilterData.S5_CATEGORIES,
         ),
         FtpBd(
             "FTPBD (Series & Tutorial)",
@@ -89,9 +89,9 @@ class FtpBdFactory : AnimeSourceFactory {
             "FTP-4/English-Foreign-TV-Series/",
             listOf(
                 "FTP-4/English-Foreign-TV-Series/",
-                "FTP-4/Tutorial/"
+                "FTP-4/Tutorial/",
             ),
-            FilterData.S4_CATEGORIES
+            FilterData.S4_CATEGORIES,
         ),
         FtpBd(
             "FTPBD (Sports)",
@@ -103,9 +103,9 @@ class FtpBdFactory : AnimeSourceFactory {
                 "FTP-7/WWE%20Wrestling/",
                 "FTP-7/All%20Elite%20Wrestling%20%28AEW%29/",
                 "FTP-7/Ultimate%20Fighting%20Championship%20%28UFC%29/",
-                "FTP-7/Awards--TV-Shows/"
+                "FTP-7/Awards--TV-Shows/",
             ),
-            FilterData.S7_CATEGORIES
-        )
+            FilterData.S7_CATEGORIES,
+        ),
     )
 }

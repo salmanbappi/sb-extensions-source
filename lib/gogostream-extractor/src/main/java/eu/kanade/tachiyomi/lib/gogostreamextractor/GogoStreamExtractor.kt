@@ -25,56 +25,55 @@ class GogoStreamExtractor(private val client: OkHttpClient) {
         .filter(Char::isDigit)
         .toByteArray()
 
-    fun videosFromUrl(serverUrl: String): List<Video> {
-        return runCatching {
-            val document = client.newCall(GET(serverUrl)).execute().asJsoup()
-            val iv = document.selectFirst("div.wrapper")!!.getBytesAfter("container-")
-            val secretKey = document.selectFirst("body[class]")!!.getBytesAfter("container-")
-            val decryptionKey = document.selectFirst("div.videocontent")!!.getBytesAfter("videocontent-")
+    fun videosFromUrl(serverUrl: String): List<Video> = runCatching {
+        val document = client.newCall(GET(serverUrl)).execute().asJsoup()
+        val iv = document.selectFirst("div.wrapper")!!.getBytesAfter("container-")
+        val secretKey = document.selectFirst("body[class]")!!.getBytesAfter("container-")
+        val decryptionKey = document.selectFirst("div.videocontent")!!.getBytesAfter("videocontent-")
 
-            val decryptedAjaxParams = cryptoHandler(
-                document.selectFirst("script[data-value]")!!.attr("data-value"),
-                iv,
-                secretKey,
-                encrypt = false,
-            ).substringAfter("&")
+        val decryptedAjaxParams = cryptoHandler(
+            document.selectFirst("script[data-value]")!!.attr("data-value"),
+            iv,
+            secretKey,
+            encrypt = false,
+        ).substringAfter("&")
 
-            val httpUrl = serverUrl.toHttpUrl()
-            val host = "https://" + httpUrl.host
-            val id = httpUrl.queryParameter("id") ?: throw Exception("error getting id")
-            val encryptedId = cryptoHandler(id, iv, secretKey)
-            val token = httpUrl.queryParameter("token")
-            val qualityPrefix = if (token != null) "Gogostream - " else "Vidstreaming - "
+        val httpUrl = serverUrl.toHttpUrl()
+        val host = "https://" + httpUrl.host
+        val id = httpUrl.queryParameter("id") ?: throw Exception("error getting id")
+        val encryptedId = cryptoHandler(id, iv, secretKey)
+        val token = httpUrl.queryParameter("token")
+        val qualityPrefix = if (token != null) "Gogostream - " else "Vidstreaming - "
 
-            val jsonResponse = client.newCall(
-                GET(
-                    "$host/encrypt-ajax.php?id=$encryptedId&$decryptedAjaxParams&alias=$id",
-                    Headers.headersOf(
-                        "X-Requested-With",
-                        "XMLHttpRequest",
-                    ),
+        val jsonResponse = client.newCall(
+            GET(
+                "$host/encrypt-ajax.php?id=$encryptedId&$decryptedAjaxParams&alias=$id",
+                Headers.headersOf(
+                    "X-Requested-With",
+                    "XMLHttpRequest",
                 ),
-            ).execute().body.string()
+            ),
+        ).execute().body.string()
 
-            val data = json.decodeFromString<EncryptedDataDto>(jsonResponse).data
-            val sourceList = cryptoHandler(data, iv, decryptionKey, false)
-                .let { json.decodeFromString<DecryptedDataDto>(it) }
-                .source
+        val data = json.decodeFromString<EncryptedDataDto>(jsonResponse).data
+        val sourceList = cryptoHandler(data, iv, decryptionKey, false)
+            .let { json.decodeFromString<DecryptedDataDto>(it) }
+            .source
 
-            when {
-                sourceList.size == 1 && sourceList.first().type == "hls" -> {
-                    val playlistUrl = sourceList.first().file
-                    playlistUtils.extractFromHls(playlistUrl, serverUrl, videoNameGen = { qualityPrefix + it })
-                }
-                else -> {
-                    val headers = Headers.headersOf("Referer", serverUrl)
-                    sourceList.map { video ->
-                        Video(video.file, qualityPrefix + video.label, video.file, headers)
-                    }
+        when {
+            sourceList.size == 1 && sourceList.first().type == "hls" -> {
+                val playlistUrl = sourceList.first().file
+                playlistUtils.extractFromHls(playlistUrl, serverUrl, videoNameGen = { qualityPrefix + it })
+            }
+
+            else -> {
+                val headers = Headers.headersOf("Referer", serverUrl)
+                sourceList.map { video ->
+                    Video(video.file, qualityPrefix + video.label, video.file, headers)
                 }
             }
-        }.getOrElse { emptyList() }
-    }
+        }
+    }.getOrElse { emptyList() }
 
     private fun cryptoHandler(
         string: String,

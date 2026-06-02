@@ -14,27 +14,29 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import extensions.utils.Source
 import extensions.utils.get
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.IOException
 import java.net.URLEncoder
 
-class BasPlay : Source(), ConfigurableAnimeSource {
+class BasPlay :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "Bas play"
     override val baseUrl = "http://103.87.212.46"
@@ -91,11 +93,22 @@ class BasPlay : Source(), ConfigurableAnimeSource {
             filters.forEach { filter ->
                 when (filter) {
                     is MovieCategoryFilter -> if (filter.toValue().isNotEmpty()) category = filter.toValue()
-                    is TvCategoryFilter -> if (filter.toValue().isNotEmpty()) { category = filter.toValue(); isTv = true }
+
+                    is TvCategoryFilter -> if (filter.toValue().isNotEmpty()) {
+                        category = filter.toValue()
+                        isTv = true
+                    }
+
                     else -> {}
                 }
             }
-            if (isTv) "$baseUrl/tv.php?category=$category" else if (category.isNotEmpty()) "$baseUrl/category.php?category=$category" else baseUrl
+            if (isTv) {
+                "$baseUrl/tv.php?category=$category"
+            } else if (category.isNotEmpty()) {
+                "$baseUrl/category.php?category=$category"
+            } else {
+                baseUrl
+            }
         }
         val separator = if (url.contains("?")) "&" else "?"
         url += "${separator}page=$page"
@@ -128,11 +141,13 @@ class BasPlay : Source(), ConfigurableAnimeSource {
             }
             if (seenUrls.contains(url)) continue
             seenUrls.add(url)
-            animeList.add(SAnime.create().apply {
-                this.url = url
-                this.title = title
-                this.thumbnail_url = if (imgSrc != null) fixUrl(imgSrc) else null
-            })
+            animeList.add(
+                SAnime.create().apply {
+                    this.url = url
+                    this.title = title
+                    this.thumbnail_url = if (imgSrc != null) fixUrl(imgSrc) else null
+                },
+            )
         }
         return AnimesPage(animeList, hasNextPage)
     }
@@ -157,29 +172,33 @@ class BasPlay : Source(), ConfigurableAnimeSource {
                 ?: doc.selectFirst("a.cta, a[href^='player.php']")?.attr("href")
                 ?: doc.selectFirst("video source")?.attr("src")
                 ?: anime.url
-            return listOf(SEpisode.create().apply {
-                name = "Play Movie"
-                this.url = videoLink ?: anime.url
-                episode_number = 1F
-            })
+            return listOf(
+                SEpisode.create().apply {
+                    name = "Play Movie"
+                    this.url = videoLink ?: anime.url
+                    episode_number = 1F
+                },
+            )
         } else {
             val episodes = mutableListOf<SEpisode>()
             val currentSeasonAttr = doc.selectFirst("select#seasonSelect option[selected]")?.attr("value")
             val currentSeasonVal = currentSeasonAttr?.toIntOrNull() ?: 1
-            
+
             parseEpisodesFromDoc(doc, episodes, currentSeasonVal)
-            
+
             val seasonOptions = doc.select("select#seasonSelect option")
             if (seasonOptions.size > 1) {
                 val seriesName = doc.selectFirst("h1.sec-title")?.text() ?: "Series"
                 val encodedSeries = URLEncoder.encode(seriesName, "UTF-8").replace("+", "%20")
-                
+
                 val otherSeasons = seasonOptions.mapNotNull { opt ->
                     val seasonValAttr = opt.attr("value")
                     val sVal = seasonValAttr.toIntOrNull() ?: 1
                     if (sVal != currentSeasonVal) {
                         "$baseUrl/tview.php?series=$encodedSeries&season=$seasonValAttr" to sVal
-                    } else null
+                    } else {
+                        null
+                    }
                 }
 
                 if (otherSeasons.isNotEmpty()) {
@@ -207,7 +226,7 @@ class BasPlay : Source(), ConfigurableAnimeSource {
             val epUrl = element.attr("data-src")
             val epNameRaw = element.selectFirst("div.text-sm")?.text() ?: element.text()
             val epNumAttr = element.attr("data-epnum").toFloatOrNull() ?: (index + 1).toFloat()
-            
+
             val match = Regex("""S(\d+)E(\d+)""", RegexOption.IGNORE_CASE).find(epNameRaw)
             val finalEpNum = if (match != null) {
                 val s = match.groupValues[1].toInt()
@@ -216,13 +235,15 @@ class BasPlay : Source(), ConfigurableAnimeSource {
             } else {
                 (seasonVal * 1000).toFloat() + epNumAttr
             }
-            
+
             if (epUrl.isNotBlank()) {
-                targetList.add(SEpisode.create().apply {
-                    this.name = epNameRaw
-                    this.url = if (epUrl.startsWith("http") || epUrl.startsWith("/")) epUrl else "/$epUrl"
-                    this.episode_number = finalEpNum
-                })
+                targetList.add(
+                    SEpisode.create().apply {
+                        this.name = epNameRaw
+                        this.url = if (epUrl.startsWith("http") || epUrl.startsWith("/")) epUrl else "/$epUrl"
+                        this.episode_number = finalEpNum
+                    },
+                )
             }
         }
     }
@@ -244,25 +265,33 @@ class BasPlay : Source(), ConfigurableAnimeSource {
     override fun getFilterList() = AnimeFilterList(
         AnimeFilter.Header("Use only one filter at a time"),
         MovieCategoryFilter(),
-        TvCategoryFilter()
+        TvCategoryFilter(),
     )
 
     private open class SelectFilter(name: String, val items: Array<Pair<String, String>>) : AnimeFilter.Select<String>(name, items.map { it.first }.toTypedArray()) {
         fun toValue() = items[state].second
     }
 
-    private class MovieCategoryFilter : SelectFilter("Movies", arrayOf(
-        "None" to "", "Animation" to "Animation", "Bangla" to "Bangla", "Bollywood" to "Bollywood", 
-        "Hollywood" to "Hollywood", "Chinese" to "Chinese", "Korean" to "Korean", 
-        "South Indian" to "South+Indian", "Dubbed Movie" to "Dubbed+Movie"
-    ))
+    private class MovieCategoryFilter :
+        SelectFilter(
+            "Movies",
+            arrayOf(
+                "None" to "", "Animation" to "Animation", "Bangla" to "Bangla", "Bollywood" to "Bollywood",
+                "Hollywood" to "Hollywood", "Chinese" to "Chinese", "Korean" to "Korean",
+                "South Indian" to "South+Indian", "Dubbed Movie" to "Dubbed+Movie",
+            ),
+        )
 
-    private class TvCategoryFilter : SelectFilter("TV Shows", arrayOf(
-        "None" to "", "ANIMATED TV SERIES" to "ANIMATED+TV+SERIES", "ENGLISH TV SERIES" to "ENGLISH+TV+SERIES", 
-        "HINDI TV SERIES" to "HINDI+TV+SERIES", "BANGLA TV SERIES" to "BANGLA+TV+SERIES", 
-        "CHINESE TV SERIES" to "CHINESE+TV+SERIES", "JAPANES TV SERIES" to "JAPANES+TV+SERIES", 
-        "KOREAN TV SERIES" to "KOREAN+TV+SERIES", "TURKISH TV SERIES" to "TURKISH+TV+SERIES", "UNDEFINE" to "UNDEFINE"
-    ))
+    private class TvCategoryFilter :
+        SelectFilter(
+            "TV Shows",
+            arrayOf(
+                "None" to "", "ANIMATED TV SERIES" to "ANIMATED+TV+SERIES", "ENGLISH TV SERIES" to "ENGLISH+TV+SERIES",
+                "HINDI TV SERIES" to "HINDI+TV+SERIES", "BANGLA TV SERIES" to "BANGLA+TV+SERIES",
+                "CHINESE TV SERIES" to "CHINESE+TV+SERIES", "JAPANES TV SERIES" to "JAPANES+TV+SERIES",
+                "KOREAN TV SERIES" to "KOREAN+TV+SERIES", "TURKISH TV SERIES" to "TURKISH+TV+SERIES", "UNDEFINE" to "UNDEFINE",
+            ),
+        )
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
 }

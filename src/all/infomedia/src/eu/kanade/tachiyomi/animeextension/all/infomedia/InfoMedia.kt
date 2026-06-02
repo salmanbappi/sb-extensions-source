@@ -9,21 +9,21 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.asJsoup
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Element
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.floatOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import uy.kohesive.injekt.injectLazy
-import java.net.URLEncoder
 import java.net.URLDecoder
+import java.net.URLEncoder
 
 class InfoMedia : AnimeHttpSource() {
 
@@ -51,39 +51,41 @@ class InfoMedia : AnimeHttpSource() {
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val elements = document.select("div.post-item")
-        
+
         val seenTitles = mutableSetOf<String>()
         val animeList = mutableListOf<SAnime>()
 
         elements.forEach { element ->
             val aTag = element.selectFirst("a.post-permalink") ?: element.selectFirst("a") ?: return@forEach
             val rawTitle = aTag.attr("title").ifEmpty { aTag.text() }.trim()
-            
+
             val match = seriesRegex.find(rawTitle)
             val displayTitle = if (match != null) match.groupValues[1].trim() else rawTitle
-            
+
             if (seenTitles.contains(displayTitle)) return@forEach
             seenTitles.add(displayTitle)
 
-            animeList.add(SAnime.create().apply {
-                val fullUrl = aTag.attr("abs:href")
-                val path = if (fullUrl.startsWith(baseUrl)) fullUrl.substringAfter(baseUrl) else fullUrl
-                
-                url = if (match != null) {
-                    "$path?is_series=true&base_title=${URLEncoder.encode(displayTitle, "UTF-8")}"
-                } else {
-                    path
-                }
-                title = displayTitle
-                thumbnail_url = element.selectFirst("img")?.attr("abs:src")
-            })
+            animeList.add(
+                SAnime.create().apply {
+                    val fullUrl = aTag.attr("abs:href")
+                    val path = if (fullUrl.startsWith(baseUrl)) fullUrl.substringAfter(baseUrl) else fullUrl
+
+                    url = if (match != null) {
+                        "$path?is_series=true&base_title=${URLEncoder.encode(displayTitle, "UTF-8")}"
+                    } else {
+                        path
+                    }
+                    title = displayTitle
+                    thumbnail_url = element.selectFirst("img")?.attr("abs:src")
+                },
+            )
         }
-        
+
         val grid = document.selectFirst("div.post-grid")
         val maxPages = grid?.attr("data-max-pages")?.toIntOrNull() ?: 1
         val currentPage = grid?.attr("data-page")?.toIntOrNull() ?: 1
         val hasNextPage = currentPage < maxPages || document.selectFirst("a.next, li.next") != null
-        
+
         return AnimesPage(animeList, hasNextPage)
     }
 
@@ -130,13 +132,13 @@ class InfoMedia : AnimeHttpSource() {
     override fun episodeListParse(response: Response): List<SEpisode> {
         val url = response.request.url.toString()
         val document = response.asJsoup()
-        
+
         if (url.contains("?s=")) {
             val elements = document.select("div.post-item")
             return elements.mapIndexed { index, element ->
                 val aTag = element.selectFirst("a.post-permalink") ?: element.selectFirst("a")!!
                 val epTitle = aTag.attr("title").ifEmpty { aTag.text() }.trim()
-                
+
                 SEpisode.create().apply {
                     name = epTitle
                     val fullUrl = aTag.attr("abs:href")
@@ -152,7 +154,7 @@ class InfoMedia : AnimeHttpSource() {
                     episode_number = 1f
                     val fullUrl = response.request.url.toString()
                     this.url = if (fullUrl.startsWith(baseUrl)) fullUrl.substringAfter(baseUrl) else fullUrl
-                }
+                },
             )
         }
     }
@@ -160,7 +162,7 @@ class InfoMedia : AnimeHttpSource() {
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
-        
+
         document.select("video-js").forEach { videoTag ->
             val settingsJson = videoTag.attr("data-settings")
             if (settingsJson.isNotEmpty()) {
@@ -179,7 +181,7 @@ class InfoMedia : AnimeHttpSource() {
                 } catch (e: Exception) {}
             }
         }
-        
+
         if (videoList.isEmpty()) {
             document.select("iframe").forEach { iframe ->
                 val src = iframe.attr("abs:src")
@@ -193,13 +195,14 @@ class InfoMedia : AnimeHttpSource() {
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        CategoryFilter()
+        CategoryFilter(),
     )
 
-    private class CategoryFilter : AnimeFilter.Select<String>(
-        "Category",
-        categories.map { it.first }.toTypedArray()
-    )
+    private class CategoryFilter :
+        AnimeFilter.Select<String>(
+            "Category",
+            categories.map { it.first }.toTypedArray(),
+        )
 
     companion object {
         private val categories = listOf(
@@ -223,7 +226,7 @@ class InfoMedia : AnimeHttpSource() {
             "Hindi Drama" to "categories/tv-show/hindi-drama/",
             "Kids Cartoon" to "categories/kids/cartoon/",
             "Kids Science" to "categories/kids/science/",
-            "Kids E-Book" to "categories/kids/e-book/"
+            "Kids E-Book" to "categories/kids/e-book/",
         )
     }
 }
