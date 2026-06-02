@@ -1,3 +1,6 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 apply plugin: 'com.android.application'
 apply plugin: 'kotlinx-serialization'
 
@@ -109,10 +112,10 @@ android {
 
 }
 
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-    kotlinOptions {
-        jvmTarget = "11"
-        freeCompilerArgs += ["-opt-in=kotlinx.serialization.ExperimentalSerializationApi"]
+tasks.withType(KotlinCompile).configureEach {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_11
+        freeCompilerArgs.add("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
     }
 }
 
