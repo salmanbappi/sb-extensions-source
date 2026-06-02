@@ -84,6 +84,17 @@ jobs:
         with:
           cache-read-only: true
 
+      - name: Run Spotless Apply
+        run: ./gradlew spotlessApply
+
+      - name: Commit and push changes
+        if: github.repository == 'salmanbappi/sb-extensions-source'
+        uses: EndBug/add-and-commit@v9
+        with:
+          default_author: github_actions
+          message: 'Apply Spotless formatting'
+          commit: '--no-verify'
+
       - name: Get last successful CI commit
         id: last_successful_ci_commit
         uses: nrwl/nx-set-shas@3e9ad7370203c1e93d109be57f3b72eb0eb511b1 # v4.4.0

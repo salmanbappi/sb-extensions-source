@@ -12,6 +12,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 env:
   CI_CHUNK_SIZE: 65
   IS_PR_CHECK: true
@@ -28,6 +31,8 @@ jobs:
       - name: Checkout PR
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
           fetch-depth: 0
 
       - name: Set env
@@ -71,6 +76,17 @@ jobs:
         uses: gradle/actions/setup-gradle@4d9f0ba0025fe599b4ebab900eb7f3a1d93ef4c2 # v5.0.0
         with:
           cache-read-only: true
+
+      - name: Run Spotless Apply
+        run: ./gradlew spotlessApply
+
+      - name: Commit and push changes
+        if: github.repository == github.event.pull_request.head.repo.full_name
+        uses: EndBug/add-and-commit@v9
+        with:
+          default_author: github_actions
+          message: 'Apply Spotless formatting'
+          commit: '--no-verify'
 
       - id: generate-matrices
         name: Generate build matrices

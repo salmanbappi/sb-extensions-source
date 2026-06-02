@@ -33,7 +33,13 @@ class PluginAndroidBase : Plugin<Project> {
             }
         }
 
-        tasks.getByName("preBuild").dependsOn(spotlessTaskName())
+        val skipSpotless = providers.gradleProperty("skipSpotless").orNull == "true" ||
+            providers.environmentVariable("SKIP_SPOTLESS").orNull == "true" ||
+            providers.environmentVariable("TERMUX_VERSION").orNull != null
+
+        if (!skipSpotless) {
+            tasks.getByName("preBuild").dependsOn(spotlessTaskName())
+        }
     }
 }
 
