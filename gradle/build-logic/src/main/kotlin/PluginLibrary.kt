@@ -5,6 +5,7 @@ import keiyoushi.gradle.extensions.implementation
 import keiyoushi.gradle.extensions.kei
 import keiyoushi.gradle.extensions.libs
 import keiyoushi.gradle.extensions.plugins
+import keiyoushi.gradle.extensions.printDependentExtensions
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
@@ -41,6 +42,12 @@ class PluginLibrary : Plugin<Project> {
         dependencies {
             compileOnly(libs.bundles.common)
             implementation(project(":core"))
+        }
+
+        tasks.register("printDependentExtensions") {
+            doLast {
+                printDependentExtensions()
+            }
         }
     }
 }
