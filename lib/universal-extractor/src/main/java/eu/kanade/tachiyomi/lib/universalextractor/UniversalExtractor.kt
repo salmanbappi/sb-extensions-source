@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit
 class UniversalExtractor(private val client: OkHttpClient) {
     private val context: Application by injectLazy()
     private val handler by lazy { Handler(Looper.getMainLooper()) }
+
     @SuppressLint("SetJavaScriptEnabled")
     fun videosFromUrl(origRequestUrl: String, origRequestHeader: Headers, customQuality: String? = null, prefix: String = ""): List<Video> {
         val host = origRequestUrl.toHttpUrl().host.substringBefore(".").proper()
@@ -91,21 +92,27 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 Log.d("UniversalExtractor", "m3u8 URL: $resultUrl")
                 playlistUtils.extractFromHls(resultUrl, origRequestUrl, videoNameGen = { "$prefix - $host: $it" })
             }
+
             "mpd" in resultUrl -> {
                 Log.d("UniversalExtractor", "mpd URL: $resultUrl")
                 playlistUtils.extractFromDash(resultUrl, { it -> "$prefix - $host: $it" }, referer = origRequestUrl)
             }
+
             "mp4" in resultUrl -> {
                 Log.d("UniversalExtractor", "mp4 URL: $resultUrl")
                 Video(resultUrl, "$prefix - $host: ${customQuality ?: "Mirror"}", resultUrl, origRequestHeader.newBuilder().add("referer", origRequestUrl).build()).let(::listOf)
             }
+
             else -> emptyList()
         }
     }
 
-    private fun String.proper(): String {
-        return this.replaceFirstChar { if (it.isLowerCase()) it.titlecase(
-            Locale.getDefault()) else it.toString() }
+    private fun String.proper(): String = this.replaceFirstChar {
+        if (it.isLowerCase()) {
+            it.titlecase(Locale.getDefault())
+        } else {
+            it.toString()
+        }
     }
 
     companion object {
