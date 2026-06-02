@@ -22,7 +22,7 @@ class PluginLibrary : Plugin<Project> {
         }
 
         android {
-            namespace = "aniyomi.lib.${project.name}"
+            namespace = "aniyomi.lib.${project.name.replace("-", "")}"
 
             sourceSets {
                 named("main") {
