@@ -3,7 +3,7 @@ ext {
     extClass = '.Pelisplushd'
     themePkg = 'pelisplus'
     baseUrl = 'https://pelisplushd.bz'
-    overrideVersionCode = 82
+    overrideVersionCode = 83
 }
 
 apply plugin: "kei.plugins.extension.legacy"

@@ -3,7 +3,7 @@ ext {
     extClass = '.HiAnime'
     themePkg = 'zorotheme'
     baseUrl = 'https://hianime.to'
-    overrideVersionCode = 66
+    overrideVersionCode = 67
 }
 
 apply plugin: "kei.plugins.extension.legacy"

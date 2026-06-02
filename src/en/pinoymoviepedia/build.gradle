@@ -3,7 +3,7 @@ ext {
     extClass = '.PinoyMoviePedia'
     themePkg = 'dooplay'
     baseUrl = 'https://pinoymoviepedia.ru'
-    overrideVersionCode = 6
+    overrideVersionCode = 7
     isNsfw = true
 }
 

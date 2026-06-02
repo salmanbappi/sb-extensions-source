@@ -3,7 +3,7 @@ ext {
     extClass = '.AnimeKai'
     themePkg = 'animekaitheme'
     baseUrl = 'https://animekai.to'
-    overrideVersionCode = 14
+    overrideVersionCode = 15
 }
 
 apply plugin: "kei.plugins.extension.legacy"

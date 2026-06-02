@@ -3,7 +3,7 @@ ext {
     extClass = '.SFlix'
     themePkg = 'dopeflix'
     baseUrl = 'https://sflix.to'
-    overrideVersionCode = 17
+    overrideVersionCode = 18
 }
 
 apply plugin: "kei.plugins.extension.legacy"

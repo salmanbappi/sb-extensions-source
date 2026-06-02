@@ -3,7 +3,7 @@ ext {
     extClass = '.Pelisplusto'
     themePkg = 'pelisplus'
     baseUrl = 'https://tioplus.app'
-    overrideVersionCode = 82
+    overrideVersionCode = 83
 }
 
 apply plugin: "kei.plugins.extension.legacy"

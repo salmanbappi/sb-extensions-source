@@ -1,7 +1,7 @@
 ext {
     extName = 'AniWave (Unoriginal)'
     extClass = '.AniWave'
-    extVersionCode = 2
+    extVersionCode = 3
 }
 
 apply plugin: "kei.plugins.extension.legacy"

@@ -3,7 +3,7 @@ ext {
     extClass = '.Kaido'
     themePkg = 'zorotheme'
     baseUrl = 'https://kaido.to'
-    overrideVersionCode = 18
+    overrideVersionCode = 19
 }
 
 apply plugin: "kei.plugins.extension.legacy"

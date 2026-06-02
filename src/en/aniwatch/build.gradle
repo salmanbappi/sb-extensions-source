@@ -3,7 +3,7 @@ ext {
     extClass = '.AniWatchtv'
     themePkg = 'zorotheme'
     baseUrl = 'https://aniwatchtv.to'
-    overrideVersionCode = 12
+    overrideVersionCode = 13
 }
 
 apply plugin: "kei.plugins.extension.legacy"
