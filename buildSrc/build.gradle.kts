@@ -9,8 +9,8 @@ repositories {
 }
 
 dependencies {
-    implementation(libs.gradle.agp)
-    implementation(libs.gradle.kotlin)
-    implementation(libs.gradle.serialization)
+    implementation(libs.android.gradle)
+    implementation(libs.kotlin.gradle)
+    implementation("org.jetbrains.kotlin:kotlin-serialization:${libs.versions.kotlin.gradle.get()}")
     implementation(libs.gradle.kotlinter)
 }
