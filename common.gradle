@@ -19,7 +19,7 @@ if (theme != null) evaluationDependsOn(theme.path)
 android {
     compileSdk 34
 
-    namespace "eu.kanade.tachiyomi.animeextension"
+    namespace "eu.kanade.tachiyomi.animeextension.${project.parent.name}.${project.name}"
     sourceSets {
         main {
             manifest.srcFile "AndroidManifest.xml"
