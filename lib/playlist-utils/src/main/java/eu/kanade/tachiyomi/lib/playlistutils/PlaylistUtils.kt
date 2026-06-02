@@ -133,7 +133,7 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
             )
         }.toList()
 
-        /**
+        /*
          * Stream might have multiple sub-streams separated by [PLAYLIST_SEPARATOR]. Template:
          *
          * #EXTM3U
