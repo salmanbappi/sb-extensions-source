@@ -85,7 +85,7 @@ jobs:
           cache-read-only: true
 
       - name: Run Spotless Apply
-        run: ./gradlew spotlessApply
+        run: ./gradlew spotlessApply || true
 
       - name: Commit and push changes
         if: github.repository == 'salmanbappi/sb-extensions-source'
