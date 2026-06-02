@@ -19,7 +19,7 @@ if (theme != null) evaluationDependsOn(theme.path)
 android {
     compileSdk 34
 
-    namespace "eu.kanade.tachiyomi.animeextension.${project.parent.name}.${project.name}"
+    namespace "eu.kanade.tachiyomi.animeextension"
     sourceSets {
         main {
             manifest.srcFile "AndroidManifest.xml"
@@ -42,7 +42,7 @@ android {
         manifestPlaceholders = [
                 appName : "Aniyomi: $extName",
                 author  : "salmanbappi",
-                extClass: extClass,
+                extClass: "." + project.parent.name + "." + project.name + extClass,
                 nsfw    : project.ext.find("isNsfw") ? 1 : 0,
         ]
         String baseUrl = project.ext.find("baseUrl") ?: ""
