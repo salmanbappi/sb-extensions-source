@@ -45,17 +45,19 @@ class Dflix : AnimeHttpSource() {
         .build()
 
     override val client: OkHttpClient = baseClient.newBuilder()
-        .dispatcher(okhttp3.Dispatcher().apply {
-            maxRequests = 100
-            maxRequestsPerHost = 100
-        })
+        .dispatcher(
+            okhttp3.Dispatcher().apply {
+                maxRequests = 100
+                maxRequestsPerHost = 100
+            },
+        )
         .addInterceptor { chain ->
             val request = chain.request()
             var response = chain.proceed(request)
-            
+
             val url = response.request.url.encodedPath
             var isLoginPage = url.contains("login/destroy") || url.contains("login/index") || url.contains("login/demo")
-            
+
             var needsRefresh = isLoginPage
             if (!needsRefresh && response.isSuccessful && request.header("X-Dflix-Retry") == null) {
                 val bodyString = response.peekBody(1024 * 20).string()
@@ -63,7 +65,7 @@ class Dflix : AnimeHttpSource() {
                     needsRefresh = true
                 }
             }
-            
+
             if (needsRefresh && request.header("X-Dflix-Retry") == null) {
                 response.close()
                 cm.refreshCookies()
@@ -95,9 +97,13 @@ class Dflix : AnimeHttpSource() {
     private fun fixUrl(url: String): String {
         if (url.isBlank()) return url
         val u = url.trim().replace(" ", "%20")
-        val fullUrl = if (u.startsWith("http")) u
-        else if (u.startsWith("/")) "$baseUrl$u"
-        else "$baseUrl/$u"
+        val fullUrl = if (u.startsWith("http")) {
+            u
+        } else if (u.startsWith("/")) {
+            "$baseUrl$u"
+        } else {
+            "$baseUrl/$u"
+        }
         return highResUrl(fullUrl)
     }
 
@@ -110,24 +116,20 @@ class Dflix : AnimeHttpSource() {
             .replace(Regex("""discoveryftp\.net/\d+//"""), "discoveryftp.net/1080//")
     }
 
-    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        return withContext(Dispatchers.IO) {
-            if (query.isNotEmpty()) {
-                val movies = fetchAnimeByType(query, "m")
-                val series = fetchAnimeByType(query, "s")
-                val combined = sortByTitle(movies + series, query)
-                AnimesPage(combined, false)
-            } else {
-                val url = Filters.getUrl(query, filters, page)
-                val response = client.newCall(GET(fixUrl(url), headers)).execute()
-                popularAnimeParse(response)
-            }
+    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage = withContext(Dispatchers.IO) {
+        if (query.isNotEmpty()) {
+            val movies = fetchAnimeByType(query, "m")
+            val series = fetchAnimeByType(query, "s")
+            val combined = sortByTitle(movies + series, query)
+            AnimesPage(combined, false)
+        } else {
+            val url = Filters.getUrl(query, filters, page)
+            val response = client.newCall(GET(fixUrl(url), headers)).execute()
+            popularAnimeParse(response)
         }
     }
 
-    private fun sortByTitle(list: List<SAnime>, query: String): List<SAnime> {
-        return list.sortedByDescending { diceCoefficient(it.title.lowercase(), query.lowercase()) }
-    }
+    private fun sortByTitle(list: List<SAnime>, query: String): List<SAnime> = list.sortedByDescending { diceCoefficient(it.title.lowercase(), query.lowercase()) }
 
     private fun diceCoefficient(s1: String, s2: String): Double {
         if (s1.length < 2 || s2.length < 2) return 0.0
@@ -150,24 +152,24 @@ class Dflix : AnimeHttpSource() {
             .add("term", query)
             .add("types", type)
             .build()
-        
+
         val request = okhttp3.Request.Builder()
             .url("$baseUrl/search")
             .post(formBody)
             .headers(headers)
             .build()
-        
+
         return try {
             val response = client.newCall(request).execute()
             val document = response.asJsoup()
             response.close()
-            
+
             document.select("div.moviesearchiteam a, a:has(div.fcard), a:has(div.card), div.card a").map { element ->
                 val card = element.selectFirst("div.p-1, div.fcard, div.card") ?: element
                 SAnime.create().apply {
                     url = fixUrl(element.attr("href"))
                     thumbnail_url = fixUrl(element.selectFirst("img")?.attr("src") ?: "")
-                    var titleText = card.selectFirst("div.searchtitle, div.ftitle, h3, .ftitle")?.text() 
+                    var titleText = card.selectFirst("div.searchtitle, div.ftitle, h3, .ftitle")?.text()
                         ?: element.selectFirst(".ftitle, .searchtitle")?.text()
                         ?: "Unknown"
                     if (type == "m") {
@@ -184,25 +186,21 @@ class Dflix : AnimeHttpSource() {
         }
     }
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return GET(fixUrl(Filters.getUrl(query, filters, page)), headers)
-    }
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = GET(fixUrl(Filters.getUrl(query, filters, page)), headers)
 
     override fun searchAnimeParse(response: Response) = popularAnimeParse(response)
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return GET("$baseUrl/m/recent/$page", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/m/recent/$page", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animeList = document.select("div.card a.cfocus, a:has(div.fcard), a:has(div.card), div.moviesearchiteam a")
             .map { animeFromElement(it) }
             .filter { it.title != "Unknown" }
-        
-        val hasNextPage = document.select("a.page-link:contains(Next)").isNotEmpty() || 
+
+        val hasNextPage = document.select("a.page-link:contains(Next)").isNotEmpty() ||
             (animeList.size >= 20 && !response.request.url.encodedPath.contains("/search"))
-        
+
         return AnimesPage(animeList, hasNextPage)
     }
 
@@ -273,14 +271,12 @@ class Dflix : AnimeHttpSource() {
 
     override fun getFilterList() = Filters.getFilterList()
 
-    override fun animeDetailsRequest(anime: SAnime): Request {
-        return GET(fixUrl(anime.url), headers)
-    }
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(fixUrl(anime.url), headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
         val mediaType = getMediaType(document)
-        
+
         return if (mediaType == "m") getMovieDetails(document) else getSeriesDetails(document)
     }
 
@@ -303,39 +299,37 @@ class Dflix : AnimeHttpSource() {
         description = document.selectFirst("p.storyline")?.text()?.trim() ?: ""
     }
 
-    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        return withContext(Dispatchers.IO) {
-            val response = client.newCall(GET(fixUrl(anime.url), headers)).execute()
-            val document = response.asJsoup()
-            val mediaType = getMediaType(document)
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = withContext(Dispatchers.IO) {
+        val response = client.newCall(GET(fixUrl(anime.url), headers)).execute()
+        val document = response.asJsoup()
+        val mediaType = getMediaType(document)
 
-            if (mediaType == "m") {
-                getMovieMedia(document)
+        if (mediaType == "m") {
+            getMovieMedia(document)
+        } else {
+            val seasonLinks = document.select("tbody tr th.card a[href^='/s/view/']")
+                .map { it.attr("href") }
+                .reversed()
+
+            val episodes = if (seasonLinks.isEmpty()) {
+                extractEpisodes(document)
             } else {
-                val seasonLinks = document.select("tbody tr th.card a[href^='/s/view/']")
-                    .map { it.attr("href") }
-                    .reversed()
-                
-                val episodes = if (seasonLinks.isEmpty()) {
-                    extractEpisodes(document)
-                } else {
-                    val semaphore = Semaphore(3)
-                    coroutineScope {
-                        val allLinks = (listOf(anime.url) + seasonLinks).distinct()
-                        allLinks.map { link ->
-                            async {
-                                semaphore.withPermit {
-                                    val res = client.newCall(GET(fixUrl(link), headers)).execute()
-                                    val doc = res.asJsoup()
-                                    res.close()
-                                    extractEpisodes(doc)
-                                }
+                val semaphore = Semaphore(3)
+                coroutineScope {
+                    val allLinks = (listOf(anime.url) + seasonLinks).distinct()
+                    allLinks.map { link ->
+                        async {
+                            semaphore.withPermit {
+                                val res = client.newCall(GET(fixUrl(link), headers)).execute()
+                                val doc = res.asJsoup()
+                                res.close()
+                                extractEpisodes(doc)
                             }
-                        }.awaitAll().flatten()
-                    }
+                        }
+                    }.awaitAll().flatten()
                 }
-                sortEpisodes(episodes)
             }
+            sortEpisodes(episodes)
         }
     }
 
@@ -344,17 +338,19 @@ class Dflix : AnimeHttpSource() {
             val titleElement = element.selectFirst("h5") ?: return@mapNotNull null
             val rawTitle = titleElement.ownText().trim()
             if (rawTitle.isEmpty()) return@mapNotNull null
-            
+
             val seasonEpisode = rawTitle.split("&nbsp;").first().trim()
             val url = element.selectFirst("h5 a")?.attr("href")?.trim() ?: ""
             val qualityText = element.selectFirst("h5 .badge-fill")?.text() ?: ""
             val quality = sizeRegex.replace(qualityText, "$1").trim()
             val epName = element.selectFirst("h4")?.ownText()?.trim() ?: ""
             val size = element.selectFirst("h4 .badge-outline")?.text()?.trim() ?: ""
-            
+
             if (seasonEpisode.isNotEmpty() && url.isNotEmpty()) {
                 EpisodeData(seasonEpisode, url, quality, epName, size)
-            } else null
+            } else {
+                null
+            }
         }
     }
 
@@ -362,20 +358,22 @@ class Dflix : AnimeHttpSource() {
         val linkElement = document.select("div.col-md-12 a.btn").lastOrNull()
         val url = linkElement?.attr("href")?.let { it.replace(" ", "%20") } ?: ""
         val quality = document.select(".badge-wrapper .badge-fill").lastOrNull()?.text()?.replace("|", "•")?.trim() ?: ""
-        
-        return listOf(SEpisode.create().apply {
-            this.url = url
-            this.name = "Movie"
-            this.episode_number = 1f
-            this.scanlator = quality
-        })
+
+        return listOf(
+            SEpisode.create().apply {
+                this.url = url
+                this.name = "Movie"
+                this.episode_number = 1f
+                this.scanlator = quality
+            },
+        )
     }
 
     private fun sortEpisodes(list: List<EpisodeData>): List<SEpisode> {
         val distinctList = list.distinctBy { it.videoUrl }
         return distinctList.sortedWith(
             compareByDescending<EpisodeData> { it.seasonNumber }
-                .thenByDescending { it.episodeNumber }
+                .thenByDescending { it.episodeNumber },
         ).mapIndexed { index, it ->
             SEpisode.create().apply {
                 url = it.videoUrl
@@ -404,7 +402,7 @@ class Dflix : AnimeHttpSource() {
         val videoUrl: String,
         val quality: String,
         val episodeName: String,
-        val size: String
+        val size: String,
     ) {
         val seasonNumber: Int = SEASON_PATTERN.find(seasonEpisode)?.groupValues?.get(1)?.toIntOrNull() ?: 0
         val episodeNumber: Int = EPISODE_PATTERN.find(seasonEpisode)?.groupValues?.get(1)?.toIntOrNull() ?: 0
@@ -412,7 +410,7 @@ class Dflix : AnimeHttpSource() {
 
     class CookieManager(private val client: OkHttpClient) {
         private val cookieUrl = "https://dflix.discoveryftp.net/login/demo".toHttpUrl()
-        
+
         @Volatile
         private var cookies: List<Cookie> = emptyList()
         private val lock = Any()

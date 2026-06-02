@@ -8,17 +8,17 @@ object FilterData {
         "Genre",
         "Type & Year",
         "Dual Audio",
-        "Language"
+        "Language",
     )
 
     val GENRES = arrayOf(
         "Action", "Adventure", "Comedy", "Crime", "Documentary", "Drama", "Family",
         "Fantasy", "History", "Horror", "Musical", "Mystery", "Romance", "Sci-Fi",
-        "Thriller", "Tv Movie", "War", "Western"
+        "Thriller", "Tv Movie", "War", "Western",
     )
 
     val CATEGORIES = arrayOf(
-        "Animation", "Bangla", "English", "Hindi", "Others", "Tamil"
+        "Animation", "Bangla", "English", "Hindi", "Others", "Tamil",
     )
 
     val YEARS = (2026 downTo 2000).map { it.toString() }.toTypedArray()
