@@ -14,7 +14,10 @@ import okhttp3.OkHttpClient
 class VidHideExtractor(private val client: OkHttpClient, private val headers: Headers) {
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-    private val json = Json { isLenient = true; ignoreUnknownKeys = true }
+    private val json = Json {
+        isLenient = true
+        ignoreUnknownKeys = true
+    }
     private val sourceRegex = Regex(""""(http[^"]*?m3u8[^"]*?)"""")
 
     fun videosFromUrl(url: String, videoNameGen: (String) -> String = { quality -> "VidHide - $quality" }): List<Video> {
@@ -26,22 +29,18 @@ class VidHideExtractor(private val client: OkHttpClient, private val headers: He
             videoUrl,
             referer = url,
             videoNameGen = videoNameGen,
-            subtitleList = subtitleList
+            subtitleList = subtitleList,
         )
     }
 
-    private fun fetchAndExtractScript(url: String): String? {
-        return client.newCall(GET(url, headers)).execute()
-            .asJsoup()
-            .select("script")
-            .find { it.html().contains("eval(function(p,a,c,k,e,d)") }
-            ?.html()
-            ?.let { JsUnpacker(it).unpack() }
-    }
+    private fun fetchAndExtractScript(url: String): String? = client.newCall(GET(url, headers)).execute()
+        .asJsoup()
+        .select("script")
+        .find { it.html().contains("eval(function(p,a,c,k,e,d)") }
+        ?.html()
+        ?.let { JsUnpacker(it).unpack() }
 
-    private fun extractVideoUrl(script: String): String? {
-        return sourceRegex.find(script)?.groupValues?.get(1)
-    }
+    private fun extractVideoUrl(script: String): String? = sourceRegex.find(script)?.groupValues?.get(1)
 
     private fun extractSubtitles(script: String): List<Track> {
         return try {
