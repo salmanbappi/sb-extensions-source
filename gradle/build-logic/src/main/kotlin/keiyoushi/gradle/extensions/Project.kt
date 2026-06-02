@@ -3,9 +3,9 @@ package keiyoushi.gradle.extensions
 import org.gradle.accessors.dm.LibrariesForKei
 import org.gradle.accessors.dm.LibrariesForLibs
 import org.gradle.api.Project
+import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.plugins.PluginManager
 import org.gradle.kotlin.dsl.the
-import org.gradle.api.artifacts.ProjectDependency
 
 internal val Project.libs get() = the<LibrariesForLibs>()
 internal val Project.kei get() = the<LibrariesForKei>()
@@ -55,11 +55,12 @@ private fun Project.printDependentExtensions(visited: MutableSet<String>) {
         when {
             project.path.startsWith(":src:") ->
                 println(project.path)
+
             project.path.startsWith(":lib-multisrc:") ->
                 project.getDependents().forEach { println(it.path) }
+
             project.path.startsWith(":lib:") ->
                 project.printDependentExtensions(visited)
         }
     }
 }
-
