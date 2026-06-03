@@ -263,7 +263,7 @@ class Nepu :
     private fun parseEpisodeNumber(text: String): Float = Regex("""(?i)(?:Episode|Ep|E|Vol|Temporada)\.?\s*(\d+(\.\d+)?)""").find(text)
         ?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
 
-    private fun buildVideoHeaders(refererUrl: String): okhttp3.Headers {
+    private fun buildVideoHeaders(videoUrl: String, refererUrl: String): okhttp3.Headers {
         val referer = refererUrl.takeIf { it.startsWith("http") } ?: "$baseUrl/"
 
         val origin = try {
@@ -281,15 +281,15 @@ class Nepu :
             .set("Sec-CH-UA-Mobile", "?1")
             .set("Sec-CH-UA-Platform", "\"Android\"")
 
-        val isBaseUrl = try {
-            val refererHost = referer.toHttpUrl().host
+        val isVideoOnBaseUrl = try {
+            val videoHost = videoUrl.toHttpUrl().host
             val baseHost = baseUrl.toHttpUrl().host
-            refererHost.endsWith(baseHost)
+            videoHost.endsWith(baseHost)
         } catch (_: Exception) {
             false
         }
 
-        if (isBaseUrl) {
+        if (isVideoOnBaseUrl) {
             val cookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
             if (cookies.isNotEmpty()) {
                 builder.set("Cookie", cookies)
@@ -326,6 +326,10 @@ class Nepu :
                     .header("X-Requested-With", "XMLHttpRequest")
                     .header("Referer", pageUrl)
                     .header("Origin", baseUrl)
+                    .header("Accept", "*/*")
+                    .header("Sec-Fetch-Site", "same-origin")
+                    .header("Sec-Fetch-Mode", "cors")
+                    .header("Sec-Fetch-Dest", "empty")
                     .build()
 
                 try {
@@ -369,7 +373,7 @@ class Nepu :
 
                         fun extractVideos(finalUrl: String, name: String, refererContext: String) {
                             if (!finalUrl.contains(".")) return
-                            val mediaHeaders = buildVideoHeaders(refererContext)
+                            val mediaHeaders = buildVideoHeaders(finalUrl, refererContext)
 
                             if (finalUrl.contains(".mp4") || finalUrl.contains(".m3u8")) {
                                 videoList.add(Video(finalUrl, name, finalUrl, headers = mediaHeaders))
@@ -417,7 +421,7 @@ class Nepu :
             document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe, iframe[src*='embed']").forEach { iframe ->
                 val src = iframe.attr("abs:src")
                 if (src.isNotBlank() && !src.contains("index.html")) {
-                    val videoHeaders = buildVideoHeaders(src)
+                    val videoHeaders = buildVideoHeaders(src, src)
 
                     if (src.contains(".mp4") || src.contains(".m3u8")) {
                         videoList.add(Video(src, "Video", src, headers = videoHeaders))
@@ -454,7 +458,7 @@ class Nepu :
         // Final Fallback for internal player (e.g. Gravity Falls)
         // If the video is not in an iframe but loaded dynamically on the page itself
         if (videoList.isEmpty()) {
-            val videoHeaders = buildVideoHeaders(pageUrl)
+            val videoHeaders = buildVideoHeaders(pageUrl, pageUrl)
 
             try {
                 val extracted = UniversalExtractor(client).videosFromUrl(pageUrl, videoHeaders, prefix = "Internal Player")
