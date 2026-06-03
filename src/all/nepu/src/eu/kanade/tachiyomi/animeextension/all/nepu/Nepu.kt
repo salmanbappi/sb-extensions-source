@@ -470,7 +470,32 @@ class Nepu :
             }
         }
 
-        return videoList.distinctBy { it.videoUrl }
+        return videoList.distinctBy { it.videoUrl }.map { video ->
+            val videoUrl = video.videoUrl
+            val isVideoOnBaseUrl = try {
+                val videoHost = videoUrl.toHttpUrl().host
+                val baseHost = baseUrl.toHttpUrl().host
+                videoHost.endsWith(baseHost)
+            } catch (_: Exception) {
+                false
+            }
+
+            if (!isVideoOnBaseUrl && video.headers != null) {
+                val cleanHeaders = video.headers.newBuilder().apply {
+                    removeAll("Cookie")
+                }.build()
+                Video(
+                    url = video.url,
+                    quality = video.quality,
+                    videoUrl = video.videoUrl,
+                    headers = cleanHeaders,
+                    subtitleTracks = video.subtitleTracks,
+                    audioTracks = video.audioTracks,
+                )
+            } else {
+                video
+            }
+        }
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()

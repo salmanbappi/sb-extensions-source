@@ -78,7 +78,7 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         referer: String = playlistUrl.toDefaultReferer(),
         masterHeadersGen: (Headers, String) -> Headers = ::generateMasterHeaders,
         videoHeadersGen: (Headers, String, String) -> Headers = { baseHeaders, referer, videoUrl ->
-            generateMasterHeaders(baseHeaders, referer)
+            generateMasterHeaders(baseHeaders, referer, videoUrl)
         },
         videoNameGen: (String) -> String = { quality -> quality },
         subtitleList: List<Track> = emptyList(),
@@ -87,7 +87,15 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
             stnQuality(quality)
         },
     ): List<Video> {
-        val masterHeaders = masterHeadersGen(headers, referer)
+        val masterHeaders = masterHeadersGen(headers, referer).newBuilder().apply {
+            try {
+                val masterHost = playlistUrl.toHttpUrl().host
+                val refererHost = referer.toHttpUrl().host
+                if (!masterHost.endsWith(refererHost) && !refererHost.endsWith(masterHost)) {
+                    removeAll("Cookie")
+                }
+            } catch (_: Exception) {}
+        }.build()
 
         val masterPlaylist = client.newCall(GET(playlistUrl, masterHeaders)).execute()
             .body.string()
@@ -221,11 +229,23 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         else -> masterBase + url
     }
 
-    fun generateMasterHeaders(baseHeaders: Headers, referer: String): Headers = baseHeaders.newBuilder().apply {
+    fun generateMasterHeaders(baseHeaders: Headers, referer: String): Headers =
+        generateMasterHeaders(baseHeaders, referer, null)
+
+    fun generateMasterHeaders(baseHeaders: Headers, referer: String, destinationUrl: String?): Headers = baseHeaders.newBuilder().apply {
         set("Accept", "*/*")
         if (referer.isNotEmpty()) {
             set("Origin", "https://${referer.toHttpUrl().host}")
             set("Referer", referer)
+        }
+        if (destinationUrl != null && referer.isNotEmpty()) {
+            try {
+                val destHost = destinationUrl.toHttpUrl().host
+                val refHost = referer.toHttpUrl().host
+                if (!destHost.endsWith(refHost) && !refHost.endsWith(destHost)) {
+                    removeAll("Cookie")
+                }
+            } catch (_: Exception) {}
         }
     }.build()
 
@@ -297,7 +317,7 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         referer: String = mpdUrl.toDefaultReferer(),
         mpdHeadersGen: (Headers, String) -> Headers = ::generateMasterHeaders,
         videoHeadersGen: (Headers, String, String) -> Headers = { baseHeaders, referer, videoUrl ->
-            generateMasterHeaders(baseHeaders, referer)
+            generateMasterHeaders(baseHeaders, referer, videoUrl)
         },
         subtitleList: List<Track> = emptyList(),
         audioList: List<Track> = emptyList(),
@@ -346,7 +366,7 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         referer: String = mpdUrl.toDefaultReferer(),
         mpdHeadersGen: (Headers, String) -> Headers = ::generateMasterHeaders,
         videoHeadersGen: (Headers, String, String) -> Headers = { baseHeaders, referer, videoUrl ->
-            generateMasterHeaders(baseHeaders, referer)
+            generateMasterHeaders(baseHeaders, referer, videoUrl)
         },
         subtitleList: List<Track> = emptyList(),
         audioList: List<Track> = emptyList(),
@@ -354,7 +374,15 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
             stnQuality(quality)
         },
     ): List<Video> {
-        val mpdHeaders = mpdHeadersGen(headers, referer)
+        val mpdHeaders = mpdHeadersGen(headers, referer).newBuilder().apply {
+            try {
+                val mpdHost = mpdUrl.toHttpUrl().host
+                val refererHost = referer.toHttpUrl().host
+                if (!mpdHost.endsWith(refererHost) && !refererHost.endsWith(mpdHost)) {
+                    removeAll("Cookie")
+                }
+            } catch (_: Exception) {}
+        }.build()
 
         val doc = client.newCall(GET(mpdUrl, mpdHeaders)).execute()
             .asJsoup()
