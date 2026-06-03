@@ -203,6 +203,18 @@ class Nepu :
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = response.asJsoup()
+        val url = response.request.url.toString()
+
+        if (url.contains("/movie/")) {
+            return listOf(
+                SEpisode.create().apply {
+                    name = "Movie"
+                    setUrlWithoutDomain(url)
+                    episode_number = 1f
+                },
+            )
+        }
+
         val seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane, div.episodes")
 
         val episodeList = mutableListOf<SEpisode>()
@@ -261,15 +273,30 @@ class Nepu :
             baseUrl
         }
 
-        return headers.newBuilder()
+        val builder = headers.newBuilder()
             .set("Referer", referer)
             .set("Origin", origin)
             .set("Accept", "*/*")
-            .set("Cookie", client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" })
             .set("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
             .set("Sec-CH-UA-Mobile", "?1")
             .set("Sec-CH-UA-Platform", "\"Android\"")
-            .build()
+
+        val isBaseUrl = try {
+            val refererHost = referer.toHttpUrl().host
+            val baseHost = baseUrl.toHttpUrl().host
+            refererHost.endsWith(baseHost)
+        } catch (_: Exception) {
+            false
+        }
+
+        if (isBaseUrl) {
+            val cookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+            if (cookies.isNotEmpty()) {
+                builder.set("Cookie", cookies)
+            }
+        }
+
+        return builder.build()
     }
 
     // ============================ Video Links =============================
