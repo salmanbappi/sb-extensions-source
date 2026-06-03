@@ -1,29 +1,25 @@
 <div align="center">
 
-| Install on Aniyomi | Install on Anikku | Build | Discord |
-|:------------------:|:-----------------:|:-----:|:-------:|
-| [![Install](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=flat&labelColor=red)](https://intradeus.github.io/http-protocol-redirector/?r=aniyomi://add-repo?url=https://raw.githubusercontent.com/salmanbappi/extensions-repo/main/index.min.json) | [![Install](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=flat&labelColor=red)](https://intradeus.github.io/http-protocol-redirector/?r=anikku://add-repo?url=https://raw.githubusercontent.com/salmanbappi/extensions-repo/main/index.min.json) | ![CI](https://github.com/salmanbappi/sb-extensions-source/actions/workflows/build_push.yml/badge.svg) | [![Discord](https://img.shields.io/discord/1377136877491982366.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/85MZhUX688) |
+| Install on AniZen | Build | Discord |
+|:-----------------:|:-----:|:-------:|
+| [![Install](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=flat&labelColor=red)](https://intradeus.github.io/http-protocol-redirector/?r=anizen://add-repo?url=https://raw.githubusercontent.com/salmanbappi/extensions-repo/main/index.min.json) | ![CI](https://github.com/salmanbappi/sb-extensions-source/actions/workflows/build_push.yml/badge.svg) | [![Discord](https://img.shields.io/discord/1377136877491982366.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/85MZhUX688) |
 
 [![Sponsor me on GitHub](https://custom-icon-badges.demolab.com/badge/-Sponsor-ea4aaa?style=for-the-badge&logo=heart&logoColor=white)](https://github.com/sponsors/salmanbappi "Sponsor me on GitHub")
 
 ![Visitor Count](https://count.getloli.com/get/@salmanbappi?theme=capoo-2)
 </div>
 
-# ![app icon](./.github/readme-images/app-icon.png) Anikku/Aniyomi Extensions
+# ![app icon](./.github/readme-images/app-icon.png) AniZen Extensions
 
-Anikku/Aniyomi is a free and open source anime player for Android 6.0 and above.
+AniZen is a free and open source anime player for Android 6.0 and above.
 
-This repository contains the available extension catalogues for the [Anikku](https://github.com/komikku-app/anikku) or [Aniyomi](https://github.com/aniyomiorg/aniyomi) forks.
+This repository contains the available extension catalogues for the [AniZen](https://github.com/salmanbappi/AniZen) player.
 
-## Recommend App
+## Recommended App
 
-### [Anikku](https://github.com/komikku-app/anikku)
-
-### [Aniyomi](https://github.com/aniyomiorg/aniyomi)
+### [AniZen](https://github.com/salmanbappi/AniZen)
 
 ## How to add the repo
-
-**If you are new to repository/extensions, please refer to the official [Aniyomi Extensions guide](https://aniyomi.org/docs/guides/extensions) first.**
 
 * You can add our repo by visiting the [Extensions Repository](https://github.com/salmanbappi/extensions-repo)
 * Otherwise, copy & paste the following URL:
@@ -74,6 +70,6 @@ It might also be good to read our [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
 
 This project does not have any affiliation with the content providers available.
 
-This project is not affiliated with Anikku/Aniyomi. Don't ask for help about these extensions at the official support channels of Anikku/Aniyomi. All credits to the codebase go to the original contributors.
+All credits to the codebase go to the original contributors.
 
 The developer of this application does not have any affiliation with the content providers available.
