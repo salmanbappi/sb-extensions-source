@@ -93,6 +93,7 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
                 val refererHost = referer.toHttpUrl().host
                 if (!masterHost.endsWith(refererHost) && !refererHost.endsWith(masterHost)) {
                     removeAll("Cookie")
+                    removeAll("Origin")
                 }
             } catch (_: Exception) {}
         }.build()
@@ -243,6 +244,7 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
                 val refHost = referer.toHttpUrl().host
                 if (!destHost.endsWith(refHost) && !refHost.endsWith(destHost)) {
                     removeAll("Cookie")
+                    removeAll("Origin")
                 }
             } catch (_: Exception) {}
         }
@@ -379,6 +381,7 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
                 val refererHost = referer.toHttpUrl().host
                 if (!mpdHost.endsWith(refererHost) && !refererHost.endsWith(mpdHost)) {
                     removeAll("Cookie")
+                    removeAll("Origin")
                 }
             } catch (_: Exception) {}
         }.build()
