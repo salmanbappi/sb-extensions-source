@@ -95,6 +95,10 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
                     removeAll("Cookie")
                     removeAll("Origin")
                 }
+                val cookies = client.cookieJar.loadForRequest(playlistUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+                if (cookies.isNotEmpty()) {
+                    set("Cookie", cookies)
+                }
             } catch (_: Exception) {}
         }.build()
 
@@ -238,15 +242,23 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
             set("Origin", "https://${referer.toHttpUrl().host}")
             set("Referer", referer)
         }
-        if (destinationUrl != null && referer.isNotEmpty()) {
+        if (destinationUrl != null) {
             try {
-                val destHost = destinationUrl.toHttpUrl().host
-                val refHost = referer.toHttpUrl().host
-                if (!destHost.endsWith(refHost) && !refHost.endsWith(destHost)) {
-                    removeAll("Cookie")
-                    removeAll("Origin")
+                removeAll("Cookie")
+                val cookies = client.cookieJar.loadForRequest(destinationUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+                if (cookies.isNotEmpty()) {
+                    set("Cookie", cookies)
                 }
             } catch (_: Exception) {}
+            if (referer.isNotEmpty()) {
+                try {
+                    val destHost = destinationUrl.toHttpUrl().host
+                    val refHost = referer.toHttpUrl().host
+                    if (!destHost.endsWith(refHost) && !refHost.endsWith(destHost)) {
+                        removeAll("Origin")
+                    }
+                } catch (_: Exception) {}
+            }
         }
     }.build()
 
@@ -382,6 +394,10 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
                 if (!mpdHost.endsWith(refererHost) && !refererHost.endsWith(mpdHost)) {
                     removeAll("Cookie")
                     removeAll("Origin")
+                }
+                val cookies = client.cookieJar.loadForRequest(mpdUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+                if (cookies.isNotEmpty()) {
+                    set("Cookie", cookies)
                 }
             } catch (_: Exception) {}
         }.build()

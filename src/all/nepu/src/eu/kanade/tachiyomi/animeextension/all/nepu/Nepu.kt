@@ -484,6 +484,12 @@ class Nepu :
             if (!isVideoOnBaseUrl && videoHeaders != null) {
                 val cleanHeaders = videoHeaders.newBuilder().apply {
                     removeAll("Cookie")
+                    try {
+                        val cookies = client.cookieJar.loadForRequest(videoUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+                        if (cookies.isNotEmpty()) {
+                            set("Cookie", cookies)
+                        }
+                    } catch (_: Exception) {}
                     removeAll("Origin")
                 }.build()
                 Video(
