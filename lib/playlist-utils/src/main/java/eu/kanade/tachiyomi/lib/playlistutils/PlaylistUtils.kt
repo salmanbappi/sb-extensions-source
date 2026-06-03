@@ -229,8 +229,7 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         else -> masterBase + url
     }
 
-    fun generateMasterHeaders(baseHeaders: Headers, referer: String): Headers =
-        generateMasterHeaders(baseHeaders, referer, null)
+    fun generateMasterHeaders(baseHeaders: Headers, referer: String): Headers = generateMasterHeaders(baseHeaders, referer, null)
 
     fun generateMasterHeaders(baseHeaders: Headers, referer: String, destinationUrl: String?): Headers = baseHeaders.newBuilder().apply {
         set("Accept", "*/*")
