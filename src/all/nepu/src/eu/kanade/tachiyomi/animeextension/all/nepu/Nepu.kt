@@ -63,7 +63,6 @@ class Nepu :
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
-        .set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36")
         .set("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
@@ -277,9 +276,6 @@ class Nepu :
             .set("Referer", referer)
             .set("Origin", origin)
             .set("Accept", "*/*")
-            .set("Sec-CH-UA", "\"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"121\", \"Chromium\";v=\"121\"")
-            .set("Sec-CH-UA-Mobile", "?1")
-            .set("Sec-CH-UA-Platform", "\"Android\"")
 
         val isVideoOnBaseUrl = try {
             val videoHost = videoUrl.toHttpUrl().host
