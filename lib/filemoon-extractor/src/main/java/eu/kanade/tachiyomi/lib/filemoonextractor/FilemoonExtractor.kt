@@ -62,7 +62,8 @@ class FilemoonExtractor(
             }
         }
 
-        val videoList = playlistUtils.extractFromHls(
+        val localPlaylistUtils = PlaylistUtils(client, videoHeaders)
+        val videoList = localPlaylistUtils.extractFromHls(
             masterUrl,
             subtitleList = subtitleTracks,
             referer = "https://${httpUrl.host}/",
@@ -75,6 +76,7 @@ class FilemoonExtractor(
                 url = it.url,
                 quality = it.quality,
                 videoUrl = it.videoUrl,
+                headers = it.headers,
                 audioTracks = it.audioTracks,
                 subtitleTracks = it.subtitleTracks.filter { tracks -> tracks.lang.contains(subPref, true) },
             )
