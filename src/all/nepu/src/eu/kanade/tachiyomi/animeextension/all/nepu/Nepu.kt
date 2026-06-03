@@ -473,15 +473,20 @@ class Nepu :
         return videoList.distinctBy { it.videoUrl }.map { video ->
             val videoUrl = video.videoUrl
             val isVideoOnBaseUrl = try {
-                val videoHost = videoUrl.toHttpUrl().host
-                val baseHost = baseUrl.toHttpUrl().host
-                videoHost.endsWith(baseHost)
+                if (!videoUrl.isNullOrBlank()) {
+                    val videoHost = videoUrl.toHttpUrl().host
+                    val baseHost = baseUrl.toHttpUrl().host
+                    videoHost.endsWith(baseHost)
+                } else {
+                    false
+                }
             } catch (_: Exception) {
                 false
             }
 
-            if (!isVideoOnBaseUrl && video.headers != null) {
-                val cleanHeaders = video.headers.newBuilder().apply {
+            val videoHeaders = video.headers
+            if (!isVideoOnBaseUrl && videoHeaders != null) {
+                val cleanHeaders = videoHeaders.newBuilder().apply {
                     removeAll("Cookie")
                 }.build()
                 Video(
