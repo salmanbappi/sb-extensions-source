@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.all.nepu
 
 import android.app.Application
-import org.json.JSONObject
 import android.content.SharedPreferences
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -26,6 +25,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -159,6 +159,7 @@ class Nepu :
                         hasFilter = true
                     }
                 }
+
                 is GenreFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) {
@@ -166,6 +167,7 @@ class Nepu :
                         hasFilter = true
                     }
                 }
+
                 is ImdbFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) {
@@ -173,6 +175,7 @@ class Nepu :
                         hasFilter = true
                     }
                 }
+
                 is ReleasedFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) {
@@ -180,6 +183,7 @@ class Nepu :
                         hasFilter = true
                     }
                 }
+
                 is SortingFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) {
