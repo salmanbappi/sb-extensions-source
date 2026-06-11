@@ -603,7 +603,7 @@ class Nepu :
                     quality = video.quality,
                     videoUrl = proxiedUrl,
                     subtitleTracks = video.subtitleTracks,
-                    audioTracks = video.audioTracks
+                    audioTracks = video.audioTracks,
                 )
             } else {
                 video
