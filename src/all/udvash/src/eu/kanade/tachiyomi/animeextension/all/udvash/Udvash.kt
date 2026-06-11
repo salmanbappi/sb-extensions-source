@@ -335,13 +335,12 @@ class Udvash :
     private var coursesCache: List<Course>? = null
 
     private fun getMyCourses(): List<Course> {
-        coursesCache?.let { if (it.size > 3) return it }
+        coursesCache?.let { return it }
 
         val list = mutableListOf(
             Course("Select a Course", ""),
-            Course("Varsity KA Master Class", "/Content/ContentSubject?CourseTypeId=1&masterCourseId=3"),
-            Course("Course & Content", "/Content/ContentSubject?CourseTypeId=2&masterCourseId=82"),
         )
+        var fetchSuccess = false
         try {
             val response = client.newCall(GET("$baseUrl/Dashboard", headers)).execute()
             val doc = Jsoup.parse(response.body?.string().orEmpty())
@@ -377,12 +376,18 @@ class Udvash :
                     list.add(Course(name, courseUrl))
                 }
             }
+            fetchSuccess = true
         } catch (e: Exception) {}
 
-        if (list.size > 3) {
+        return if (fetchSuccess) {
             coursesCache = list
+            list
+        } else {
+            val fallbackList = list.toMutableList()
+            fallbackList.add(Course("Varsity KA Master Class", "/Content/ContentSubject?CourseTypeId=1&masterCourseId=3"))
+            fallbackList.add(Course("Course & Content", "/Content/ContentSubject?CourseTypeId=2&masterCourseId=82"))
+            fallbackList
         }
-        return list
     }
 
     private fun getStaticSections(): List<Section> = listOf(
