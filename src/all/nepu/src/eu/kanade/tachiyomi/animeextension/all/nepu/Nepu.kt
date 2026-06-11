@@ -855,7 +855,8 @@ class LocalProxy(
             sb.toString()
         } ?: ""
         val encodedHeaders = Base64.encodeToString(headersStr.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        return "http://127.0.0.1:$port/proxy?url=$encodedUrl&headers=$encodedHeaders"
+        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "segment.ts"
+        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
     }
 
     private fun handleSocket(socket: Socket) {
@@ -961,6 +962,17 @@ class LocalProxy(
 
         out.write("HTTP/1.1 $code $message\r\n".toByteArray())
 
+        val originalContentType = response.header("Content-Type") ?: ""
+        val shouldOverrideContentType = !isM3u8 && (
+            originalContentType.startsWith("image/") ||
+            originalContentType.contains("octet-stream") ||
+            targetUrl.contains(".jpg") ||
+            targetUrl.contains(".png") ||
+            targetUrl.contains(".php") ||
+            targetUrl.contains(".ico") ||
+            targetUrl.contains(".svg")
+        )
+
         val headers = response.headers
         for (i in 0 until headers.size) {
             val name = headers.name(i)
@@ -974,11 +986,17 @@ class LocalProxy(
             if (name.equals("Content-Length", ignoreCase = true) && isM3u8) {
                 continue
             }
+            if (name.equals("Content-Type", ignoreCase = true) && shouldOverrideContentType) {
+                continue
+            }
             out.write("$name: $value\r\n".toByteArray())
         }
 
         if (isM3u8 && modifiedContentBytes != null) {
             out.write("Content-Length: ${modifiedContentBytes.size}\r\n".toByteArray())
+        }
+        if (shouldOverrideContentType) {
+            out.write("Content-Type: video/mp2t\r\n".toByteArray())
         }
         out.write("Connection: close\r\n".toByteArray())
         out.write("\r\n".toByteArray())
@@ -1048,7 +1066,8 @@ class LocalProxy(
 
     private fun getProxyUrlWithEncodedHeaders(targetUrl: String, encodedHeaders: String): String {
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        return "http://127.0.0.1:$port/proxy?url=$encodedUrl&headers=$encodedHeaders"
+        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "segment.ts"
+        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
     }
 
     private fun resolveUrl(baseUrl: String, relativeUrl: String): String = try {
