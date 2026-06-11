@@ -55,10 +55,10 @@ class Nepu :
         .addInterceptor { chain ->
             val request = chain.request()
             val isNepu = request.url.host.contains("nepu.to")
-            
+
             var requestBuilder = request.newBuilder()
             var injectedCustomCookies = false
-            
+
             if (isNepu) {
                 val cookieHeader = getSavedCookiesHeader()
                 if (cookieHeader.isNotEmpty()) {
@@ -72,7 +72,7 @@ class Nepu :
             }
 
             val newRequest = requestBuilder.build()
-            
+
             val response = if (newRequest.url.host.contains("tmdb.org")) {
                 val newHeaders = newRequest.headers.newBuilder().removeAll("Referer").build()
                 chain.proceed(newRequest.newBuilder().headers(newHeaders).build())
@@ -90,7 +90,7 @@ class Nepu :
             } else {
                 chain.proceed(newRequest)
             }
-            
+
             if (isNepu && response.code == 403 && injectedCustomCookies) {
                 response.close()
                 chain.proceed(request)
