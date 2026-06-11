@@ -753,41 +753,44 @@ class Nepu :
     // ============================== Utils ==============================
 
     private fun Element.extractImageUrl(): String {
-        val styleElement = selectFirst("[style*='url(']") ?: selectFirst(".media, .list-media, .poster, .thumb") ?: this
-
-        // 1. Try to get data-src, src, or data-lazy-src from styleElement (useful for div tags with data-src)
-        val directSrc = styleElement.attr("abs:data-src")
-            .ifEmpty { styleElement.attr("data-src") }
-            .ifEmpty { styleElement.attr("abs:data-lazy-src") }
-            .ifEmpty { styleElement.attr("data-lazy-src") }
-            .ifEmpty { styleElement.attr("abs:src") }
-            .ifEmpty { styleElement.attr("src") }
-
-        if (directSrc.isNotEmpty() && !directSrc.contains("url(")) {
-            return directSrc
+        // 1. Try to find any child element (or self) that has a data-src or src attribute (excluding sprite icons/scripts)
+        val imageElements = select("[data-src], [data-lazy-src], [src]")
+        for (el in imageElements) {
+            val src = el.attr("abs:data-src")
+                .ifEmpty { el.attr("data-src") }
+                .ifEmpty { el.attr("abs:data-lazy-src") }
+                .ifEmpty { el.attr("data-lazy-src") }
+                .ifEmpty { el.attr("abs:src") }
+                .ifEmpty { el.attr("src") }
+            if (src.isNotEmpty() && !src.contains("sprite.svg") && !src.endsWith(".js") && !src.endsWith(".css")) {
+                return src
+            }
         }
 
         // 2. Fallback to style attribute url() extraction
-        val style = styleElement.attr("style")
-        if (style.contains("url(")) {
-            val url = Regex("""url\(\s*['"]?([^'")\s>]+)""").find(style)?.groupValues?.get(1)
-                ?: style.substringAfter("url(").substringBefore(")")
+        val styleElement = selectFirst("[style*='url(']")
+        if (styleElement != null) {
+            val style = styleElement.attr("style")
+            if (style.contains("url(")) {
+                val url = Regex("""url\(\s*['"]?([^'")\s>]+)""").find(style)?.groupValues?.get(1)
+                    ?: style.substringAfter("url(").substringBefore(")")
 
-            val cleanedUrl = url.replace("&quot;", "")
-                .replace("\"", "")
-                .replace("'", "")
-                .replace(")", "")
-                .trim()
+                val cleanedUrl = url.replace("&quot;", "")
+                    .replace("\"", "")
+                    .replace("'", "")
+                    .replace(")", "")
+                    .trim()
 
-            if (cleanedUrl.isNotEmpty()) {
-                val absoluteUrl = if (cleanedUrl.startsWith("http")) {
-                    cleanedUrl
-                } else if (cleanedUrl.startsWith("//")) {
-                    "https:$cleanedUrl"
-                } else {
-                    "https://${baseUrl.substringAfter("://")}/${cleanedUrl.removePrefix("/")}"
+                if (cleanedUrl.isNotEmpty()) {
+                    val absoluteUrl = if (cleanedUrl.startsWith("http")) {
+                        cleanedUrl
+                    } else if (cleanedUrl.startsWith("//")) {
+                        "https:$cleanedUrl"
+                    } else {
+                        "https://${baseUrl.substringAfter("://")}/${cleanedUrl.removePrefix("/")}"
+                    }
+                    return absoluteUrl.replace(" ", "%20")
                 }
-                return absoluteUrl.replace(" ", "%20")
             }
         }
 
