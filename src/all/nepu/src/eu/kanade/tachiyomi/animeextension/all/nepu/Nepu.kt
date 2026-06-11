@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.animeextension.all.nepu
 
 import android.app.Application
 import android.content.SharedPreferences
-import java.io.File
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
@@ -32,6 +31,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.File
 
 class Nepu :
     ParsedAnimeHttpSource(),
@@ -56,7 +56,7 @@ class Nepu :
         .addInterceptor { chain ->
             val request = chain.request()
             val requestBuilder = request.newBuilder()
-            
+
             if (request.url.host.contains("nepu.to")) {
                 val cookieHeader = getSavedCookiesHeader()
                 if (cookieHeader.isNotEmpty()) {
@@ -67,7 +67,7 @@ class Nepu :
                     requestBuilder.header("User-Agent", savedUserAgent)
                 }
             }
-            
+
             val newRequest = requestBuilder.build()
             if (newRequest.url.host.contains("tmdb.org")) {
                 val newHeaders = newRequest.headers.newBuilder().removeAll("Referer").build()
@@ -92,7 +92,11 @@ class Nepu :
         if (!file.exists()) {
             val sdcardFile = File("/sdcard/Download/Serious/cookies.json")
             if (!sdcardFile.exists()) return null
-            return try { JSONObject(sdcardFile.readText()) } catch (_: Exception) { null }
+            return try {
+                JSONObject(sdcardFile.readText())
+            } catch (_: Exception) {
+                null
+            }
         }
         return try {
             JSONObject(file.readText())
@@ -101,9 +105,7 @@ class Nepu :
         }
     }
 
-    private fun getSavedUserAgent(): String? {
-        return getSavedCookieData()?.optString("userAgent")
-    }
+    private fun getSavedUserAgent(): String? = getSavedCookieData()?.optString("userAgent")
 
     private fun getSavedCookiesHeader(): String {
         val data = getSavedCookieData() ?: return ""
