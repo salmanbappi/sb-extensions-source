@@ -729,14 +729,6 @@ class Nepu :
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
 
-    private fun log(msg: String) {
-        try {
-            val context = Injekt.get<Application>()
-            val file = File(context.getExternalFilesDir(null), "nepu_log.txt")
-            file.appendText("${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}: $msg\n")
-        } catch (_: Exception) {}
-    }
-
     private fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String = Companion.getProxyUrl(this, targetUrl, headers)
 
     companion object {
@@ -816,6 +808,12 @@ class Nepu :
             "IMDb" to "imdb",
         )
     }
+private fun log(msg: String) {
+    try {
+        val context = Injekt.get<Application>()
+        val file = File(context.getExternalFilesDir(null), "nepu_log.txt")
+        file.appendText("${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}: $msg\n")
+    } catch (_: Exception) {}
 }
 
 class LocalProxy(
