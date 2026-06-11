@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.all.nepu
 
 import android.app.Application
+import org.json.JSONObject
 import android.content.SharedPreferences
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -146,31 +147,60 @@ class Nepu :
             return AnimesPage(filteredList, pageResults.hasNextPage)
         }
 
-        val listingFilter = filters.filterIsInstance<ListingFilter>().firstOrNull()
-        if (listingFilter != null && listingFilter.state != 0) {
-            val path = listingFilter.toPath()
-            val pagePath = if (page == 1) "" else "/page/$page"
-            val response = client.newCall(GET("$baseUrl/$path$pagePath", headers)).execute()
-            return searchAnimeParse(response)
+        val filterJson = JSONObject()
+        var hasFilter = false
+
+        filters.forEach { filter ->
+            when (filter) {
+                is TypeFilter -> {
+                    val value = filter.toValue()
+                    if (value.isNotEmpty()) {
+                        filterJson.put("type", value)
+                        hasFilter = true
+                    }
+                }
+                is GenreFilter -> {
+                    val value = filter.toValue()
+                    if (value.isNotEmpty()) {
+                        filterJson.put("category", value)
+                        hasFilter = true
+                    }
+                }
+                is ImdbFilter -> {
+                    val value = filter.toValue()
+                    if (value.isNotEmpty()) {
+                        filterJson.put("imdb", value)
+                        hasFilter = true
+                    }
+                }
+                is ReleasedFilter -> {
+                    val value = filter.toValue()
+                    if (value.isNotEmpty()) {
+                        filterJson.put("released", value)
+                        hasFilter = true
+                    }
+                }
+                is SortingFilter -> {
+                    val value = filter.toValue()
+                    if (value.isNotEmpty()) {
+                        filterJson.put("sorting", value)
+                        hasFilter = true
+                    }
+                }
+            }
         }
 
-        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
-        if (genreFilter != null && genreFilter.state != 0) {
-            val genreSlug = genreFilter.toSlug()
-            val pagePath = if (page == 1) "" else "/page/$page"
-            val response = client.newCall(GET("$baseUrl/category/$genreSlug$pagePath", headers)).execute()
-            return searchAnimeParse(response)
+        val url = if (hasFilter) {
+            "$baseUrl/discovery".toHttpUrl().newBuilder().apply {
+                addQueryParameter("filter", filterJson.toString())
+                addQueryParameter("page", page.toString())
+            }.build()
+        } else {
+            val path = if (page == 1) "discovery" else "discovery/page/$page"
+            "$baseUrl/$path/".toHttpUrl()
         }
 
-        val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()
-        if (typeFilter != null && typeFilter.state != 0) {
-            val typeSlug = typeFilter.toSlug()
-            val pagePath = if (page == 1) "" else "/page/$page"
-            val response = client.newCall(GET("$baseUrl/$typeSlug$pagePath", headers)).execute()
-            return searchAnimeParse(response)
-        }
-
-        val response = client.newCall(popularAnimeRequest(page)).execute()
+        val response = client.newCall(GET(url, headers)).execute()
         return searchAnimeParse(response)
     }
 
@@ -517,46 +547,59 @@ class Nepu :
     // ============================== Filters ==============================
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("Filters are mutually exclusive!"),
-        ListingFilter(),
-        AnimeFilter.Separator(),
         TypeFilter(),
         AnimeFilter.Separator(),
         GenreFilter(),
+        AnimeFilter.Separator(),
+        ImdbFilter(),
+        AnimeFilter.Separator(),
+        ReleasedFilter(),
+        AnimeFilter.Separator(),
+        SortingFilter(),
     )
-
-    private class ListingFilter :
-        AnimeFilter.Select<String>(
-            "Listing",
-            arrayOf("Discovery", "Trending Now", "Latest Movies", "Latest TV Shows"),
-        ) {
-        fun toPath() = when (state) {
-            0 -> "discovery"
-            1 -> "trends"
-            2 -> "movies"
-            3 -> "shows"
-            else -> "discovery"
-        }
-    }
 
     private class TypeFilter :
         AnimeFilter.Select<String>(
             "Type",
             arrayOf("All", "Movies", "TV Shows"),
         ) {
-        fun toSlug() = when (state) {
-            1 -> "movies"
-            2 -> "shows"
+        fun toValue() = when (state) {
+            1 -> "movie"
+            2 -> "serie"
             else -> ""
         }
     }
 
     private class GenreFilter :
         AnimeFilter.Select<String>(
-            "Genre",
+            "Category",
             GENRES.map { it.first }.toTypedArray(),
         ) {
-        fun toSlug() = GENRES[state].second
+        fun toValue() = GENRES[state].second
+    }
+
+    private class ImdbFilter :
+        AnimeFilter.Select<String>(
+            "IMDb Rating",
+            IMDB_RATING.map { it.first }.toTypedArray(),
+        ) {
+        fun toValue() = IMDB_RATING[state].second
+    }
+
+    private class ReleasedFilter :
+        AnimeFilter.Select<String>(
+            "Released",
+            RELEASE_YEARS.map { it.first }.toTypedArray(),
+        ) {
+        fun toValue() = RELEASE_YEARS[state].second
+    }
+
+    private class SortingFilter :
+        AnimeFilter.Select<String>(
+            "Sorting",
+            SORTING.map { it.first }.toTypedArray(),
+        ) {
+        fun toValue() = SORTING[state].second
     }
 
     // ============================== Utils ==============================
@@ -610,35 +653,69 @@ class Nepu :
 
     companion object {
         private val GENRES = arrayOf(
-            "All" to "",
-            "Action" to "action",
-            "Action & Adventure" to "action-adventure",
-            "Adventure" to "adventure",
-            "Animation" to "animation",
-            "Anime" to "anime",
-            "Comedy" to "comedy",
-            "Crime" to "crime",
-            "Documentary" to "documentary",
-            "Drama" to "drama",
-            "Family" to "family",
-            "Fantasy" to "fantasy",
-            "History" to "history",
-            "Horror" to "horror",
-            "Kids" to "kids",
-            "Music" to "music",
-            "Mystery" to "mystery",
-            "News" to "news",
-            "Reality" to "reality",
-            "Romance" to "romance",
-            "Sci-Fi & Fantasy" to "sci-fi-fantasy",
-            "Science Fiction" to "science-fiction",
-            "Soap" to "soap",
-            "Talk" to "talk",
-            "Thriller" to "thriller",
-            "TV Movie" to "tv-movie",
-            "War" to "war",
-            "War & Politics" to "war-politics",
-            "Western" to "western",
+            "Category" to "",
+            "3D" to "32",
+            "4K" to "31",
+            "Action" to "1",
+            "Action & Adventure" to "21",
+            "Adventure" to "2",
+            "Animation" to "3",
+            "AnimeDubMovie" to "36",
+            "AnimeDubSerie" to "34",
+            "AnimeDubSeries" to "37",
+            "AnimeSubMovie" to "35",
+            "AnimeSubSerie" to "33",
+            "Comedy" to "4",
+            "Crime" to "5",
+            "Documentary" to "6",
+            "Drama" to "7",
+            "Family" to "8",
+            "Fantasy" to "9",
+            "History" to "10",
+            "Horror" to "11",
+            "Kids" to "22",
+            "Movies" to "28",
+            "Music" to "12",
+            "Musical" to "30",
+            "Mystery" to "13",
+            "News" to "25",
+            "Reality" to "24",
+            "Romance" to "14",
+            "Sci-Fi & Fantasy" to "20",
+            "Science Fiction" to "15",
+            "Soap" to "27",
+            "Talk" to "26",
+            "Thriller" to "16",
+            "TV Movie" to "17",
+            "TV Shows" to "29",
+            "War" to "18",
+            "War & Politics" to "23",
+            "Western" to "19",
+        )
+
+        private val IMDB_RATING = arrayOf(
+            "IMDb Rating" to "",
+            "4 and over" to "4",
+            "5 and over" to "5",
+            "6 and over" to "6",
+            "7 and over" to "7",
+            "8 and over" to "8",
+            "9 and over" to "9",
+        )
+
+        private val RELEASE_YEARS = arrayOf(
+            "Released" to "",
+            "2010 - 2026" to "2010-2026",
+            "2000 - 2009" to "2000-2009",
+            "1990 - 1999" to "1990-1999",
+            "1980 - 1989" to "1980-1989",
+        )
+
+        private val SORTING = arrayOf(
+            "Newest" to "newest",
+            "Popular" to "popular",
+            "Released" to "released",
+            "IMDb" to "imdb",
         )
     }
 }
