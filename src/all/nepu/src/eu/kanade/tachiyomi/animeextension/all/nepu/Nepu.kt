@@ -930,6 +930,12 @@ class LocalProxy(
             } catch (_: Exception) {}
         } finally {
             try {
+                socket.shutdownOutput()
+            } catch (_: Exception) {}
+            try {
+                Thread.sleep(50)
+            } catch (_: Exception) {}
+            try {
                 socket.close()
             } catch (_: Exception) {}
         }
