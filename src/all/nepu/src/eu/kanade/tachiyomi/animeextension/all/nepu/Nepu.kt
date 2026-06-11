@@ -946,9 +946,20 @@ class LocalProxy(
         val code = response.code
         val message = response.message
 
-        out.write("HTTP/1.1 $code $message\r\n".toByteArray())
-
         val isM3u8 = targetUrl.contains(".m3u8") || response.header("Content-Type")?.contains("mpegurl") == true
+
+        var modifiedContentBytes: ByteArray? = null
+        if (isM3u8) {
+            try {
+                val content = response.body.string()
+                val modifiedContent = processM3u8(content, targetUrl, encodedHeaders)
+                modifiedContentBytes = modifiedContent.toByteArray()
+            } catch (e: Exception) {
+                log("Error processing m3u8 in sendResponse: ${e.message}")
+            }
+        }
+
+        out.write("HTTP/1.1 $code $message\r\n".toByteArray())
 
         val headers = response.headers
         for (i in 0 until headers.size) {
@@ -965,16 +976,17 @@ class LocalProxy(
             }
             out.write("$name: $value\r\n".toByteArray())
         }
+
+        if (isM3u8 && modifiedContentBytes != null) {
+            out.write("Content-Length: ${modifiedContentBytes.size}\r\n".toByteArray())
+        }
         out.write("Connection: close\r\n".toByteArray())
         out.write("\r\n".toByteArray())
 
-        val body = response.body
-        if (isM3u8) {
-            val content = body.string()
-            val modifiedContent = processM3u8(content, targetUrl, encodedHeaders)
-            out.write(modifiedContent.toByteArray())
+        if (isM3u8 && modifiedContentBytes != null) {
+            out.write(modifiedContentBytes)
         } else {
-            body.byteStream().use { input ->
+            response.body.byteStream().use { input ->
                 val buffer = ByteArray(16384)
                 var bytesRead: Int
                 while (input.read(buffer).also { bytesRead = it } != -1) {
@@ -1007,6 +1019,24 @@ class LocalProxy(
         }.toMutableList()
 
         if (content.contains("#EXTINF")) {
+            var playlistTypeIndex = -1
+            var extm3uIndex = -1
+            for (i in rewrittenLines.indices) {
+                val trimmed = rewrittenLines[i].trim()
+                if (trimmed.startsWith("#EXT-X-PLAYLIST-TYPE")) {
+                    playlistTypeIndex = i
+                } else if (trimmed.startsWith("#EXTM3U")) {
+                    extm3uIndex = i
+                }
+            }
+
+            if (playlistTypeIndex != -1) {
+                rewrittenLines[playlistTypeIndex] = "#EXT-X-PLAYLIST-TYPE:VOD"
+            } else {
+                val insertIndex = if (extm3uIndex != -1) extm3uIndex + 1 else 0
+                rewrittenLines.add(insertIndex, "#EXT-X-PLAYLIST-TYPE:VOD")
+            }
+
             val hasEndList = rewrittenLines.any { it.trim() == "#EXT-X-ENDLIST" }
             if (!hasEndList) {
                 rewrittenLines.add("#EXT-X-ENDLIST")
