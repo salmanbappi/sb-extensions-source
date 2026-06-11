@@ -589,25 +589,14 @@ class Nepu :
 
             log("Processing video: quality=${video.quality}, url=$videoUrl")
 
-            val isDirectCdn = try {
-                val host = videoUrl.toHttpUrl().host
-                host.contains("vr-cdn.com") || host.contains("nepu.to")
-            } catch (_: Exception) {
-                false
-            }
-
-            if (isDirectCdn) {
-                val proxiedUrl = getProxyUrl(videoUrl, video.headers)
-                Video(
-                    url = proxiedUrl,
-                    quality = video.quality,
-                    videoUrl = proxiedUrl,
-                    subtitleTracks = video.subtitleTracks,
-                    audioTracks = video.audioTracks,
-                )
-            } else {
-                video
-            }
+            val proxiedUrl = getProxyUrl(videoUrl, video.headers)
+            Video(
+                url = proxiedUrl,
+                quality = video.quality,
+                videoUrl = proxiedUrl,
+                subtitleTracks = video.subtitleTracks,
+                audioTracks = video.audioTracks,
+            )
         }
     }
 
@@ -857,7 +846,7 @@ class LocalProxy(
     }
 
     fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String {
-        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)
+        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val headersStr = headers?.let { h ->
             val sb = StringBuilder()
             for (i in 0 until h.size) {
@@ -865,7 +854,7 @@ class LocalProxy(
             }
             sb.toString()
         } ?: ""
-        val encodedHeaders = Base64.encodeToString(headersStr.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)
+        val encodedHeaders = Base64.encodeToString(headersStr.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         return "http://127.0.0.1:$port/proxy?url=$encodedUrl&headers=$encodedHeaders"
     }
 
@@ -884,21 +873,19 @@ class LocalProxy(
             }
 
             val httpUrl = ("http://127.0.0.1$path").toHttpUrl()
-            val rawUrl = httpUrl.queryParameter("url")
-            val rawHeaders = httpUrl.queryParameter("headers")
+            val encodedUrl = httpUrl.queryParameter("url")
+            val encodedHeaders = httpUrl.queryParameter("headers")
 
-            if (rawUrl.isNullOrEmpty()) {
+            if (encodedUrl.isNullOrEmpty()) {
                 sendError(socket, 400, "Missing url parameter")
                 return
             }
 
-            val decodedUrl = java.net.URLDecoder.decode(rawUrl, "UTF-8")
-            val targetUrl = String(Base64.decode(decodedUrl, Base64.URL_SAFE or Base64.NO_WRAP))
+            val targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
 
             val targetHeaders = okhttp3.Headers.Builder()
-            if (!rawHeaders.isNullOrEmpty()) {
-                val decodedHeaders = java.net.URLDecoder.decode(rawHeaders, "UTF-8")
-                val headersStr = String(Base64.decode(decodedHeaders, Base64.URL_SAFE or Base64.NO_WRAP))
+            if (!encodedHeaders.isNullOrEmpty()) {
+                val headersStr = String(Base64.decode(encodedHeaders, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
                 headersStr.split("\n").forEach { line ->
                     val headerParts = line.split(":", limit = 2)
                     if (headerParts.size == 2) {
@@ -935,7 +922,7 @@ class LocalProxy(
 
             val request = reqBuilder.build()
             client.newCall(request).execute().use { response ->
-                sendResponse(socket, response, targetUrl, rawHeaders ?: "")
+                sendResponse(socket, response, targetUrl, encodedHeaders ?: "")
             }
         } catch (e: Exception) {
             try {
@@ -1030,7 +1017,7 @@ class LocalProxy(
     }
 
     private fun getProxyUrlWithEncodedHeaders(targetUrl: String, encodedHeaders: String): String {
-        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)
+        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         return "http://127.0.0.1:$port/proxy?url=$encodedUrl&headers=$encodedHeaders"
     }
 
