@@ -589,14 +589,25 @@ class Nepu :
 
             log("Processing video: quality=${video.quality}, url=$videoUrl")
 
-            val proxiedUrl = getProxyUrl(videoUrl, video.headers)
-            Video(
-                url = proxiedUrl,
-                quality = video.quality,
-                videoUrl = proxiedUrl,
-                subtitleTracks = video.subtitleTracks,
-                audioTracks = video.audioTracks,
-            )
+            val isDirectCdn = try {
+                val host = videoUrl.toHttpUrl().host
+                host.contains("vr-cdn.com") || host.contains("nepu.to")
+            } catch (_: Exception) {
+                false
+            }
+
+            if (isDirectCdn) {
+                val proxiedUrl = getProxyUrl(videoUrl, video.headers)
+                Video(
+                    url = proxiedUrl,
+                    quality = video.quality,
+                    videoUrl = proxiedUrl,
+                    subtitleTracks = video.subtitleTracks,
+                    audioTracks = video.audioTracks
+                )
+            } else {
+                video
+            }
         }
     }
 
