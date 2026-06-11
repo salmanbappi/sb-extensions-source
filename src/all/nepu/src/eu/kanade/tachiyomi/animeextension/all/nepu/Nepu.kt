@@ -1004,7 +1004,15 @@ class LocalProxy(
                 val absoluteUrl = resolveUrl(playlistUrl, trimmed)
                 getProxyUrlWithEncodedHeaders(absoluteUrl, encodedHeaders)
             }
+        }.toMutableList()
+
+        if (content.contains("#EXTINF")) {
+            val hasEndList = rewrittenLines.any { it.trim() == "#EXT-X-ENDLIST" }
+            if (!hasEndList) {
+                rewrittenLines.add("#EXT-X-ENDLIST")
+            }
         }
+
         return rewrittenLines.joinToString("\n")
     }
 
