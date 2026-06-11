@@ -400,13 +400,13 @@ class Nepu :
         }
 
         if (isVideoOnBaseUrl) {
-            val savedCookies = getSavedCookiesHeader()
-            if (savedCookies.isNotEmpty()) {
-                builder.set("Cookie", savedCookies)
+            val cookieJarCookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+            if (cookieJarCookies.isNotEmpty() && cookieJarCookies.contains("cf_clearance")) {
+                builder.set("Cookie", cookieJarCookies)
             } else {
-                val cookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
-                if (cookies.isNotEmpty()) {
-                    builder.set("Cookie", cookies)
+                val savedCookies = getSavedCookiesHeader()
+                if (savedCookies.isNotEmpty()) {
+                    builder.set("Cookie", savedCookies)
                 }
             }
         }
@@ -595,131 +595,43 @@ class Nepu :
             }
 
             log("Processing video: quality=${video.quality}, url=$videoUrl")
-            var processedVideo = video
 
-            // 1. Rewrite .m3u8 playlists locally to support MPV player and bypass 403 blocks
-            if (videoUrl.contains(".m3u8")) {
-                log("Video is a playlist (.m3u8). Downloading playlist...")
-                try {
-                    val m3u8Request = Request.Builder()
-                        .url(videoUrl)
-                        .headers(video.headers ?: buildVideoHeaders(videoUrl, pageUrl))
-                        .build()
-
-                    client.newCall(m3u8Request).execute().use { response ->
-                        log("M3U8 download response code: ${response.code}")
-                        if (response.isSuccessful) {
-                            val originalBody = response.body.string()
-                            log("M3U8 content downloaded successfully. Length: ${originalBody.length} bytes")
-
-                            // Clean up old cached playlists to prevent storage buildup
-                            val context = Injekt.get<Application>()
-                            var deleteCount = 0
-                            context.cacheDir.listFiles()?.forEach { file ->
-                                if (file.name.startsWith("nepu_playlist_") && file.name.endsWith(".m3u8")) {
-                                    try {
-                                        if (file.delete()) deleteCount++
-                                    } catch (_: Exception) {}
-                                }
-                            }
-                            log("Cleaned up old cached playlists. Deleted: $deleteCount files")
-
-                            // Parse and rewrite lines
-                            val lines = originalBody.split("\n")
-                            val fakeExtensions = listOf(".jpg", ".php", ".html", ".js", ".css", ".txt", ".vtt", ".srt", ".woff", ".ico", ".svg", ".tff")
-                            var rewrittenCount = 0
-
-                            val rewrittenLines = lines.map { line ->
-                                val trimmed = line.trim()
-                                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                                    line
-                                } else {
-                                    // Resolve relative segment URLs to absolute URLs
-                                    var absoluteUrl = try {
-                                        videoUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
-                                    } catch (_: Exception) {
-                                        trimmed
-                                    }
-
-                                    // Rewrite segment extensions to .ts to prevent player formats probing failures
-                                    for (ext in fakeExtensions) {
-                                        if (absoluteUrl.endsWith(ext, ignoreCase = true)) {
-                                            absoluteUrl = absoluteUrl.substring(0, absoluteUrl.length - ext.length) + ".ts"
-                                            rewrittenCount++
-                                            break
-                                        } else if (absoluteUrl.contains("$ext?")) {
-                                            absoluteUrl = absoluteUrl.replace("$ext?", ".ts?")
-                                            rewrittenCount++
-                                            break
-                                        }
-                                    }
-                                    absoluteUrl
-                                }
-                            }
-
-                            log("Rewrote $rewrittenCount segments to absolute .ts paths")
-
-                            val modifiedBody = rewrittenLines.joinToString("\n")
-                            val cacheFile = File(context.cacheDir, "nepu_playlist_${System.currentTimeMillis()}.m3u8")
-                            cacheFile.writeText(modifiedBody)
-                            log("Saved local modified playlist to: ${cacheFile.absolutePath}")
-
-                            processedVideo = Video(
-                                url = video.url,
-                                quality = video.quality,
-                                videoUrl = "file://" + cacheFile.absolutePath,
-                                headers = video.headers,
-                                subtitleTracks = video.subtitleTracks,
-                                audioTracks = video.audioTracks,
-                            )
-                        } else {
-                            log("M3U8 download failed. Response code: ${response.code}")
-                        }
-                    }
-                } catch (e: Exception) {
-                    val sw = java.io.StringWriter()
-                    e.printStackTrace(java.io.PrintWriter(sw))
-                    log("M3U8 download/write failed with exception: ${e.message}\nStacktrace: $sw")
-                }
+            // Apply headers cleanups only if it's NOT on nepu.to
+            val isVideoOnBaseUrl = try {
+                val videoHost = videoUrl.toHttpUrl().host
+                val baseHost = baseUrl.toHttpUrl().host
+                videoHost.endsWith(baseHost)
+            } catch (_: Exception) {
+                false
             }
 
-            // 2. Apply headers cleanups only if it's NOT a local file URI
-            val finalVideoUrl = processedVideo.videoUrl
-            if (finalVideoUrl != null && !finalVideoUrl.startsWith("file://")) {
-                val isVideoOnBaseUrl = try {
-                    val videoHost = finalVideoUrl.toHttpUrl().host
-                    val baseHost = baseUrl.toHttpUrl().host
-                    videoHost.endsWith(baseHost)
-                } catch (_: Exception) {
-                    false
-                }
-
-                val videoHeaders = processedVideo.headers
-                if (!isVideoOnBaseUrl && videoHeaders != null) {
+            if (!isVideoOnBaseUrl) {
+                val videoHeaders = video.headers
+                if (videoHeaders != null) {
                     val cleanHeaders = videoHeaders.newBuilder().apply {
                         removeAll("Cookie")
                         try {
-                            val cookies = client.cookieJar.loadForRequest(finalVideoUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+                            val cookies = client.cookieJar.loadForRequest(videoUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
                             if (cookies.isNotEmpty()) {
                                 set("Cookie", cookies)
                             }
                         } catch (_: Exception) {}
                         removeAll("Origin")
                     }.build()
-                    processedVideo = Video(
-                        url = processedVideo.url,
-                        quality = processedVideo.quality,
-                        videoUrl = processedVideo.videoUrl,
+                    Video(
+                        url = video.url,
+                        quality = video.quality,
+                        videoUrl = video.videoUrl,
                         headers = cleanHeaders,
-                        subtitleTracks = processedVideo.subtitleTracks,
-                        audioTracks = processedVideo.audioTracks,
+                        subtitleTracks = video.subtitleTracks,
+                        audioTracks = video.audioTracks,
                     )
+                } else {
+                    video
                 }
             } else {
-                log("Skipping headers cleanup for local file URI: $finalVideoUrl")
+                video
             }
-
-            processedVideo
         }
     }
 
