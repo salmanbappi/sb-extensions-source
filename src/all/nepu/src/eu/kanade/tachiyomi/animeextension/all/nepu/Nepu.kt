@@ -924,7 +924,7 @@ class LocalProxy(
 
             val request = reqBuilder.build()
             client.newCall(request).execute().use { response ->
-                sendResponse(socket, response, targetUrl, encodedHeaders ?: "")
+                sendResponse(socket, response, targetUrl, rawHeaders ?: "")
             }
         } catch (e: Exception) {
             try {
