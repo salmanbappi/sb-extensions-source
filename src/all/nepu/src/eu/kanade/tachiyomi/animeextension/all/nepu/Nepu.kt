@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.all.nepu
 
 import android.app.Application
 import android.content.SharedPreferences
+import java.io.File
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
@@ -54,17 +55,70 @@ class Nepu :
         .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
-            if (request.url.host.contains("tmdb.org")) {
-                val newHeaders = request.headers.newBuilder().removeAll("Referer").build()
-                chain.proceed(request.newBuilder().headers(newHeaders).build())
+            val requestBuilder = request.newBuilder()
+            
+            if (request.url.host.contains("nepu.to")) {
+                val cookieHeader = getSavedCookiesHeader()
+                if (cookieHeader.isNotEmpty()) {
+                    requestBuilder.header("Cookie", cookieHeader)
+                }
+                val savedUserAgent = getSavedUserAgent()
+                if (!savedUserAgent.isNullOrBlank()) {
+                    requestBuilder.header("User-Agent", savedUserAgent)
+                }
+            }
+            
+            val newRequest = requestBuilder.build()
+            if (newRequest.url.host.contains("tmdb.org")) {
+                val newHeaders = newRequest.headers.newBuilder().removeAll("Referer").build()
+                chain.proceed(newRequest.newBuilder().headers(newHeaders).build())
             } else {
-                chain.proceed(request)
+                chain.proceed(newRequest)
             }
         }
         .build()
 
-    override fun headersBuilder() = super.headersBuilder()
-        .set("Referer", "$baseUrl/")
+    override fun headersBuilder(): okhttp3.Headers.Builder {
+        val builder = super.headersBuilder().set("Referer", "$baseUrl/")
+        val savedUserAgent = getSavedUserAgent()
+        if (!savedUserAgent.isNullOrBlank()) {
+            builder.set("User-Agent", savedUserAgent)
+        }
+        return builder
+    }
+
+    private fun getSavedCookieData(): JSONObject? {
+        val file = File("/storage/emulated/0/Download/Serious/cookies.json")
+        if (!file.exists()) {
+            val sdcardFile = File("/sdcard/Download/Serious/cookies.json")
+            if (!sdcardFile.exists()) return null
+            return try { JSONObject(sdcardFile.readText()) } catch (_: Exception) { null }
+        }
+        return try {
+            JSONObject(file.readText())
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun getSavedUserAgent(): String? {
+        return getSavedCookieData()?.optString("userAgent")
+    }
+
+    private fun getSavedCookiesHeader(): String {
+        val data = getSavedCookieData() ?: return ""
+        val cookiesArray = data.optJSONArray("cookies") ?: return ""
+        val cookieList = mutableListOf<String>()
+        for (i in 0 until cookiesArray.length()) {
+            val cookieObj = cookiesArray.optJSONObject(i) ?: continue
+            val name = cookieObj.optString("name")
+            val value = cookieObj.optString("value")
+            if (name.isNotEmpty() && value.isNotEmpty()) {
+                cookieList.add("$name=$value")
+            }
+        }
+        return cookieList.joinToString("; ")
+    }
 
     // ============================== Popular ===============================
 
@@ -322,9 +376,14 @@ class Nepu :
         }
 
         if (isVideoOnBaseUrl) {
-            val cookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
-            if (cookies.isNotEmpty()) {
-                builder.set("Cookie", cookies)
+            val savedCookies = getSavedCookiesHeader()
+            if (savedCookies.isNotEmpty()) {
+                builder.set("Cookie", savedCookies)
+            } else {
+                val cookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+                if (cookies.isNotEmpty()) {
+                    builder.set("Cookie", cookies)
+                }
             }
         }
 
