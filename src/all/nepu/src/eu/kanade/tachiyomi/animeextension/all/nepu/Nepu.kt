@@ -416,191 +416,138 @@ class Nepu :
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val videoList = mutableListOf<Video>()
+        val videoList = java.util.Collections.synchronizedList(mutableListOf<Video>())
         val pageUrl = response.request.url.toString()
         val token = document.selectFirst("input[name=_TOKEN]")?.attr("value")
 
-        document.select(".btn-service").forEach { btn ->
-            val embedId = btn.attr("data-embed")
-            var name = btn.selectFirst(".source-selected")?.text()
-                ?: btn.selectFirst(".name")?.text()
-                ?: btn.text()
-            name = name.trim().ifEmpty { "Server" }
+        val servers = document.select(".btn-service")
+        val pool = Executors.newFixedThreadPool(5)
+        val futures = servers.map { btn ->
+            pool.submit {
+                val embedId = btn.attr("data-embed")
+                var name = btn.selectFirst(".source-selected")?.text()
+                    ?: btn.selectFirst(".name")?.text()
+                    ?: btn.text()
+                name = name.trim().ifEmpty { "Server" }
 
-            if (embedId.isNotEmpty()) {
-                val postBodyBuilder = okhttp3.FormBody.Builder().add("id", embedId)
-                if (token != null) postBodyBuilder.add("_TOKEN", token)
-                val postBody = postBodyBuilder.build()
+                if (embedId.isNotEmpty()) {
+                    val postBodyBuilder = okhttp3.FormBody.Builder().add("id", embedId)
+                    if (token != null) postBodyBuilder.add("_TOKEN", token)
+                    val postBody = postBodyBuilder.build()
 
-                val request = Request.Builder()
-                    .url("$baseUrl/ajax/embed")
-                    .post(postBody)
-                    .headers(headers)
-                    .header("X-Requested-With", "XMLHttpRequest")
-                    .header("Referer", pageUrl)
-                    .header("Origin", baseUrl)
-                    .header("Accept", "*/*")
-                    .header("Sec-Fetch-Site", "same-origin")
-                    .header("Sec-Fetch-Mode", "cors")
-                    .header("Sec-Fetch-Dest", "empty")
-                    .build()
+                    val request = Request.Builder()
+                        .url("$baseUrl/ajax/embed")
+                        .post(postBody)
+                        .headers(headers)
+                        .header("X-Requested-With", "XMLHttpRequest")
+                        .header("Referer", pageUrl)
+                        .header("Origin", baseUrl)
+                        .header("Accept", "*/*")
+                        .build()
 
-                try {
-                    client.newCall(request).execute().use { embedResponse ->
-                        if (!embedResponse.isSuccessful) return@forEach
-                        val embedHtml = embedResponse.body.string()
+                    try {
+                        client.newCall(request).execute().use { embedResponse ->
+                            if (!embedResponse.isSuccessful) return@submit
+                            val embedHtml = embedResponse.body.string()
 
-                        var extractedUrl: String? = null
+                            var extractedUrl: String? = null
 
-                        // Try to parse JSON first (Standard Dooplay)
-                        try {
-                            val jsonMatch = Regex("""["']?(?:embed_url|link|url|file)["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
-
-                            if (jsonMatch != null) {
-                                val url = jsonMatch.groupValues[1].replace("\\/", "/")
-                                // Sometimes the JSON embed_url contains an iframe tag instead of a raw URL
-                                if (url.contains("<iframe")) {
-                                    extractedUrl = Jsoup.parse(url).selectFirst("iframe")?.attr("abs:src")
-                                } else {
-                                    extractedUrl = url
+                            // Try to parse JSON first (Standard Dooplay)
+                            try {
+                                val jsonMatch = Regex("""["']?(?:embed_url|link|url|file)["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
+                                if (jsonMatch != null) {
+                                    val url = jsonMatch.groupValues[1].replace("\\/", "/")
+                                    if (url.contains("<iframe")) {
+                                        extractedUrl = Jsoup.parse(url).selectFirst("iframe")?.attr("abs:src")
+                                    } else {
+                                        extractedUrl = url
+                                    }
                                 }
+                            } catch (_: Exception) {}
+
+                            if (extractedUrl.isNullOrBlank()) {
+                                val embedDoc = Jsoup.parse(embedHtml, pageUrl)
+                                extractedUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
+                                    ?: embedDoc.selectFirst("video source")?.attr("abs:src")
+                                    ?: Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
+                                        ?.replace("\\/", "/")
                             }
-                        } catch (e: Exception) {}
 
-                        // Fallback to HTML parsing if JSON extraction failed
-                        if (extractedUrl.isNullOrBlank()) {
-                            val embedDoc = Jsoup.parse(embedHtml, pageUrl)
-                            extractedUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
-                                ?: embedDoc.selectFirst("video source")?.attr("abs:src")
-                                ?: Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
-                                    ?.replace("\\/", "/")
-                        }
+                            fun sanitize(url: String): String = when {
+                                url.startsWith("http") -> url
+                                url.startsWith("//") -> "https:$url"
+                                url.startsWith("/") -> "$baseUrl$url"
+                                else -> "$baseUrl/$url"
+                            }.trim()
 
-                        fun sanitize(url: String): String = when {
-                            url.startsWith("http") -> url
-                            url.startsWith("//") -> "https:$url"
-                            url.startsWith("/") -> "$baseUrl$url"
-                            else -> "$baseUrl/$url"
-                        }.trim()
+                            fun extractVideos(finalUrl: String, name: String, refererContext: String) {
+                                if (!finalUrl.contains(".")) return
+                                val mediaHeaders = buildVideoHeaders(finalUrl, refererContext)
 
-                        fun extractVideos(finalUrl: String, name: String, refererContext: String) {
-                            if (!finalUrl.contains(".")) return
-                            val mediaHeaders = buildVideoHeaders(finalUrl, refererContext)
-
-                            if (finalUrl.contains(".mp4") || finalUrl.contains(".m3u8")) {
-                                videoList.add(Video(finalUrl, name, finalUrl, headers = mediaHeaders))
-                            } else {
-                                try {
-                                    when {
-                                        finalUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(finalUrl, "DoodStream"))
-
-                                        finalUrl.contains("filemoon") || finalUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(finalUrl, "Filemoon", mediaHeaders))
-
-                                        finalUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "VidMoly"))
-
-                                        finalUrl.contains("vidhide") || finalUrl.contains("guccihide") || finalUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, mediaHeaders).videosFromUrl(finalUrl, { "VidHide - $it" }))
-
-                                        finalUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "Voe"))
-
-                                        finalUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(finalUrl, "StreamTape"))
-
-                                        else -> {
-                                            val extracted = UniversalExtractor(client).videosFromUrl(finalUrl, mediaHeaders, prefix = name)
-                                            if (extracted.isNotEmpty()) {
-                                                videoList.addAll(extracted)
+                                if (finalUrl.contains(".mp4") || finalUrl.contains(".m3u8")) {
+                                    videoList.add(Video(finalUrl, name, finalUrl, headers = mediaHeaders))
+                                } else {
+                                    try {
+                                        when {
+                                            finalUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(finalUrl, "DoodStream"))
+                                            finalUrl.contains("filemoon") || finalUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(finalUrl, "Filemoon", mediaHeaders))
+                                            finalUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "VidMoly"))
+                                            finalUrl.contains("vidhide") || finalUrl.contains("guccihide") || finalUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, mediaHeaders).videosFromUrl(finalUrl, { "VidHide - $it" }))
+                                            finalUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "Voe"))
+                                            finalUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(finalUrl, "StreamTape"))
+                                            else -> {
+                                                val extracted = UniversalExtractor(client).videosFromUrl(finalUrl, mediaHeaders, prefix = name)
+                                                if (extracted.isNotEmpty()) videoList.addAll(extracted)
                                             }
                                         }
-                                    }
-                                } catch (e: Exception) {
-                                    // ignore extraction errors
+                                    } catch (_: Exception) {}
                                 }
                             }
-                        }
 
-                        if (!extractedUrl.isNullOrBlank()) {
-                            val sanitized = sanitize(extractedUrl)
-                            val refererContext = if (sanitized.contains(".mp4") || sanitized.contains(".m3u8")) pageUrl else sanitized
-                            extractVideos(sanitized, name, refererContext)
+                            if (!extractedUrl.isNullOrBlank()) {
+                                val sanitized = sanitize(extractedUrl)
+                                val refererContext = if (sanitized.contains(".mp4") || sanitized.contains(".m3u8")) pageUrl else sanitized
+                                extractVideos(sanitized, name, refererContext)
+                            }
                         }
-                    }
-                } catch (e: Exception) {
-                    // skip
+                    } catch (_: Exception) {}
                 }
             }
         }
+        futures.forEach { try { it.get(10, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) {} }
+        pool.shutdown()
 
         if (videoList.isEmpty()) {
             document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe, iframe[src*='embed']").forEach { iframe ->
                 val src = iframe.attr("abs:src")
                 if (src.isNotBlank() && !src.contains("index.html")) {
                     val videoHeaders = buildVideoHeaders(src, src)
-
                     if (src.contains(".mp4") || src.contains(".m3u8")) {
                         videoList.add(Video(src, "Video", src, headers = videoHeaders))
                     } else {
                         try {
                             when {
                                 src.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(src, "DoodStream"))
-
                                 src.contains("filemoon") || src.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(src, "Filemoon", videoHeaders))
-
                                 src.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(src, "VidMoly"))
-
                                 src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(src, { "VidHide - $it" }))
-
                                 src.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(src, "Voe"))
-
                                 src.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(src, "StreamTape"))
-
                                 else -> {
                                     val extracted = UniversalExtractor(client).videosFromUrl(src, videoHeaders, prefix = "Video")
-                                    if (extracted.isNotEmpty()) {
-                                        videoList.addAll(extracted)
-                                    }
+                                    if (extracted.isNotEmpty()) videoList.addAll(extracted)
                                 }
                             }
-                        } catch (e: Exception) {
-                            // ignore extraction errors
-                        }
+                        } catch (_: Exception) {}
                     }
                 }
             }
         }
 
-        // Final Fallback for internal player (e.g. Gravity Falls)
-        // If the video is not in an iframe but loaded dynamically on the page itself
-        if (videoList.isEmpty()) {
-            val videoHeaders = buildVideoHeaders(pageUrl, pageUrl)
-
-            try {
-                val extracted = UniversalExtractor(client).videosFromUrl(pageUrl, videoHeaders, prefix = "Internal Player")
-                if (extracted.isNotEmpty()) {
-                    videoList.addAll(extracted)
-                }
-            } catch (e: Exception) {
-                // ignore extraction errors
-            }
-        }
-
-        log("videoListParse mapping started. Total videos to process: ${videoList.size}")
-
         return videoList.distinctBy { it.videoUrl }.map { video ->
-            val videoUrl = video.videoUrl
-            if (videoUrl.isNullOrBlank()) {
-                log("Video URL is null or blank for video quality: ${video.quality}")
-                return@map video
-            }
-
-            log("Processing video: quality=${video.quality}, url=$videoUrl")
-
+            val videoUrl = video.videoUrl ?: return@map video
             val proxiedUrl = getProxyUrl(videoUrl, video.headers)
-            Video(
-                url = proxiedUrl,
-                quality = video.quality,
-                videoUrl = proxiedUrl,
-                subtitleTracks = video.subtitleTracks,
-                audioTracks = video.audioTracks,
-            )
+            Video(proxiedUrl, video.quality, proxiedUrl, subtitleTracks = video.subtitleTracks, audioTracks = video.audioTracks)
         }
     }
 
@@ -671,7 +618,6 @@ class Nepu :
     // ============================== Utils ==============================
 
     private fun Element.extractImageUrl(): String {
-        // 1. Try to find any child element (or self) that has a data-src or src attribute (excluding sprite icons/scripts)
         val imageElements = select("[data-src], [data-lazy-src], [src]")
         for (el in imageElements) {
             val src = el.attr("abs:data-src")
@@ -685,7 +631,6 @@ class Nepu :
             }
         }
 
-        // 2. Fallback to style attribute url() extraction
         val styleElement = selectFirst("[style*='url(']")
         if (styleElement != null) {
             val style = styleElement.attr("style")
@@ -712,7 +657,6 @@ class Nepu :
             }
         }
 
-        // 3. Fallback to img child tags
         val img = selectFirst("img")
         return img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
     }
@@ -814,14 +758,6 @@ class Nepu :
     }
 }
 
-private fun log(msg: String) {
-    try {
-        val context = Injekt.get<Application>()
-        val file = File(context.getExternalFilesDir(null), "nepu_log.txt")
-        file.appendText("${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}: $msg\n")
-    } catch (_: Exception) {}
-}
-
 class LocalProxy(
     private val client: okhttp3.OkHttpClient,
     private val userAgentProvider: () -> String?,
@@ -840,13 +776,10 @@ class LocalProxy(
                     try {
                         val socket = serverSocket!!.accept()
                         executor.execute { handleSocket(socket) }
-                    } catch (_: Exception) {
-                    }
+                    } catch (_: Exception) {}
                 }
             }
-        } catch (e: Exception) {
-            // ignore
-        }
+        } catch (e: Exception) {}
     }
 
     fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String {
@@ -879,7 +812,7 @@ class LocalProxy(
 
             val httpUrl = ("http://127.0.0.1$path").toHttpUrl()
             val encodedUrl = httpUrl.queryParameter("url")
-            val encodedHeaders = httpUrl.queryParameter("headers")
+            val encodedHeaders = httpUrl.queryParameter("headers") ?: ""
 
             if (encodedUrl.isNullOrEmpty()) {
                 sendError(socket, 400, "Missing url parameter")
@@ -887,9 +820,10 @@ class LocalProxy(
             }
 
             val targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+            val isM3u8Request = targetUrl.contains(".m3u8") || path.contains(".m3u8")
 
             val targetHeaders = okhttp3.Headers.Builder()
-            if (!encodedHeaders.isNullOrEmpty()) {
+            if (encodedHeaders.isNotEmpty()) {
                 val headersStr = String(Base64.decode(encodedHeaders, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
                 headersStr.split("\n").forEach { line ->
                     val headerParts = line.split(":", limit = 2)
@@ -898,18 +832,12 @@ class LocalProxy(
                     }
                 }
             }
-
-            if (targetHeaders.get("User-Agent").isNullOrEmpty()) {
-                val savedUA = userAgentProvider()
-                if (!savedUA.isNullOrBlank()) {
-                    targetHeaders.set("User-Agent", savedUA)
-                }
+            
+            val savedUA = userAgentProvider()
+            if (targetHeaders.get("User-Agent").isNullOrEmpty() && !savedUA.isNullOrBlank()) {
+                targetHeaders.set("User-Agent", savedUA)
             }
 
-            val reqBuilder = Request.Builder()
-                .url(targetUrl)
-
-            // Forward Range header from client
             var line: String?
             while (reader.readLine().also { line = it } != null) {
                 if (line!!.isEmpty()) break
@@ -917,29 +845,25 @@ class LocalProxy(
                 if (headerParts.size == 2) {
                     val name = headerParts[0].trim()
                     val value = headerParts[1].trim()
-                    if (name.equals("Range", ignoreCase = true)) {
+                    if (name.equals("Range", ignoreCase = true) && !isM3u8Request) {
                         targetHeaders.set(name, value)
                     }
                 }
             }
 
-            reqBuilder.headers(targetHeaders.build())
+            val request = Request.Builder()
+                .url(targetUrl)
+                .headers(targetHeaders.build())
+                .build()
 
-            val request = reqBuilder.build()
             client.newCall(request).execute().use { response ->
-                sendResponse(socket, response, targetUrl, encodedHeaders ?: "")
+                sendResponse(socket, response, targetUrl, encodedHeaders)
             }
         } catch (e: Exception) {
             try {
                 sendError(socket, 500, e.message ?: "Internal Error")
             } catch (_: Exception) {}
         } finally {
-            try {
-                socket.shutdownOutput()
-            } catch (_: Exception) {}
-            try {
-                Thread.sleep(50)
-            } catch (_: Exception) {}
             try {
                 socket.close()
             } catch (_: Exception) {}
@@ -956,26 +880,13 @@ class LocalProxy(
         var modifiedContentBytes: ByteArray? = null
         if (isM3u8) {
             try {
-                val content = response.body.string()
-                val modifiedContent = processM3u8(content, targetUrl, encodedHeaders)
+                val bodyString = response.body.string()
+                val modifiedContent = processM3u8(bodyString, targetUrl, encodedHeaders)
                 modifiedContentBytes = modifiedContent.toByteArray()
-            } catch (e: Exception) {
-                log("Error processing m3u8 in sendResponse: ${e.message}")
-            }
+            } catch (e: Exception) {}
         }
 
         out.write("HTTP/1.1 $code $message\r\n".toByteArray())
-
-        val originalContentType = response.header("Content-Type") ?: ""
-        val shouldOverrideContentType = !isM3u8 && (
-            originalContentType.startsWith("image/") ||
-                originalContentType.contains("octet-stream") ||
-                targetUrl.contains(".jpg") ||
-                targetUrl.contains(".png") ||
-                targetUrl.contains(".php") ||
-                targetUrl.contains(".ico") ||
-                targetUrl.contains(".svg")
-            )
 
         val headers = response.headers
         for (i in 0 until headers.size) {
@@ -983,27 +894,19 @@ class LocalProxy(
             val value = headers.value(i)
             if (name.equals("Connection", ignoreCase = true) ||
                 name.equals("Transfer-Encoding", ignoreCase = true) ||
-                name.equals("Keep-Alive", ignoreCase = true)
-            ) {
-                continue
-            }
-            if (name.equals("Content-Length", ignoreCase = true) && isM3u8) {
-                continue
-            }
-            if (name.equals("Content-Type", ignoreCase = true) && shouldOverrideContentType) {
-                continue
-            }
+                name.equals("Content-Type", ignoreCase = true) ||
+                (name.equals("Content-Length", ignoreCase = true) && isM3u8)
+            ) continue
             out.write("$name: $value\r\n".toByteArray())
         }
 
         if (isM3u8 && modifiedContentBytes != null) {
             out.write("Content-Length: ${modifiedContentBytes.size}\r\n".toByteArray())
-        }
-        if (shouldOverrideContentType) {
+            out.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
+        } else {
             out.write("Content-Type: video/mp2t\r\n".toByteArray())
         }
-        out.write("Connection: close\r\n".toByteArray())
-        out.write("\r\n".toByteArray())
+        out.write("Connection: close\r\n\r\n".toByteArray())
 
         if (isM3u8 && modifiedContentBytes != null) {
             out.write(modifiedContentBytes)
@@ -1019,53 +922,45 @@ class LocalProxy(
         out.flush()
     }
 
-    private val uriRegex = Regex("""URI=["']([^"']+)["']""")
+    private val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
 
     private fun processM3u8(content: String, playlistUrl: String, encodedHeaders: String): String {
-        val lines = content.split("\n")
-        val rewrittenLines = lines.map { line ->
+        val lines = content.split(Regex("""\r?\n"""))
+        val builder = StringBuilder(content.length * 2)
+        
+        for (line in lines) {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) {
-                trimmed
-            } else if (trimmed.startsWith("#")) {
-                uriRegex.find(trimmed)?.let { match ->
-                    val uriValue = match.groupValues[1]
-                    val absoluteUri = resolveUrl(playlistUrl, uriValue)
-                    val proxiedUri = getProxyUrlWithEncodedHeaders(absoluteUri, encodedHeaders)
-                    trimmed.replace(uriValue, proxiedUri)
-                } ?: trimmed
-            } else {
-                val absoluteUrl = resolveUrl(playlistUrl, trimmed)
-                getProxyUrlWithEncodedHeaders(absoluteUrl, encodedHeaders)
+                builder.append("\n")
+                continue
             }
-        }.toMutableList()
-
-        if (content.contains("#EXTINF")) {
-            var playlistTypeIndex = -1
-            var extm3uIndex = -1
-            for (i in rewrittenLines.indices) {
-                val trimmed = rewrittenLines[i].trim()
-                if (trimmed.startsWith("#EXT-X-PLAYLIST-TYPE")) {
-                    playlistTypeIndex = i
-                } else if (trimmed.startsWith("#EXTM3U")) {
-                    extm3uIndex = i
+            
+            if (trimmed.startsWith("#")) {
+                if (trimmed.startsWith("#EXT-X-KEY") || trimmed.startsWith("#EXT-X-MAP") || trimmed.startsWith("#EXT-X-MEDIA")) {
+                    uriRegex.find(trimmed)?.let { match ->
+                        val uriValue = match.groupValues[1]
+                        val proxiedUri = getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, uriValue), encodedHeaders)
+                        builder.append(trimmed.replace(uriValue, proxiedUri))
+                    } ?: builder.append(trimmed)
+                } else if (!trimmed.startsWith("#EXT-X-PLAYLIST-TYPE")) {
+                    builder.append(trimmed)
                 }
-            }
-
-            if (playlistTypeIndex != -1) {
-                rewrittenLines[playlistTypeIndex] = "#EXT-X-PLAYLIST-TYPE:VOD"
             } else {
-                val insertIndex = if (extm3uIndex != -1) extm3uIndex + 1 else 0
-                rewrittenLines.add(insertIndex, "#EXT-X-PLAYLIST-TYPE:VOD")
+                builder.append(getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, trimmed), encodedHeaders))
             }
+            builder.append("\n")
+        }
 
-            val hasEndList = rewrittenLines.any { it.trim() == "#EXT-X-ENDLIST" }
-            if (!hasEndList) {
-                rewrittenLines.add("#EXT-X-ENDLIST")
+        if (content.contains("#EXTINF") && !content.contains("#EXT-X-STREAM-INF")) {
+            val result = builder.toString()
+            return if (!result.contains("#EXT-X-ENDLIST")) {
+                result.replace("#EXTM3U\n", "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n") + "#EXT-X-ENDLIST"
+            } else {
+                result.replace("#EXTM3U\n", "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n")
             }
         }
 
-        return rewrittenLines.joinToString("\n")
+        return builder.toString()
     }
 
     private fun getProxyUrlWithEncodedHeaders(targetUrl: String, encodedHeaders: String): String {
