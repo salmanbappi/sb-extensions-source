@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.all.nepu
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.util.Base64
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
@@ -32,11 +33,9 @@ import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
-import android.util.Base64
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
-
 
 class Nepu :
     ParsedAnimeHttpSource(),
@@ -596,7 +595,7 @@ class Nepu :
                 quality = video.quality,
                 videoUrl = proxiedUrl,
                 subtitleTracks = video.subtitleTracks,
-                audioTracks = video.audioTracks
+                audioTracks = video.audioTracks,
             )
         }
     }
@@ -738,9 +737,7 @@ class Nepu :
         } catch (_: Exception) {}
     }
 
-    private fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String {
-        return Companion.getProxyUrl(this, targetUrl, headers)
-    }
+    private fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String = Companion.getProxyUrl(this, targetUrl, headers)
 
     companion object {
         private var proxy: LocalProxy? = null
@@ -823,7 +820,7 @@ class Nepu :
 
 class LocalProxy(
     private val client: okhttp3.OkHttpClient,
-    private val userAgentProvider: () -> String?
+    private val userAgentProvider: () -> String?,
 ) {
     private var serverSocket: ServerSocket? = null
     private val executor = Executors.newCachedThreadPool()
@@ -1002,12 +999,10 @@ class LocalProxy(
         return "http://127.0.0.1:$port/proxy?url=$encodedUrl&headers=$encodedHeaders"
     }
 
-    private fun resolveUrl(baseUrl: String, relativeUrl: String): String {
-        return try {
-            baseUrl.toHttpUrl().resolve(relativeUrl)?.toString() ?: relativeUrl
-        } catch (_: Exception) {
-            relativeUrl
-        }
+    private fun resolveUrl(baseUrl: String, relativeUrl: String): String = try {
+        baseUrl.toHttpUrl().resolve(relativeUrl)?.toString() ?: relativeUrl
+    } catch (_: Exception) {
+        relativeUrl
     }
 
     private fun sendError(socket: Socket, code: Int, message: String) {
