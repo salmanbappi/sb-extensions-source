@@ -575,43 +575,112 @@ class Nepu :
 
         return videoList.distinctBy { it.videoUrl }.map { video ->
             val videoUrl = video.videoUrl
-            val isVideoOnBaseUrl = try {
-                if (!videoUrl.isNullOrBlank()) {
-                    val videoHost = videoUrl.toHttpUrl().host
-                    val baseHost = baseUrl.toHttpUrl().host
-                    videoHost.endsWith(baseHost)
-                } else {
-                    false
-                }
-            } catch (_: Exception) {
-                false
+            if (videoUrl.isNullOrBlank()) return@map video
+
+            var processedVideo = video
+
+            // 1. Rewrite .m3u8 playlists locally to support MPV player and bypass 403 blocks
+            if (videoUrl.contains(".m3u8")) {
+                try {
+                    val m3u8Request = Request.Builder()
+                        .url(videoUrl)
+                        .headers(video.headers ?: buildVideoHeaders(videoUrl, pageUrl))
+                        .build()
+
+                    client.newCall(m3u8Request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val originalBody = response.body.string()
+
+                            // Clean up old cached playlists to prevent storage buildup
+                            val context = Injekt.get<Application>()
+                            context.cacheDir.listFiles()?.forEach { file ->
+                                if (file.name.startsWith("nepu_playlist_") && file.name.endsWith(".m3u8")) {
+                                    try { file.delete() } catch (_: Exception) {}
+                                }
+                            }
+
+                            // Parse and rewrite lines
+                            val lines = originalBody.split("\n")
+                            val fakeExtensions = listOf(".jpg", ".php", ".html", ".js", ".css", ".txt", ".vtt", ".srt", ".woff", ".ico", ".svg", ".tff")
+
+                            val rewrittenLines = lines.map { line ->
+                                val trimmed = line.trim()
+                                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                                    line
+                                } else {
+                                    // Resolve relative segment URLs to absolute URLs
+                                    var absoluteUrl = try {
+                                        videoUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
+                                    } catch (_: Exception) {
+                                        trimmed
+                                    }
+
+                                    // Rewrite segment extensions to .ts to prevent player formats probing failures
+                                    for (ext in fakeExtensions) {
+                                        if (absoluteUrl.endsWith(ext, ignoreCase = true)) {
+                                            absoluteUrl = absoluteUrl.substring(0, absoluteUrl.length - ext.length) + ".ts"
+                                            break
+                                        } else if (absoluteUrl.contains("$ext?")) {
+                                            absoluteUrl = absoluteUrl.replace("$ext?", ".ts?")
+                                            break
+                                        }
+                                    }
+                                    absoluteUrl
+                                }
+                            }
+
+                            val modifiedBody = rewrittenLines.joinToString("\n")
+                            val cacheFile = File(context.cacheDir, "nepu_playlist_${System.currentTimeMillis()}.m3u8")
+                            cacheFile.writeText(modifiedBody)
+
+                            processedVideo = Video(
+                                url = video.url,
+                                quality = video.quality,
+                                videoUrl = "file://" + cacheFile.absolutePath,
+                                headers = video.headers,
+                                subtitleTracks = video.subtitleTracks,
+                                audioTracks = video.audioTracks,
+                            )
+                        }
+                    }
+                } catch (_: Exception) {}
             }
 
-            val videoHeaders = video.headers
-            if (!isVideoOnBaseUrl && videoHeaders != null) {
-                val cleanHeaders = videoHeaders.newBuilder().apply {
-                    removeAll("Cookie")
-                    try {
-                        if (!videoUrl.isNullOrBlank()) {
-                            val cookies = client.cookieJar.loadForRequest(videoUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+            // 2. Apply headers cleanups only if it's NOT a local file URI
+            val finalVideoUrl = processedVideo.videoUrl
+            if (finalVideoUrl != null && !finalVideoUrl.startsWith("file://")) {
+                val isVideoOnBaseUrl = try {
+                    val videoHost = finalVideoUrl.toHttpUrl().host
+                    val baseHost = baseUrl.toHttpUrl().host
+                    videoHost.endsWith(baseHost)
+                } catch (_: Exception) {
+                    false
+                }
+
+                val videoHeaders = processedVideo.headers
+                if (!isVideoOnBaseUrl && videoHeaders != null) {
+                    val cleanHeaders = videoHeaders.newBuilder().apply {
+                        removeAll("Cookie")
+                        try {
+                            val cookies = client.cookieJar.loadForRequest(finalVideoUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
                             if (cookies.isNotEmpty()) {
                                 set("Cookie", cookies)
                             }
-                        }
-                    } catch (_: Exception) {}
-                    removeAll("Origin")
-                }.build()
-                Video(
-                    url = video.url,
-                    quality = video.quality,
-                    videoUrl = video.videoUrl,
-                    headers = cleanHeaders,
-                    subtitleTracks = video.subtitleTracks,
-                    audioTracks = video.audioTracks,
-                )
-            } else {
-                video
+                        } catch (_: Exception) {}
+                        removeAll("Origin")
+                    }.build()
+                    processedVideo = Video(
+                        url = processedVideo.url,
+                        quality = processedVideo.quality,
+                        videoUrl = processedVideo.videoUrl,
+                        headers = cleanHeaders,
+                        subtitleTracks = processedVideo.subtitleTracks,
+                        audioTracks = processedVideo.audioTracks,
+                    )
+                }
             }
+
+            processedVideo
         }
     }
 
@@ -682,8 +751,21 @@ class Nepu :
     // ============================== Utils ==============================
 
     private fun Element.extractImageUrl(): String {
-        // Unescape HTML entities first
         val styleElement = selectFirst("[style*='url(']") ?: selectFirst(".media, .list-media, .poster, .thumb") ?: this
+        
+        // 1. Try to get data-src, src, or data-lazy-src from styleElement (useful for div tags with data-src)
+        val directSrc = styleElement.attr("abs:data-src")
+            .ifEmpty { styleElement.attr("data-src") }
+            .ifEmpty { styleElement.attr("abs:data-lazy-src") }
+            .ifEmpty { styleElement.attr("data-lazy-src") }
+            .ifEmpty { styleElement.attr("abs:src") }
+            .ifEmpty { styleElement.attr("src") }
+            
+        if (directSrc.isNotEmpty() && !directSrc.contains("url(")) {
+            return directSrc
+        }
+
+        // 2. Fallback to style attribute url() extraction
         val style = styleElement.attr("style")
         if (style.contains("url(")) {
             val url = Regex("""url\(\s*['"]?([^'")\s>]+)""").find(style)?.groupValues?.get(1)
@@ -706,6 +788,8 @@ class Nepu :
                 return absoluteUrl.replace(" ", "%20")
             }
         }
+        
+        // 3. Fallback to img child tags
         val img = selectFirst("img")
         return img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
     }
