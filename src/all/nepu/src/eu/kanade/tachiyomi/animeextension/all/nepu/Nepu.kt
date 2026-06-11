@@ -595,7 +595,9 @@ class Nepu :
                             val context = Injekt.get<Application>()
                             context.cacheDir.listFiles()?.forEach { file ->
                                 if (file.name.startsWith("nepu_playlist_") && file.name.endsWith(".m3u8")) {
-                                    try { file.delete() } catch (_: Exception) {}
+                                    try {
+                                        file.delete()
+                                    } catch (_: Exception) {}
                                 }
                             }
 
@@ -752,7 +754,7 @@ class Nepu :
 
     private fun Element.extractImageUrl(): String {
         val styleElement = selectFirst("[style*='url(']") ?: selectFirst(".media, .list-media, .poster, .thumb") ?: this
-        
+
         // 1. Try to get data-src, src, or data-lazy-src from styleElement (useful for div tags with data-src)
         val directSrc = styleElement.attr("abs:data-src")
             .ifEmpty { styleElement.attr("data-src") }
@@ -760,7 +762,7 @@ class Nepu :
             .ifEmpty { styleElement.attr("data-lazy-src") }
             .ifEmpty { styleElement.attr("abs:src") }
             .ifEmpty { styleElement.attr("src") }
-            
+
         if (directSrc.isNotEmpty() && !directSrc.contains("url(")) {
             return directSrc
         }
@@ -788,7 +790,7 @@ class Nepu :
                 return absoluteUrl.replace(" ", "%20")
             }
         }
-        
+
         // 3. Fallback to img child tags
         val img = selectFirst("img")
         return img?.attr("abs:src")?.ifEmpty { img.attr("abs:data-src") }?.ifEmpty { img.attr("abs:data-lazy-src") } ?: ""
