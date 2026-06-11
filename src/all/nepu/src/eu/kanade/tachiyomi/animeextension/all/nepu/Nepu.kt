@@ -52,7 +52,6 @@ class Nepu :
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
             val requestBuilder = request.newBuilder()
@@ -72,6 +71,17 @@ class Nepu :
             if (newRequest.url.host.contains("tmdb.org")) {
                 val newHeaders = newRequest.headers.newBuilder().removeAll("Referer").build()
                 chain.proceed(newRequest.newBuilder().headers(newHeaders).build())
+            } else if (newRequest.url.pathSegments.lastOrNull()?.contains(".m3u8") == true) {
+                val response = chain.proceed(newRequest)
+                if (response.isSuccessful) {
+                    val bodyString = response.body.string()
+                    val modifiedBody = bodyString.replace(".jpg", ".ts")
+                    val contentType = response.body.contentType()
+                    val newResponseBody = okhttp3.ResponseBody.create(contentType, modifiedBody)
+                    response.newBuilder().body(newResponseBody).build()
+                } else {
+                    response
+                }
             } else {
                 chain.proceed(newRequest)
             }
