@@ -585,14 +585,21 @@ class Nepu :
             }
         }
 
+        log("videoListParse mapping started. Total videos to process: ${videoList.size}")
+
         return videoList.distinctBy { it.videoUrl }.map { video ->
             val videoUrl = video.videoUrl
-            if (videoUrl.isNullOrBlank()) return@map video
+            if (videoUrl.isNullOrBlank()) {
+                log("Video URL is null or blank for video quality: ${video.quality}")
+                return@map video
+            }
 
+            log("Processing video: quality=${video.quality}, url=$videoUrl")
             var processedVideo = video
 
             // 1. Rewrite .m3u8 playlists locally to support MPV player and bypass 403 blocks
             if (videoUrl.contains(".m3u8")) {
+                log("Video is a playlist (.m3u8). Downloading playlist...")
                 try {
                     val m3u8Request = Request.Builder()
                         .url(videoUrl)
@@ -600,22 +607,27 @@ class Nepu :
                         .build()
 
                     client.newCall(m3u8Request).execute().use { response ->
+                        log("M3U8 download response code: ${response.code}")
                         if (response.isSuccessful) {
                             val originalBody = response.body.string()
+                            log("M3U8 content downloaded successfully. Length: ${originalBody.length} bytes")
 
                             // Clean up old cached playlists to prevent storage buildup
                             val context = Injekt.get<Application>()
+                            var deleteCount = 0
                             context.cacheDir.listFiles()?.forEach { file ->
                                 if (file.name.startsWith("nepu_playlist_") && file.name.endsWith(".m3u8")) {
                                     try {
-                                        file.delete()
+                                        if (file.delete()) deleteCount++
                                     } catch (_: Exception) {}
                                 }
                             }
+                            log("Cleaned up old cached playlists. Deleted: $deleteCount files")
 
                             // Parse and rewrite lines
                             val lines = originalBody.split("\n")
                             val fakeExtensions = listOf(".jpg", ".php", ".html", ".js", ".css", ".txt", ".vtt", ".srt", ".woff", ".ico", ".svg", ".tff")
+                            var rewrittenCount = 0
 
                             val rewrittenLines = lines.map { line ->
                                 val trimmed = line.trim()
@@ -633,9 +645,11 @@ class Nepu :
                                     for (ext in fakeExtensions) {
                                         if (absoluteUrl.endsWith(ext, ignoreCase = true)) {
                                             absoluteUrl = absoluteUrl.substring(0, absoluteUrl.length - ext.length) + ".ts"
+                                            rewrittenCount++
                                             break
                                         } else if (absoluteUrl.contains("$ext?")) {
                                             absoluteUrl = absoluteUrl.replace("$ext?", ".ts?")
+                                            rewrittenCount++
                                             break
                                         }
                                     }
@@ -643,9 +657,12 @@ class Nepu :
                                 }
                             }
 
+                            log("Rewrote $rewrittenCount segments to absolute .ts paths")
+
                             val modifiedBody = rewrittenLines.joinToString("\n")
                             val cacheFile = File(context.cacheDir, "nepu_playlist_${System.currentTimeMillis()}.m3u8")
                             cacheFile.writeText(modifiedBody)
+                            log("Saved local modified playlist to: ${cacheFile.absolutePath}")
 
                             processedVideo = Video(
                                 url = video.url,
@@ -655,9 +672,15 @@ class Nepu :
                                 subtitleTracks = video.subtitleTracks,
                                 audioTracks = video.audioTracks,
                             )
+                        } else {
+                            log("M3U8 download failed. Response code: ${response.code}")
                         }
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    val sw = java.io.StringWriter()
+                    e.printStackTrace(java.io.PrintWriter(sw))
+                    log("M3U8 download/write failed with exception: ${e.message}\nStacktrace: $sw")
+                }
             }
 
             // 2. Apply headers cleanups only if it's NOT a local file URI
@@ -692,6 +715,8 @@ class Nepu :
                         audioTracks = processedVideo.audioTracks,
                     )
                 }
+            } else {
+                log("Skipping headers cleanup for local file URI: $finalVideoUrl")
             }
 
             processedVideo
@@ -825,9 +850,15 @@ class Nepu :
         return (2.0 * intersection) / (n1 + n2 - 2).coerceAtLeast(1)
     }
 
-    // ============================== Settings ==============================
-
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
+
+    private fun log(msg: String) {
+        try {
+            val context = Injekt.get<Application>()
+            val file = File(context.getExternalFilesDir(null), "nepu_log.txt")
+            file.appendText("${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}: $msg\n")
+        } catch (_: Exception) {}
+    }
 
     companion object {
         private val GENRES = arrayOf(
