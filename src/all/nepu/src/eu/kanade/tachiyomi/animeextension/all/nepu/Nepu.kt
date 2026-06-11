@@ -948,10 +948,18 @@ class LocalProxy(
         for (i in 0 until headers.size) {
             val name = headers.name(i)
             val value = headers.value(i)
-            if (!name.equals("Content-Length", ignoreCase = true) || !isM3u8) {
-                out.write("$name: $value\r\n".toByteArray())
+            if (name.equals("Connection", ignoreCase = true) ||
+                name.equals("Transfer-Encoding", ignoreCase = true) ||
+                name.equals("Keep-Alive", ignoreCase = true)
+            ) {
+                continue
             }
+            if (name.equals("Content-Length", ignoreCase = true) && isM3u8) {
+                continue
+            }
+            out.write("$name: $value\r\n".toByteArray())
         }
+        out.write("Connection: close\r\n".toByteArray())
         out.write("\r\n".toByteArray())
 
         val body = response.body
