@@ -32,6 +32,11 @@ import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import android.util.Base64
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.concurrent.Executors
+
 
 class Nepu :
     ParsedAnimeHttpSource(),
@@ -76,17 +81,6 @@ class Nepu :
             val response = if (newRequest.url.host.contains("tmdb.org")) {
                 val newHeaders = newRequest.headers.newBuilder().removeAll("Referer").build()
                 chain.proceed(newRequest.newBuilder().headers(newHeaders).build())
-            } else if (newRequest.url.pathSegments.lastOrNull()?.contains(".m3u8") == true) {
-                val resp = chain.proceed(newRequest)
-                if (resp.isSuccessful) {
-                    val bodyString = resp.body.string()
-                    val modifiedBody = bodyString.replace(".jpg", ".ts")
-                    val contentType = resp.body.contentType()
-                    val newResponseBody = okhttp3.ResponseBody.create(contentType, modifiedBody)
-                    resp.newBuilder().body(newResponseBody).build()
-                } else {
-                    resp
-                }
             } else {
                 chain.proceed(newRequest)
             }
@@ -596,42 +590,14 @@ class Nepu :
 
             log("Processing video: quality=${video.quality}, url=$videoUrl")
 
-            // Apply headers cleanups only if it's NOT on nepu.to
-            val isVideoOnBaseUrl = try {
-                val videoHost = videoUrl.toHttpUrl().host
-                val baseHost = baseUrl.toHttpUrl().host
-                videoHost.endsWith(baseHost)
-            } catch (_: Exception) {
-                false
-            }
-
-            if (!isVideoOnBaseUrl) {
-                val videoHeaders = video.headers
-                if (videoHeaders != null) {
-                    val cleanHeaders = videoHeaders.newBuilder().apply {
-                        removeAll("Cookie")
-                        try {
-                            val cookies = client.cookieJar.loadForRequest(videoUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
-                            if (cookies.isNotEmpty()) {
-                                set("Cookie", cookies)
-                            }
-                        } catch (_: Exception) {}
-                        removeAll("Origin")
-                    }.build()
-                    Video(
-                        url = video.url,
-                        quality = video.quality,
-                        videoUrl = video.videoUrl,
-                        headers = cleanHeaders,
-                        subtitleTracks = video.subtitleTracks,
-                        audioTracks = video.audioTracks,
-                    )
-                } else {
-                    video
-                }
-            } else {
-                video
-            }
+            val proxiedUrl = getProxyUrl(videoUrl, video.headers)
+            Video(
+                url = proxiedUrl,
+                quality = video.quality,
+                videoUrl = proxiedUrl,
+                subtitleTracks = video.subtitleTracks,
+                audioTracks = video.audioTracks
+            )
         }
     }
 
@@ -772,7 +738,21 @@ class Nepu :
         } catch (_: Exception) {}
     }
 
+    private fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String {
+        return Companion.getProxyUrl(this, targetUrl, headers)
+    }
+
     companion object {
+        private var proxy: LocalProxy? = null
+
+        @Synchronized
+        fun getProxyUrl(source: Nepu, targetUrl: String, headers: okhttp3.Headers?): String {
+            if (proxy == null) {
+                proxy = LocalProxy(source.client) { source.getSavedUserAgent() }
+            }
+            return proxy!!.getProxyUrl(targetUrl, headers)
+        }
+
         private val GENRES = arrayOf(
             "Category" to "",
             "3D" to "32",
@@ -838,5 +818,204 @@ class Nepu :
             "Released" to "released",
             "IMDb" to "imdb",
         )
+    }
+}
+
+class LocalProxy(
+    private val client: okhttp3.OkHttpClient,
+    private val userAgentProvider: () -> String?
+) {
+    private var serverSocket: ServerSocket? = null
+    private val executor = Executors.newCachedThreadPool()
+    var port: Int = 0
+        private set
+
+    init {
+        try {
+            serverSocket = ServerSocket(0)
+            port = serverSocket!!.localPort
+            executor.execute {
+                while (serverSocket?.isClosed == false) {
+                    try {
+                        val socket = serverSocket!!.accept()
+                        executor.execute { handleSocket(socket) }
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String {
+        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val headersStr = headers?.let { h ->
+            val sb = StringBuilder()
+            for (i in 0 until h.size) {
+                sb.append(h.name(i)).append(":").append(h.value(i)).append("\n")
+            }
+            sb.toString()
+        } ?: ""
+        val encodedHeaders = Base64.encodeToString(headersStr.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        return "http://127.0.0.1:$port/proxy?url=$encodedUrl&headers=$encodedHeaders"
+    }
+
+    private fun handleSocket(socket: Socket) {
+        try {
+            val input = socket.getInputStream()
+            val reader = input.bufferedReader()
+            val firstLine = reader.readLine() ?: return
+            val parts = firstLine.split(" ")
+            if (parts.size < 2) return
+            val path = parts[1]
+
+            if (!path.startsWith("/proxy")) {
+                sendError(socket, 404, "Not Found")
+                return
+            }
+
+            val httpUrl = ("http://127.0.0.1$path").toHttpUrl()
+            val encodedUrl = httpUrl.queryParameter("url")
+            val encodedHeaders = httpUrl.queryParameter("headers")
+
+            if (encodedUrl.isNullOrEmpty()) {
+                sendError(socket, 400, "Missing url parameter")
+                return
+            }
+
+            val targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+
+            val targetHeaders = okhttp3.Headers.Builder()
+            if (!encodedHeaders.isNullOrEmpty()) {
+                val headersStr = String(Base64.decode(encodedHeaders, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+                headersStr.split("\n").forEach { line ->
+                    val headerParts = line.split(":", limit = 2)
+                    if (headerParts.size == 2) {
+                        targetHeaders.set(headerParts[0].trim(), headerParts[1].trim())
+                    }
+                }
+            }
+
+            if (targetHeaders.get("User-Agent").isNullOrEmpty()) {
+                val savedUA = userAgentProvider()
+                if (!savedUA.isNullOrBlank()) {
+                    targetHeaders.set("User-Agent", savedUA)
+                }
+            }
+
+            val reqBuilder = Request.Builder()
+                .url(targetUrl)
+
+            // Forward Range header from client
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                if (line!!.isEmpty()) break
+                val headerParts = line!!.split(":", limit = 2)
+                if (headerParts.size == 2) {
+                    val name = headerParts[0].trim()
+                    val value = headerParts[1].trim()
+                    if (name.equals("Range", ignoreCase = true)) {
+                        targetHeaders.set(name, value)
+                    }
+                }
+            }
+
+            reqBuilder.headers(targetHeaders.build())
+
+            val request = reqBuilder.build()
+            client.newCall(request).execute().use { response ->
+                sendResponse(socket, response, targetUrl, encodedHeaders ?: "")
+            }
+        } catch (e: Exception) {
+            try {
+                sendError(socket, 500, e.message ?: "Internal Error")
+            } catch (_: Exception) {}
+        } finally {
+            try {
+                socket.close()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun sendResponse(socket: Socket, response: Response, targetUrl: String, encodedHeaders: String) {
+        val out = socket.getOutputStream()
+        val code = response.code
+        val message = response.message
+
+        out.write("HTTP/1.1 $code $message\r\n".toByteArray())
+
+        val isM3u8 = targetUrl.contains(".m3u8") || response.header("Content-Type")?.contains("mpegurl") == true
+
+        val headers = response.headers
+        for (i in 0 until headers.size) {
+            val name = headers.name(i)
+            val value = headers.value(i)
+            if (!name.equals("Content-Length", ignoreCase = true) || !isM3u8) {
+                out.write("$name: $value\r\n".toByteArray())
+            }
+        }
+        out.write("\r\n".toByteArray())
+
+        val body = response.body
+        if (isM3u8) {
+            val content = body.string()
+            val modifiedContent = processM3u8(content, targetUrl, encodedHeaders)
+            out.write(modifiedContent.toByteArray())
+        } else {
+            body.byteStream().use { input ->
+                val buffer = ByteArray(16384)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    out.write(buffer, 0, bytesRead)
+                }
+            }
+        }
+        out.flush()
+    }
+
+    private val uriRegex = Regex("""URI=["']([^"']+)["']""")
+
+    private fun processM3u8(content: String, playlistUrl: String, encodedHeaders: String): String {
+        val lines = content.split("\n")
+        val rewrittenLines = lines.map { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                trimmed
+            } else if (trimmed.startsWith("#")) {
+                uriRegex.find(trimmed)?.let { match ->
+                    val uriValue = match.groupValues[1]
+                    val absoluteUri = resolveUrl(playlistUrl, uriValue)
+                    val proxiedUri = getProxyUrlWithEncodedHeaders(absoluteUri, encodedHeaders)
+                    trimmed.replace(uriValue, proxiedUri)
+                } ?: trimmed
+            } else {
+                val absoluteUrl = resolveUrl(playlistUrl, trimmed)
+                getProxyUrlWithEncodedHeaders(absoluteUrl, encodedHeaders)
+            }
+        }
+        return rewrittenLines.joinToString("\n")
+    }
+
+    private fun getProxyUrlWithEncodedHeaders(targetUrl: String, encodedHeaders: String): String {
+        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        return "http://127.0.0.1:$port/proxy?url=$encodedUrl&headers=$encodedHeaders"
+    }
+
+    private fun resolveUrl(baseUrl: String, relativeUrl: String): String {
+        return try {
+            baseUrl.toHttpUrl().resolve(relativeUrl)?.toString() ?: relativeUrl
+        } catch (_: Exception) {
+            relativeUrl
+        }
+    }
+
+    private fun sendError(socket: Socket, code: Int, message: String) {
+        val out = socket.getOutputStream()
+        out.write("HTTP/1.1 $code $message\r\n".toByteArray())
+        out.write("Content-Type: text/plain\r\n".toByteArray())
+        out.write("\r\n".toByteArray())
+        out.write(message.toByteArray())
+        out.flush()
     }
 }
