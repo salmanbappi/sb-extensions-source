@@ -808,6 +808,8 @@ class Nepu :
             "IMDb" to "imdb",
         )
     }
+}
+
 private fun log(msg: String) {
     try {
         val context = Injekt.get<Application>()
