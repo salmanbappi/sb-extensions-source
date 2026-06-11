@@ -107,7 +107,15 @@ class Nepu :
         return builder
     }
 
+    private var cachedCookieData: JSONObject? = null
+    private var lastCookieRead: Long = 0
+
     private fun getSavedCookieData(): JSONObject? {
+        val now = System.currentTimeMillis()
+        if (cachedCookieData != null && now - lastCookieRead < 60000) {
+            return cachedCookieData
+        }
+
         val context = Injekt.get<Application>()
         var file = File(context.getExternalFilesDir(null), "cookies.json")
         if (!file.exists()) {
@@ -119,7 +127,10 @@ class Nepu :
             }
         }
         return try {
-            JSONObject(file.readText())
+            val data = JSONObject(file.readText())
+            cachedCookieData = data
+            lastCookieRead = now
+            data
         } catch (_: Exception) {
             null
         }
@@ -507,6 +518,21 @@ class Nepu :
                             if (!extractedUrl.isNullOrBlank()) {
                                 val sanitized = sanitize(extractedUrl)
                                 val refererContext = if (sanitized.contains(".mp4") || sanitized.contains(".m3u8")) pageUrl else sanitized
+                                
+                                // Pre-fetch M3U8 content before it gets deleted by the server
+                                if (sanitized.contains(".m3u8")) {
+                                    try {
+                                        val m3u8Response = client.newCall(GET(sanitized, buildVideoHeaders(sanitized, refererContext))).execute()
+                                        if (m3u8Response.isSuccessful) {
+                                            val content = m3u8Response.body.string()
+                                            if (content.startsWith("#EXTM3U")) {
+                                                m3u8Cache[sanitized] = content
+                                            }
+                                        }
+                                        m3u8Response.close()
+                                    } catch (_: Exception) {}
+                                }
+                                
                                 extractVideos(sanitized, name, refererContext)
                             }
                         }
@@ -682,10 +708,12 @@ class Nepu :
     companion object {
         private var proxy: LocalProxy? = null
 
+        val m3u8Cache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
         @Synchronized
         fun getProxyUrl(source: Nepu, targetUrl: String, headers: okhttp3.Headers?): String {
             if (proxy == null) {
-                proxy = LocalProxy(source.client) { source.getSavedUserAgent() }
+                proxy = LocalProxy(source.client, source.baseUrl) { source.getSavedUserAgent() }
             }
             return proxy!!.getProxyUrl(targetUrl, headers)
         }
@@ -760,6 +788,7 @@ class Nepu :
 
 class LocalProxy(
     private val client: okhttp3.OkHttpClient,
+    private val baseUrl: String,
     private val userAgentProvider: () -> String?,
 ) {
     private var serverSocket: ServerSocket? = null
@@ -821,9 +850,10 @@ class LocalProxy(
 
             val targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
             val isM3u8Request = targetUrl.contains(".m3u8") || path.contains(".m3u8")
+            val isCdnRequest = targetUrl.contains("vr-cdn.com")
 
             val targetHeaders = okhttp3.Headers.Builder()
-            if (encodedHeaders.isNotEmpty()) {
+            if (encodedHeaders.isNotEmpty() && !isCdnRequest) {
                 val headersStr = String(Base64.decode(encodedHeaders, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
                 headersStr.split("\n").forEach { line ->
                     val headerParts = line.split(":", limit = 2)
@@ -836,6 +866,11 @@ class LocalProxy(
             val savedUA = userAgentProvider()
             if (targetHeaders.get("User-Agent").isNullOrEmpty() && !savedUA.isNullOrBlank()) {
                 targetHeaders.set("User-Agent", savedUA)
+            }
+
+            if (isCdnRequest) {
+                targetHeaders.set("Referer", "$baseUrl/")
+                targetHeaders.set("Origin", baseUrl)
             }
 
             var line: String?
@@ -872,21 +907,24 @@ class LocalProxy(
 
     private fun sendResponse(socket: Socket, response: Response, targetUrl: String, encodedHeaders: String) {
         val out = socket.getOutputStream()
-        val code = response.code
-        val message = response.message
-
         val isM3u8 = targetUrl.contains(".m3u8") || response.header("Content-Type")?.contains("mpegurl") == true
 
         var modifiedContentBytes: ByteArray? = null
         if (isM3u8) {
             try {
-                val bodyString = response.body.string()
+                // Check if we have the content in cache (pre-fetched)
+                val cachedContent = Nepu.m3u8Cache[targetUrl]
+                val bodyString = cachedContent ?: response.body.string()
+                
                 val modifiedContent = processM3u8(bodyString, targetUrl, encodedHeaders)
                 modifiedContentBytes = modifiedContent.toByteArray()
+                
+                // Remove from cache after first use to save memory
+                if (cachedContent != null) Nepu.m3u8Cache.remove(targetUrl)
             } catch (e: Exception) {}
         }
 
-        out.write("HTTP/1.1 $code $message\r\n".toByteArray())
+        out.write("HTTP/1.1 ${response.code} ${response.message}\r\n".toByteArray())
 
         val headers = response.headers
         for (i in 0 until headers.size) {
@@ -912,7 +950,7 @@ class LocalProxy(
             out.write(modifiedContentBytes)
         } else {
             response.body.byteStream().use { input ->
-                val buffer = ByteArray(16384)
+                val buffer = ByteArray(32768)
                 var bytesRead: Int
                 while (input.read(buffer).also { bytesRead = it } != -1) {
                     out.write(buffer, 0, bytesRead)
