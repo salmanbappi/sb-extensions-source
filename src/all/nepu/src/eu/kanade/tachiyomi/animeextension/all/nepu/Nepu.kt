@@ -56,35 +56,37 @@ class Nepu :
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
-            val isNepu = request.url.host.contains("nepu.to")
+            val host = request.url.host
+            val isNepu = host.contains("nepu.to")
 
-            var requestBuilder = request.newBuilder()
+            if (!isNepu) return@addInterceptor chain.proceed(request)
+
+            val requestBuilder = request.newBuilder()
             var injectedCustomCookies = false
 
-            if (isNepu) {
-                val cookieHeader = getSavedCookiesHeader()
-                if (cookieHeader.isNotEmpty()) {
-                    requestBuilder.header("Cookie", cookieHeader)
-                    injectedCustomCookies = true
-                }
-                val savedUserAgent = getSavedUserAgent()
-                if (!savedUserAgent.isNullOrBlank()) {
-                    requestBuilder.header("User-Agent", savedUserAgent)
-                }
+            val cookieHeader = getSavedCookiesHeader()
+            if (cookieHeader.isNotEmpty()) {
+                requestBuilder.header("Cookie", cookieHeader)
+                injectedCustomCookies = true
             }
 
-            val newRequest = requestBuilder.build()
+            val savedUserAgent = getSavedUserAgent()
+            if (!savedUserAgent.isNullOrBlank()) {
+                requestBuilder.header("User-Agent", savedUserAgent)
+            }
 
-            val response = if (newRequest.url.host.contains("tmdb.org")) {
-                val newHeaders = newRequest.headers.newBuilder().removeAll("Referer").build()
-                chain.proceed(newRequest.newBuilder().headers(newHeaders).build())
+            val finalRequest = if (host.contains("tmdb.org")) {
+                requestBuilder.removeHeader("Referer").build()
             } else {
-                chain.proceed(newRequest)
+                requestBuilder.build()
             }
 
-            if (isNepu && response.code == 403 && injectedCustomCookies) {
+            val response = chain.proceed(finalRequest)
+
+            if (response.code == 403 && injectedCustomCookies) {
                 response.close()
                 chain.proceed(request)
             } else {
@@ -94,10 +96,13 @@ class Nepu :
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder {
-        val builder = super.headersBuilder().set("Referer", "$baseUrl/")
+        val builder = super.headersBuilder()
+            .set("Referer", "$baseUrl/")
         val savedUserAgent = getSavedUserAgent()
         if (!savedUserAgent.isNullOrBlank()) {
             builder.set("User-Agent", savedUserAgent)
+        } else {
+            builder.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         }
         return builder
     }
@@ -449,9 +454,7 @@ class Nepu :
 
                         // Try to parse JSON first (Standard Dooplay)
                         try {
-                            val jsonMatch = Regex("""["']?embed_url["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
-                                ?: Regex("""["']?link["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
-                                ?: Regex("""["']?url["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
+                            val jsonMatch = Regex("""["']?(?:embed_url|link|url|file)["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
 
                             if (jsonMatch != null) {
                                 val url = jsonMatch.groupValues[1].replace("\\/", "/")
@@ -470,6 +473,7 @@ class Nepu :
                             extractedUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
                                 ?: embedDoc.selectFirst("video source")?.attr("abs:src")
                                 ?: Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
+                                    ?.replace("\\/", "/")
                         }
 
                         fun sanitize(url: String): String = when {
