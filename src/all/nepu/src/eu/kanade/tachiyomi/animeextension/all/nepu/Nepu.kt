@@ -54,12 +54,16 @@ class Nepu :
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain ->
             val request = chain.request()
-            val requestBuilder = request.newBuilder()
-
-            if (request.url.host.contains("nepu.to")) {
+            val isNepu = request.url.host.contains("nepu.to")
+            
+            var requestBuilder = request.newBuilder()
+            var injectedCustomCookies = false
+            
+            if (isNepu) {
                 val cookieHeader = getSavedCookiesHeader()
                 if (cookieHeader.isNotEmpty()) {
                     requestBuilder.header("Cookie", cookieHeader)
+                    injectedCustomCookies = true
                 }
                 val savedUserAgent = getSavedUserAgent()
                 if (!savedUserAgent.isNullOrBlank()) {
@@ -68,22 +72,30 @@ class Nepu :
             }
 
             val newRequest = requestBuilder.build()
-            if (newRequest.url.host.contains("tmdb.org")) {
+            
+            val response = if (newRequest.url.host.contains("tmdb.org")) {
                 val newHeaders = newRequest.headers.newBuilder().removeAll("Referer").build()
                 chain.proceed(newRequest.newBuilder().headers(newHeaders).build())
             } else if (newRequest.url.pathSegments.lastOrNull()?.contains(".m3u8") == true) {
-                val response = chain.proceed(newRequest)
-                if (response.isSuccessful) {
-                    val bodyString = response.body.string()
+                val resp = chain.proceed(newRequest)
+                if (resp.isSuccessful) {
+                    val bodyString = resp.body.string()
                     val modifiedBody = bodyString.replace(".jpg", ".ts")
-                    val contentType = response.body.contentType()
+                    val contentType = resp.body.contentType()
                     val newResponseBody = okhttp3.ResponseBody.create(contentType, modifiedBody)
-                    response.newBuilder().body(newResponseBody).build()
+                    resp.newBuilder().body(newResponseBody).build()
                 } else {
-                    response
+                    resp
                 }
             } else {
                 chain.proceed(newRequest)
+            }
+            
+            if (isNepu && response.code == 403 && injectedCustomCookies) {
+                response.close()
+                chain.proceed(request)
+            } else {
+                response
             }
         }
         .build()
