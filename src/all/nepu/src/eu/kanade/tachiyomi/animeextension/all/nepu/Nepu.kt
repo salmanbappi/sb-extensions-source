@@ -88,14 +88,14 @@ class Nepu :
     }
 
     private fun getSavedCookieData(): JSONObject? {
-        val file = File("/storage/emulated/0/Download/Serious/cookies.json")
+        val context = Injekt.get<Application>()
+        var file = File(context.getExternalFilesDir(null), "cookies.json")
         if (!file.exists()) {
-            val sdcardFile = File("/sdcard/Download/Serious/cookies.json")
-            if (!sdcardFile.exists()) return null
-            return try {
-                JSONObject(sdcardFile.readText())
-            } catch (_: Exception) {
-                null
+            file = File("/storage/emulated/0/Download/Serious/cookies.json")
+            if (!file.exists()) {
+                val sdcardFile = File("/sdcard/Download/Serious/cookies.json")
+                if (!sdcardFile.exists()) return null
+                file = sdcardFile
             }
         }
         return try {
