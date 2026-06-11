@@ -965,13 +965,13 @@ class LocalProxy(
         val originalContentType = response.header("Content-Type") ?: ""
         val shouldOverrideContentType = !isM3u8 && (
             originalContentType.startsWith("image/") ||
-            originalContentType.contains("octet-stream") ||
-            targetUrl.contains(".jpg") ||
-            targetUrl.contains(".png") ||
-            targetUrl.contains(".php") ||
-            targetUrl.contains(".ico") ||
-            targetUrl.contains(".svg")
-        )
+                originalContentType.contains("octet-stream") ||
+                targetUrl.contains(".jpg") ||
+                targetUrl.contains(".png") ||
+                targetUrl.contains(".php") ||
+                targetUrl.contains(".ico") ||
+                targetUrl.contains(".svg")
+            )
 
         val headers = response.headers
         for (i in 0 until headers.size) {
