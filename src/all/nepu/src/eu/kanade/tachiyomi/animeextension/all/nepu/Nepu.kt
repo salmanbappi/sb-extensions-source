@@ -358,6 +358,7 @@ class Nepu :
                     ?: season.selectFirst("span.se-t")?.text()
                     ?: season.selectFirst("h2, h3, .season-title")?.text()
                     ?: ""
+                seasonName = seasonName.trim()
                 if (seasonName.toIntOrNull() != null) {
                     seasonName = "Season $seasonName"
                 }
