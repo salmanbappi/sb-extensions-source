@@ -337,7 +337,10 @@ class Nepu :
             )
         }
 
-        val seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane, div.episodes")
+        var seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane")
+        if (seasons.isEmpty()) {
+            seasons = doc.select("div.episodes")
+        }
 
         val episodeList = mutableListOf<SEpisode>()
 
