@@ -344,9 +344,19 @@ class Nepu :
         if (seasons.isNotEmpty()) {
             seasons.forEach { season ->
                 val seasonId = season.attr("id")
-                val seasonName = (if (seasonId.isNotEmpty()) doc.selectFirst("a[href='#$seasonId']")?.text() else null)
+                var seasonName = (if (seasonId.isNotEmpty()) {
+                    doc.selectFirst("a[href='#$seasonId']")?.text()
+                        ?: doc.selectFirst("button[data-bs-target='#$seasonId']")?.text()
+                        ?: doc.selectFirst("button[data-target='#$seasonId']")?.text()
+                } else null)
+                    ?: season.selectFirst(".se-q .title")?.text()
+                    ?: season.selectFirst("span.title")?.text()
                     ?: season.selectFirst("span.se-t")?.text()
+                    ?: season.selectFirst("h2, h3, .season-title")?.text()
                     ?: ""
+                if (seasonName.toIntOrNull() != null) {
+                    seasonName = "Season $seasonName"
+                }
                 val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
                 episodes.forEach { element ->
                     episodeList.add(
