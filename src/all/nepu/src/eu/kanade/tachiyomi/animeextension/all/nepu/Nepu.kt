@@ -344,11 +344,15 @@ class Nepu :
         if (seasons.isNotEmpty()) {
             seasons.forEach { season ->
                 val seasonId = season.attr("id")
-                var seasonName = (if (seasonId.isNotEmpty()) {
-                    doc.selectFirst("a[href='#$seasonId']")?.text()
-                        ?: doc.selectFirst("button[data-bs-target='#$seasonId']")?.text()
-                        ?: doc.selectFirst("button[data-target='#$seasonId']")?.text()
-                } else null)
+                var seasonName = (
+                    if (seasonId.isNotEmpty()) {
+                        doc.selectFirst("a[href='#$seasonId']")?.text()
+                            ?: doc.selectFirst("button[data-bs-target='#$seasonId']")?.text()
+                            ?: doc.selectFirst("button[data-target='#$seasonId']")?.text()
+                    } else {
+                        null
+                    }
+                    )
                     ?: season.selectFirst(".se-q .title")?.text()
                     ?: season.selectFirst("span.title")?.text()
                     ?: season.selectFirst("span.se-t")?.text()
