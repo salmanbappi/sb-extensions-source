@@ -6,10 +6,10 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/ic_launcher"
         android:label="${appName}"
         android:usesCleartextTraffic="true"
-        tools:replace="android:allowBackup,android:label">
+        tools:replace="android:allowBackup,android:icon,android:label">
 
         <meta-data
             android:name="tachiyomi.animeextension.class"
