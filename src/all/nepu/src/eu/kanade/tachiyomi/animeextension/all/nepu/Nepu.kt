@@ -501,11 +501,17 @@ class Nepu :
                                     try {
                                         when {
                                             finalUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(finalUrl, "DoodStream"))
+
                                             finalUrl.contains("filemoon") || finalUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(finalUrl, "Filemoon", mediaHeaders))
+
                                             finalUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "VidMoly"))
+
                                             finalUrl.contains("vidhide") || finalUrl.contains("guccihide") || finalUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, mediaHeaders).videosFromUrl(finalUrl, { "VidHide - $it" }))
+
                                             finalUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "Voe"))
+
                                             finalUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(finalUrl, "StreamTape"))
+
                                             else -> {
                                                 val extracted = UniversalExtractor(client).videosFromUrl(finalUrl, mediaHeaders, prefix = name)
                                                 if (extracted.isNotEmpty()) videoList.addAll(extracted)
@@ -518,7 +524,7 @@ class Nepu :
                             if (!extractedUrl.isNullOrBlank()) {
                                 val sanitized = sanitize(extractedUrl)
                                 val refererContext = if (sanitized.contains(".mp4") || sanitized.contains(".m3u8")) pageUrl else sanitized
-                                
+
                                 // Pre-fetch M3U8 content before it gets deleted by the server
                                 if (sanitized.contains(".m3u8")) {
                                     try {
@@ -532,7 +538,7 @@ class Nepu :
                                         m3u8Response.close()
                                     } catch (_: Exception) {}
                                 }
-                                
+
                                 extractVideos(sanitized, name, refererContext)
                             }
                         }
@@ -540,7 +546,11 @@ class Nepu :
                 }
             }
         }
-        futures.forEach { try { it.get(10, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) {} }
+        futures.forEach {
+            try {
+                it.get(10, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (_: Exception) {}
+        }
         pool.shutdown()
 
         if (videoList.isEmpty()) {
@@ -554,11 +564,17 @@ class Nepu :
                         try {
                             when {
                                 src.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(src, "DoodStream"))
+
                                 src.contains("filemoon") || src.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(src, "Filemoon", videoHeaders))
+
                                 src.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(src, "VidMoly"))
+
                                 src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(src, { "VidHide - $it" }))
+
                                 src.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(src, "Voe"))
+
                                 src.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(src, "StreamTape"))
+
                                 else -> {
                                     val extracted = UniversalExtractor(client).videosFromUrl(src, videoHeaders, prefix = "Video")
                                     if (extracted.isNotEmpty()) videoList.addAll(extracted)
@@ -862,7 +878,7 @@ class LocalProxy(
                     }
                 }
             }
-            
+
             val savedUA = userAgentProvider()
             if (targetHeaders.get("User-Agent").isNullOrEmpty() && !savedUA.isNullOrBlank()) {
                 targetHeaders.set("User-Agent", savedUA)
@@ -915,10 +931,10 @@ class LocalProxy(
                 // Check if we have the content in cache (pre-fetched)
                 val cachedContent = Nepu.m3u8Cache[targetUrl]
                 val bodyString = cachedContent ?: response.body.string()
-                
+
                 val modifiedContent = processM3u8(bodyString, targetUrl, encodedHeaders)
                 modifiedContentBytes = modifiedContent.toByteArray()
-                
+
                 // Remove from cache after first use to save memory
                 if (cachedContent != null) Nepu.m3u8Cache.remove(targetUrl)
             } catch (e: Exception) {}
@@ -934,7 +950,9 @@ class LocalProxy(
                 name.equals("Transfer-Encoding", ignoreCase = true) ||
                 name.equals("Content-Type", ignoreCase = true) ||
                 (name.equals("Content-Length", ignoreCase = true) && isM3u8)
-            ) continue
+            ) {
+                continue
+            }
             out.write("$name: $value\r\n".toByteArray())
         }
 
@@ -965,14 +983,14 @@ class LocalProxy(
     private fun processM3u8(content: String, playlistUrl: String, encodedHeaders: String): String {
         val lines = content.split(Regex("""\r?\n"""))
         val builder = StringBuilder(content.length * 2)
-        
+
         for (line in lines) {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) {
                 builder.append("\n")
                 continue
             }
-            
+
             if (trimmed.startsWith("#")) {
                 if (trimmed.startsWith("#EXT-X-KEY") || trimmed.startsWith("#EXT-X-MAP") || trimmed.startsWith("#EXT-X-MEDIA")) {
                     uriRegex.find(trimmed)?.let { match ->
