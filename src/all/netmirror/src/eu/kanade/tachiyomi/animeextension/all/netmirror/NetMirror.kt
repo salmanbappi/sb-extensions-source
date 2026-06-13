@@ -24,9 +24,7 @@ class NetMirror :
 
     override val name = "NetMirror"
 
-    override val baseUrl = "https://net52.cc/home"
-
-    private val apiBaseUrl = "https://net52.cc"
+    override val baseUrl = "https://net52.cc"
 
     override val lang = "all"
 
@@ -99,7 +97,7 @@ class NetMirror :
                         }, 5000L)
                     }
                 }
-                wv.loadUrl(baseUrl)
+                wv.loadUrl("$baseUrl/home")
             } catch (_: Exception) {
                 latch.countDown()
                 sessionWarmedUp.set(false)
@@ -117,7 +115,7 @@ class NetMirror :
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$apiBaseUrl/pv/homepage.php", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/pv/homepage.php", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val json = JSONObject(response.body.string())
@@ -150,7 +148,7 @@ class NetMirror :
             pool.submit(
                 java.util.concurrent.Callable<SAnime?> {
                     runCatching {
-                        val res = client.newCall(GET("$apiBaseUrl/pv/mini-modal-info.php?id=$id", headers)).execute()
+                        val res = client.newCall(GET("$baseUrl/pv/mini-modal-info.php?id=$id", headers)).execute()
                         if (res.isSuccessful) {
                             val info = JSONObject(res.body.string())
                             val anime = SAnime.create()
@@ -189,7 +187,7 @@ class NetMirror :
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-        return GET("$apiBaseUrl/pv/search.php?s=$encodedQuery", headers)
+        return GET("$baseUrl/pv/search.php?s=$encodedQuery", headers)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
@@ -214,7 +212,7 @@ class NetMirror :
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request = GET("$apiBaseUrl/pv/post.php?id=${anime.url}", headers)
+    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/pv/post.php?id=${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val json = JSONObject(response.body.string())
@@ -263,7 +261,7 @@ class NetMirror :
                     var hasNext = true
                     while (hasNext && page <= 3) {
                         try {
-                            val url = "$apiBaseUrl/pv/episodes.php?s=$seasonId&series=$seriesId&page=$page"
+                            val url = "$baseUrl/pv/episodes.php?s=$seasonId&series=$seriesId&page=$page"
                             val res = client.newCall(GET(url, headers)).execute()
                             if (res.isSuccessful) {
                                 val resJson = JSONObject(res.body.string())
@@ -329,7 +327,7 @@ class NetMirror :
 
     override fun videoListRequest(episode: SEpisode): Request {
         val tm = System.currentTimeMillis() / 1000
-        return GET("$apiBaseUrl/pv/playlist.php?id=${episode.url}&tm=$tm", headers)
+        return GET("$baseUrl/pv/playlist.php?id=${episode.url}&tm=$tm", headers)
     }
 
     override fun videoListParse(response: Response): List<Video> {
@@ -363,7 +361,7 @@ class NetMirror :
                         val file = source.optString("file")
                         val label = source.optString("label")
                         if (file.isNotEmpty()) {
-                            val absoluteUrl = "$apiBaseUrl$file"
+                            val absoluteUrl = "$baseUrl$file"
                             videoList.add(Video(absoluteUrl, label, absoluteUrl, subtitleTracks = subtitleTracks))
                         }
                     }
