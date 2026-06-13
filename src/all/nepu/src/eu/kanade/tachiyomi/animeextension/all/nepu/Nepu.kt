@@ -32,7 +32,6 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.io.File
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -60,97 +59,80 @@ class Nepu :
         .addInterceptor { chain ->
             val request = chain.request()
             val host = request.url.host
-            val isNepu = host.contains("nepu.to")
 
-            if (!isNepu) return@addInterceptor chain.proceed(request)
-
-            val requestBuilder = request.newBuilder()
-            var injectedCustomCookies = false
-
-            val cookieHeader = getSavedCookiesHeader()
-            if (cookieHeader.isNotEmpty()) {
-                requestBuilder.header("Cookie", cookieHeader)
-                injectedCustomCookies = true
+            if (host.contains("tmdb.org")) {
+                return@addInterceptor chain.proceed(request.newBuilder().removeHeader("Referer").build())
             }
 
-            val savedUserAgent = getSavedUserAgent()
-            if (!savedUserAgent.isNullOrBlank()) {
-                requestBuilder.header("User-Agent", savedUserAgent)
-            }
-
-            val finalRequest = if (host.contains("tmdb.org")) {
-                requestBuilder.removeHeader("Referer").build()
-            } else {
-                requestBuilder.build()
-            }
-
-            val response = chain.proceed(finalRequest)
-
-            if (response.code == 403 && injectedCustomCookies) {
-                response.close()
+            var response = try {
                 chain.proceed(request)
-            } else {
-                response
+            } catch (e: Exception) {
+                if (host.contains("nepu.to")) {
+                    warmupWebViewSession()
+                    chain.proceed(request)
+                } else {
+                    throw e
+                }
             }
+
+            if (host.contains("nepu.to") && (response.code == 403 || response.code == 503)) {
+                response.close()
+                warmupWebViewSession()
+                response = chain.proceed(request)
+            }
+
+            response
         }
         .build()
 
-    override fun headersBuilder(): okhttp3.Headers.Builder {
-        val builder = super.headersBuilder()
-            .set("Referer", "$baseUrl/")
-        val savedUserAgent = getSavedUserAgent()
-        if (!savedUserAgent.isNullOrBlank()) {
-            builder.set("User-Agent", savedUserAgent)
-        } else {
-            builder.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        }
-        return builder
-    }
+    override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
+        .set("Referer", "$baseUrl/")
 
-    private var cachedCookieData: JSONObject? = null
-    private var lastCookieRead: Long = 0
+    private val sessionWarmedUp = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    private fun getSavedCookieData(): JSONObject? {
-        val now = System.currentTimeMillis()
-        if (cachedCookieData != null && now - lastCookieRead < 60000) {
-            return cachedCookieData
-        }
+    @android.annotation.SuppressLint("SetJavaScriptEnabled")
+    private fun warmupWebViewSession() {
+        if (!sessionWarmedUp.compareAndSet(false, true)) return
 
-        val context = Injekt.get<Application>()
-        var file = File(context.getExternalFilesDir(null), "cookies.json")
-        if (!file.exists()) {
-            file = File("/storage/emulated/0/Download/Serious/cookies.json")
-            if (!file.exists()) {
-                val sdcardFile = File("/sdcard/Download/Serious/cookies.json")
-                if (!sdcardFile.exists()) return null
-                file = sdcardFile
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+        mainHandler.post {
+            try {
+                val context = Injekt.get<Application>()
+                val wv = android.webkit.WebView(context)
+                wv.settings.javaScriptEnabled = true
+                wv.settings.domStorageEnabled = true
+
+                val cm = android.webkit.CookieManager.getInstance()
+                cm.setAcceptCookie(true)
+                cm.setAcceptThirdPartyCookies(wv, true)
+
+                wv.webViewClient = object : android.webkit.WebViewClient() {
+                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                        mainHandler.postDelayed({
+                            runCatching {
+                                view?.stopLoading()
+                                view?.destroy()
+                            }
+                            latch.countDown()
+                        }, 5000L)
+                    }
+                }
+                wv.loadUrl("$baseUrl/")
+            } catch (_: Exception) {
+                latch.countDown()
+                sessionWarmedUp.set(false)
             }
         }
-        return try {
-            val data = JSONObject(file.readText())
-            cachedCookieData = data
-            lastCookieRead = now
-            data
-        } catch (_: Exception) {
-            null
-        }
-    }
 
-    private fun getSavedUserAgent(): String? = getSavedCookieData()?.optString("userAgent")
-
-    private fun getSavedCookiesHeader(): String {
-        val data = getSavedCookieData() ?: return ""
-        val cookiesArray = data.optJSONArray("cookies") ?: return ""
-        val cookieList = mutableListOf<String>()
-        for (i in 0 until cookiesArray.length()) {
-            val cookieObj = cookiesArray.optJSONObject(i) ?: continue
-            val name = cookieObj.optString("name")
-            val value = cookieObj.optString("value")
-            if (name.isNotEmpty() && value.isNotEmpty()) {
-                cookieList.add("$name=$value")
+        try {
+            if (!latch.await(15, java.util.concurrent.TimeUnit.SECONDS)) {
+                sessionWarmedUp.set(false)
             }
+        } catch (_: InterruptedException) {
+            sessionWarmedUp.set(false)
         }
-        return cookieList.joinToString("; ")
     }
 
     // ============================== Popular ===============================
