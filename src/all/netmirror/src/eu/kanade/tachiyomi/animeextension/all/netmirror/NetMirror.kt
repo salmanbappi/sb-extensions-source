@@ -11,7 +11,6 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.GET
-
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -146,22 +145,24 @@ class NetMirror :
 
         val pool = java.util.concurrent.Executors.newFixedThreadPool(10)
         val futures = uniqueIds.map { id ->
-            pool.submit(java.util.concurrent.Callable<SAnime?> {
-                runCatching {
-                    val res = client.newCall(GET("$baseUrl/pv/mini-modal-info.php?id=$id", headers)).execute()
-                    if (res.isSuccessful) {
-                        val info = JSONObject(res.body.string())
-                        val anime = SAnime.create()
-                        anime.title = info.optString("title")
-                        anime.url = id
-                        anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
-                        anime.description = info.optString("desc")
-                        anime
-                    } else {
-                        null
-                    }
-                }.getOrNull()
-            })
+            pool.submit(
+                java.util.concurrent.Callable<SAnime?> {
+                    runCatching {
+                        val res = client.newCall(GET("$baseUrl/pv/mini-modal-info.php?id=$id", headers)).execute()
+                        if (res.isSuccessful) {
+                            val info = JSONObject(res.body.string())
+                            val anime = SAnime.create()
+                            anime.title = info.optString("title")
+                            anime.url = id
+                            anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
+                            anime.description = info.optString("desc")
+                            anime
+                        } else {
+                            null
+                        }
+                    }.getOrNull()
+                },
+            )
         }
 
         val animes = futures.mapNotNull {
