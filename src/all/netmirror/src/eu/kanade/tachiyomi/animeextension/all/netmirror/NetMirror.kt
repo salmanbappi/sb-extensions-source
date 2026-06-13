@@ -382,16 +382,21 @@ class NetMirror :
                                                     val match = resRegex.find(trimmed)
                                                     lastResolution = if (match != null) {
                                                         val res = match.groupValues[1]
-                                                        if (res.contains("1920x1080")) "1080p"
-                                                        else if (res.contains("1280x720")) "720p"
-                                                        else if (res.contains("854x480")) "480p"
-                                                        else res
+                                                        if (res.contains("1920x1080")) {
+                                                            "1080p"
+                                                        } else if (res.contains("1280x720")) {
+                                                            "720p"
+                                                        } else if (res.contains("854x480")) {
+                                                            "480p"
+                                                        } else {
+                                                            res
+                                                        }
                                                     } else {
                                                         "Video"
                                                     }
                                                 } else if (trimmed.startsWith("http") && trimmed.contains(".m3u8")) {
                                                     videoList.add(
-                                                        Video(trimmed, lastResolution, trimmed, headers = videoHeaders, subtitleTracks = subtitleTracks)
+                                                        Video(trimmed, lastResolution, trimmed, headers = videoHeaders, subtitleTracks = subtitleTracks),
                                                     )
                                                     parsedAny = true
                                                 }
