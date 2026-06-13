@@ -155,12 +155,12 @@ class NetMirror :
                         val res = client.newCall(GET("$baseUrl/pv/mini-modal-info.php?id=$id", headers)).execute()
                         if (res.isSuccessful) {
                             val info = JSONObject(res.body.string())
-                            SAnime.create().apply {
-                                title = info.optString("title")
-                                url = id
-                                thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
-                                description = info.optString("desc")
-                            }
+                            val anime = SAnime.create()
+                            anime.title = info.optString("title")
+                            anime.url = id
+                            anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
+                            anime.description = info.optString("desc")
+                            anime
                         } else {
                             null
                         }
@@ -195,13 +195,11 @@ class NetMirror :
             val id = item.optString("id")
             val titleText = item.optString("t")
             if (id.isNotEmpty() && titleText.isNotEmpty()) {
-                animeList.add(
-                    SAnime.create().apply {
-                        title = titleText
-                        url = id
-                        thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
-                    },
-                )
+                val anime = SAnime.create()
+                anime.title = titleText
+                anime.url = id
+                anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
+                animeList.add(anime)
             }
         }
         return AnimesPage(animeList, false)
@@ -214,15 +212,15 @@ class NetMirror :
     override fun animeDetailsParse(response: Response): SAnime {
         val json = JSONObject(response.body.string())
         val id = response.request.url.queryParameter("id") ?: ""
-        return SAnime.create().apply {
-            title = json.optString("title")
-            description = json.optString("desc")
-            genre = json.optString("genre")
-            author = json.optString("creator").ifEmpty { json.optString("writer") }
-            artist = json.optString("director")
-            status = SAnime.UNKNOWN
-            thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
-        }
+        val anime = SAnime.create()
+        anime.title = json.optString("title")
+        anime.description = json.optString("desc")
+        anime.genre = json.optString("genre")
+        anime.author = json.optString("creator").ifEmpty { json.optString("writer") }
+        anime.artist = json.optString("director")
+        anime.status = SAnime.UNKNOWN
+        anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
+        return anime
     }
 
     // ============================== Episodes ==============================
@@ -235,13 +233,11 @@ class NetMirror :
         val id = response.request.url.queryParameter("id") ?: ""
 
         if (type == "m") {
-            return listOf(
-                SEpisode.create().apply {
-                    name = "Movie"
-                    url = id
-                    episode_number = 1f
-                },
-            )
+            val sEpisode = SEpisode.create()
+            sEpisode.name = "Movie"
+            sEpisode.url = id
+            sEpisode.episode_number = 1f
+            return listOf(sEpisode)
         }
 
         val episodeList = mutableListOf<SEpisode>()
@@ -274,13 +270,11 @@ class NetMirror :
                                                 val epNumStr = ep.optString("ep").replace("E", "")
                                                 val epNum = epNumStr.toFloatOrNull() ?: 1.0f
 
-                                                episodeList.add(
-                                                    SEpisode.create().apply {
-                                                        name = "$seasonName - $epTitle"
-                                                        url = epId
-                                                        episode_number = epNum
-                                                    },
-                                                )
+                                                val sEpisode = SEpisode.create()
+                                                sEpisode.name = "$seasonName - $epTitle"
+                                                sEpisode.url = epId
+                                                sEpisode.episode_number = epNum
+                                                episodeList.add(sEpisode)
                                             }
                                         }
                                         val nextPage = resJson.optInt("nextPage", -1)
@@ -308,13 +302,11 @@ class NetMirror :
                     val epId = ep.optString("id")
                     val epTitle = ep.optString("t")
                     val epNum = ep.optString("ep").replace("E", "").toFloatOrNull() ?: 1.0f
-                    episodeList.add(
-                        SEpisode.create().apply {
-                            name = epTitle
-                            url = epId
-                            episode_number = epNum
-                        },
-                    )
+                    val sEpisode = SEpisode.create()
+                    sEpisode.name = epTitle
+                    sEpisode.url = epId
+                    sEpisode.episode_number = epNum
+                    episodeList.add(sEpisode)
                 }
             }
         }
