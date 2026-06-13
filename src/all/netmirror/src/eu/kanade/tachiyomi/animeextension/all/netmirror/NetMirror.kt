@@ -64,6 +64,7 @@ class NetMirror :
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
+        .set("User-Agent", USER_AGENT)
         .set("Referer", "$baseUrl/")
 
     private val sessionWarmedUp = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -81,6 +82,7 @@ class NetMirror :
                 val wv = android.webkit.WebView(context)
                 wv.settings.javaScriptEnabled = true
                 wv.settings.domStorageEnabled = true
+                wv.settings.userAgentString = USER_AGENT
 
                 val cm = android.webkit.CookieManager.getInstance()
                 cm.setAcceptCookie(true)
@@ -88,6 +90,23 @@ class NetMirror :
 
                 wv.webViewClient = object : android.webkit.WebViewClient() {
                     override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                        view?.evaluateJavascript(
+                            """
+                            setInterval(() => {
+                                if (document.querySelector("#challenge-form") != null) {
+                                    const simpleChallenge = document.querySelector("#challenge-stage > div > input[type='button']")
+                                    if (simpleChallenge != null) simpleChallenge.click()
+                
+                                    const turnstile = document.querySelector("div.hcaptcha-box > iframe")
+                                    if (turnstile != null) {
+                                        const button = turnstile.contentWindow.document.querySelector("input[type='checkbox']")
+                                        if (button != null) button.click()
+                                    }
+                                }
+                            }, 2500)
+                            """.trimIndent()
+                        ) {}
+
                         mainHandler.postDelayed({
                             runCatching {
                                 view?.stopLoading()
@@ -357,7 +376,7 @@ class NetMirror :
 
                 if (sources != null) {
                     val videoHeaders = headersBuilder()
-                        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .set("User-Agent", USER_AGENT)
                         .build()
 
                     var parsedAny = false
@@ -430,4 +449,8 @@ class NetMirror :
     override fun getFilterList(): AnimeFilterList = AnimeFilterList()
 
     override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {}
+
+    companion object {
+        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+    }
 }
