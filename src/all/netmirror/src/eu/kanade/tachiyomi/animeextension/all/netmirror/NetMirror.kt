@@ -119,9 +119,7 @@ class NetMirror :
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return GET("$baseUrl/pv/homepage.php", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/pv/homepage.php", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val json = JSONObject(response.body.string())
@@ -163,7 +161,9 @@ class NetMirror :
                                 thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
                                 description = info.optString("desc")
                             }
-                        } else null
+                        } else {
+                            null
+                        }
                     }.getOrNull()
                 }
             }.awaitAll().filterNotNull()
@@ -195,11 +195,13 @@ class NetMirror :
             val id = item.optString("id")
             val titleText = item.optString("t")
             if (id.isNotEmpty() && titleText.isNotEmpty()) {
-                animeList.add(SAnime.create().apply {
-                    title = titleText
-                    url = id
-                    thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
-                })
+                animeList.add(
+                    SAnime.create().apply {
+                        title = titleText
+                        url = id
+                        thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
+                    },
+                )
             }
         }
         return AnimesPage(animeList, false)
@@ -207,9 +209,7 @@ class NetMirror :
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request {
-        return GET("$baseUrl/pv/post.php?id=${anime.url}", headers)
-    }
+    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/pv/post.php?id=${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val json = JSONObject(response.body.string())
@@ -227,9 +227,7 @@ class NetMirror :
 
     // ============================== Episodes ==============================
 
-    override fun episodeListRequest(anime: SAnime): Request {
-        return animeDetailsRequest(anime)
-    }
+    override fun episodeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val json = JSONObject(response.body.string())
@@ -276,11 +274,13 @@ class NetMirror :
                                                 val epNumStr = ep.optString("ep").replace("E", "")
                                                 val epNum = epNumStr.toFloatOrNull() ?: 1.0f
 
-                                                episodeList.add(SEpisode.create().apply {
-                                                    name = "$seasonName - $epTitle"
-                                                    url = epId
-                                                    episode_number = epNum
-                                                })
+                                                episodeList.add(
+                                                    SEpisode.create().apply {
+                                                        name = "$seasonName - $epTitle"
+                                                        url = epId
+                                                        episode_number = epNum
+                                                    },
+                                                )
                                             }
                                         }
                                         val nextPage = resJson.optInt("nextPage", -1)
@@ -308,11 +308,13 @@ class NetMirror :
                     val epId = ep.optString("id")
                     val epTitle = ep.optString("t")
                     val epNum = ep.optString("ep").replace("E", "").toFloatOrNull() ?: 1.0f
-                    episodeList.add(SEpisode.create().apply {
-                        name = epTitle
-                        url = epId
-                        episode_number = epNum
-                    })
+                    episodeList.add(
+                        SEpisode.create().apply {
+                            name = epTitle
+                            url = epId
+                            episode_number = epNum
+                        },
+                    )
                 }
             }
         }
