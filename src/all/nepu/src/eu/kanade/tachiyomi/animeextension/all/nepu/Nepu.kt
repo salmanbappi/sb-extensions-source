@@ -156,8 +156,11 @@ class Nepu :
     // ============================== Popular ===============================
 
     override fun popularAnimeRequest(page: Int): Request {
-        val path = if (page == 1) "discovery" else "discovery/page/$page"
-        return GET("$baseUrl/$path/", headers)
+        val url = "$baseUrl/discovery".toHttpUrl().newBuilder().apply {
+            addQueryParameter("filter", "null")
+            addQueryParameter("page", page.toString())
+        }.build()
+        return GET(url, headers)
     }
 
     override fun popularAnimeSelector(): String = ".list-movie, .list-episode"
@@ -165,25 +168,35 @@ class Nepu :
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a") ?: element
         setUrlWithoutDomain(link.attr("href"))
-        title = element.selectFirst(".list-title, .jws-post-title, h2, h3, .title, .name")?.text()
+        title = element.selectFirst(".list-title")?.text()?.trim()
+            ?: element.selectFirst(".jws-post-title, h2, h3, .title, .name")?.text()
             ?: element.selectFirst("img")?.attr("alt")
             ?: link.attr("title")
             ?: ""
         thumbnail_url = element.extractImageUrl()
     }
 
-    override fun popularAnimeNextPageSelector(): String? = "ul.pagination li:not(.disabled) a, .pagination a[title*=ext], a[title*=ext], a[title*=EXT], .pagination a.next, a.next, .next.page-numbers, a.page-link:contains(Next)"
+    override fun popularAnimeNextPageSelector(): String? = "ul.pagination a.page-link:contains(Next)"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animes = document.select(popularAnimeSelector()).map { popularAnimeFromElement(it) }
-        val hasNextPage = (popularAnimeNextPageSelector()?.let { document.selectFirst(it) } != null) || animes.size >= 20
+        val hasNextPage = document.selectFirst("ul.pagination a.page-link:contains(Next)") != null
         return AnimesPage(animes, hasNextPage)
     }
 
     // =============================== Latest ===============================
 
-    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
+    override fun latestUpdatesRequest(page: Int): Request {
+        val filterJson = JSONObject().apply {
+            put("sorting", "newest")
+        }
+        val url = "$baseUrl/discovery".toHttpUrl().newBuilder().apply {
+            addQueryParameter("filter", filterJson.toString())
+            addQueryParameter("page", page.toString())
+        }.build()
+        return GET(url, headers)
+    }
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
 
@@ -263,6 +276,14 @@ class Nepu :
                     }
                 }
 
+                is QualityFilter -> {
+                    val value = filter.toValue()
+                    if (value.isNotEmpty()) {
+                        filterJson.put("quality", value)
+                        hasFilter = true
+                    }
+                }
+
                 is ReleasedFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) {
@@ -283,18 +304,13 @@ class Nepu :
             }
         }
 
-        val url = if (hasFilter) {
-            "$baseUrl/discovery".toHttpUrl().newBuilder().apply {
-                addQueryParameter("filter", filterJson.toString())
-                addQueryParameter("page", page.toString())
-            }.build()
-        } else {
-            val path = if (page == 1) "discovery" else "discovery/page/$page"
-            "$baseUrl/$path/".toHttpUrl()
-        }
+        val url = "$baseUrl/discovery".toHttpUrl().newBuilder().apply {
+            addQueryParameter("filter", if (hasFilter) filterJson.toString() else "null")
+            addQueryParameter("page", page.toString())
+        }.build()
 
         val response = client.newCall(GET(url, headers)).execute()
-        return searchAnimeParse(response)
+        return popularAnimeParse(response)
     }
 
     // =========================== Anime Details ============================
@@ -626,6 +642,8 @@ class Nepu :
         AnimeFilter.Separator(),
         ImdbFilter(),
         AnimeFilter.Separator(),
+        QualityFilter(),
+        AnimeFilter.Separator(),
         ReleasedFilter(),
         AnimeFilter.Separator(),
         SortingFilter(),
@@ -657,6 +675,14 @@ class Nepu :
             IMDB_RATING.map { it.first }.toTypedArray(),
         ) {
         fun toValue() = IMDB_RATING[state].second
+    }
+
+    private class QualityFilter :
+        AnimeFilter.Select<String>(
+            "Quality",
+            QUALITY.map { it.first }.toTypedArray(),
+        ) {
+        fun toValue() = QUALITY[state].second
     }
 
     private class ReleasedFilter :
@@ -809,6 +835,14 @@ class Nepu :
             "2000 - 2009" to "2000-2009",
             "1990 - 1999" to "1990-1999",
             "1980 - 1989" to "1980-1989",
+        )
+
+        private val QUALITY = arrayOf(
+            "Quality" to "",
+            "HD" to "HD",
+            "Ultra HD" to "Ultra HD",
+            "SD" to "SD",
+            "CAM" to "CAM",
         )
 
         private val SORTING = arrayOf(
