@@ -96,7 +96,7 @@ class NetMirror :
                                 if (document.querySelector("#challenge-form") != null) {
                                     const simpleChallenge = document.querySelector("#challenge-stage > div > input[type='button']")
                                     if (simpleChallenge != null) simpleChallenge.click()
-                
+
                                     const turnstile = document.querySelector("div.hcaptcha-box > iframe")
                                     if (turnstile != null) {
                                         const button = turnstile.contentWindow.document.querySelector("input[type='checkbox']")
@@ -104,7 +104,7 @@ class NetMirror :
                                     }
                                 }
                             }, 2500)
-                            """.trimIndent()
+                            """.trimIndent(),
                         ) {}
 
                         mainHandler.postDelayed({
