@@ -11,10 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.GET
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.runBlocking
+
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -147,27 +144,34 @@ class NetMirror :
 
         val uniqueIds = ids.distinct()
 
-        val dispatcher = Dispatchers.IO
-        val animes = runBlocking(dispatcher) {
-            uniqueIds.map { id ->
-                async {
-                    runCatching {
-                        val res = client.newCall(GET("$baseUrl/pv/mini-modal-info.php?id=$id", headers)).execute()
-                        if (res.isSuccessful) {
-                            val info = JSONObject(res.body.string())
-                            val anime = SAnime.create()
-                            anime.title = info.optString("title")
-                            anime.url = id
-                            anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
-                            anime.description = info.optString("desc")
-                            anime
-                        } else {
-                            null
-                        }
-                    }.getOrNull()
-                }
-            }.awaitAll().filterNotNull()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(10)
+        val futures = uniqueIds.map { id ->
+            pool.submit(java.util.concurrent.Callable<SAnime?> {
+                runCatching {
+                    val res = client.newCall(GET("$baseUrl/pv/mini-modal-info.php?id=$id", headers)).execute()
+                    if (res.isSuccessful) {
+                        val info = JSONObject(res.body.string())
+                        val anime = SAnime.create()
+                        anime.title = info.optString("title")
+                        anime.url = id
+                        anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
+                        anime.description = info.optString("desc")
+                        anime
+                    } else {
+                        null
+                    }
+                }.getOrNull()
+            })
         }
+
+        val animes = futures.mapNotNull {
+            try {
+                it.get(10, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (_: Exception) {
+                null
+            }
+        }
+        pool.shutdown()
 
         return AnimesPage(animes, false)
     }
@@ -245,55 +249,59 @@ class NetMirror :
 
         val seasons = json.optJSONArray("season")
         if (seasons != null && seasons.length() > 0) {
-            runBlocking(Dispatchers.IO) {
-                val jobs = (0 until seasons.length()).map { idx ->
-                    async {
-                        val seasonObj = seasons.getJSONObject(idx)
-                        val seasonId = seasonObj.optString("id")
-                        val seasonName = "Season ${seasonObj.optString("s")}"
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(5)
+            val futures = (0 until seasons.length()).map { idx ->
+                pool.submit {
+                    val seasonObj = seasons.getJSONObject(idx)
+                    val seasonId = seasonObj.optString("id")
+                    val seasonName = "Season ${seasonObj.optString("s")}"
 
-                        var page = 1
-                        var hasNext = true
-                        while (hasNext && page <= 3) {
-                            try {
-                                val url = "$baseUrl/pv/episodes.php?s=$seasonId&series=$seriesId&page=$page"
-                                val res = client.newCall(GET(url, headers)).execute()
-                                if (res.isSuccessful) {
-                                    val resJson = JSONObject(res.body.string())
-                                    val eps = resJson.optJSONArray("episodes")
-                                    if (eps != null && eps.length() > 0) {
-                                        synchronized(episodeList) {
-                                            for (k in 0 until eps.length()) {
-                                                val ep = eps.getJSONObject(k)
-                                                val epId = ep.optString("id")
-                                                val epTitle = ep.optString("t")
-                                                val epNumStr = ep.optString("ep").replace("E", "")
-                                                val epNum = epNumStr.toFloatOrNull() ?: 1.0f
+                    var page = 1
+                    var hasNext = true
+                    while (hasNext && page <= 3) {
+                        try {
+                            val url = "$baseUrl/pv/episodes.php?s=$seasonId&series=$seriesId&page=$page"
+                            val res = client.newCall(GET(url, headers)).execute()
+                            if (res.isSuccessful) {
+                                val resJson = JSONObject(res.body.string())
+                                val eps = resJson.optJSONArray("episodes")
+                                if (eps != null && eps.length() > 0) {
+                                    synchronized(episodeList) {
+                                        for (k in 0 until eps.length()) {
+                                            val ep = eps.getJSONObject(k)
+                                            val epId = ep.optString("id")
+                                            val epTitle = ep.optString("t")
+                                            val epNumStr = ep.optString("ep").replace("E", "")
+                                            val epNum = epNumStr.toFloatOrNull() ?: 1.0f
 
-                                                val sEpisode = SEpisode.create()
-                                                sEpisode.name = "$seasonName - $epTitle"
-                                                sEpisode.url = epId
-                                                sEpisode.episode_number = epNum
-                                                episodeList.add(sEpisode)
-                                            }
+                                            val sEpisode = SEpisode.create()
+                                            sEpisode.name = "$seasonName - $epTitle"
+                                            sEpisode.url = epId
+                                            sEpisode.episode_number = epNum
+                                            episodeList.add(sEpisode)
                                         }
-                                        val nextPage = resJson.optInt("nextPage", -1)
-                                        hasNext = nextPage > page
-                                        page = nextPage
-                                    } else {
-                                        hasNext = false
                                     }
+                                    val nextPage = resJson.optInt("nextPage", -1)
+                                    hasNext = nextPage > page
+                                    page = nextPage
                                 } else {
                                     hasNext = false
                                 }
-                            } catch (e: Exception) {
+                            } else {
                                 hasNext = false
                             }
+                        } catch (e: Exception) {
+                            hasNext = false
                         }
                     }
                 }
-                jobs.awaitAll()
             }
+            futures.forEach {
+                try {
+                    it.get(15, java.util.concurrent.TimeUnit.SECONDS)
+                } catch (_: Exception) {}
+            }
+            pool.shutdown()
         } else {
             val eps = json.optJSONArray("episodes")
             if (eps != null) {
