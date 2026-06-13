@@ -428,11 +428,6 @@ class Nepu :
             val cookieJarCookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
             if (cookieJarCookies.isNotEmpty() && cookieJarCookies.contains("cf_clearance")) {
                 builder.set("Cookie", cookieJarCookies)
-            } else {
-                val savedCookies = getSavedCookiesHeader()
-                if (savedCookies.isNotEmpty()) {
-                    builder.set("Cookie", savedCookies)
-                }
             }
         }
 
@@ -755,7 +750,7 @@ class Nepu :
         @Synchronized
         fun getProxyUrl(source: Nepu, targetUrl: String, headers: okhttp3.Headers?): String {
             if (proxy == null) {
-                proxy = LocalProxy(source.client, source.baseUrl) { source.getSavedUserAgent() }
+                proxy = LocalProxy(source.client, source.baseUrl) { null }
             }
             return proxy!!.getProxyUrl(targetUrl, headers)
         }
