@@ -356,13 +356,57 @@ class NetMirror :
                 }
 
                 if (sources != null) {
+                    val videoHeaders = headersBuilder()
+                        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .build()
+
+                    var parsedAny = false
                     for (i in 0 until sources.length()) {
                         val source = sources.getJSONObject(i)
                         val file = source.optString("file")
                         val label = source.optString("label")
                         if (file.isNotEmpty()) {
                             val absoluteUrl = "$baseUrl$file"
-                            videoList.add(Video(absoluteUrl, label, absoluteUrl, subtitleTracks = subtitleTracks))
+                            if (!parsedAny && i == 0) {
+                                try {
+                                    val playlistResponse = client.newCall(GET(absoluteUrl, headers)).execute()
+                                    if (playlistResponse.isSuccessful) {
+                                        val playlistContent = playlistResponse.body.string()
+                                        if (playlistContent.contains("#EXT-X-STREAM-INF:")) {
+                                            val lines = playlistContent.lines()
+                                            var lastResolution = "Video"
+                                            for (line in lines) {
+                                                val trimmed = line.trim()
+                                                if (trimmed.startsWith("#EXT-X-STREAM-INF:")) {
+                                                    val resRegex = """RESOLUTION=(\d+x\d+)""".toRegex()
+                                                    val match = resRegex.find(trimmed)
+                                                    lastResolution = if (match != null) {
+                                                        val res = match.groupValues[1]
+                                                        if (res.contains("1920x1080")) "1080p"
+                                                        else if (res.contains("1280x720")) "720p"
+                                                        else if (res.contains("854x480")) "480p"
+                                                        else res
+                                                    } else {
+                                                        "Video"
+                                                    }
+                                                } else if (trimmed.startsWith("http") && trimmed.contains(".m3u8")) {
+                                                    videoList.add(
+                                                        Video(trimmed, lastResolution, trimmed, headers = videoHeaders, subtitleTracks = subtitleTracks)
+                                                    )
+                                                    parsedAny = true
+                                                }
+                                            }
+                                        }
+                                    }
+                                    playlistResponse.close()
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
+
+                            if (!parsedAny) {
+                                videoList.add(Video(absoluteUrl, label, absoluteUrl, headers = videoHeaders, subtitleTracks = subtitleTracks))
+                            }
                         }
                     }
                 }
