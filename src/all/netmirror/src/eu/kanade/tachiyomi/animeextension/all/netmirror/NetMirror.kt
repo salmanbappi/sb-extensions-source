@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.GET
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -42,6 +43,7 @@ class NetMirror :
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(CloudflareInterceptor(network.client))
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
