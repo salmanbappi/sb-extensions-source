@@ -122,12 +122,15 @@ class NetMirror :
                 cm.setAcceptCookie(true)
                 cm.setAcceptThirdPartyCookies(wv, true)
 
-                wv.addJavascriptInterface(object {
-                    @android.webkit.JavascriptInterface
-                    fun leave() {
-                        latch.countDown()
-                    }
-                }, "NetMirrorJSI")
+                wv.addJavascriptInterface(
+                    object {
+                        @android.webkit.JavascriptInterface
+                        fun leave() {
+                            latch.countDown()
+                        }
+                    },
+                    "NetMirrorJSI",
+                )
 
                 wv.webViewClient = object : android.webkit.WebViewClient() {
                     override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
@@ -141,7 +144,7 @@ class NetMirror :
                             """
                             (function() {
                                 var checkInterval = setInterval(() => {
-                                    if (document.querySelector("#challenge-form") == null && 
+                                    if (document.querySelector("#challenge-form") == null &&
                                         document.querySelector("#challenge-stage") == null &&
                                         !document.title.includes("Just a moment")) {
                                         clearInterval(checkInterval);
