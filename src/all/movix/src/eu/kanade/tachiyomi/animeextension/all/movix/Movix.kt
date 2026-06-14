@@ -80,18 +80,21 @@ class Movix : AnimeHttpSource() {
                     is SortFilter -> {
                         selectedSort = filter.toValue()
                     }
+
                     is LanguageFilter -> {
                         val value = filter.toValue()
                         if (value.isNotEmpty()) {
                             selectedLang = value
                         }
                     }
+
                     is YearFilter -> {
                         val value = filter.state
                         if (value.isNotBlank()) {
                             selectedYear = value
                         }
                     }
+
                     is GenreFilter -> {
                         val genresList = filter.state
                             .filter { it.state }
@@ -100,6 +103,7 @@ class Movix : AnimeHttpSource() {
                             selectedGenres = genresList.joinToString(",")
                         }
                     }
+
                     else -> {}
                 }
             }
@@ -146,10 +150,12 @@ class Movix : AnimeHttpSource() {
                 val tmdbId = epUrl.substringAfter("/movie/")
                 GET("$baseUrl/api/tmdb/movie/$tmdbId?append_to_response=external_ids", headers)
             }
+
             epUrl.startsWith("/tv/") -> {
                 val tmdbId = epUrl.substringAfter("/tv/")
                 GET("$baseUrl/api/tmdb/tv/$tmdbId?append_to_response=external_ids", headers)
             }
+
             else -> throw Exception("Invalid details URL: $epUrl")
         }
     }
@@ -186,10 +192,12 @@ class Movix : AnimeHttpSource() {
                 val tmdbId = epUrl.substringAfter("/movie/")
                 GET("$baseUrl/api/tmdb/movie/$tmdbId?append_to_response=external_ids", headers)
             }
+
             epUrl.startsWith("/tv/") -> {
                 val tmdbId = epUrl.substringAfter("/tv/")
                 GET("$baseUrl/api/tmdb/tv/$tmdbId?append_to_response=external_ids", headers)
             }
+
             else -> throw Exception("Invalid episode list URL: $epUrl")
         }
     }
@@ -264,6 +272,7 @@ class Movix : AnimeHttpSource() {
                 val tmdbId = epUrl.substringAfter("/movie/")
                 GET("$baseUrl/api/vidlink/movie/$tmdbId", headers)
             }
+
             epUrl.startsWith("/tv/") -> {
                 val parts = epUrl.substringAfter("/tv/").split("/")
                 val tmdbId = parts[0]
@@ -271,6 +280,7 @@ class Movix : AnimeHttpSource() {
                 val epNum = parts[2]
                 GET("$baseUrl/api/vidlink/tv/$tmdbId/$season/$epNum", headers)
             }
+
             else -> throw Exception("Invalid video request URL: $epUrl")
         }
     }
@@ -315,71 +325,75 @@ class Movix : AnimeHttpSource() {
         fun toValue() = vals[state].second
     }
 
-    class TypeFilter : AnimeFilter.Select<String>(
-        "Content Type",
-        arrayOf("Movies", "TV Shows"),
-    )
-
-    class SortFilter : UriPartFilter(
-        "Sort By",
-        arrayOf(
-            Pair("Popularity Descending", "popularity.desc"),
-            Pair("Popularity Ascending", "popularity.asc"),
-            Pair("Release Date Descending", "release_date.desc"),
-            Pair("Release Date Ascending", "release_date.asc"),
-            Pair("Vote Average Descending", "vote_average.desc"),
-            Pair("Vote Average Ascending", "vote_average.asc"),
-            Pair("Original Title Descending", "original_title.desc"),
-            Pair("Original Title Ascending", "original_title.asc"),
+    class TypeFilter :
+        AnimeFilter.Select<String>(
+            "Content Type",
+            arrayOf("Movies", "TV Shows"),
         )
-    )
 
-    class LanguageFilter : UriPartFilter(
-        "Original Language",
-        arrayOf(
-            Pair("Any", ""),
-            Pair("English", "en"),
-            Pair("Japanese", "ja"),
-            Pair("Korean", "ko"),
-            Pair("Spanish", "es"),
-            Pair("French", "fr"),
-            Pair("Chinese", "zh"),
-            Pair("Hindi", "hi"),
-            Pair("Italian", "it"),
-            Pair("German", "de"),
-            Pair("Russian", "ru"),
+    class SortFilter :
+        UriPartFilter(
+            "Sort By",
+            arrayOf(
+                Pair("Popularity Descending", "popularity.desc"),
+                Pair("Popularity Ascending", "popularity.asc"),
+                Pair("Release Date Descending", "release_date.desc"),
+                Pair("Release Date Ascending", "release_date.asc"),
+                Pair("Vote Average Descending", "vote_average.desc"),
+                Pair("Vote Average Ascending", "vote_average.asc"),
+                Pair("Original Title Descending", "original_title.desc"),
+                Pair("Original Title Ascending", "original_title.asc"),
+            ),
         )
-    )
 
-    class GenreFilter : AnimeFilter.Group<GenreCheckBox>(
-        "Genres",
-        listOf(
-            GenreCheckBox("Action", "28", "10759"),
-            GenreCheckBox("Adventure", "12", "10759"),
-            GenreCheckBox("Animation", "16", "16"),
-            GenreCheckBox("Comedy", "35", "35"),
-            GenreCheckBox("Crime", "80", "80"),
-            GenreCheckBox("Documentary", "99", "99"),
-            GenreCheckBox("Drama", "18", "18"),
-            GenreCheckBox("Family", "10751", "10751"),
-            GenreCheckBox("Fantasy", "14", "10765"),
-            GenreCheckBox("History", "36", null),
-            GenreCheckBox("Horror", "27", null),
-            GenreCheckBox("Kids", null, "10762"),
-            GenreCheckBox("Music", "10402", null),
-            GenreCheckBox("Mystery", "9648", "9648"),
-            GenreCheckBox("News", null, "10763"),
-            GenreCheckBox("Reality", null, "10764"),
-            GenreCheckBox("Romance", "10749", null),
-            GenreCheckBox("Sci-Fi & Fantasy", "878,14", "10765"),
-            GenreCheckBox("Soap", null, "10766"),
-            GenreCheckBox("Talk", null, "10767"),
-            GenreCheckBox("Thriller", "53", null),
-            GenreCheckBox("TV Movie", "10770", null),
-            GenreCheckBox("War & Politics", "10752", "10768"),
-            GenreCheckBox("Western", "37", "37"),
+    class LanguageFilter :
+        UriPartFilter(
+            "Original Language",
+            arrayOf(
+                Pair("Any", ""),
+                Pair("English", "en"),
+                Pair("Japanese", "ja"),
+                Pair("Korean", "ko"),
+                Pair("Spanish", "es"),
+                Pair("French", "fr"),
+                Pair("Chinese", "zh"),
+                Pair("Hindi", "hi"),
+                Pair("Italian", "it"),
+                Pair("German", "de"),
+                Pair("Russian", "ru"),
+            ),
         )
-    )
+
+    class GenreFilter :
+        AnimeFilter.Group<GenreCheckBox>(
+            "Genres",
+            listOf(
+                GenreCheckBox("Action", "28", "10759"),
+                GenreCheckBox("Adventure", "12", "10759"),
+                GenreCheckBox("Animation", "16", "16"),
+                GenreCheckBox("Comedy", "35", "35"),
+                GenreCheckBox("Crime", "80", "80"),
+                GenreCheckBox("Documentary", "99", "99"),
+                GenreCheckBox("Drama", "18", "18"),
+                GenreCheckBox("Family", "10751", "10751"),
+                GenreCheckBox("Fantasy", "14", "10765"),
+                GenreCheckBox("History", "36", null),
+                GenreCheckBox("Horror", "27", null),
+                GenreCheckBox("Kids", null, "10762"),
+                GenreCheckBox("Music", "10402", null),
+                GenreCheckBox("Mystery", "9648", "9648"),
+                GenreCheckBox("News", null, "10763"),
+                GenreCheckBox("Reality", null, "10764"),
+                GenreCheckBox("Romance", "10749", null),
+                GenreCheckBox("Sci-Fi & Fantasy", "878,14", "10765"),
+                GenreCheckBox("Soap", null, "10766"),
+                GenreCheckBox("Talk", null, "10767"),
+                GenreCheckBox("Thriller", "53", null),
+                GenreCheckBox("TV Movie", "10770", null),
+                GenreCheckBox("War & Politics", "10752", "10768"),
+                GenreCheckBox("Western", "37", "37"),
+            ),
+        )
 
     class GenreCheckBox(name: String, val movieVal: String?, val tvVal: String?) : AnimeFilter.CheckBox(name)
 
