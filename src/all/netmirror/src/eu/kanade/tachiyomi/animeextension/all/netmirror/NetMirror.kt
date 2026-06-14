@@ -55,7 +55,17 @@ class NetMirror :
         val customCookies = preferences.getString(PREF_COOKIES_KEY, "") ?: ""
         if (customCookies.isNotEmpty()) return customCookies
         return try {
-            android.webkit.CookieManager.getInstance().getCookie(urlStr) ?: ""
+            val cm = android.webkit.CookieManager.getInstance()
+            val urlCookies = cm.getCookie(urlStr) ?: ""
+            val baseCookies = cm.getCookie(baseUrl) ?: ""
+            
+            if (urlCookies.contains("cf_clearance")) {
+                urlCookies
+            } else if (baseCookies.contains("cf_clearance")) {
+                if (urlCookies.isNotEmpty()) "$urlCookies; $baseCookies" else baseCookies
+            } else {
+                urlCookies.ifEmpty { baseCookies }
+            }
         } catch (_: Exception) {
             ""
         }
@@ -81,7 +91,7 @@ class NetMirror :
             } catch (e: Exception) {
                 if (host.contains("net52.cc") || host.contains("net11.cc")) {
                     sessionWarmedUp.set(false)
-                    warmupWebViewSession()
+                    warmupWebViewSession("https://$host/")
                     val updatedCookies = getCookiesForRequest(request.url.toString())
                     val retriedRequest = if (updatedCookies.isNotEmpty()) {
                         request.newBuilder().header("Cookie", updatedCookies).build()
@@ -97,7 +107,7 @@ class NetMirror :
             if ((host.contains("net52.cc") || host.contains("net11.cc")) && (response.code == 403 || response.code == 503)) {
                 response.close()
                 sessionWarmedUp.set(false)
-                warmupWebViewSession()
+                warmupWebViewSession("https://$host/")
                 val updatedCookies = getCookiesForRequest(request.url.toString())
                 val retriedRequest = if (updatedCookies.isNotEmpty()) {
                     request.newBuilder().header("Cookie", updatedCookies).build()
@@ -117,7 +127,7 @@ class NetMirror :
     private val sessionWarmedUp = AtomicBoolean(false)
 
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
-    private fun warmupWebViewSession() {
+    private fun warmupWebViewSession(targetUrl: String? = null) {
         if (!sessionWarmedUp.compareAndSet(false, true)) return
 
         val latch = CountDownLatch(1)
@@ -156,7 +166,7 @@ class NetMirror :
 
                 wv.webViewClient = object : android.webkit.WebViewClient() {
                     override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                        android.util.Log.d("NetMirrorWebView", "Page finished: $url, title: ${view?.title}")
+                        android.util.Log.d("NetMirrorWebView", "Page finished: ${url}, title: ${view?.title}")
                         if (url != null && !url.contains("verify2") && !url.contains("challenge")) {
                             latch.countDown()
                             return
@@ -187,7 +197,7 @@ class NetMirror :
                         ) {}
                     }
                 }
-                wv.loadUrl("$baseUrl/home")
+                wv.loadUrl(targetUrl ?: "$baseUrl/home")
             } catch (e: Exception) {
                 android.util.Log.e("NetMirrorWebView", "Error in WebView warmup", e)
                 latch.countDown()
