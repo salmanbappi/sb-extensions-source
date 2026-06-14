@@ -415,6 +415,12 @@ class Animex :
                         Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
                     } ?: emptyList()
 
+                    val videoHeaders = headersBuilder().apply {
+                        sourcesData.headers?.forEach { (key, value) ->
+                            set(key, value)
+                        }
+                    }.build()
+
                     sourcesData.sources.forEach { source ->
                         val streamUrl = absoluteUrl(source.url)
                         val providerName = providerId.uppercase()
@@ -435,7 +441,7 @@ class Animex :
                                 streamUrl,
                                 qualityLabel,
                                 streamUrl,
-                                headers = headers,
+                                headers = videoHeaders,
                                 subtitleTracks = subtitleTracks,
                             ),
                         )
@@ -602,7 +608,7 @@ class Animex :
  */
 class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
     companion object {
-        private const val SESSION_COOKIE = "animex_session"
+        private const val SESSION_COOKIE = "_amx_id"
         private const val BASE_URL = "https://animex.one"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -620,12 +626,20 @@ class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
                 synchronized(this) {
                     val freshCookies = cookieJar.loadForRequest(httpUrl)
                     if (!freshCookies.any { it.name == SESSION_COOKIE }) {
+                        val slug = httpUrl.queryParameter("id")
+                        val epNum = httpUrl.queryParameter("epNum")
+                        val handshakeUrl = if (slug != null && epNum != null) {
+                            "$BASE_URL/watch/$slug-episode-$epNum"
+                        } else {
+                            BASE_URL
+                        }
+
                         val handshakeClient = OkHttpClient.Builder()
                             .cookieJar(cookieJar)
                             .build()
 
                         val handshakeRequest = Request.Builder()
-                            .url(BASE_URL)
+                            .url(handshakeUrl)
                             .header("User-Agent", USER_AGENT)
                             .build()
 
@@ -779,6 +793,7 @@ data class ProviderItem(
 data class SourcesResponse(
     val sources: List<SourceItem> = emptyList(),
     val tracks: List<TrackItem>? = null,
+    val headers: Map<String, String>? = null,
 )
 
 @Serializable
