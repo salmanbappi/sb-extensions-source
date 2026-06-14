@@ -70,24 +70,38 @@ class AnimexOne :
     override fun popularAnimeRequest(page: Int): Request {
         val queryBody = GraphQLRequest(
             query = """
-                query(${'$'}page: Int) {
-                  Page(page: ${'$'}page, perPage: 30) {
-                    media(sort: [TRENDING_DESC], type: ANIME, isAdult: false) {
+                query CatalogAnime(${'$'}filter: AnimeCatalogFilterInput, ${'$'}sort: [AnimeSortInput!], ${'$'}limit: Int, ${'$'}offset: Int) {
+                  catalogAnime(filter: ${'$'}filter, sort: ${'$'}sort, limit: ${'$'}limit, offset: ${'$'}offset) {
+                    items {
                       id
-                      idMal
-                      title { english romaji }
-                      coverImage { large extraLarge }
-                      description(asHtml: false)
+                      anilistId
+                      titleRomaji
+                      titleEnglish
+                      coverImage
+                      bannerImage
+                      backdropUrl
+                      description
                       status
+                      format
+                      averageScore
+                      popularity
+                      episodeCount
+                      seasonYear
+                      season
+                      color
                       genres
                     }
                   }
                 }
             """.trimIndent(),
-            variables = GraphQLVariables(page = page),
+            variables = GraphQLVariables(
+                sort = listOf(AnimeSortInput("POPULARITY", "DESC")),
+                limit = 30,
+                offset = (page - 1) * 30,
+            ),
         )
         val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-        return POST("https://graphql.anilist.co", headers, body)
+        return POST("https://graphql.animex.one/graphql", headers, body)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
@@ -95,24 +109,38 @@ class AnimexOne :
     override fun latestUpdatesRequest(page: Int): Request {
         val queryBody = GraphQLRequest(
             query = """
-                query(${'$'}page: Int) {
-                  Page(page: ${'$'}page, perPage: 30) {
-                    media(sort: [START_DATE_DESC], type: ANIME, isAdult: false) {
+                query CatalogAnime(${'$'}filter: AnimeCatalogFilterInput, ${'$'}sort: [AnimeSortInput!], ${'$'}limit: Int, ${'$'}offset: Int) {
+                  catalogAnime(filter: ${'$'}filter, sort: ${'$'}sort, limit: ${'$'}limit, offset: ${'$'}offset) {
+                    items {
                       id
-                      idMal
-                      title { english romaji }
-                      coverImage { large extraLarge }
-                      description(asHtml: false)
+                      anilistId
+                      titleRomaji
+                      titleEnglish
+                      coverImage
+                      bannerImage
+                      backdropUrl
+                      description
                       status
+                      format
+                      averageScore
+                      popularity
+                      episodeCount
+                      seasonYear
+                      season
+                      color
                       genres
                     }
                   }
                 }
             """.trimIndent(),
-            variables = GraphQLVariables(page = page),
+            variables = GraphQLVariables(
+                sort = listOf(AnimeSortInput("CREATED_AT", "DESC")),
+                limit = 30,
+                offset = (page - 1) * 30,
+            ),
         )
         val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-        return POST("https://graphql.anilist.co", headers, body)
+        return POST("https://graphql.animex.one/graphql", headers, body)
     }
 
     override fun latestUpdatesParse(response: Response): AnimesPage = searchAnimeParse(response)
@@ -120,17 +148,28 @@ class AnimexOne :
     // ============================== SEARCH / DISCOVERY ==============================
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        var selectedSort: List<String> = listOf("TRENDING_DESC")
-        var selectedGenres: List<String> = emptyList()
-        var selectedFormats: List<String> = emptyList()
+        var selectedSort = listOf(AnimeSortInput("POPULARITY", "DESC"))
+        var selectedGenres: List<String>? = null
+        var selectedFormats: List<String>? = null
         var selectedStatus: List<String>? = null
-        var selectedSeason: String? = null
+        var selectedSeason: List<String>? = null
         var selectedYear: Int? = null
 
         filters.forEach { filter ->
             when (filter) {
                 is SortFilter -> {
-                    selectedSort = listOf(filter.toValue())
+                    val sortVal = filter.toValue()
+                    selectedSort = listOf(
+                        when (sortVal) {
+                            "TRENDING_DESC" -> AnimeSortInput("TRENDING", "DESC")
+                            "POPULARITY_DESC" -> AnimeSortInput("POPULARITY", "DESC")
+                            "SCORE_DESC" -> AnimeSortInput("AVERAGE_SCORE", "DESC")
+                            "FAVOURITES_DESC" -> AnimeSortInput("FAVOURITES", "DESC")
+                            "START_DATE_DESC" -> AnimeSortInput("CREATED_AT", "DESC")
+                            "START_DATE" -> AnimeSortInput("CREATED_AT", "ASC")
+                            else -> AnimeSortInput("POPULARITY", "DESC")
+                        }
+                    )
                 }
 
                 is StatusFilter -> {
@@ -143,20 +182,26 @@ class AnimexOne :
                 is SeasonFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) {
-                        selectedSeason = value
+                        selectedSeason = listOf(value)
                     }
                 }
 
                 is FormatFilter -> {
-                    selectedFormats = filter.state
+                    val formats = filter.state
                         .filter { it.state }
                         .map { it.value }
+                    if (formats.isNotEmpty()) {
+                        selectedFormats = formats
+                    }
                 }
 
                 is GenreFilter -> {
-                    selectedGenres = filter.state
+                    val genres = filter.state
                         .filter { it.state }
                         .map { it.value }
+                    if (genres.isNotEmpty()) {
+                        selectedGenres = genres
+                    }
                 }
 
                 is YearFilter -> {
@@ -170,104 +215,123 @@ class AnimexOne :
             }
         }
 
+        val filterInput = AnimeCatalogFilterInput(
+            query = if (query.isNotBlank()) query else null,
+            statusIn = selectedStatus,
+            seasonIn = selectedSeason,
+            seasonYearMin = selectedYear,
+            seasonYearMax = selectedYear,
+            formatIn = selectedFormats,
+            genres = selectedGenres,
+        )
+
         val queryBody = GraphQLRequest(
             query = """
-                query(${'$'}page: Int, ${'$'}search: String, ${'$'}sort: [MediaSort], ${'$'}genres: [String], ${'$'}format: [MediaFormat], ${'$'}status: [MediaStatus], ${'$'}season: MediaSeason, ${'$'}seasonYear: Int) {
-                  Page(page: ${'$'}page, perPage: 30) {
-                    media(search: ${'$'}search, sort: ${'$'}sort, genre_in: ${'$'}genres, format_in: ${'$'}format, status_in: ${'$'}status, season: ${'$'}season, seasonYear: ${'$'}seasonYear, type: ANIME, isAdult: false) {
+                query CatalogAnime(${'$'}filter: AnimeCatalogFilterInput, ${'$'}sort: [AnimeSortInput!], ${'$'}limit: Int, ${'$'}offset: Int) {
+                  catalogAnime(filter: ${'$'}filter, sort: ${'$'}sort, limit: ${'$'}limit, offset: ${'$'}offset) {
+                    items {
                       id
-                      idMal
-                      title { english romaji }
-                      coverImage { large extraLarge }
-                      description(asHtml: false)
+                      anilistId
+                      titleRomaji
+                      titleEnglish
+                      coverImage
+                      bannerImage
+                      backdropUrl
+                      description
                       status
+                      format
+                      averageScore
+                      popularity
+                      episodeCount
+                      seasonYear
+                      season
+                      color
                       genres
                     }
                   }
                 }
             """.trimIndent(),
             variables = GraphQLVariables(
-                page = page,
-                search = if (query.isNotBlank()) query else null,
+                filter = filterInput,
                 sort = selectedSort,
-                genres = selectedGenres.ifEmpty { null },
-                format = selectedFormats.ifEmpty { null },
-                status = selectedStatus,
-                season = selectedSeason,
-                seasonYear = selectedYear,
+                limit = 30,
+                offset = (page - 1) * 30,
             ),
         )
 
         val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-        return POST("https://graphql.anilist.co", headers, body)
+        return POST("https://graphql.animex.one/graphql", headers, body)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val responseBody = response.body.string()
-        val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
-        val animeList = anilistRes.data.Page.media.map { media ->
+        val result = json.decodeFromString<CatalogAnimeResponse>(responseBody)
+        val animeList = result.data.catalogAnime.items.map { item ->
             SAnime.create().apply {
-                // Store only anilistId in URL; slug is derived at detail/episode time
-                url = "/anime/${media.id}"
-                title = media.title.english ?: media.title.romaji ?: "Unknown Title"
-                thumbnail_url = media.coverImage.large ?: media.coverImage.extraLarge
-                description = media.description
-                genre = media.genres.joinToString()
+                url = "/anime/${item.anilistId}/${item.id}"
+                title = item.titleEnglish ?: item.titleRomaji ?: "Unknown Title"
+                thumbnail_url = item.coverImage
+                description = item.description
+                genre = item.genres.joinToString()
             }
         }
-        return AnimesPage(animeList, animeList.isNotEmpty())
+        return AnimesPage(animeList, animeList.size >= 30)
     }
 
     // ============================== ANIME DETAILS ==============================
 
     override fun animeDetailsRequest(anime: SAnime): Request {
-        val anilistId = anime.url.substringAfterLast("/").toIntOrNull()
+        val urlParts = anime.url.split("/")
+        val anilistId = urlParts.getOrNull(2)?.toIntOrNull()
+            ?: anime.url.substringAfter("/anime/").substringBefore("/").toIntOrNull()
             ?: throw Exception("Invalid anime URL: ${anime.url}")
+
         val queryBody = GraphQLRequest(
             query = """
-                query(${'$'}id: Int) {
-                  Page(page: 1, perPage: 1) {
-                    media(id: ${'$'}id) {
-                      id
-                      idMal
-                      title { english romaji native }
-                      coverImage { large extraLarge }
-                      description(asHtml: false)
-                      status
-                      genres
-                      averageScore
-                      startDate { year }
-                      format
-                      episodes
-                    }
+                query GetAnime(${'$'}anilistId: Int) {
+                  anime(anilistId: ${'$'}anilistId) {
+                    id
+                    anilistId
+                    malId
+                    titleRomaji
+                    titleEnglish
+                    description
+                    coverImage
+                    bannerImage
+                    status
+                    format
+                    genres
+                    averageScore
+                    seasonYear
+                    season
                   }
                 }
             """.trimIndent(),
-            variables = GraphQLVariables(id = anilistId),
+            variables = GraphQLVariables(anilistId = anilistId),
         )
         val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-        return POST("https://graphql.anilist.co", headers, body)
+        return POST("https://graphql.animex.one/graphql", headers, body)
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
         val responseBody = response.body.string()
-        val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
-        val media = anilistRes.data.Page.media.firstOrNull() ?: throw Exception("Anime not found")
+        val result = json.decodeFromString<GetAnimeResponse>(responseBody)
+        val anime = result.data.anime ?: throw Exception("Anime not found")
 
         return SAnime.create().apply {
-            title = media.title.english ?: media.title.romaji ?: "Unknown Title"
-            thumbnail_url = media.coverImage.large ?: media.coverImage.extraLarge
+            title = anime.titleEnglish ?: anime.titleRomaji ?: "Unknown Title"
+            thumbnail_url = anime.coverImage
             description = buildString {
-                media.description?.let { append(it) }
-                media.averageScore?.let { append("\n\nScore: $it/100") }
-                media.startDate?.year?.let { append("\nYear: $it") }
+                anime.description?.let { append(it) }
+                anime.averageScore?.let { append("\n\nScore: $it/100") }
+                anime.seasonYear?.let { append("\nYear: $it") }
+                anime.season?.let { append("\nSeason: $it") }
             }
-            genre = media.genres.joinToString()
-            status = when (media.status) {
+            genre = anime.genres.joinToString()
+            status = when (anime.status?.uppercase()) {
                 "FINISHED" -> SAnime.COMPLETED
                 "RELEASING" -> SAnime.ONGOING
-                "NOT_YET_RELEASED" -> SAnime.UNKNOWN
-                "CANCELLED" -> SAnime.UNKNOWN
+                "NOT_YET_RELEASED", "CANCELLED", "HIATUS" -> SAnime.UNKNOWN
                 else -> SAnime.UNKNOWN
             }
         }
@@ -276,64 +340,102 @@ class AnimexOne :
     // ============================== EPISODE LIST ==============================
 
     override fun episodeListRequest(anime: SAnime): Request {
-        val anilistId = anime.url.substringAfterLast("/")
-        return GET("$baseUrl/api/anime/episodes/$anilistId", headers)
+        val urlParts = anime.url.split("/")
+        val slug = urlParts.getOrNull(3)
+            ?: throw Exception("Could not extract slug from URL: ${anime.url}")
+        return GET("https://pp.animex.one/rest/api/episodes?id=$slug", headers)
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val anilistId = anime.url.substringAfterLast("/")
-        val request = GET("$baseUrl/api/anime/episodes/$anilistId", headers)
+        val request = episodeListRequest(anime)
         val response = client.newCall(request).execute()
-        val episodes = mutableListOf<SEpisode>()
-
-        if (response.isSuccessful) {
-            val animeRes = json.decodeFromString<AnimeEpisodesResponse>(response.body.string())
-            animeRes.episodes.forEach { episode ->
-                episodes.add(
-                    SEpisode.create().apply {
-                        name = "Episode ${episode.number}${episode.title?.let { ": $it" } ?: ""}"
-                        episode_number = episode.number.toFloat()
-                        url = "/anime/${episode.episodeId}"
-                    },
-                )
-            }
-            episodes.sortByDescending { it.episode_number }
-        } else {
-            response.close()
-        }
-
-        return episodes
+        return episodeListParse(response, anime)
     }
 
-    override fun episodeListParse(response: Response): List<SEpisode> = emptyList()
+    private fun episodeListParse(response: Response, anime: SAnime): List<SEpisode> {
+        val urlParts = anime.url.split("/")
+        val slug = urlParts.getOrNull(3)
+            ?: throw Exception("Could not extract slug from URL: ${anime.url}")
+        return episodeListParseWithSlug(response, slug)
+    }
+
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val slug = response.request.url.queryParameter("id")
+            ?: throw Exception("Could not extract slug from request URL: ${response.request.url}")
+        return episodeListParseWithSlug(response, slug)
+    }
+
+    private fun episodeListParseWithSlug(response: Response, slug: String): List<SEpisode> {
+        if (!response.isSuccessful) {
+            response.close()
+            return emptyList()
+        }
+        val responseBody = response.body.string()
+        val restEpisodes = json.decodeFromString<List<RestEpisode>>(responseBody)
+        val episodes = restEpisodes.map { episode ->
+            SEpisode.create().apply {
+                name = "Episode ${episode.number}${episode.titles?.en?.let { ": $it" } ?: ""}"
+                episode_number = episode.number.toFloat()
+                url = "/watch/$slug/${episode.number}"
+            }
+        }
+        return episodes.sortedByDescending { it.episode_number }
+    }
+
 
     // ============================== VIDEO LIST (SOURCES) ==============================
 
-    override fun videoListRequest(episode: SEpisode): Request {
-        val episodeId = episode.url.substringAfterLast("/")
+    override fun videoListRequest(episode: SEpisode): Request = throw Exception("Not used")
+
+    override fun videoListParse(response: Response): List<Video> = throw Exception("Not used")
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val parts = episode.url.split("/")
+        val slug = parts.getOrNull(2) ?: throw Exception("Invalid episode URL: ${episode.url}")
+        val epNum = parts.getOrNull(3) ?: throw Exception("Invalid episode URL: ${episode.url}")
         val category = getPreferredCategory()
-        return GET("$baseUrl/api/anime/stream?episodeId=$episodeId&category=$category", headers)
-    }
 
-    override fun videoListParse(response: Response): List<Video> {
-        val responseBody = response.body.string()
+        val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
+        val serversResponse = client.newCall(serversRequest).execute()
+        if (!serversResponse.isSuccessful) {
+            serversResponse.close()
+            return emptyList()
+        }
+
+        val serversData = json.decodeFromString<ServersResponse>(serversResponse.body.string())
+        val providers = if (category == "dub") serversData.dubProviders else serversData.subProviders
         val videos = mutableListOf<Video>()
-        val animeStream = json.decodeFromString<AnimeStreamResponse>(responseBody)
 
-        animeStream.sources.forEach { source ->
-            val streamUrl = absoluteUrl(source.url)
-            val subtitleTracks = source.tracks.map { track ->
-                Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
+        providers.forEach { provider ->
+            val providerId = provider.id
+            val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$category&providerId=$providerId", headers)
+            try {
+                val sourcesResponse = client.newCall(sourcesRequest).execute()
+                if (sourcesResponse.isSuccessful) {
+                    val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
+                    val subtitleTracks = sourcesData.tracks?.map { track ->
+                        Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
+                    } ?: emptyList()
+
+                    sourcesData.sources.forEach { source ->
+                        val streamUrl = absoluteUrl(source.url)
+                        val qualityLabel = "${providerId.replaceFirstChar { it.uppercase() }} (${source.quality ?: "Auto"})"
+                        videos.add(
+                            Video(
+                                streamUrl,
+                                qualityLabel,
+                                streamUrl,
+                                headers = headers,
+                                subtitleTracks = subtitleTracks,
+                            ),
+                        )
+                    }
+                } else {
+                    sourcesResponse.close()
+                }
+            } catch (e: Exception) {
+                // Ignore individual provider errors
             }
-            videos.add(
-                Video(
-                    streamUrl,
-                    "${source.label} (HLS)",
-                    streamUrl,
-                    headers = headers,
-                    subtitleTracks = subtitleTracks,
-                ),
-            )
         }
 
         val preferredServer = getPreferredServer()
@@ -461,9 +563,9 @@ class AnimexOne :
         ListPreference(screen.context).apply {
             key = "pref_preferred_server"
             title = "Preferred Server"
-            entries = arrayOf("Hoshi", "Kuma", "Kaze", "TryEmbed")
-            entryValues = arrayOf("Hoshi", "Kuma", "Kaze", "TryEmbed")
-            setDefaultValue("Hoshi")
+            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
+            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
+            setDefaultValue("beep")
             summary = "%s"
         }.also { screen.addPreference(it) }
     }
@@ -529,95 +631,141 @@ data class GraphQLRequest(
 
 @Serializable
 data class GraphQLVariables(
-    val page: Int? = null,
-    val search: String? = null,
-    val sort: List<String>? = null,
+    val filter: AnimeCatalogFilterInput? = null,
+    val sort: List<AnimeSortInput>? = null,
+    val limit: Int? = null,
+    val offset: Int? = null,
+    val anilistId: Int? = null,
+)
+
+@Serializable
+data class AnimeCatalogFilterInput(
+    val query: String? = null,
+    val statusIn: List<String>? = null,
+    val seasonIn: List<String>? = null,
+    val seasonYearMin: Int? = null,
+    val seasonYearMax: Int? = null,
+    val formatIn: List<String>? = null,
     val genres: List<String>? = null,
-    val format: List<String>? = null,
-    val status: List<String>? = null,
-    val season: String? = null,
-    val seasonYear: Int? = null,
-    val id: Int? = null,
 )
 
 @Serializable
-data class AnimeEpisodesResponse(
-    val episodes: List<AnimeEpisode> = emptyList(),
+data class AnimeSortInput(
+    val field: String,
+    val direction: String,
 )
 
 @Serializable
-data class AnimeEpisode(
-    val episodeId: String,
-    val number: Int,
-    val title: String? = null,
+data class CatalogAnimeResponse(
+    val data: CatalogAnimeData,
 )
 
 @Serializable
-data class AnimeStreamResponse(
-    val sources: List<AnimeSource> = emptyList(),
-    val subtitles: List<AnimeSubtitle> = emptyList(),
-    val defaultSource: String? = null,
+data class CatalogAnimeData(
+    val catalogAnime: CatalogAnimeContent,
 )
 
 @Serializable
-data class AnimeSource(
+data class CatalogAnimeContent(
+    val items: List<AnimeCatalogItem> = emptyList(),
+)
+
+@Serializable
+data class AnimeCatalogItem(
     val id: String,
-    val url: String,
-    val label: String,
-    val tracks: List<AnimeSubtitle> = emptyList(),
+    val anilistId: Int,
+    val titleRomaji: String? = null,
+    val titleEnglish: String? = null,
+    val coverImage: String? = null,
+    val bannerImage: String? = null,
+    val backdropUrl: String? = null,
+    val description: String? = null,
+    val status: String? = null,
+    val format: String? = null,
+    val averageScore: Int? = null,
+    val popularity: Int? = null,
+    val episodeCount: Int? = null,
+    val seasonYear: Int? = null,
+    val season: String? = null,
+    val color: String? = null,
+    val genres: List<String> = emptyList(),
 )
 
 @Serializable
-data class AnimeSubtitle(
+data class GetAnimeResponse(
+    val data: GetAnimeData,
+)
+
+@Serializable
+data class GetAnimeData(
+    val anime: AnimeDetailsItem?,
+)
+
+@Serializable
+data class AnimeDetailsItem(
+    val id: String,
+    val anilistId: Int,
+    val malId: Int? = null,
+    val titleRomaji: String? = null,
+    val titleEnglish: String? = null,
+    val description: String? = null,
+    val coverImage: String? = null,
+    val bannerImage: String? = null,
+    val status: String? = null,
+    val format: String? = null,
+    val genres: List<String> = emptyList(),
+    val averageScore: Int? = null,
+    val seasonYear: Int? = null,
+    val season: String? = null,
+)
+
+@Serializable
+data class RestEpisode(
+    val number: Int,
+    val titles: EpisodeTitles? = null,
+    val img: String? = null,
+    val isFiller: Boolean? = null,
+    val hasSub: Boolean? = null,
+    val hasDub: Boolean? = null,
+)
+
+@Serializable
+data class EpisodeTitles(
+    val en: String? = null,
+)
+
+@Serializable
+data class ServersResponse(
+    val subProviders: List<ProviderItem> = emptyList(),
+    val dubProviders: List<ProviderItem> = emptyList(),
+)
+
+@Serializable
+data class ProviderItem(
+    val id: String,
+    val default: Boolean? = null,
+    val tip: String? = null,
+)
+
+@Serializable
+data class SourcesResponse(
+    val sources: List<SourceItem> = emptyList(),
+    val tracks: List<TrackItem>? = null,
+)
+
+@Serializable
+data class SourceItem(
+    val url: String,
+    val quality: String? = null,
+    val type: String? = null,
+)
+
+@Serializable
+data class TrackItem(
+    val id: String? = null,
     val url: String,
     val lang: String? = null,
     val label: String? = null,
-)
-
-@Serializable
-data class AnilistGraphQLResponse(
-    val data: AnilistData,
-)
-
-@Serializable
-data class AnilistData(
-    val Page: AnilistPage,
-)
-
-@Serializable
-data class AnilistPage(
-    val media: List<AnilistMedia> = emptyList(),
-)
-
-@Serializable
-data class AnilistMedia(
-    val id: Int,
-    val idMal: Int? = null,
-    val title: AnilistTitle,
-    val coverImage: AnilistCoverImage,
-    val description: String? = null,
-    val status: String? = null,
-    val genres: List<String> = emptyList(),
-    val averageScore: Int? = null,
-    val startDate: AnilistDate? = null,
-    val format: String? = null,
-    val episodes: Int? = null,
-)
-
-@Serializable
-data class AnilistTitle(
-    val english: String? = null,
-    val romaji: String? = null,
-    val native: String? = null,
-)
-
-@Serializable
-data class AnilistCoverImage(
-    val large: String? = null,
-    val extraLarge: String? = null,
-)
-
-@Serializable
-data class AnilistDate(
-    val year: Int? = null,
+    val kind: String? = null,
+    val default: Boolean? = null,
 )
