@@ -390,7 +390,8 @@ class Animex :
         val parts = episode.url.split("/")
         val slug = parts.getOrNull(2) ?: throw Exception("Invalid episode URL: ${episode.url}")
         val epNum = parts.getOrNull(3) ?: throw Exception("Invalid episode URL: ${episode.url}")
-        val preferredType = preferences.getString("pref_preferred_type", "soft") ?: "soft"
+        val preferredType = preferences.getString("pref_preferred_type", "sub") ?: "sub"
+        val preferredSubType = preferences.getString("pref_sub_type", "any") ?: "any"
 
         val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
         val serversResponse = client.newCall(serversRequest).execute()
@@ -400,67 +401,66 @@ class Animex :
         }
 
         val serversData = json.decodeFromString<ServersResponse>(serversResponse.body.string())
+        val providers = if (preferredType == "dub") serversData.dubProviders else serversData.subProviders
         val videos = mutableListOf<Video>()
 
-        fun fetchSources(providers: List<ProviderItem>, cat: String) {
-            providers.forEach { provider ->
-                val providerId = provider.id
-                val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$cat&providerId=$providerId", headers)
-                try {
-                    val sourcesResponse = client.newCall(sourcesRequest).execute()
-                    if (sourcesResponse.isSuccessful) {
-                        val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
-                        val subtitleTracks = sourcesData.tracks?.map { track ->
-                            Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
-                        } ?: emptyList()
+        providers.forEach { provider ->
+            val providerId = provider.id
+            val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$preferredType&providerId=$providerId", headers)
+            try {
+                val sourcesResponse = client.newCall(sourcesRequest).execute()
+                if (sourcesResponse.isSuccessful) {
+                    val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
+                    val subtitleTracks = sourcesData.tracks?.map { track ->
+                        Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
+                    } ?: emptyList()
 
-                        sourcesData.sources.forEach { source ->
-                            val streamUrl = absoluteUrl(source.url)
-                            val providerName = providerId.uppercase()
-                            val quality = source.quality ?: "Auto"
-                            val categoryLabel = cat.uppercase()
-                            val subStyle = when {
+                    sourcesData.sources.forEach { source ->
+                        val streamUrl = absoluteUrl(source.url)
+                        val providerName = providerId.uppercase()
+                        val quality = source.quality ?: "Auto"
+                        val categoryLabel = preferredType.uppercase()
+                        val subStyle = if (preferredType == "dub") {
+                            ""
+                        } else {
+                            when {
                                 provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
                                 provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
                                 else -> ""
                             }
-                            val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                            videos.add(
-                                Video(
-                                    streamUrl,
-                                    qualityLabel,
-                                    streamUrl,
-                                    headers = headers,
-                                    subtitleTracks = subtitleTracks,
-                                ),
-                            )
                         }
-                    } else {
-                        sourcesResponse.close()
+                        val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
+                        videos.add(
+                            Video(
+                                streamUrl,
+                                qualityLabel,
+                                streamUrl,
+                                headers = headers,
+                                subtitleTracks = subtitleTracks,
+                            ),
+                        )
                     }
-                } catch (e: Exception) {
-                    // Ignore individual provider errors
+                } else {
+                    sourcesResponse.close()
                 }
+            } catch (e: Exception) {
+                // Ignore individual provider errors
             }
         }
-
-        fetchSources(serversData.subProviders, "sub")
-        fetchSources(serversData.dubProviders, "dub")
 
         val preferredServer = getPreferredServer()
         videos.sortWith(
             compareBy<Video> { video ->
-                val matchesPreferred = when (preferredType) {
-                    "soft" -> video.quality.contains("[Soft Subs]", ignoreCase = true)
-                    "hard" -> video.quality.contains("[Hard Subs]", ignoreCase = true)
-                    "dub" -> video.quality.contains("(DUB)", ignoreCase = true)
-                    else -> false
+                if (preferredSubType != "any") {
+                    val hasPreferredType = video.quality.contains(preferredSubType, ignoreCase = true)
+                    if (hasPreferredType) 0 else 1
+                } else {
+                    0
                 }
-                if (matchesPreferred) 0 else 1
             }.thenBy { video ->
                 val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
                 if (isPreferredServer) 0 else 1
-            },
+            }
         )
 
         return videos
