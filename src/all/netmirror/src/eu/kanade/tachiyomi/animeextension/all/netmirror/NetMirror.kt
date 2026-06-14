@@ -2,6 +2,8 @@ package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
 import android.content.SharedPreferences
+import eu.kanade.tachiyomi.animesource.AnimeSource
+import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -9,8 +11,6 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.animesource.AnimeSource
-import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.network.GET
 import okhttp3.FormBody
 import okhttp3.Headers
@@ -18,8 +18,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONObject
 import org.json.JSONArray
+import org.json.JSONObject
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.UUID
@@ -33,7 +33,7 @@ class NetMirror : AnimeSourceFactory {
         CNCVerseSource("CNCVerse (Disney)", "dp", "disney", 5181466391484419891L),
         CNCVerseSource("CNCVerse (Marvel)", "dp", "marvel", 5181466391484419892L),
         CNCVerseSource("CNCVerse (Star Wars)", "dp", "starwars", 5181466391484419893L),
-        CNCVerseSource("CNCVerse (Pixar)", "dp", "pixar", 5181466391484419894L)
+        CNCVerseSource("CNCVerse (Pixar)", "dp", "pixar", 5181466391484419894L),
     )
 }
 
@@ -41,8 +41,9 @@ class CNCVerseSource(
     override val name: String,
     private val ott: String,
     private val studio: String,
-    override val id: Long
-) : AnimeHttpSource(), ConfigurableAnimeSource {
+    override val id: Long,
+) : AnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     override val baseUrl = "https://net52.cc"
     override val lang = "all"
@@ -59,12 +60,10 @@ class CNCVerseSource(
             else -> "hs"
         }
 
-    private fun getPosterUrl(id: String): String {
-        return when (ott) {
-            "nf" -> "https://imgcdn.kim/poster/v/$id.jpg"
-            "pv" -> "https://imgcdn.kim/pv/v/$id.jpg"
-            else -> "https://imgcdn.kim/hs/v/$id.jpg"
-        }
+    private fun getPosterUrl(id: String): String = when (ott) {
+        "nf" -> "https://imgcdn.kim/poster/v/$id.jpg"
+        "pv" -> "https://imgcdn.kim/pv/v/$id.jpg"
+        else -> "https://imgcdn.kim/hs/v/$id.jpg"
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
@@ -120,9 +119,7 @@ class CNCVerseSource(
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return GET("$baseUrl/mobile/home?app=1", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/mobile/home?app=1", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = org.jsoup.Jsoup.parse(response.body.string())
@@ -191,15 +188,15 @@ class CNCVerseSource(
         val data = JSONObject(json)
         val anime = SAnime.create()
         anime.title = data.optString("title")
-        
+
         val genreVal = data.optString("genre")
         if (genreVal.isNotEmpty()) {
             anime.genre = genreVal.split(",").joinToString { it.trim() }
         }
-        
+
         anime.author = data.optString("director").ifEmpty { data.optString("cast") }
         anime.status = SAnime.UNKNOWN
-        
+
         val desc = StringBuilder()
         data.optString("desc").takeIf { it.isNotEmpty() }?.let {
             desc.append(it).append("\n\n")
@@ -221,7 +218,7 @@ class CNCVerseSource(
             desc.append(details.joinToString("\n"))
         }
         anime.description = desc.toString()
-        
+
         val id = response.request.url.queryParameter("id") ?: ""
         anime.thumbnail_url = getPosterUrl(id)
         return anime
@@ -237,9 +234,9 @@ class CNCVerseSource(
         val episodes = mutableListOf<SEpisode>()
         val episodesArray = data.optJSONArray("episodes")
         val isMovie = episodesArray == null || episodesArray.length() == 0 || episodesArray.isNull(0)
-        
+
         val id = response.request.url.queryParameter("id") ?: ""
-        
+
         if (isMovie) {
             val sEpisode = SEpisode.create()
             sEpisode.name = "Movie"
@@ -255,20 +252,20 @@ class CNCVerseSource(
                 val epNumStr = ep.optString("ep").replace("E", "")
                 val epNum = epNumStr.toFloatOrNull() ?: 1.0f
                 val seasonStr = ep.optString("s").replace("S", "")
-                
+
                 val sEpisode = SEpisode.create()
                 sEpisode.name = "S$seasonStr E$epNum - $epTitle"
                 sEpisode.url = epId
                 sEpisode.episode_number = epNum
                 episodes.add(sEpisode)
             }
-            
+
             val nextPageShow = data.optInt("nextPageShow", 0)
             if (nextPageShow == 1) {
                 val nextPageSeason = data.optString("nextPageSeason")
                 episodes.addAll(getEpisodes(id, nextPageSeason, 2))
             }
-            
+
             val seasonsArray = data.optJSONArray("season")
             if (seasonsArray != null) {
                 for (i in 0 until seasonsArray.length()) {
@@ -278,7 +275,7 @@ class CNCVerseSource(
                 }
             }
         }
-        
+
         return episodes.sortedByDescending { it.episode_number }
     }
 
@@ -303,7 +300,7 @@ class CNCVerseSource(
             }
             val epsArray = jsonObj.optJSONArray("episodes") ?: break
             if (epsArray.length() == 0) break
-            
+
             for (i in 0 until epsArray.length()) {
                 if (epsArray.isNull(i)) continue
                 val ep = epsArray.getJSONObject(i)
@@ -312,7 +309,7 @@ class CNCVerseSource(
                 val epNumStr = ep.optString("ep").replace("E", "")
                 val epNum = epNumStr.toFloatOrNull() ?: 1.0f
                 val seasonStr = ep.optString("s").replace("S", "")
-                
+
                 val sEpisode = SEpisode.create()
                 sEpisode.name = "S$seasonStr E$epNum - $epTitle"
                 sEpisode.url = epId
@@ -330,7 +327,7 @@ class CNCVerseSource(
     override fun videoListRequest(episode: SEpisode): Request {
         val apiBase = getApiUrl()
         val url = "$apiBase/newtv/player.php?id=${episode.url}"
-        
+
         val ottValue = if (ott == "dp") "hs" else ott
         val headers = Headers.Builder()
             .add("Ott", ottValue)
@@ -342,7 +339,7 @@ class CNCVerseSource(
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
             .add("Accept", "application/json, text/plain, */*")
             .build()
-            
+
         return GET(url, headers)
     }
 
@@ -352,18 +349,18 @@ class CNCVerseSource(
         val status = jsonObj.optString("status")
         val videoLink = jsonObj.optString("video_link")
         val referer = jsonObj.optString("referer")
-        
+
         if (status != "ok" || videoLink.isEmpty()) {
             return emptyList()
         }
-        
+
         val videoHeaders = Headers.Builder()
             .set("Referer", referer.ifEmpty { getApiUrl() })
             .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
             .build()
-            
+
         return listOf(
-            Video(videoLink, "CNCVerse", videoLink, headers = videoHeaders)
+            Video(videoLink, "CNCVerse", videoLink, headers = videoHeaders),
         ).sortVideos()
     }
 
@@ -392,7 +389,7 @@ class CNCVerseSource(
                 } else {
                     1
                 }
-            }
+            },
         )
     }
 
@@ -408,14 +405,14 @@ class CNCVerseSource(
         @Synchronized
         private fun getApiUrl(): String {
             if (resolvedApiUrl.isNotEmpty()) return resolvedApiUrl
-            
+
             val newTvBaseHeaders = mapOf(
                 "Cache-Control" to "no-cache, no-store, must-revalidate",
                 "Pragma" to "no-cache",
                 "Expires" to "0",
                 "X-Requested-With" to "NetmirrorNewTV v1.0",
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0",
-                "Accept" to "application/json, text/plain, */*"
+                "Accept" to "application/json, text/plain, */*",
             )
 
             val newTvDomains = listOf(
@@ -442,7 +439,7 @@ class CNCVerseSource(
                 "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5wcm8=",
                 "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5zdG9yZQ==",
                 "aHR0cHM6Ly9tb2JpZGV0ZWN0cy50b3A=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy54eXo="
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy54eXo=",
             )
 
             val directClient = OkHttpClient.Builder()
@@ -459,7 +456,7 @@ class CNCVerseSource(
                             newTvBaseHeaders.forEach { (k, v) -> addHeader(k, v) }
                         }
                         .build()
-                    
+
                     directClient.newCall(request).execute().use { response ->
                         if (response.isSuccessful) {
                             val json = response.body.string()
@@ -485,7 +482,7 @@ class CNCVerseSource(
             val now = System.currentTimeMillis()
             val savedCookie = sharedPreferences.getString("nf_cookie", null)
             val savedTimestamp = sharedPreferences.getLong("nf_cookie_timestamp", 0L)
-            
+
             if (!savedCookie.isNullOrEmpty() && now - savedTimestamp < 54_000_000) {
                 cookieValue = savedCookie
                 cookieTimestamp = savedTimestamp
@@ -537,8 +534,6 @@ class CNCVerseSource(
             return cookieValue
         }
 
-        private fun decodeBase64(value: String): String {
-            return String(android.util.Base64.decode(value, android.util.Base64.DEFAULT))
-        }
+        private fun decodeBase64(value: String): String = String(android.util.Base64.decode(value, android.util.Base64.DEFAULT))
     }
 }
