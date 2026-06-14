@@ -352,7 +352,7 @@ class NetMirror :
             e.printStackTrace()
         }
 
-        return videoList.sort()
+        return videoList.sortVideos()
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
@@ -370,7 +370,7 @@ class NetMirror :
         }.also(screen::addPreference)
     }
 
-    private fun List<Video>.sort(): List<Video> {
+    private fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, "720p") ?: "720p"
         return sortedWith(
             compareBy { video ->
