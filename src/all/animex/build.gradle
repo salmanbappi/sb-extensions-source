@@ -1,0 +1,8 @@
+ext {
+    extName = 'Animex'
+    extClass = '.Animex'
+    extVersionCode = 1000
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

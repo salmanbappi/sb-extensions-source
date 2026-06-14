@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.all.animexone
+package eu.kanade.tachiyomi.animeextension.all.animex
 
 import android.app.Application
 import android.content.SharedPreferences
@@ -28,11 +28,11 @@ import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class AnimexOne :
+class Animex :
     AnimeHttpSource(),
     ConfigurableAnimeSource {
 
-    override val name = "AnimexOne"
+    override val name = "Animex"
     override val baseUrl = "https://animex.one"
     override val lang = "all"
     override val supportsLatest = true
@@ -50,7 +50,7 @@ class AnimexOne :
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(AnimexOneInterceptor(network.client.cookieJar))
+        .addInterceptor(AnimexInterceptor(network.client.cookieJar))
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
@@ -270,7 +270,7 @@ class AnimexOne :
             SAnime.create().apply {
                 url = "/anime/${item.anilistId}/${item.id}"
                 title = item.titleEnglish ?: item.titleRomaji ?: "Unknown Title"
-                thumbnail_url = item.coverImage
+                thumbnail_url = item.coverImage?.extraLarge
                 description = item.description
                 genre = item.genres.joinToString()
             }
@@ -320,7 +320,7 @@ class AnimexOne :
 
         return SAnime.create().apply {
             title = anime.titleEnglish ?: anime.titleRomaji ?: "Unknown Title"
-            thumbnail_url = anime.coverImage
+            thumbnail_url = anime.coverImage?.extraLarge
             description = buildString {
                 anime.description?.let { append(it) }
                 anime.averageScore?.let { append("\n\nScore: $it/100") }
@@ -573,11 +573,11 @@ class AnimexOne :
 // ============================== SESSION INTERCEPTOR ==============================
 
 /**
- * AnimexOne uses a session cookie (similar to Anivix's movix_session).
+ * Animex uses a session cookie (similar to Anivix's movix_session).
  * We perform a homepage "handshake" before any /api/ call if no session cookie exists.
  * The actual cookie name may need updating once verified via browser DevTools.
  */
-class AnimexOneInterceptor(private val cookieJar: CookieJar) : Interceptor {
+class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
     companion object {
         private const val SESSION_COOKIE = "animex_session"
         private const val BASE_URL = "https://animex.one"
@@ -670,12 +670,18 @@ data class CatalogAnimeContent(
 )
 
 @Serializable
+data class CoverImage(
+    val extraLarge: String? = null,
+    val color: String? = null,
+)
+
+@Serializable
 data class AnimeCatalogItem(
     val id: String,
     val anilistId: Int,
     val titleRomaji: String? = null,
     val titleEnglish: String? = null,
-    val coverImage: String? = null,
+    val coverImage: CoverImage? = null,
     val bannerImage: String? = null,
     val backdropUrl: String? = null,
     val description: String? = null,
@@ -708,7 +714,7 @@ data class AnimeDetailsItem(
     val titleRomaji: String? = null,
     val titleEnglish: String? = null,
     val description: String? = null,
-    val coverImage: String? = null,
+    val coverImage: CoverImage? = null,
     val bannerImage: String? = null,
     val status: String? = null,
     val format: String? = null,
