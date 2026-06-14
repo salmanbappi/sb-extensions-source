@@ -59,14 +59,11 @@ class AnimexOne :
         .add("Origin", "https://animex.one")
         .add("Accept", "application/json, text/plain, */*")
 
-    private fun absoluteUrl(url: String): String =
-        if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
+    private fun absoluteUrl(url: String): String = if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
 
-    private fun getPreferredCategory(): String =
-        preferences.getString("pref_anime_category", "sub") ?: "sub"
+    private fun getPreferredCategory(): String = preferences.getString("pref_anime_category", "sub") ?: "sub"
 
-    private fun getPreferredServer(): String =
-        preferences.getString("pref_preferred_server", "Hoshi") ?: "Hoshi"
+    private fun getPreferredServer(): String = preferences.getString("pref_preferred_server", "Hoshi") ?: "Hoshi"
 
     // ============================== POPULAR / LATEST ==============================
 
