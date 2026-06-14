@@ -22,7 +22,10 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class NetMirror :
     AnimeHttpSource(),
@@ -44,15 +47,112 @@ class NetMirror :
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(CloudflareInterceptor(network.client))
+        .addInterceptor { chain ->
+            val request = chain.request()
+            val host = request.url.host
+
+            var response = try {
+                chain.proceed(request)
+            } catch (e: Exception) {
+                if (host.contains("net52.cc") || host.contains("net11.cc")) {
+                    warmupWebViewSession()
+                    chain.proceed(request)
+                } else {
+                    throw e
+                }
+            }
+
+            if ((host.contains("net52.cc") || host.contains("net11.cc")) && (response.code == 403 || response.code == 503)) {
+                response.close()
+                warmupWebViewSession()
+                response = chain.proceed(request)
+            }
+
+            response
+        }
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
         .set("User-Agent", USER_AGENT)
         .set("Referer", "$baseUrl/")
 
+    private val sessionWarmedUp = AtomicBoolean(false)
+
+    @android.annotation.SuppressLint("SetJavaScriptEnabled")
+    private fun warmupWebViewSession() {
+        if (!sessionWarmedUp.compareAndSet(false, true)) return
+
+        val latch = CountDownLatch(1)
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+        mainHandler.post {
+            try {
+                val context = Injekt.get<Application>()
+                val wv = android.webkit.WebView(context)
+                wv.settings.javaScriptEnabled = true
+                wv.settings.domStorageEnabled = true
+                wv.settings.userAgentString = USER_AGENT
+
+                val cm = android.webkit.CookieManager.getInstance()
+                cm.setAcceptCookie(true)
+                cm.setAcceptThirdPartyCookies(wv, true)
+
+                wv.webViewClient = object : android.webkit.WebViewClient() {
+                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                        view?.evaluateJavascript(
+                            """
+                            setInterval(() => {
+                                if (document.querySelector("#challenge-form") != null) {
+                                    const simpleChallenge = document.querySelector("#challenge-stage > div > input[type='button']")
+                                    if (simpleChallenge != null) simpleChallenge.click()
+
+                                    const turnstile = document.querySelector("div.hcaptcha-box > iframe")
+                                    if (turnstile != null) {
+                                        const button = turnstile.contentWindow.document.querySelector("input[type='checkbox']")
+                                        if (button != null) button.click()
+                                    }
+                                }
+                            }, 2500)
+                            """.trimIndent(),
+                        ) {}
+
+                        mainHandler.postDelayed({
+                            runCatching {
+                                view?.stopLoading()
+                                view?.destroy()
+                            }
+                            latch.countDown()
+                        }, 5000L)
+                    }
+                }
+                wv.loadUrl("$baseUrl/home")
+            } catch (_: Exception) {
+                latch.countDown()
+                sessionWarmedUp.set(false)
+            }
+        }
+
+        try {
+            if (!latch.await(15, TimeUnit.SECONDS)) {
+                sessionWarmedUp.set(false)
+            }
+        } catch (_: InterruptedException) {
+            sessionWarmedUp.set(false)
+        }
+    }
+
+    private fun ensureSession() {
+        if (!sessionWarmedUp.get()) {
+            warmupWebViewSession()
+        }
+    }
+
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/pv/homepage.php", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        ensureSession()
+        return GET("$baseUrl/pv/homepage.php", headers)
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val json = JSONObject(response.body.string())
@@ -80,7 +180,7 @@ class NetMirror :
 
         val uniqueIds = ids.distinct().take(60)
 
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(10)
+        val pool = Executors.newFixedThreadPool(10)
         val futures = uniqueIds.map { id ->
             pool.submit(
                 java.util.concurrent.Callable<SAnime?> {
@@ -104,7 +204,7 @@ class NetMirror :
 
         val animes = futures.mapNotNull {
             try {
-                it.get(10, java.util.concurrent.TimeUnit.SECONDS)
+                it.get(10, TimeUnit.SECONDS)
             } catch (_: Exception) {
                 null
             }
@@ -123,6 +223,7 @@ class NetMirror :
     // =============================== Search ===============================
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        ensureSession()
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
         return GET("$baseUrl/pv/search.php?s=$encodedQuery", headers)
     }
@@ -149,7 +250,10 @@ class NetMirror :
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/pv/post.php?id=${anime.url}", headers)
+    override fun animeDetailsRequest(anime: SAnime): Request {
+        ensureSession()
+        return GET("$baseUrl/pv/post.php?id=${anime.url}", headers)
+    }
 
     override fun animeDetailsParse(response: Response): SAnime {
         val json = JSONObject(response.body.string())
@@ -166,9 +270,9 @@ class NetMirror :
         json.optString("desc").takeIf { it.isNotEmpty() }?.let {
             description.append(it).append("\n\n")
         }
-
+        
         val details = mutableListOf<String>()
-
+        
         json.optString("year").takeIf { it.isNotEmpty() }?.let {
             details.add("Year: $it")
         }
@@ -194,7 +298,7 @@ class NetMirror :
         if (details.isNotEmpty()) {
             description.append(details.joinToString("\n"))
         }
-
+        
         anime.description = description.toString()
         return anime
     }
@@ -221,7 +325,7 @@ class NetMirror :
 
         val seasons = json.optJSONArray("season")
         if (seasons != null && seasons.length() > 0) {
-            val pool = java.util.concurrent.Executors.newFixedThreadPool(5)
+            val pool = Executors.newFixedThreadPool(5)
             val futures = (0 until seasons.length()).map { idx ->
                 pool.submit {
                     val seasonObj = seasons.getJSONObject(idx)
@@ -273,7 +377,7 @@ class NetMirror :
             }
             futures.forEach {
                 try {
-                    it.get(15, java.util.concurrent.TimeUnit.SECONDS)
+                    it.get(15, TimeUnit.SECONDS)
                 } catch (_: Exception) {}
             }
             pool.shutdown()
@@ -300,6 +404,7 @@ class NetMirror :
     // ============================ Video Links =============================
 
     override fun videoListRequest(episode: SEpisode): Request {
+        ensureSession()
         val tm = System.currentTimeMillis() / 1000
         return GET("$baseUrl/pv/playlist.php?id=${episode.url}&tm=$tm", headers)
     }
@@ -382,7 +487,7 @@ class NetMirror :
                 } else {
                     1
                 }
-            },
+            }
         )
     }
 
@@ -427,10 +532,14 @@ class NetMirrorProxy(
                     try {
                         val socket = serverSocket!!.accept()
                         executor.execute { handleSocket(socket) }
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        android.util.Log.e("NetMirrorProxy", "Accept error", e)
+                    }
                 }
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            android.util.Log.e("NetMirrorProxy", "Init error", e)
+        }
     }
 
     fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String {
@@ -448,6 +557,7 @@ class NetMirrorProxy(
     }
 
     private fun handleSocket(socket: Socket) {
+        var targetUrl = ""
         try {
             val input = socket.getInputStream()
             val reader = input.bufferedReader()
@@ -470,7 +580,7 @@ class NetMirrorProxy(
                 return
             }
 
-            val targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+            targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
             val isM3u8Request = targetUrl.contains(".m3u8") || path.contains(".m3u8")
 
             val targetHeaders = okhttp3.Headers.Builder()
@@ -514,6 +624,7 @@ class NetMirrorProxy(
                 sendResponse(socket, response, targetUrl, encodedHeaders)
             }
         } catch (e: Exception) {
+            android.util.Log.e("NetMirrorProxy", "Socket error for targetUrl=$targetUrl", e)
             try {
                 sendError(socket, 500, e.message ?: "Internal Error")
             } catch (_: Exception) {}
@@ -534,7 +645,9 @@ class NetMirrorProxy(
                 val bodyString = response.body.string()
                 val modifiedContent = processM3u8(bodyString, targetUrl, encodedHeaders)
                 modifiedContentBytes = modifiedContent.toByteArray()
-            } catch (e: Exception) {}
+            } catch (e: Exception) {
+                android.util.Log.e("NetMirrorProxy", "sendResponse m3u8 modify error", e)
+            }
         }
 
         out.write("HTTP/1.1 ${response.code} ${response.message}\r\n".toByteArray())
