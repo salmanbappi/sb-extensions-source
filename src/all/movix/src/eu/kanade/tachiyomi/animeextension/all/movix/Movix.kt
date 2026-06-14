@@ -63,31 +63,21 @@ class Movix :
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "https://hdmovix.cc/")
 
-    private fun absoluteUrl(url: String): String {
-        return if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
-    }
+    private fun absoluteUrl(url: String): String = if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
 
-    private fun getPreferredCategory(): String {
-        return preferences.getString("pref_anime_category", "sub") ?: "sub"
-    }
+    private fun getPreferredCategory(): String = preferences.getString("pref_anime_category", "sub") ?: "sub"
 
-    private fun getPreferredServer(): String {
-        return preferences.getString("pref_preferred_server", "Hoshi") ?: "Hoshi"
-    }
+    private fun getPreferredServer(): String = preferences.getString("pref_preferred_server", "Hoshi") ?: "Hoshi"
 
     // ============================== POPULAR / LATEST ==============================
 
-    override fun popularAnimeRequest(page: Int): Request =
-        GET("$baseUrl/api/tmdb/movie/popular?page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/tmdb/movie/popular?page=$page", headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage =
-        searchAnimeParse(response)
+    override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
 
-    override fun latestUpdatesRequest(page: Int): Request =
-        GET("$baseUrl/api/tmdb/trending/all/week?page=$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/tmdb/trending/all/week?page=$page", headers)
 
-    override fun latestUpdatesParse(response: Response): AnimesPage =
-        searchAnimeParse(response)
+    override fun latestUpdatesParse(response: Response): AnimesPage = searchAnimeParse(response)
 
     // ============================== SEARCH / DISCOVERY ==============================
 
@@ -99,7 +89,9 @@ class Movix :
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
             when (selectedType) {
                 0 -> GET("$baseUrl/api/tmdb/search/movie?query=$encodedQuery&page=$page", headers)
+
                 1 -> GET("$baseUrl/api/tmdb/search/tv?query=$encodedQuery&page=$page", headers)
+
                 else -> {
                     // Anime Anilist Search
                     val queryBody = GraphQLRequest(
@@ -118,7 +110,7 @@ class Movix :
                               }
                             }
                         """.trimIndent(),
-                        variables = GraphQLVariables(search = query)
+                        variables = GraphQLVariables(search = query),
                     )
                     val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
                     POST("https://graphql.anilist.co", headers, body)
@@ -128,7 +120,9 @@ class Movix :
             // Browsing/Discovering popular lists
             when (selectedType) {
                 0 -> GET("$baseUrl/api/tmdb/movie/popular?page=$page", headers)
+
                 1 -> GET("$baseUrl/api/tmdb/tv/popular?page=$page", headers)
+
                 else -> {
                     // Anime Anilist Popular
                     val queryBody = GraphQLRequest(
@@ -146,7 +140,7 @@ class Movix :
                                 }
                               }
                             }
-                        """.trimIndent()
+                        """.trimIndent(),
                     )
                     val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
                     POST("https://graphql.anilist.co", headers, body)
@@ -201,10 +195,12 @@ class Movix :
                 val tmdbId = epUrl.substringAfter("/movie/")
                 GET("$baseUrl/api/tmdb/movie/$tmdbId?append_to_response=external_ids", headers)
             }
+
             epUrl.startsWith("/tv/") -> {
                 val tmdbId = epUrl.substringAfter("/tv/")
                 GET("$baseUrl/api/tmdb/tv/$tmdbId?append_to_response=external_ids", headers)
             }
+
             epUrl.startsWith("/anime/") -> {
                 val anilistId = epUrl.substringAfter("/anime/").toInt()
                 val queryBody = GraphQLRequest(
@@ -225,11 +221,12 @@ class Movix :
                           }
                         }
                     """.trimIndent(),
-                    variables = GraphQLVariables(id = anilistId)
+                    variables = GraphQLVariables(id = anilistId),
                 )
                 val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
                 POST("https://graphql.anilist.co", headers, body)
             }
+
             else -> throw Exception("Invalid anime details URL: $epUrl")
         }
     }
@@ -281,14 +278,17 @@ class Movix :
                 val tmdbId = epUrl.substringAfter("/movie/")
                 GET("$baseUrl/api/tmdb/movie/$tmdbId?append_to_response=external_ids", headers)
             }
+
             epUrl.startsWith("/tv/") -> {
                 val tmdbId = epUrl.substringAfter("/tv/")
                 GET("$baseUrl/api/tmdb/tv/$tmdbId?append_to_response=external_ids", headers)
             }
+
             epUrl.startsWith("/anime/") -> {
                 val anilistId = epUrl.substringAfter("/anime/")
                 GET("$baseUrl/api/anime/episodes/$anilistId", headers)
             }
+
             else -> throw Exception("Invalid episode list URL: $epUrl")
         }
     }
@@ -304,7 +304,7 @@ class Movix :
                     name = "Play Movie"
                     episode_number = 1f
                     url = "/movie/$tmdbId"
-                }
+                },
             )
         } else if (epUrl.startsWith("/tv/")) {
             val tmdbId = epUrl.substringAfter("/tv/")
@@ -359,7 +359,7 @@ class Movix :
                             name = "Episode ${episode.number}: ${episode.title ?: "Episode ${episode.number}"}"
                             episode_number = episode.number.toFloat()
                             url = "/anime/${episode.episodeId}"
-                        }
+                        },
                     )
                 }
                 episodes.sortByDescending { it.episode_number }
@@ -385,6 +385,7 @@ class Movix :
                 val tmdbId = epUrl.substringAfter("/movie/")
                 GET("$baseUrl/api/vidlink/movie/$tmdbId", headers)
             }
+
             epUrl.startsWith("/tv/") -> {
                 val parts = epUrl.substringAfter("/tv/").split("/")
                 val tmdbId = parts[0]
@@ -392,11 +393,13 @@ class Movix :
                 val epNum = parts[2]
                 GET("$baseUrl/api/vidlink/tv/$tmdbId/$season/$epNum", headers)
             }
+
             epUrl.startsWith("/anime/") -> {
                 val episodeId = epUrl.substringAfter("/anime/")
                 val category = getPreferredCategory()
                 GET("$baseUrl/api/anime/stream?episodeId=$episodeId&category=$category", headers)
             }
+
             else -> throw Exception("Invalid video request URL: $epUrl")
         }
     }
@@ -415,8 +418,8 @@ class Movix :
                         streamUrl,
                         "VidLink (HLS)",
                         streamUrl,
-                        headers = headers
-                    )
+                        headers = headers,
+                    ),
                 )
             }
         } else if (requestUrl.contains("/anime/stream")) {
@@ -432,8 +435,8 @@ class Movix :
                         "${source.label} (HLS)",
                         streamUrl,
                         headers = headers,
-                        subtitleTracks = subtitleTracks
-                    )
+                        subtitleTracks = subtitleTracks,
+                    ),
                 )
             }
             // Sort to place preferred server first
@@ -447,13 +450,14 @@ class Movix :
     // ============================== FILTERS ==============================
 
     override fun getFilterList() = AnimeFilterList(
-        TypeFilter()
+        TypeFilter(),
     )
 
-    private class TypeFilter : AnimeFilter.Select<String>(
-        "Content Type",
-        arrayOf("Movies", "TV Shows", "Anime")
-    )
+    private class TypeFilter :
+        AnimeFilter.Select<String>(
+            "Content Type",
+            arrayOf("Movies", "TV Shows", "Anime"),
+        )
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
@@ -520,13 +524,13 @@ class MovixInterceptor(private val cookieJar: CookieJar) : Interceptor {
 @Serializable
 data class GraphQLRequest(
     val query: String,
-    val variables: GraphQLVariables? = null
+    val variables: GraphQLVariables? = null,
 )
 
 @Serializable
 data class GraphQLVariables(
     val search: String? = null,
-    val id: Int? = null
+    val id: Int? = null,
 )
 
 @Serializable
@@ -534,7 +538,7 @@ data class TmdbPage(
     val page: Int,
     val results: List<TmdbResult> = emptyList(),
     val total_pages: Int = 1,
-    val total_results: Int = 0
+    val total_results: Int = 0,
 )
 
 @Serializable
@@ -547,7 +551,7 @@ data class TmdbResult(
     val overview: String? = null,
     val release_date: String? = null,
     val first_air_date: String? = null,
-    val vote_average: Float? = null
+    val vote_average: Float? = null,
 )
 
 @Serializable
@@ -558,33 +562,33 @@ data class TmdbTvDetails(
     val genres: List<TmdbGenre> = emptyList(),
     val poster_path: String? = null,
     val in_production: Boolean? = null,
-    val seasons: List<TmdbSeason> = emptyList()
+    val seasons: List<TmdbSeason> = emptyList(),
 )
 
 @Serializable
 data class TmdbGenre(
     val id: Int,
-    val name: String
+    val name: String,
 )
 
 @Serializable
 data class TmdbSeason(
     val season_number: Int,
     val episode_count: Int,
-    val name: String? = null
+    val name: String? = null,
 )
 
 @Serializable
 data class TmdbSeasonDetails(
     val season_number: Int,
-    val episodes: List<TmdbEpisode> = emptyList()
+    val episodes: List<TmdbEpisode> = emptyList(),
 )
 
 @Serializable
 data class TmdbEpisode(
     val episode_number: Int,
     val name: String? = null,
-    val season_number: Int
+    val season_number: Int,
 )
 
 @Serializable
@@ -593,7 +597,7 @@ data class TmdbMovieDetails(
     val title: String,
     val overview: String? = null,
     val genres: List<TmdbGenre> = emptyList(),
-    val poster_path: String? = null
+    val poster_path: String? = null,
 )
 
 @Serializable
@@ -601,26 +605,26 @@ data class VidLinkResponse(
     val success: Boolean,
     val url: String? = null,
     val ref: String? = null,
-    val sig: String? = null
+    val sig: String? = null,
 )
 
 @Serializable
 data class AnimeEpisodesResponse(
-    val episodes: List<AnimeEpisode> = emptyList()
+    val episodes: List<AnimeEpisode> = emptyList(),
 )
 
 @Serializable
 data class AnimeEpisode(
     val episodeId: String,
     val number: Int,
-    val title: String? = null
+    val title: String? = null,
 )
 
 @Serializable
 data class AnimeStreamResponse(
     val sources: List<AnimeSource> = emptyList(),
     val subtitles: List<AnimeSubtitle> = emptyList(),
-    val defaultSource: String? = null
+    val defaultSource: String? = null,
 )
 
 @Serializable
@@ -628,29 +632,29 @@ data class AnimeSource(
     val id: String,
     val url: String,
     val label: String,
-    val tracks: List<AnimeSubtitle> = emptyList()
+    val tracks: List<AnimeSubtitle> = emptyList(),
 )
 
 @Serializable
 data class AnimeSubtitle(
     val url: String,
     val lang: String? = null,
-    val label: String? = null
+    val label: String? = null,
 )
 
 @Serializable
 data class AnilistGraphQLResponse(
-    val data: AnilistData
+    val data: AnilistData,
 )
 
 @Serializable
 data class AnilistData(
-    val Page: AnilistPage
+    val Page: AnilistPage,
 )
 
 @Serializable
 data class AnilistPage(
-    val media: List<AnilistMedia> = emptyList()
+    val media: List<AnilistMedia> = emptyList(),
 )
 
 @Serializable
@@ -663,22 +667,22 @@ data class AnilistMedia(
     val status: String? = null,
     val genres: List<String> = emptyList(),
     val averageScore: Int? = null,
-    val startDate: AnilistDate? = null
+    val startDate: AnilistDate? = null,
 )
 
 @Serializable
 data class AnilistTitle(
     val english: String? = null,
-    val romaji: String? = null
+    val romaji: String? = null,
 )
 
 @Serializable
 data class AnilistCoverImage(
     val large: String? = null,
-    val extraLarge: String? = null
+    val extraLarge: String? = null,
 )
 
 @Serializable
 data class AnilistDate(
-    val year: Int? = null
+    val year: Int? = null,
 )
