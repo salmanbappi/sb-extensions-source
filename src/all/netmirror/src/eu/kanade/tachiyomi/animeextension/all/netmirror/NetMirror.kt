@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.util.Base64
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -9,14 +10,18 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.GET
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.concurrent.Executors
 
 class NetMirror :
     AnimeHttpSource(),
@@ -37,100 +42,11 @@ class NetMirror :
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(CloudflareInterceptor(network.client))
-        .addInterceptor { chain ->
-            val request = chain.request()
-            val host = request.url.host
-
-            var response = try {
-                chain.proceed(request)
-            } catch (e: Exception) {
-                if (host.contains("net52.cc") || host.contains("net11.cc")) {
-                    warmupWebViewSession()
-                    chain.proceed(request)
-                } else {
-                    throw e
-                }
-            }
-
-            if ((host.contains("net52.cc") || host.contains("net11.cc")) && (response.code == 403 || response.code == 503)) {
-                response.close()
-                warmupWebViewSession()
-                response = chain.proceed(request)
-            }
-
-            response
-        }
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
         .set("User-Agent", USER_AGENT)
         .set("Referer", "$baseUrl/")
-
-    private val sessionWarmedUp = java.util.concurrent.atomic.AtomicBoolean(false)
-
-    @android.annotation.SuppressLint("SetJavaScriptEnabled")
-    private fun warmupWebViewSession() {
-        if (!sessionWarmedUp.compareAndSet(false, true)) return
-
-        val latch = java.util.concurrent.CountDownLatch(1)
-        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-
-        mainHandler.post {
-            try {
-                val context = Injekt.get<Application>()
-                val wv = android.webkit.WebView(context)
-                wv.settings.javaScriptEnabled = true
-                wv.settings.domStorageEnabled = true
-                wv.settings.userAgentString = USER_AGENT
-
-                val cm = android.webkit.CookieManager.getInstance()
-                cm.setAcceptCookie(true)
-                cm.setAcceptThirdPartyCookies(wv, true)
-
-                wv.webViewClient = object : android.webkit.WebViewClient() {
-                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                        view?.evaluateJavascript(
-                            """
-                            setInterval(() => {
-                                if (document.querySelector("#challenge-form") != null) {
-                                    const simpleChallenge = document.querySelector("#challenge-stage > div > input[type='button']")
-                                    if (simpleChallenge != null) simpleChallenge.click()
-
-                                    const turnstile = document.querySelector("div.hcaptcha-box > iframe")
-                                    if (turnstile != null) {
-                                        const button = turnstile.contentWindow.document.querySelector("input[type='checkbox']")
-                                        if (button != null) button.click()
-                                    }
-                                }
-                            }, 2500)
-                            """.trimIndent(),
-                        ) {}
-
-                        mainHandler.postDelayed({
-                            runCatching {
-                                view?.stopLoading()
-                                view?.destroy()
-                            }
-                            latch.countDown()
-                        }, 5000L)
-                    }
-                }
-                wv.loadUrl("$baseUrl/home")
-            } catch (_: Exception) {
-                latch.countDown()
-                sessionWarmedUp.set(false)
-            }
-        }
-
-        try {
-            if (!latch.await(15, java.util.concurrent.TimeUnit.SECONDS)) {
-                sessionWarmedUp.set(false)
-            }
-        } catch (_: InterruptedException) {
-            sessionWarmedUp.set(false)
-        }
-    }
 
     // ============================== Popular ===============================
 
@@ -238,12 +154,46 @@ class NetMirror :
         val id = response.request.url.queryParameter("id") ?: ""
         val anime = SAnime.create()
         anime.title = json.optString("title")
-        anime.description = json.optString("desc")
         anime.genre = json.optString("genre")
         anime.author = json.optString("creator").ifEmpty { json.optString("writer") }
         anime.artist = json.optString("director")
         anime.status = SAnime.UNKNOWN
         anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
+
+        val description = StringBuilder()
+        json.optString("desc").takeIf { it.isNotEmpty() }?.let {
+            description.append(it).append("\n\n")
+        }
+        
+        val details = mutableListOf<String>()
+        
+        json.optString("year").takeIf { it.isNotEmpty() }?.let {
+            details.add("Year: $it")
+        }
+        json.optString("match").takeIf { it.isNotEmpty() }?.let {
+            details.add("Rating: $it")
+        }
+        json.optString("runtime").takeIf { it.isNotEmpty() }?.let {
+            details.add("Runtime: $it")
+        }
+        json.optString("hdsd").takeIf { it.isNotEmpty() }?.let {
+            details.add("Quality: $it")
+        }
+        json.optString("ua").takeIf { it.isNotEmpty() }?.let {
+            details.add("Age Rating: $it")
+        }
+        json.optString("studio").takeIf { it.isNotEmpty() }?.let {
+            details.add("Studio: $it")
+        }
+        json.optString("cast").takeIf { it.isNotEmpty() }?.let {
+            details.add("Cast: $it")
+        }
+
+        if (details.isNotEmpty()) {
+            description.append(details.joinToString("\n"))
+        }
+        
+        anime.description = description.toString()
         return anime
     }
 
@@ -302,8 +252,11 @@ class NetMirror :
                                         }
                                     }
                                     val nextPage = resJson.optInt("nextPage", -1)
-                                    hasNext = nextPage > page
-                                    page = nextPage
+                                    if (nextPage > page) {
+                                        page = nextPage
+                                    } else {
+                                        hasNext = false
+                                    }
                                 } else {
                                     hasNext = false
                                 }
@@ -354,7 +307,7 @@ class NetMirror :
         val videoList = mutableListOf<Video>()
 
         try {
-            val jsonArray = org.json.JSONArray(jsonStr)
+            val jsonArray = JSONArray(jsonStr)
             if (jsonArray.length() > 0) {
                 val playlistObj = jsonArray.getJSONObject(0)
                 val sources = playlistObj.optJSONArray("sources")
@@ -368,7 +321,11 @@ class NetMirror :
                         val label = track.optString("label")
                         val kind = track.optString("kind")
                         if (kind == "captions" && file.isNotEmpty() && label.isNotEmpty()) {
-                            val absoluteFile = if (file.startsWith("//")) "https:$file" else file
+                            val absoluteFile = when {
+                                file.startsWith("//") -> "https:$file"
+                                file.startsWith("http") -> file
+                                else -> "$baseUrl$file"
+                            }
                             subtitleTracks.add(eu.kanade.tachiyomi.animesource.model.Track(absoluteFile, label))
                         }
                     }
@@ -376,61 +333,17 @@ class NetMirror :
 
                 if (sources != null) {
                     val videoHeaders = headersBuilder()
-                        .set("User-Agent", USER_AGENT)
+                        .set("Referer", "$baseUrl/")
                         .build()
 
-                    var parsedAny = false
                     for (i in 0 until sources.length()) {
                         val source = sources.getJSONObject(i)
                         val file = source.optString("file")
                         val label = source.optString("label")
                         if (file.isNotEmpty()) {
-                            val absoluteUrl = "$baseUrl$file"
-                            if (!parsedAny && i == 0) {
-                                try {
-                                    val playlistResponse = client.newCall(GET(absoluteUrl, headers)).execute()
-                                    if (playlistResponse.isSuccessful) {
-                                        val playlistContent = playlistResponse.body.string()
-                                        if (playlistContent.contains("#EXT-X-STREAM-INF:")) {
-                                            val lines = playlistContent.lines()
-                                            var lastResolution = "Video"
-                                            for (line in lines) {
-                                                val trimmed = line.trim()
-                                                if (trimmed.startsWith("#EXT-X-STREAM-INF:")) {
-                                                    val resRegex = """RESOLUTION=(\d+x\d+)""".toRegex()
-                                                    val match = resRegex.find(trimmed)
-                                                    lastResolution = if (match != null) {
-                                                        val res = match.groupValues[1]
-                                                        if (res.contains("1920x1080")) {
-                                                            "1080p"
-                                                        } else if (res.contains("1280x720")) {
-                                                            "720p"
-                                                        } else if (res.contains("854x480")) {
-                                                            "480p"
-                                                        } else {
-                                                            res
-                                                        }
-                                                    } else {
-                                                        "Video"
-                                                    }
-                                                } else if (trimmed.startsWith("http") && trimmed.contains(".m3u8")) {
-                                                    videoList.add(
-                                                        Video(trimmed, lastResolution, trimmed, headers = videoHeaders, subtitleTracks = subtitleTracks),
-                                                    )
-                                                    parsedAny = true
-                                                }
-                                            }
-                                        }
-                                    }
-                                    playlistResponse.close()
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                }
-                            }
-
-                            if (!parsedAny) {
-                                videoList.add(Video(absoluteUrl, label, absoluteUrl, headers = videoHeaders, subtitleTracks = subtitleTracks))
-                            }
+                            val absoluteUrl = if (file.startsWith("http")) file else "$baseUrl$file"
+                            val proxiedUrl = getProxyUrl(absoluteUrl, videoHeaders)
+                            videoList.add(Video(proxiedUrl, label, proxiedUrl, headers = videoHeaders, subtitleTracks = subtitleTracks))
                         }
                     }
                 }
@@ -439,18 +352,286 @@ class NetMirror :
             e.printStackTrace()
         }
 
-        return videoList
+        return videoList.sort()
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
+
+    // ============================== Preferences ===========================
+
+    override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {
+        androidx.preference.ListPreference(screen.context).apply {
+            key = PREF_QUALITY_KEY
+            title = "Preferred Quality"
+            entries = arrayOf("1080p", "720p", "480p", "360p")
+            entryValues = arrayOf("1080p", "720p", "480p", "360p")
+            setDefaultValue("720p")
+            summary = "%s"
+        }.also(screen::addPreference)
+    }
+
+    private fun List<Video>.sort(): List<Video> {
+        val quality = preferences.getString(PREF_QUALITY_KEY, "720p") ?: "720p"
+        return sortedWith(
+            compareBy { video ->
+                val videoQuality = video.quality
+                if (videoQuality.contains(quality)) {
+                    0
+                } else {
+                    1
+                }
+            }
+        )
+    }
 
     // ============================== Filters ==============================
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList()
 
-    override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {}
+    private fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String = Companion.getProxyUrl(this, targetUrl, headers)
 
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        private const val PREF_QUALITY_KEY = "preferred_quality"
+
+        private var proxy: NetMirrorProxy? = null
+
+        @Synchronized
+        fun getProxyUrl(source: NetMirror, targetUrl: String, headers: okhttp3.Headers?): String {
+            if (proxy == null) {
+                proxy = NetMirrorProxy(source.client, source.baseUrl, USER_AGENT)
+            }
+            return proxy!!.getProxyUrl(targetUrl, headers)
+        }
+    }
+}
+
+class NetMirrorProxy(
+    private val client: OkHttpClient,
+    private val baseUrl: String,
+    private val userAgent: String,
+) {
+    private var serverSocket: ServerSocket? = null
+    private val executor = Executors.newCachedThreadPool()
+    var port: Int = 0
+        private set
+
+    init {
+        try {
+            serverSocket = ServerSocket(0)
+            port = serverSocket!!.localPort
+            executor.execute {
+                while (serverSocket?.isClosed == false) {
+                    try {
+                        val socket = serverSocket!!.accept()
+                        executor.execute { handleSocket(socket) }
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (e: Exception) {}
+    }
+
+    fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String {
+        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val headersStr = headers?.let { h ->
+            val sb = StringBuilder()
+            for (i in 0 until h.size) {
+                sb.append(h.name(i)).append(":").append(h.value(i)).append("\n")
+            }
+            sb.toString()
+        } ?: ""
+        val encodedHeaders = Base64.encodeToString(headersStr.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "segment.ts"
+        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
+    }
+
+    private fun handleSocket(socket: Socket) {
+        try {
+            val input = socket.getInputStream()
+            val reader = input.bufferedReader()
+            val firstLine = reader.readLine() ?: return
+            val parts = firstLine.split(" ")
+            if (parts.size < 2) return
+            val path = parts[1]
+
+            if (!path.startsWith("/proxy")) {
+                sendError(socket, 404, "Not Found")
+                return
+            }
+
+            val httpUrl = ("http://127.0.0.1$path").toHttpUrl()
+            val encodedUrl = httpUrl.queryParameter("url")
+            val encodedHeaders = httpUrl.queryParameter("headers") ?: ""
+
+            if (encodedUrl.isNullOrEmpty()) {
+                sendError(socket, 400, "Missing url parameter")
+                return
+            }
+
+            val targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+            val isM3u8Request = targetUrl.contains(".m3u8") || path.contains(".m3u8")
+
+            val targetHeaders = okhttp3.Headers.Builder()
+            if (encodedHeaders.isNotEmpty()) {
+                val headersStr = String(Base64.decode(encodedHeaders, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+                headersStr.split("\n").forEach { line ->
+                    val headerParts = line.split(":", limit = 2)
+                    if (headerParts.size == 2) {
+                        targetHeaders.set(headerParts[0].trim(), headerParts[1].trim())
+                    }
+                }
+            }
+
+            if (targetHeaders.get("User-Agent").isNullOrEmpty()) {
+                targetHeaders.set("User-Agent", userAgent)
+            }
+
+            // Always add Referer/Origin for NetMirror CDN requests
+            targetHeaders.set("Referer", "$baseUrl/")
+            targetHeaders.set("Origin", baseUrl)
+
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                if (line!!.isEmpty()) break
+                val headerParts = line!!.split(":", limit = 2)
+                if (headerParts.size == 2) {
+                    val name = headerParts[0].trim()
+                    val value = headerParts[1].trim()
+                    if (name.equals("Range", ignoreCase = true) && !isM3u8Request) {
+                        targetHeaders.set(name, value)
+                    }
+                }
+            }
+
+            val request = Request.Builder()
+                .url(targetUrl)
+                .headers(targetHeaders.build())
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                sendResponse(socket, response, targetUrl, encodedHeaders)
+            }
+        } catch (e: Exception) {
+            try {
+                sendError(socket, 500, e.message ?: "Internal Error")
+            } catch (_: Exception) {}
+        } finally {
+            try {
+                socket.close()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun sendResponse(socket: Socket, response: Response, targetUrl: String, encodedHeaders: String) {
+        val out = socket.getOutputStream()
+        val isM3u8 = targetUrl.contains(".m3u8") || response.header("Content-Type")?.contains("mpegurl") == true
+
+        var modifiedContentBytes: ByteArray? = null
+        if (isM3u8) {
+            try {
+                val bodyString = response.body.string()
+                val modifiedContent = processM3u8(bodyString, targetUrl, encodedHeaders)
+                modifiedContentBytes = modifiedContent.toByteArray()
+            } catch (e: Exception) {}
+        }
+
+        out.write("HTTP/1.1 ${response.code} ${response.message}\r\n".toByteArray())
+
+        val headers = response.headers
+        for (i in 0 until headers.size) {
+            val name = headers.name(i)
+            val value = headers.value(i)
+            if (name.equals("Connection", ignoreCase = true) ||
+                name.equals("Transfer-Encoding", ignoreCase = true) ||
+                name.equals("Content-Type", ignoreCase = true) ||
+                (name.equals("Content-Length", ignoreCase = true) && isM3u8)
+            ) {
+                continue
+            }
+            out.write("$name: $value\r\n".toByteArray())
+        }
+
+        if (isM3u8 && modifiedContentBytes != null) {
+            out.write("Content-Length: ${modifiedContentBytes.size}\r\n".toByteArray())
+            out.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
+        } else {
+            out.write("Content-Type: video/mp2t\r\n".toByteArray())
+        }
+        out.write("Connection: close\r\n\r\n".toByteArray())
+
+        if (isM3u8 && modifiedContentBytes != null) {
+            out.write(modifiedContentBytes)
+        } else {
+            response.body.byteStream().use { input ->
+                val buffer = ByteArray(32768)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    out.write(buffer, 0, bytesRead)
+                }
+            }
+        }
+        out.flush()
+    }
+
+    private val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
+
+    private fun processM3u8(content: String, playlistUrl: String, encodedHeaders: String): String {
+        val lines = content.split(Regex("""\r?\n"""))
+        val builder = StringBuilder(content.length * 2)
+
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                builder.append("\n")
+                continue
+            }
+
+            if (trimmed.startsWith("#")) {
+                if (trimmed.startsWith("#EXT-X-KEY") || trimmed.startsWith("#EXT-X-MAP") || trimmed.startsWith("#EXT-X-MEDIA")) {
+                    uriRegex.find(trimmed)?.let { match ->
+                        val uriValue = match.groupValues[1]
+                        val proxiedUri = getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, uriValue), encodedHeaders)
+                        builder.append(trimmed.replace(uriValue, proxiedUri))
+                    } ?: builder.append(trimmed)
+                } else if (!trimmed.startsWith("#EXT-X-PLAYLIST-TYPE")) {
+                    builder.append(trimmed)
+                }
+            } else {
+                builder.append(getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, trimmed), encodedHeaders))
+            }
+            builder.append("\n")
+        }
+
+        if (content.contains("#EXTINF") && !content.contains("#EXT-X-STREAM-INF")) {
+            val result = builder.toString()
+            return if (!result.contains("#EXT-X-ENDLIST")) {
+                result.replace("#EXTM3U\n", "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n") + "#EXT-X-ENDLIST"
+            } else {
+                result.replace("#EXTM3U\n", "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n")
+            }
+        }
+
+        return builder.toString()
+    }
+
+    private fun getProxyUrlWithEncodedHeaders(targetUrl: String, encodedHeaders: String): String {
+        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "segment.ts"
+        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
+    }
+
+    private fun resolveUrl(baseUrl: String, relativeUrl: String): String = try {
+        baseUrl.toHttpUrl().resolve(relativeUrl)?.toString() ?: relativeUrl
+    } catch (_: Exception) {
+        relativeUrl
+    }
+
+    private fun sendError(socket: Socket, code: Int, message: String) {
+        val out = socket.getOutputStream()
+        out.write("HTTP/1.1 $code $message\r\n".toByteArray())
+        out.write("Content-Type: text/plain\r\n".toByteArray())
+        out.write("\r\n".toByteArray())
+        out.write(message.toByteArray())
+        out.flush()
     }
 }
