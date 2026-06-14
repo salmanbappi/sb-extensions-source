@@ -55,6 +55,7 @@ class NetMirror :
                 chain.proceed(request)
             } catch (e: Exception) {
                 if (host.contains("net52.cc") || host.contains("net11.cc")) {
+                    sessionWarmedUp.set(false)
                     warmupWebViewSession()
                     chain.proceed(request)
                 } else {
@@ -64,6 +65,7 @@ class NetMirror :
 
             if ((host.contains("net52.cc") || host.contains("net11.cc")) && (response.code == 403 || response.code == 503)) {
                 response.close()
+                sessionWarmedUp.set(false)
                 warmupWebViewSession()
                 response = chain.proceed(request)
             }
@@ -78,66 +80,113 @@ class NetMirror :
 
     private val sessionWarmedUp = AtomicBoolean(false)
 
+    private fun copyCookiesToOkHttp() {
+        try {
+            val cookieManager = android.webkit.CookieManager.getInstance()
+            val urlsToCopy = listOf(baseUrl, "https://net11.cc")
+            for (url in urlsToCopy) {
+                val rawCookies = cookieManager.getCookie(url) ?: continue
+                val httpUrl = url.toHttpUrl()
+                val cookies = rawCookies.split(";").mapNotNull {
+                    okhttp3.Cookie.parse(httpUrl, it.trim())
+                }
+                client.cookieJar.saveFromResponse(httpUrl, cookies)
+                android.util.Log.d("NetMirrorWebView", "Copied cookies for $url: $rawCookies")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("NetMirrorWebView", "Failed to copy cookies", e)
+        }
+    }
+
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
     private fun warmupWebViewSession() {
         if (!sessionWarmedUp.compareAndSet(false, true)) return
 
         val latch = CountDownLatch(1)
         val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        var webView: android.webkit.WebView? = null
 
         mainHandler.post {
             try {
                 val context = Injekt.get<Application>()
                 val wv = android.webkit.WebView(context)
+                webView = wv
                 wv.settings.javaScriptEnabled = true
                 wv.settings.domStorageEnabled = true
+                wv.settings.databaseEnabled = true
+                wv.settings.useWideViewPort = true
+                wv.settings.loadWithOverviewMode = false
                 wv.settings.userAgentString = USER_AGENT
 
                 val cm = android.webkit.CookieManager.getInstance()
                 cm.setAcceptCookie(true)
                 cm.setAcceptThirdPartyCookies(wv, true)
 
+                wv.addJavascriptInterface(object {
+                    @android.webkit.JavascriptInterface
+                    fun leave() {
+                        latch.countDown()
+                    }
+                }, "NetMirrorJSI")
+
                 wv.webViewClient = object : android.webkit.WebViewClient() {
                     override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                        android.util.Log.d("NetMirrorWebView", "Page finished: $url, title: ${view?.title}")
+                        if (url != null && !url.contains("verify2") && !url.contains("challenge")) {
+                            latch.countDown()
+                            return
+                        }
+
                         view?.evaluateJavascript(
                             """
-                            setInterval(() => {
-                                if (document.querySelector("#challenge-form") != null) {
-                                    const simpleChallenge = document.querySelector("#challenge-stage > div > input[type='button']")
-                                    if (simpleChallenge != null) simpleChallenge.click()
+                            (function() {
+                                var checkInterval = setInterval(() => {
+                                    if (document.querySelector("#challenge-form") == null && 
+                                        document.querySelector("#challenge-stage") == null &&
+                                        !document.title.includes("Just a moment")) {
+                                        clearInterval(checkInterval);
+                                        NetMirrorJSI.leave();
+                                    } else {
+                                        const simpleChallenge = document.querySelector("#challenge-stage > div > input[type='button']")
+                                        if (simpleChallenge != null) simpleChallenge.click()
 
-                                    const turnstile = document.querySelector("div.hcaptcha-box > iframe")
-                                    if (turnstile != null) {
-                                        const button = turnstile.contentWindow.document.querySelector("input[type='checkbox']")
-                                        if (button != null) button.click()
+                                        const turnstile = document.querySelector("div.hcaptcha-box > iframe")
+                                        if (turnstile != null) {
+                                            const button = turnstile.contentWindow.document.querySelector("input[type='checkbox']")
+                                            if (button != null) button.click()
+                                        }
                                     }
-                                }
-                            }, 2500)
+                                }, 1000);
+                            })();
                             """.trimIndent(),
                         ) {}
-
-                        mainHandler.postDelayed({
-                            runCatching {
-                                view?.stopLoading()
-                                view?.destroy()
-                            }
-                            latch.countDown()
-                        }, 5000L)
                     }
                 }
                 wv.loadUrl("$baseUrl/home")
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                android.util.Log.e("NetMirrorWebView", "Error in WebView warmup", e)
                 latch.countDown()
                 sessionWarmedUp.set(false)
             }
         }
 
         try {
-            if (!latch.await(15, TimeUnit.SECONDS)) {
+            if (!latch.await(30, TimeUnit.SECONDS)) {
+                android.util.Log.w("NetMirrorWebView", "Timeout waiting for WebView warmup")
                 sessionWarmedUp.set(false)
+            } else {
+                android.util.Log.d("NetMirrorWebView", "WebView warmup completed successfully")
+                copyCookiesToOkHttp()
             }
         } catch (_: InterruptedException) {
             sessionWarmedUp.set(false)
+        } finally {
+            mainHandler.post {
+                try {
+                    webView?.stopLoading()
+                    webView?.destroy()
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -456,9 +505,10 @@ class NetMirror :
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("NetMirror", "Failed to parse video list. Response: $jsonStr", e)
         }
 
+        android.util.Log.d("NetMirror", "Getting the video right: parsed ${videoList.size} video(s)")
         return videoList.sortVideos()
     }
 
@@ -615,6 +665,7 @@ class NetMirrorProxy(
                 }
             }
 
+            android.util.Log.d("NetMirrorProxy", "Getting the video right: forwarding proxy request to CDN: $targetUrl")
             val request = Request.Builder()
                 .url(targetUrl)
                 .headers(targetHeaders.build())
