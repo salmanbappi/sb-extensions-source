@@ -98,36 +98,43 @@ class Movix :
                 is SortFilter -> {
                     sortVal = filter.toValue()
                 }
+
                 is LanguageFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) {
                         selectedLang = value
                     }
                 }
+
                 is YearFilter -> {
                     val value = filter.state
                     if (value.isNotBlank()) {
                         selectedYear = value
                     }
                 }
+
                 is GenreFilter -> {
                     selectedGenres = filter.state.filter { it.state }
                 }
+
                 is StatusFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) {
                         selectedStatus = value
                     }
                 }
+
                 is SeasonFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) {
                         selectedSeason = value
                     }
                 }
+
                 is FormatFilter -> {
                     selectedFormats = filter.state.filter { it.state }.map { it.value }
                 }
+
                 else -> {}
             }
         }
@@ -427,9 +434,7 @@ class Movix :
         return episodes
     }
 
-    override fun episodeListParse(response: Response): List<SEpisode> {
-        return emptyList()
-    }
+    override fun episodeListParse(response: Response): List<SEpisode> = emptyList()
 
     // ============================== VIDEO LIST (SOURCES) ==============================
 
@@ -524,102 +529,109 @@ class Movix :
         fun toValue() = vals[state].second
     }
 
-    class TypeFilter : AnimeFilter.Select<String>(
-        "Content Type",
-        arrayOf("Movies", "TV Shows", "Anime"),
-    )
+    class TypeFilter :
+        AnimeFilter.Select<String>(
+            "Content Type",
+            arrayOf("Movies", "TV Shows", "Anime"),
+        )
 
-    class SortFilter : UriPartFilter(
-        "Sort By",
-        arrayOf(
-            Pair("Trending / Popular", "trending"),
-            Pair("Popularity", "popularity"),
-            Pair("Release Date", "date"),
-            Pair("Rating / Score", "rating"),
-            Pair("Title", "title"),
-        ),
-    )
+    class SortFilter :
+        UriPartFilter(
+            "Sort By",
+            arrayOf(
+                Pair("Trending / Popular", "trending"),
+                Pair("Popularity", "popularity"),
+                Pair("Release Date", "date"),
+                Pair("Rating / Score", "rating"),
+                Pair("Title", "title"),
+            ),
+        )
 
-    class LanguageFilter : UriPartFilter(
-        "Original Language (Movies/TV)",
-        arrayOf(
-            Pair("Any", ""),
-            Pair("English", "en"),
-            Pair("Japanese", "ja"),
-            Pair("Korean", "ko"),
-            Pair("Spanish", "es"),
-            Pair("French", "fr"),
-            Pair("Chinese", "zh"),
-            Pair("Hindi", "hi"),
-            Pair("Italian", "it"),
-            Pair("German", "de"),
-            Pair("Russian", "ru"),
-        ),
-    )
+    class LanguageFilter :
+        UriPartFilter(
+            "Original Language (Movies/TV)",
+            arrayOf(
+                Pair("Any", ""),
+                Pair("English", "en"),
+                Pair("Japanese", "ja"),
+                Pair("Korean", "ko"),
+                Pair("Spanish", "es"),
+                Pair("French", "fr"),
+                Pair("Chinese", "zh"),
+                Pair("Hindi", "hi"),
+                Pair("Italian", "it"),
+                Pair("German", "de"),
+                Pair("Russian", "ru"),
+            ),
+        )
 
-    class StatusFilter : UriPartFilter(
-        "Anime Status",
-        arrayOf(
-            Pair("Any", ""),
-            Pair("Finished", "FINISHED"),
-            Pair("Releasing", "RELEASING"),
-            Pair("Not Yet Released", "NOT_YET_RELEASED"),
-            Pair("Cancelled", "CANCELLED"),
-            Pair("Hiatus", "HIATUS"),
-        ),
-    )
+    class StatusFilter :
+        UriPartFilter(
+            "Anime Status",
+            arrayOf(
+                Pair("Any", ""),
+                Pair("Finished", "FINISHED"),
+                Pair("Releasing", "RELEASING"),
+                Pair("Not Yet Released", "NOT_YET_RELEASED"),
+                Pair("Cancelled", "CANCELLED"),
+                Pair("Hiatus", "HIATUS"),
+            ),
+        )
 
-    class SeasonFilter : UriPartFilter(
-        "Anime Season",
-        arrayOf(
-            Pair("Any", ""),
-            Pair("Winter", "WINTER"),
-            Pair("Spring", "SPRING"),
-            Pair("Summer", "SUMMER"),
-            Pair("Fall", "FALL"),
-        ),
-    )
+    class SeasonFilter :
+        UriPartFilter(
+            "Anime Season",
+            arrayOf(
+                Pair("Any", ""),
+                Pair("Winter", "WINTER"),
+                Pair("Spring", "SPRING"),
+                Pair("Summer", "SUMMER"),
+                Pair("Fall", "FALL"),
+            ),
+        )
 
-    class FormatFilter : AnimeFilter.Group<FormatCheckBox>(
-        "Anime Formats",
-        listOf(
-            FormatCheckBox("TV Show", "TV"),
-            FormatCheckBox("TV Short", "TV_SHORT"),
-            FormatCheckBox("Movie", "MOVIE"),
-            FormatCheckBox("Special", "SPECIAL"),
-            FormatCheckBox("OVA", "OVA"),
-            FormatCheckBox("ONA", "ONA"),
-            FormatCheckBox("Music Video", "MUSIC"),
-        ),
-    )
+    class FormatFilter :
+        AnimeFilter.Group<FormatCheckBox>(
+            "Anime Formats",
+            listOf(
+                FormatCheckBox("TV Show", "TV"),
+                FormatCheckBox("TV Short", "TV_SHORT"),
+                FormatCheckBox("Movie", "MOVIE"),
+                FormatCheckBox("Special", "SPECIAL"),
+                FormatCheckBox("OVA", "OVA"),
+                FormatCheckBox("ONA", "ONA"),
+                FormatCheckBox("Music Video", "MUSIC"),
+            ),
+        )
 
     class FormatCheckBox(name: String, val value: String) : AnimeFilter.CheckBox(name)
 
-    class GenreFilter : AnimeFilter.Group<GenreCheckBox>(
-        "Genres",
-        listOf(
-            GenreCheckBox("Action", "28", "10759", "Action"),
-            GenreCheckBox("Adventure", "12", "10759", "Adventure"),
-            GenreCheckBox("Animation", "16", "16", null),
-            GenreCheckBox("Comedy", "35", "35", "Comedy"),
-            GenreCheckBox("Crime", "80", "80", null),
-            GenreCheckBox("Documentary", "99", "99", null),
-            GenreCheckBox("Drama", "18", "18", "Drama"),
-            GenreCheckBox("Family", "10751", "10751", null),
-            GenreCheckBox("Fantasy", "14", "10765", "Fantasy"),
-            GenreCheckBox("History", "36", null, null),
-            GenreCheckBox("Horror", "27", null, "Horror"),
-            GenreCheckBox("Mystery", "9648", "9648", "Mystery"),
-            GenreCheckBox("Romance", "10749", null, "Romance"),
-            GenreCheckBox("Sci-Fi & Fantasy", "878,14", "10765", "Sci-Fi"),
-            GenreCheckBox("Thriller", "53", null, "Thriller"),
-            GenreCheckBox("Western", "37", "37", null),
-            GenreCheckBox("Psychological", null, null, "Psychological"),
-            GenreCheckBox("Slice of Life", null, null, "Slice of Life"),
-            GenreCheckBox("Sports", null, null, "Sports"),
-            GenreCheckBox("Supernatural", null, null, "Supernatural"),
-        ),
-    )
+    class GenreFilter :
+        AnimeFilter.Group<GenreCheckBox>(
+            "Genres",
+            listOf(
+                GenreCheckBox("Action", "28", "10759", "Action"),
+                GenreCheckBox("Adventure", "12", "10759", "Adventure"),
+                GenreCheckBox("Animation", "16", "16", null),
+                GenreCheckBox("Comedy", "35", "35", "Comedy"),
+                GenreCheckBox("Crime", "80", "80", null),
+                GenreCheckBox("Documentary", "99", "99", null),
+                GenreCheckBox("Drama", "18", "18", "Drama"),
+                GenreCheckBox("Family", "10751", "10751", null),
+                GenreCheckBox("Fantasy", "14", "10765", "Fantasy"),
+                GenreCheckBox("History", "36", null, null),
+                GenreCheckBox("Horror", "27", null, "Horror"),
+                GenreCheckBox("Mystery", "9648", "9648", "Mystery"),
+                GenreCheckBox("Romance", "10749", null, "Romance"),
+                GenreCheckBox("Sci-Fi & Fantasy", "878,14", "10765", "Sci-Fi"),
+                GenreCheckBox("Thriller", "53", null, "Thriller"),
+                GenreCheckBox("Western", "37", "37", null),
+                GenreCheckBox("Psychological", null, null, "Psychological"),
+                GenreCheckBox("Slice of Life", null, null, "Slice of Life"),
+                GenreCheckBox("Sports", null, null, "Sports"),
+                GenreCheckBox("Supernatural", null, null, "Supernatural"),
+            ),
+        )
 
     class GenreCheckBox(name: String, val movieVal: String?, val tvVal: String?, val animeVal: String?) : AnimeFilter.CheckBox(name)
 
