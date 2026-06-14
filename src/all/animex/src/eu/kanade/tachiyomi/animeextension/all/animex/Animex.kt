@@ -61,8 +61,6 @@ class Animex :
 
     private fun absoluteUrl(url: String): String = if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
 
-
-
     private fun getPreferredServer(): String = preferences.getString("pref_preferred_server", "Hoshi") ?: "Hoshi"
 
     // ============================== POPULAR / LATEST ==============================
@@ -462,7 +460,7 @@ class Animex :
             }.thenBy { video ->
                 val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
                 if (isPreferredServer) 0 else 1
-            }
+            },
         )
 
         return videos
