@@ -33,7 +33,7 @@ class NetMirror :
 
     override val name = "NetMirror"
 
-    override val baseUrl = "https://net52.cc"
+    override val baseUrl = "https://net11.cc"
 
     override val lang = "all"
 
@@ -83,7 +83,7 @@ class NetMirror :
     private fun copyCookiesToOkHttp() {
         try {
             val cookieManager = android.webkit.CookieManager.getInstance()
-            val urlsToCopy = listOf(baseUrl, "https://net11.cc")
+            val urlsToCopy = listOf(baseUrl, "https://net52.cc")
             for (url in urlsToCopy) {
                 val rawCookies = cookieManager.getCookie(url) ?: continue
                 val httpUrl = url.toHttpUrl()
@@ -595,6 +595,29 @@ class NetMirrorProxy(
         }
     }
 
+    private fun getProxyExtension(targetUrl: String): String {
+        val uri = try { targetUrl.toHttpUrl() } catch (_: Exception) { null }
+        val lastPathSegment = uri?.pathSegments?.lastOrNull() ?: ""
+        return when {
+            targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl") -> "playlist.m3u8"
+            lastPathSegment.endsWith(".mp4") || targetUrl.contains(".mp4") -> "video.mp4"
+            lastPathSegment.endsWith(".mkv") || targetUrl.contains(".mkv") -> "video.mkv"
+            lastPathSegment.endsWith(".webm") || targetUrl.contains(".webm") -> "video.webm"
+            lastPathSegment.endsWith(".m4s") || targetUrl.contains(".m4s") -> "segment.m4s"
+            lastPathSegment.endsWith(".m4v") || targetUrl.contains(".m4v") -> "segment.m4v"
+            lastPathSegment.endsWith(".m4a") || targetUrl.contains(".m4a") -> "segment.m4a"
+            lastPathSegment.contains(".") -> {
+                val suffix = lastPathSegment.substringAfterLast(".")
+                if (suffix.length in 2..4 && suffix.all { it.isLetterOrDigit() }) {
+                    "file.$suffix"
+                } else {
+                    "segment.ts"
+                }
+            }
+            else -> "segment.ts"
+        }
+    }
+
     fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String {
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val headersStr = headers?.let { h ->
@@ -605,7 +628,7 @@ class NetMirrorProxy(
             sb.toString()
         } ?: ""
         val encodedHeaders = Base64.encodeToString(headersStr.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "segment.ts"
+        val ext = getProxyExtension(targetUrl)
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
     }
 
@@ -691,7 +714,8 @@ class NetMirrorProxy(
 
     private fun sendResponse(socket: Socket, response: Response, targetUrl: String, encodedHeaders: String) {
         val out = socket.getOutputStream()
-        val isM3u8 = targetUrl.contains(".m3u8") || response.header("Content-Type")?.contains("mpegurl") == true
+        val contentType = response.header("Content-Type")
+        val isM3u8 = targetUrl.contains(".m3u8") || contentType?.contains("mpegurl", ignoreCase = true) == true
 
         var modifiedContentBytes: ByteArray? = null
         if (isM3u8) {
@@ -724,7 +748,21 @@ class NetMirrorProxy(
             out.write("Content-Length: ${modifiedContentBytes.size}\r\n".toByteArray())
             out.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
         } else {
-            out.write("Content-Type: video/mp2t\r\n".toByteArray())
+            if (!contentType.isNullOrEmpty()) {
+                out.write("Content-Type: $contentType\r\n".toByteArray())
+            } else {
+                val proxyExt = getProxyExtension(targetUrl)
+                val fallbackType = when {
+                    proxyExt.endsWith(".mp4") -> "video/mp4"
+                    proxyExt.endsWith(".m4s") -> "video/iso.segment"
+                    proxyExt.endsWith(".m4v") -> "video/x-m4v"
+                    proxyExt.endsWith(".m4a") -> "audio/mp4"
+                    proxyExt.endsWith(".mkv") -> "video/x-matroska"
+                    proxyExt.endsWith(".webm") -> "video/webm"
+                    else -> "video/mp2t"
+                }
+                out.write("Content-Type: $fallbackType\r\n".toByteArray())
+            }
         }
         out.write("Connection: close\r\n\r\n".toByteArray())
 
@@ -785,7 +823,7 @@ class NetMirrorProxy(
 
     private fun getProxyUrlWithEncodedHeaders(targetUrl: String, encodedHeaders: String): String {
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "segment.ts"
+        val ext = getProxyExtension(targetUrl)
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
     }
 
