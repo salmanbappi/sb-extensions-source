@@ -393,6 +393,7 @@ class Animex :
         val slug = parts.getOrNull(2) ?: throw Exception("Invalid episode URL: ${episode.url}")
         val epNum = parts.getOrNull(3) ?: throw Exception("Invalid episode URL: ${episode.url}")
         val category = getPreferredCategory()
+        val preferredSubType = preferences.getString("pref_sub_type", "any") ?: "any"
 
         val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
         val serversResponse = client.newCall(serversRequest).execute()
@@ -418,7 +419,9 @@ class Animex :
 
                     sourcesData.sources.forEach { source ->
                         val streamUrl = absoluteUrl(source.url)
-                        val qualityLabel = "${providerId.replaceFirstChar { it.uppercase() }} (${source.quality ?: "Auto"})"
+                        val providerName = providerId.replaceFirstChar { it.uppercase() }
+                        val tipLabel = provider.tip?.let { " - $it" } ?: ""
+                        val qualityLabel = "$providerName$tipLabel (${source.quality ?: "Auto"})"
                         videos.add(
                             Video(
                                 streamUrl,
@@ -438,7 +441,19 @@ class Animex :
         }
 
         val preferredServer = getPreferredServer()
-        videos.sortBy { !it.quality.contains(preferredServer, ignoreCase = true) }
+        videos.sortWith(
+            compareBy<Video> { video ->
+                if (preferredSubType != "any") {
+                    val hasPreferredType = video.quality.contains(preferredSubType, ignoreCase = true)
+                    if (hasPreferredType) 0 else 1
+                } else {
+                    0
+                }
+            }.thenBy { video ->
+                val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
+                if (isPreferredServer) 0 else 1
+            }
+        )
 
         return videos
     }
@@ -565,6 +580,15 @@ class Animex :
             entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
             entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
             setDefaultValue("beep")
+            summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        ListPreference(screen.context).apply {
+            key = "pref_sub_type"
+            title = "Preferred Subtitle Type"
+            entries = arrayOf("Any", "Soft Sub", "Hard Sub")
+            entryValues = arrayOf("any", "soft", "hard")
+            setDefaultValue("any")
             summary = "%s"
         }.also { screen.addPreference(it) }
     }
