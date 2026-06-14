@@ -51,23 +51,14 @@ class NetMirror :
         Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     }
 
-    private fun getCookiesForRequest(urlStr: String): String {
-        val customCookies = preferences.getString(PREF_COOKIES_KEY, "") ?: ""
-        if (customCookies.isNotEmpty()) return customCookies
-        return try {
-            android.webkit.CookieManager.getInstance().getCookie(urlStr) ?: ""
-        } catch (_: Exception) {
-            ""
-        }
-    }
-
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
             val host = request.url.host
 
-            val rawCookies = getCookiesForRequest(request.url.toString())
+            val cookieManager = android.webkit.CookieManager.getInstance()
+            val rawCookies = cookieManager.getCookie(request.url.toString()) ?: ""
             val newRequest = if (rawCookies.isNotEmpty() && (host.contains("net52.cc") || host.contains("net11.cc"))) {
                 request.newBuilder()
                     .header("Cookie", rawCookies)
@@ -82,7 +73,7 @@ class NetMirror :
                 if (host.contains("net52.cc") || host.contains("net11.cc")) {
                     sessionWarmedUp.set(false)
                     warmupWebViewSession()
-                    val updatedCookies = getCookiesForRequest(request.url.toString())
+                    val updatedCookies = cookieManager.getCookie(request.url.toString()) ?: ""
                     val retriedRequest = if (updatedCookies.isNotEmpty()) {
                         request.newBuilder().header("Cookie", updatedCookies).build()
                     } else {
@@ -98,7 +89,7 @@ class NetMirror :
                 response.close()
                 sessionWarmedUp.set(false)
                 warmupWebViewSession()
-                val updatedCookies = getCookiesForRequest(request.url.toString())
+                val updatedCookies = cookieManager.getCookie(request.url.toString()) ?: ""
                 val retriedRequest = if (updatedCookies.isNotEmpty()) {
                     request.newBuilder().header("Cookie", updatedCookies).build()
                 } else {
@@ -551,14 +542,6 @@ class NetMirror :
             setDefaultValue("720p")
             summary = "%s"
         }.also(screen::addPreference)
-
-        androidx.preference.EditTextPreference(screen.context).apply {
-            key = PREF_COOKIES_KEY
-            title = "Custom Cookies"
-            summary = "Enter your NetMirror cookies to bypass Cloudflare and Login. Format: cf_clearance=...; t_hash_p=...; user_token=..."
-            dialogTitle = "Custom Cookies"
-            setDefaultValue("")
-        }.also(screen::addPreference)
     }
 
     private fun List<Video>.sortVideos(): List<Video> {
@@ -583,7 +566,6 @@ class NetMirror :
 
     companion object {
         private const val PREF_QUALITY_KEY = "preferred_quality"
-        private const val PREF_COOKIES_KEY = "custom_cookies"
 
         private var proxy: NetMirrorProxy? = null
 
