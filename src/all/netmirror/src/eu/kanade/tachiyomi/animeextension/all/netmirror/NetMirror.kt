@@ -184,12 +184,12 @@ class NetMirror :
                             """
                             (function() {
                                 var checkInterval = setInterval(() => {
-                                    const isChallenge = document.querySelector("#challenge-form") != null || 
-                                                        document.querySelector("#challenge-stage") != null || 
+                                    const isChallenge = document.querySelector("#challenge-form") != null ||
+                                                        document.querySelector("#challenge-stage") != null ||
                                                         document.querySelector("#challenge-running") != null ||
                                                         document.title.includes("Just a moment") ||
                                                         document.title.includes("Cloudflare");
-                                                        
+
                                     if (!isChallenge) {
                                         clearInterval(checkInterval);
                                         NetMirrorJSI.leave();
