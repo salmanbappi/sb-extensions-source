@@ -596,16 +596,27 @@ class NetMirrorProxy(
     }
 
     private fun getProxyExtension(targetUrl: String): String {
-        val uri = try { targetUrl.toHttpUrl() } catch (_: Exception) { null }
+        val uri = try {
+            targetUrl.toHttpUrl()
+        } catch (_: Exception) {
+            null
+        }
         val lastPathSegment = uri?.pathSegments?.lastOrNull() ?: ""
         return when {
             targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl") -> "playlist.m3u8"
+
             lastPathSegment.endsWith(".mp4") || targetUrl.contains(".mp4") -> "video.mp4"
+
             lastPathSegment.endsWith(".mkv") || targetUrl.contains(".mkv") -> "video.mkv"
+
             lastPathSegment.endsWith(".webm") || targetUrl.contains(".webm") -> "video.webm"
+
             lastPathSegment.endsWith(".m4s") || targetUrl.contains(".m4s") -> "segment.m4s"
+
             lastPathSegment.endsWith(".m4v") || targetUrl.contains(".m4v") -> "segment.m4v"
+
             lastPathSegment.endsWith(".m4a") || targetUrl.contains(".m4a") -> "segment.m4a"
+
             lastPathSegment.contains(".") -> {
                 val suffix = lastPathSegment.substringAfterLast(".")
                 if (suffix.length in 2..4 && suffix.all { it.isLetterOrDigit() }) {
@@ -614,6 +625,7 @@ class NetMirrorProxy(
                     "segment.ts"
                 }
             }
+
             else -> "segment.ts"
         }
     }
