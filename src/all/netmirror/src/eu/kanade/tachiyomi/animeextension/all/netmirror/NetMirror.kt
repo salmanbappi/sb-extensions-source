@@ -27,6 +27,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
+private fun cleanUrl(url: String): String {
+    return if (url.contains("://.")) {
+        url.replace("://.", "://s13.")
+    } else {
+        url
+    }
+}
+
 class NetMirror :
     AnimeHttpSource(),
     ConfigurableAnimeSource {
@@ -45,15 +53,24 @@ class NetMirror :
         Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     }
 
+    private fun getCookiesForRequest(urlStr: String): String {
+        val customCookies = preferences.getString(PREF_COOKIES_KEY, "") ?: ""
+        if (customCookies.isNotEmpty()) return customCookies
+        return try {
+            android.webkit.CookieManager.getInstance().getCookie(urlStr) ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
             val host = request.url.host
 
-            val cookieManager = android.webkit.CookieManager.getInstance()
-            val rawCookies = cookieManager.getCookie(request.url.toString())
-            val newRequest = if (!rawCookies.isNullOrEmpty() && (host.contains("net52.cc") || host.contains("net11.cc"))) {
+            val rawCookies = getCookiesForRequest(request.url.toString())
+            val newRequest = if (rawCookies.isNotEmpty() && (host.contains("net52.cc") || host.contains("net11.cc"))) {
                 request.newBuilder()
                     .header("Cookie", rawCookies)
                     .build()
@@ -67,8 +84,8 @@ class NetMirror :
                 if (host.contains("net52.cc") || host.contains("net11.cc")) {
                     sessionWarmedUp.set(false)
                     warmupWebViewSession()
-                    val updatedCookies = cookieManager.getCookie(request.url.toString())
-                    val retriedRequest = if (!updatedCookies.isNullOrEmpty()) {
+                    val updatedCookies = getCookiesForRequest(request.url.toString())
+                    val retriedRequest = if (updatedCookies.isNotEmpty()) {
                         request.newBuilder().header("Cookie", updatedCookies).build()
                     } else {
                         newRequest
@@ -83,8 +100,8 @@ class NetMirror :
                 response.close()
                 sessionWarmedUp.set(false)
                 warmupWebViewSession()
-                val updatedCookies = cookieManager.getCookie(request.url.toString())
-                val retriedRequest = if (!updatedCookies.isNullOrEmpty()) {
+                val updatedCookies = getCookiesForRequest(request.url.toString())
+                val retriedRequest = if (updatedCookies.isNotEmpty()) {
                     request.newBuilder().header("Cookie", updatedCookies).build()
                 } else {
                     newRequest
@@ -491,7 +508,8 @@ class NetMirror :
                                 file.startsWith("http") -> file
                                 else -> "$baseUrl$file"
                             }
-                            subtitleTracks.add(eu.kanade.tachiyomi.animesource.model.Track(absoluteFile, label))
+                            val cleanedFile = cleanUrl(absoluteFile)
+                            subtitleTracks.add(eu.kanade.tachiyomi.animesource.model.Track(cleanedFile, label))
                         }
                     }
                 }
@@ -507,7 +525,8 @@ class NetMirror :
                         val label = source.optString("label")
                         if (file.isNotEmpty()) {
                             val absoluteUrl = if (file.startsWith("http")) file else "$baseUrl$file"
-                            val proxiedUrl = getProxyUrl(absoluteUrl, videoHeaders)
+                            val cleanedUrl = cleanUrl(absoluteUrl)
+                            val proxiedUrl = getProxyUrl(cleanedUrl, videoHeaders)
                             videoList.add(Video(proxiedUrl, label, proxiedUrl, headers = videoHeaders, subtitleTracks = subtitleTracks))
                         }
                     }
@@ -534,6 +553,14 @@ class NetMirror :
             setDefaultValue("720p")
             summary = "%s"
         }.also(screen::addPreference)
+
+        androidx.preference.EditTextPreference(screen.context).apply {
+            key = PREF_COOKIES_KEY
+            title = "Custom Cookies"
+            summary = "Enter your NetMirror cookies to bypass Cloudflare and Login. Format: cf_clearance=...; t_hash_p=...; user_token=..."
+            dialogTitle = "Custom Cookies"
+            setDefaultValue("")
+        }.also(screen::addPreference)
     }
 
     private fun List<Video>.sortVideos(): List<Video> {
@@ -558,6 +585,7 @@ class NetMirror :
 
     companion object {
         private const val PREF_QUALITY_KEY = "preferred_quality"
+        private const val PREF_COOKIES_KEY = "custom_cookies"
 
         private var proxy: NetMirrorProxy? = null
 
@@ -815,7 +843,7 @@ class NetMirrorProxy(
                 if (trimmed.startsWith("#EXT-X-KEY") || trimmed.startsWith("#EXT-X-MAP") || trimmed.startsWith("#EXT-X-MEDIA")) {
                     uriRegex.find(trimmed)?.let { match ->
                         val uriValue = match.groupValues[1]
-                        val cleanUriValue = if (uriValue.startsWith("https://.")) uriValue.replace("https://.", "https://s13.") else uriValue
+                        val cleanUriValue = cleanUrl(uriValue)
                         val proxiedUri = getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, cleanUriValue), encodedHeaders)
                         builder.append(trimmed.replace(uriValue, proxiedUri))
                     } ?: builder.append(trimmed)
@@ -823,10 +851,8 @@ class NetMirrorProxy(
                     builder.append(trimmed)
                 }
             } else {
-                if (trimmed.startsWith("https://.")) {
-                    trimmed = trimmed.replace("https://.", "https://s13.")
-                }
-                builder.append(getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, trimmed), encodedHeaders))
+                val cleanedLine = cleanUrl(trimmed)
+                builder.append(getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, cleanedLine), encodedHeaders))
             }
             builder.append("\n")
         }
