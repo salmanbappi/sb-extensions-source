@@ -419,9 +419,15 @@ class Animex :
 
                     sourcesData.sources.forEach { source ->
                         val streamUrl = absoluteUrl(source.url)
-                        val providerName = providerId.replaceFirstChar { it.uppercase() }
-                        val tipLabel = provider.tip?.let { " - $it" } ?: ""
-                        val qualityLabel = "$providerName$tipLabel (${source.quality ?: "Auto"})"
+                        val providerName = providerId.uppercase()
+                        val quality = source.quality ?: "Auto"
+                        val categoryLabel = category.uppercase()
+                        val subStyle = when {
+                            provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
+                            provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
+                            else -> ""
+                        }
+                        val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
                         videos.add(
                             Video(
                                 streamUrl,
