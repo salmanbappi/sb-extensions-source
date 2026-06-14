@@ -78,7 +78,7 @@ class NetMirror :
             }
         }
 
-        val uniqueIds = ids.distinct()
+        val uniqueIds = ids.distinct().take(60)
 
         val pool = java.util.concurrent.Executors.newFixedThreadPool(10)
         val futures = uniqueIds.map { id ->
