@@ -414,7 +414,7 @@ class Animex :
                             Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
                         } ?: emptyList()
 
-                        sourcesData.sources.filter { it.url.isNotEmpty() }.forEach { source ->
+                        sourcesData.sources.forEach { source ->
                             val streamUrl = absoluteUrl(source.url)
                             val providerName = providerId.uppercase()
                             val quality = source.quality ?: "Auto"
