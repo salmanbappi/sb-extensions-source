@@ -61,7 +61,7 @@ class Animex :
 
     private fun absoluteUrl(url: String): String = if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
 
-    private fun getPreferredCategory(): String = preferences.getString("pref_anime_category", "sub") ?: "sub"
+
 
     private fun getPreferredServer(): String = preferences.getString("pref_preferred_server", "Hoshi") ?: "Hoshi"
 
@@ -392,8 +392,7 @@ class Animex :
         val parts = episode.url.split("/")
         val slug = parts.getOrNull(2) ?: throw Exception("Invalid episode URL: ${episode.url}")
         val epNum = parts.getOrNull(3) ?: throw Exception("Invalid episode URL: ${episode.url}")
-        val category = getPreferredCategory()
-        val preferredSubType = preferences.getString("pref_sub_type", "any") ?: "any"
+        val preferredType = preferences.getString("pref_preferred_type", "soft") ?: "soft"
 
         val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
         val serversResponse = client.newCall(serversRequest).execute()
@@ -403,62 +402,67 @@ class Animex :
         }
 
         val serversData = json.decodeFromString<ServersResponse>(serversResponse.body.string())
-        val providers = if (category == "dub") serversData.dubProviders else serversData.subProviders
         val videos = mutableListOf<Video>()
 
-        providers.forEach { provider ->
-            val providerId = provider.id
-            val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$category&providerId=$providerId", headers)
-            try {
-                val sourcesResponse = client.newCall(sourcesRequest).execute()
-                if (sourcesResponse.isSuccessful) {
-                    val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
-                    val subtitleTracks = sourcesData.tracks?.map { track ->
-                        Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
-                    } ?: emptyList()
+        fun fetchSources(providers: List<ProviderItem>, cat: String) {
+            providers.forEach { provider ->
+                val providerId = provider.id
+                val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$cat&providerId=$providerId", headers)
+                try {
+                    val sourcesResponse = client.newCall(sourcesRequest).execute()
+                    if (sourcesResponse.isSuccessful) {
+                        val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
+                        val subtitleTracks = sourcesData.tracks?.map { track ->
+                            Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
+                        } ?: emptyList()
 
-                    sourcesData.sources.forEach { source ->
-                        val streamUrl = absoluteUrl(source.url)
-                        val providerName = providerId.uppercase()
-                        val quality = source.quality ?: "Auto"
-                        val categoryLabel = category.uppercase()
-                        val subStyle = when {
-                            provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
-                            provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
-                            else -> ""
+                        sourcesData.sources.filter { it.url.isNotEmpty() }.forEach { source ->
+                            val streamUrl = absoluteUrl(source.url)
+                            val providerName = providerId.uppercase()
+                            val quality = source.quality ?: "Auto"
+                            val categoryLabel = cat.uppercase()
+                            val subStyle = when {
+                                provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
+                                provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
+                                else -> ""
+                            }
+                            val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
+                            videos.add(
+                                Video(
+                                    streamUrl,
+                                    qualityLabel,
+                                    streamUrl,
+                                    headers = headers,
+                                    subtitleTracks = subtitleTracks,
+                                ),
+                            )
                         }
-                        val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                        videos.add(
-                            Video(
-                                streamUrl,
-                                qualityLabel,
-                                streamUrl,
-                                headers = headers,
-                                subtitleTracks = subtitleTracks,
-                            ),
-                        )
+                    } else {
+                        sourcesResponse.close()
                     }
-                } else {
-                    sourcesResponse.close()
+                } catch (e: Exception) {
+                    // Ignore individual provider errors
                 }
-            } catch (e: Exception) {
-                // Ignore individual provider errors
             }
         }
+
+        fetchSources(serversData.subProviders, "sub")
+        fetchSources(serversData.dubProviders, "dub")
 
         val preferredServer = getPreferredServer()
         videos.sortWith(
             compareBy<Video> { video ->
-                if (preferredSubType != "any") {
-                    val hasPreferredType = video.quality.contains(preferredSubType, ignoreCase = true)
-                    if (hasPreferredType) 0 else 1
-                } else {
-                    0
+                val matchesPreferred = when (preferredType) {
+                    "soft" -> video.quality.contains("[Soft Subs]", ignoreCase = true)
+                    "hard" -> video.quality.contains("[Hard Subs]", ignoreCase = true)
+                    "dub" -> video.quality.contains("(DUB)", ignoreCase = true)
+                    else -> false
                 }
+                if (matchesPreferred) 0 else 1
             }.thenBy { video ->
                 val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
                 if (isPreferredServer) 0 else 1
-            },
+            }
         )
 
         return videos
@@ -572,11 +576,11 @@ class Animex :
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
-            key = "pref_anime_category"
-            title = "Preferred Anime Category"
-            entries = arrayOf("Subbed", "Dubbed")
-            entryValues = arrayOf("sub", "dub")
-            setDefaultValue("sub")
+            key = "pref_preferred_type"
+            title = "Preferred Type"
+            entries = arrayOf("Soft Sub", "Hard Sub", "Dub")
+            entryValues = arrayOf("soft", "hard", "dub")
+            setDefaultValue("soft")
             summary = "%s"
         }.also { screen.addPreference(it) }
 
@@ -586,15 +590,6 @@ class Animex :
             entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
             entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
             setDefaultValue("beep")
-            summary = "%s"
-        }.also { screen.addPreference(it) }
-
-        ListPreference(screen.context).apply {
-            key = "pref_sub_type"
-            title = "Preferred Subtitle Type"
-            entries = arrayOf("Any", "Soft Sub", "Hard Sub")
-            entryValues = arrayOf("any", "soft", "hard")
-            setDefaultValue("any")
             summary = "%s"
         }.also { screen.addPreference(it) }
     }
