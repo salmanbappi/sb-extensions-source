@@ -27,12 +27,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-private fun cleanUrl(url: String): String {
-    return if (url.contains("://.")) {
-        url.replace("://.", "://s13.")
-    } else {
-        url
-    }
+private fun cleanUrl(url: String): String = if (url.contains("://.")) {
+    url.replace("://.", "://s13.")
+} else {
+    url
 }
 
 class NetMirror :
