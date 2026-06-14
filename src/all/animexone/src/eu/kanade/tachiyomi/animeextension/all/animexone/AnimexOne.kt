@@ -168,7 +168,7 @@ class AnimexOne :
                             "START_DATE_DESC" -> AnimeSortInput("CREATED_AT", "DESC")
                             "START_DATE" -> AnimeSortInput("CREATED_AT", "ASC")
                             else -> AnimeSortInput("POPULARITY", "DESC")
-                        }
+                        },
                     )
                 }
 
@@ -381,7 +381,6 @@ class AnimexOne :
         }
         return episodes.sortedByDescending { it.episode_number }
     }
-
 
     // ============================== VIDEO LIST (SOURCES) ==============================
 
