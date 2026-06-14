@@ -1,0 +1,8 @@
+ext {
+    extName = 'Movix'
+    extClass = '.Movix'
+    extVersionCode = 1000
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
