@@ -164,9 +164,9 @@ class NetMirror :
         json.optString("desc").takeIf { it.isNotEmpty() }?.let {
             description.append(it).append("\n\n")
         }
-        
+
         val details = mutableListOf<String>()
-        
+
         json.optString("year").takeIf { it.isNotEmpty() }?.let {
             details.add("Year: $it")
         }
@@ -192,7 +192,7 @@ class NetMirror :
         if (details.isNotEmpty()) {
             description.append(details.joinToString("\n"))
         }
-        
+
         anime.description = description.toString()
         return anime
     }
@@ -380,7 +380,7 @@ class NetMirror :
                 } else {
                     1
                 }
-            }
+            },
         )
     }
 
