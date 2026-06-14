@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
 import android.content.SharedPreferences
-import android.util.Base64
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -10,305 +9,140 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
+import eu.kanade.tachiyomi.animesource.AnimeSource
+import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.network.GET
+import okhttp3.FormBody
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONArray
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.net.ServerSocket
-import java.net.Socket
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
+import java.util.UUID
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
-private fun cleanUrl(url: String): String = if (url.contains("://.")) {
-    url.replace("://.", "://s13.")
-} else {
-    url
+class NetMirror : AnimeSourceFactory {
+    override fun createSources(): List<AnimeSource> = listOf(
+        CNCVerseSource("CNCVerse (Netflix)", "nf", "", 5181466391484419888L),
+        CNCVerseSource("CNCVerse (Prime Video)", "pv", "", 5181466391484419889L),
+        CNCVerseSource("CNCVerse (Hotstar)", "hs", "", 5181466391484419890L),
+        CNCVerseSource("CNCVerse (Disney)", "dp", "disney", 5181466391484419891L),
+        CNCVerseSource("CNCVerse (Marvel)", "dp", "marvel", 5181466391484419892L),
+        CNCVerseSource("CNCVerse (Star Wars)", "dp", "starwars", 5181466391484419893L),
+        CNCVerseSource("CNCVerse (Pixar)", "dp", "pixar", 5181466391484419894L)
+    )
 }
 
-class NetMirror :
-    AnimeHttpSource(),
-    ConfigurableAnimeSource {
+class CNCVerseSource(
+    override val name: String,
+    private val ott: String,
+    private val studio: String,
+    override val id: Long
+) : AnimeHttpSource(), ConfigurableAnimeSource {
 
-    override val name = "NetMirror"
-
-    override val baseUrl = "https://net11.cc"
-
+    override val baseUrl = "https://net52.cc"
     override val lang = "all"
-
-    override val supportsLatest = true
-
-    override val id: Long = 5181466391484419888L
+    override val supportsLatest = false
 
     private val preferences: SharedPreferences by lazy {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     }
 
-    private fun getCookiesForRequest(urlStr: String, existingCookies: String? = null): String {
-        val customCookies = preferences.getString(PREF_COOKIES_KEY, "") ?: ""
-        if (customCookies.isNotEmpty()) return customCookies
-        return try {
-            val cm = android.webkit.CookieManager.getInstance()
-            val urlCookies = cm.getCookie(urlStr) ?: ""
-            val baseCookies = cm.getCookie(baseUrl) ?: ""
+    private val ottPath: String
+        get() = when (ott) {
+            "nf" -> ""
+            "pv" -> "pv"
+            else -> "hs"
+        }
 
-            val cookieMap = mutableMapOf<String, String>()
-
-            fun addCookies(cookieStr: String?) {
-                cookieStr?.split(";")?.forEach {
-                    val parts = it.split("=", limit = 2)
-                    if (parts.size == 2) {
-                        val name = parts[0].trim()
-                        val value = parts[1].trim()
-                        if (name.isNotEmpty()) cookieMap[name] = value
-                    }
-                }
-            }
-
-            addCookies(existingCookies)
-            addCookies(baseCookies)
-            addCookies(urlCookies)
-
-            cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
-        } catch (_: Exception) {
-            existingCookies ?: ""
+    private fun getPosterUrl(id: String): String {
+        return when (ott) {
+            "nf" -> "https://imgcdn.kim/poster/v/$id.jpg"
+            "pv" -> "https://imgcdn.kim/pv/v/$id.jpg"
+            else -> "https://imgcdn.kim/hs/v/$id.jpg"
         }
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain ->
             val request = chain.request()
-            val host = request.url.host
-
-            if (host.contains("net52.cc") || host.contains("net11.cc")) {
-                val rawCookies = getCookiesForRequest(request.url.toString(), request.header("Cookie"))
-                if (rawCookies.isNotEmpty()) {
-                    val newRequest = request.newBuilder()
-                        .header("Cookie", rawCookies)
-                        .build()
-                    return@addInterceptor try {
-                        chain.proceed(newRequest)
-                    } catch (e: Exception) {
-                        sessionWarmedUp.set(false)
-                        warmupWebViewSession("https://$host/")
-                        val updatedCookies = getCookiesForRequest(request.url.toString(), request.header("Cookie"))
-                        val retriedRequest = if (updatedCookies.isNotEmpty()) {
-                            request.newBuilder().header("Cookie", updatedCookies).build()
-                        } else {
-                            newRequest
+            val url = request.url.toString()
+            if (url.contains("net52.cc") || url.contains("net11.cc")) {
+                val cookieVal = getBypassCookie()
+                if (cookieVal.isNotEmpty()) {
+                    val cookieHeader = buildString {
+                        append("t_hash_t=$cookieVal")
+                        append("; ott=$ott")
+                        append("; hd=on")
+                        if (studio.isNotEmpty()) {
+                            append("; studio=$studio")
                         }
-                        chain.proceed(retriedRequest)
                     }
+                    val newRequest = request.newBuilder()
+                        .header("Cookie", cookieHeader)
+                        .build()
+                    return@addInterceptor chain.proceed(newRequest)
                 }
             }
             chain.proceed(request)
         }
-        .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
-            val host = request.url.host
-            var response = chain.proceed(request)
-
-            if ((host.contains("net52.cc") || host.contains("net11.cc")) && (response.code == 403 || response.code == 503)) {
-                response.close()
-                sessionWarmedUp.set(false)
-                warmupWebViewSession("https://$host/")
-                val updatedCookies = getCookiesForRequest(request.url.toString(), request.header("Cookie"))
-                val retriedRequest = if (updatedCookies.isNotEmpty()) {
-                    request.newBuilder().header("Cookie", updatedCookies).build()
-                } else {
-                    request
-                }
-                response = chain.proceed(retriedRequest)
+            if (request.url.toString().contains(".m3u8")) {
+                val newRequest = request.newBuilder()
+                    .header("Cookie", "hd=on")
+                    .build()
+                return@addInterceptor chain.proceed(newRequest)
             }
-
-            response
+            chain.proceed(request)
         }
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
-        .set("Referer", "$baseUrl/")
-
-    private val sessionWarmedUp = AtomicBoolean(false)
-
-    @android.annotation.SuppressLint("SetJavaScriptEnabled")
-    private fun warmupWebViewSession(targetUrl: String? = null) {
-        if (!sessionWarmedUp.compareAndSet(false, true)) return
-
-        val latch = CountDownLatch(1)
-        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-        var webView: android.webkit.WebView? = null
-
-        mainHandler.post {
-            try {
-                val context = Injekt.get<Application>()
-                val wv = android.webkit.WebView(context)
-                webView = wv
-                wv.settings.javaScriptEnabled = true
-                wv.settings.domStorageEnabled = true
-                wv.settings.databaseEnabled = true
-                wv.settings.useWideViewPort = true
-                wv.settings.loadWithOverviewMode = false
-
-                val userAgent = headers.get("User-Agent")
-                if (userAgent != null) {
-                    wv.settings.userAgentString = userAgent
-                }
-
-                val cm = android.webkit.CookieManager.getInstance()
-                cm.setAcceptCookie(true)
-                cm.setAcceptThirdPartyCookies(wv, true)
-
-                wv.addJavascriptInterface(
-                    object {
-                        @android.webkit.JavascriptInterface
-                        fun leave() {
-                            latch.countDown()
-                        }
-                    },
-                    "NetMirrorJSI",
-                )
-
-                wv.webViewClient = object : android.webkit.WebViewClient() {
-                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                        android.util.Log.d("NetMirrorWebView", "Page finished: $url, title: ${view?.title}")
-
-                        view?.evaluateJavascript(
-                            """
-                            (function() {
-                                var checkInterval = setInterval(() => {
-                                    const isChallenge = document.querySelector("#challenge-form") != null ||
-                                                        document.querySelector("#challenge-stage") != null ||
-                                                        document.querySelector("#challenge-running") != null ||
-                                                        document.title.includes("Just a moment") ||
-                                                        document.title.includes("Cloudflare");
-
-                                    if (!isChallenge) {
-                                        clearInterval(checkInterval);
-                                        NetMirrorJSI.leave();
-                                    } else {
-                                        const simpleChallenge = document.querySelector("#challenge-stage > div > input[type='button']")
-                                        if (simpleChallenge != null) simpleChallenge.click()
-
-                                        const turnstile = document.querySelector("div.hcaptcha-box > iframe, div#turnstile-wrapper iframe")
-                                        if (turnstile != null) {
-                                            try {
-                                                const button = turnstile.contentWindow.document.querySelector("input[type='checkbox']")
-                                                if (button != null) button.click()
-                                            } catch(e) {}
-                                        }
-                                    }
-                                }, 1000);
-                            })();
-                            """.trimIndent(),
-                        ) {}
-                    }
-                }
-                wv.loadUrl(targetUrl ?: "$baseUrl/home")
-            } catch (e: Exception) {
-                android.util.Log.e("NetMirrorWebView", "Error in WebView warmup", e)
-                latch.countDown()
-                sessionWarmedUp.set(false)
-            }
-        }
-
-        try {
-            if (!latch.await(45, TimeUnit.SECONDS)) {
-                android.util.Log.w("NetMirrorWebView", "Timeout waiting for WebView warmup")
-                sessionWarmedUp.set(false)
-            } else {
-                android.util.Log.d("NetMirrorWebView", "WebView warmup completed successfully")
-            }
-        } catch (_: InterruptedException) {
-            sessionWarmedUp.set(false)
-        } finally {
-            mainHandler.post {
-                try {
-                    webView?.stopLoading()
-                    webView?.destroy()
-                } catch (_: Exception) {}
-            }
-        }
-    }
-
-    private fun ensureSession() {
-        if (!sessionWarmedUp.get()) {
-            warmupWebViewSession()
-        }
-    }
+        .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+        .set("Accept-Language", "en-IN,en-US;q=0.9,en;q=0.8")
+        .set("Cache-Control", "max-age=0")
+        .set("Connection", "keep-alive")
+        .set("sec-ch-ua", "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"")
+        .set("sec-ch-ua-mobile", "?0")
+        .set("sec-ch-ua-platform", "\"Android\"")
+        .set("Sec-Fetch-Dest", "document")
+        .set("Sec-Fetch-Mode", "navigate")
+        .set("Sec-Fetch-Site", "same-origin")
+        .set("Sec-Fetch-User", "?1")
+        .set("Upgrade-Insecure-Requests", "1")
+        .set("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0")
+        .set("X-Requested-With", "XMLHttpRequest")
 
     // ============================== Popular ===============================
 
     override fun popularAnimeRequest(page: Int): Request {
-        ensureSession()
-        return GET("$baseUrl/pv/homepage.php", headers)
+        return GET("$baseUrl/mobile/home?app=1", headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val json = JSONObject(response.body.string())
-        val ids = mutableListOf<String>()
-
-        val slider = json.optJSONArray("slider")
-        if (slider != null) {
-            for (i in 0 until slider.length()) {
-                val item = slider.getJSONObject(i)
-                val id = item.optString("id")
-                if (id.isNotEmpty()) ids.add(id)
+        val document = org.jsoup.Jsoup.parse(response.body.string())
+        val animeList = mutableListOf<SAnime>()
+        val articles = document.select(".tray-container article, #top10 .top10-post")
+        for (element in articles) {
+            val id = element.selectFirst("a")?.attr("data-post") ?: element.attr("data-post") ?: continue
+            val title = element.selectFirst("img")?.attr("alt")
+                ?: element.selectFirst(".card-title")?.text()
+                ?: element.selectFirst("h3")?.text()
+                ?: ""
+            if (id.isNotEmpty()) {
+                val anime = SAnime.create()
+                anime.title = title
+                anime.url = id
+                anime.thumbnail_url = getPosterUrl(id)
+                animeList.add(anime)
             }
         }
-
-        val post = json.optJSONArray("post")
-        if (post != null) {
-            for (i in 0 until post.length()) {
-                val cat = post.getJSONObject(i)
-                val catIds = cat.optString("ids")
-                if (catIds.isNotEmpty()) {
-                    ids.addAll(catIds.split(","))
-                }
-            }
-        }
-
-        val uniqueIds = ids.distinct().take(60)
-
-        val pool = Executors.newFixedThreadPool(10)
-        val futures = uniqueIds.map { id ->
-            pool.submit(
-                java.util.concurrent.Callable<SAnime?> {
-                    runCatching {
-                        val res = client.newCall(GET("$baseUrl/pv/mini-modal-info.php?id=$id", headers)).execute()
-                        if (res.isSuccessful) {
-                            val info = JSONObject(res.body.string())
-                            val anime = SAnime.create()
-                            anime.title = info.optString("title")
-                            anime.url = id
-                            anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
-                            anime.description = info.optString("desc")
-                            anime
-                        } else {
-                            null
-                        }
-                    }.getOrNull()
-                },
-            )
-        }
-
-        val animes = futures.mapNotNull {
-            try {
-                it.get(10, TimeUnit.SECONDS)
-            } catch (_: Exception) {
-                null
-            }
-        }
-        pool.shutdown()
-
-        return AnimesPage(animes, false)
+        return AnimesPage(animeList.distinctBy { it.url }, false)
     }
 
     // =============================== Latest ===============================
@@ -320,25 +154,25 @@ class NetMirror :
     // =============================== Search ===============================
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        ensureSession()
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-        return GET("$baseUrl/pv/search.php?s=$encodedQuery", headers)
+        val path = if (ottPath.isEmpty()) "search.php" else "$ottPath/search.php"
+        return GET("$baseUrl/mobile/$path?s=$encodedQuery&t=${System.currentTimeMillis() / 1000}", headers)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val json = JSONObject(response.body.string())
-        val searchResult = json.optJSONArray("searchResult") ?: return AnimesPage(emptyList(), false)
-
+        val json = response.body.string()
+        val jsonObject = JSONObject(json)
+        val searchResult = jsonObject.optJSONArray("searchResult") ?: return AnimesPage(emptyList(), false)
         val animeList = mutableListOf<SAnime>()
         for (i in 0 until searchResult.length()) {
             val item = searchResult.getJSONObject(i)
             val id = item.optString("id")
-            val titleText = item.optString("t")
-            if (id.isNotEmpty() && titleText.isNotEmpty()) {
+            val title = item.optString("t")
+            if (id.isNotEmpty()) {
                 val anime = SAnime.create()
-                anime.title = titleText
+                anime.title = title
                 anime.url = id
-                anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
+                anime.thumbnail_url = getPosterUrl(id)
                 animeList.add(anime)
             }
         }
@@ -348,55 +182,48 @@ class NetMirror :
     // =========================== Anime Details ============================
 
     override fun animeDetailsRequest(anime: SAnime): Request {
-        ensureSession()
-        return GET("$baseUrl/pv/post.php?id=${anime.url}", headers)
+        val path = if (ottPath.isEmpty()) "post.php" else "$ottPath/post.php"
+        return GET("$baseUrl/mobile/$path?id=${anime.url}&t=${System.currentTimeMillis() / 1000}", headers)
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val json = JSONObject(response.body.string())
-        val id = response.request.url.queryParameter("id") ?: ""
+        val json = response.body.string()
+        val data = JSONObject(json)
         val anime = SAnime.create()
-        anime.title = json.optString("title")
-        anime.genre = json.optString("genre")
-        anime.author = json.optString("creator").ifEmpty { json.optString("writer") }
-        anime.artist = json.optString("director")
-        anime.status = SAnime.UNKNOWN
-        anime.thumbnail_url = "https://imgcdn.kim/pv/341/$id.jpg"
-
-        val description = StringBuilder()
-        json.optString("desc").takeIf { it.isNotEmpty() }?.let {
-            description.append(it).append("\n\n")
+        anime.title = data.optString("title")
+        
+        val genreVal = data.optString("genre")
+        if (genreVal.isNotEmpty()) {
+            anime.genre = genreVal.split(",").joinToString { it.trim() }
         }
-
+        
+        anime.author = data.optString("director").ifEmpty { data.optString("cast") }
+        anime.status = SAnime.UNKNOWN
+        
+        val desc = StringBuilder()
+        data.optString("desc").takeIf { it.isNotEmpty() }?.let {
+            desc.append(it).append("\n\n")
+        }
         val details = mutableListOf<String>()
-
-        json.optString("year").takeIf { it.isNotEmpty() }?.let {
+        data.optString("year").takeIf { it.isNotEmpty() }?.let {
             details.add("Year: $it")
         }
-        json.optString("match").takeIf { it.isNotEmpty() }?.let {
-            details.add("Rating: $it")
-        }
-        json.optString("runtime").takeIf { it.isNotEmpty() }?.let {
-            details.add("Runtime: $it")
-        }
-        json.optString("hdsd").takeIf { it.isNotEmpty() }?.let {
-            details.add("Quality: $it")
-        }
-        json.optString("ua").takeIf { it.isNotEmpty() }?.let {
+        data.optString("ua").takeIf { it.isNotEmpty() }?.let {
             details.add("Age Rating: $it")
         }
-        json.optString("studio").takeIf { it.isNotEmpty() }?.let {
-            details.add("Studio: $it")
+        data.optString("runtime").takeIf { it.isNotEmpty() }?.let {
+            details.add("Runtime: $it")
         }
-        json.optString("cast").takeIf { it.isNotEmpty() }?.let {
-            details.add("Cast: $it")
+        data.optString("match").takeIf { it.isNotEmpty() }?.let {
+            details.add("Rating: $it")
         }
-
         if (details.isNotEmpty()) {
-            description.append(details.joinToString("\n"))
+            desc.append(details.joinToString("\n"))
         }
-
-        anime.description = description.toString()
+        anime.description = desc.toString()
+        
+        val id = response.request.url.queryParameter("id") ?: ""
+        anime.thumbnail_url = getPosterUrl(id)
         return anime
     }
 
@@ -405,161 +232,139 @@ class NetMirror :
     override fun episodeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val json = JSONObject(response.body.string())
-        val type = json.optString("type")
+        val json = response.body.string()
+        val data = JSONObject(json)
+        val episodes = mutableListOf<SEpisode>()
+        val episodesArray = data.optJSONArray("episodes")
+        val isMovie = episodesArray == null || episodesArray.length() == 0 || episodesArray.isNull(0)
+        
         val id = response.request.url.queryParameter("id") ?: ""
-
-        if (type == "m") {
+        
+        if (isMovie) {
             val sEpisode = SEpisode.create()
             sEpisode.name = "Movie"
+            sEpisode.episode_number = 1.0f
             sEpisode.url = id
-            sEpisode.episode_number = 1f
-            return listOf(sEpisode)
-        }
-
-        val episodeList = mutableListOf<SEpisode>()
-        val seriesId = id
-
-        val seasons = json.optJSONArray("season")
-        if (seasons != null && seasons.length() > 0) {
-            val pool = Executors.newFixedThreadPool(5)
-            val futures = (0 until seasons.length()).map { idx ->
-                pool.submit {
-                    val seasonObj = seasons.getJSONObject(idx)
-                    val seasonId = seasonObj.optString("id")
-                    val seasonName = "Season ${seasonObj.optString("s")}"
-
-                    var page = 1
-                    var hasNext = true
-                    while (hasNext && page <= 3) {
-                        try {
-                            val url = "$baseUrl/pv/episodes.php?s=$seasonId&series=$seriesId&page=$page"
-                            val res = client.newCall(GET(url, headers)).execute()
-                            if (res.isSuccessful) {
-                                val resJson = JSONObject(res.body.string())
-                                val eps = resJson.optJSONArray("episodes")
-                                if (eps != null && eps.length() > 0) {
-                                    synchronized(episodeList) {
-                                        for (k in 0 until eps.length()) {
-                                            val ep = eps.getJSONObject(k)
-                                            val epId = ep.optString("id")
-                                            val epTitle = ep.optString("t")
-                                            val epNumStr = ep.optString("ep").replace("E", "")
-                                            val epNum = epNumStr.toFloatOrNull() ?: 1.0f
-
-                                            val sEpisode = SEpisode.create()
-                                            sEpisode.name = "$seasonName - $epTitle"
-                                            sEpisode.url = epId
-                                            sEpisode.episode_number = epNum
-                                            episodeList.add(sEpisode)
-                                        }
-                                    }
-                                    val nextPage = resJson.optInt("nextPage", -1)
-                                    if (nextPage > page) {
-                                        page = nextPage
-                                    } else {
-                                        hasNext = false
-                                    }
-                                } else {
-                                    hasNext = false
-                                }
-                            } else {
-                                hasNext = false
-                            }
-                        } catch (e: Exception) {
-                            hasNext = false
-                        }
-                    }
-                }
-            }
-            futures.forEach {
-                try {
-                    it.get(15, TimeUnit.SECONDS)
-                } catch (_: Exception) {}
-            }
-            pool.shutdown()
+            episodes.add(sEpisode)
         } else {
-            val eps = json.optJSONArray("episodes")
-            if (eps != null) {
-                for (i in 0 until eps.length()) {
-                    val ep = eps.getJSONObject(i)
-                    val epId = ep.optString("id")
-                    val epTitle = ep.optString("t")
-                    val epNum = ep.optString("ep").replace("E", "").toFloatOrNull() ?: 1.0f
-                    val sEpisode = SEpisode.create()
-                    sEpisode.name = epTitle
-                    sEpisode.url = epId
-                    sEpisode.episode_number = epNum
-                    episodeList.add(sEpisode)
+            for (i in 0 until episodesArray.length()) {
+                if (episodesArray.isNull(i)) continue
+                val ep = episodesArray.getJSONObject(i)
+                val epId = ep.optString("id")
+                val epTitle = ep.optString("t")
+                val epNumStr = ep.optString("ep").replace("E", "")
+                val epNum = epNumStr.toFloatOrNull() ?: 1.0f
+                val seasonStr = ep.optString("s").replace("S", "")
+                
+                val sEpisode = SEpisode.create()
+                sEpisode.name = "S$seasonStr E$epNum - $epTitle"
+                sEpisode.url = epId
+                sEpisode.episode_number = epNum
+                episodes.add(sEpisode)
+            }
+            
+            val nextPageShow = data.optInt("nextPageShow", 0)
+            if (nextPageShow == 1) {
+                val nextPageSeason = data.optString("nextPageSeason")
+                episodes.addAll(getEpisodes(id, nextPageSeason, 2))
+            }
+            
+            val seasonsArray = data.optJSONArray("season")
+            if (seasonsArray != null) {
+                for (i in 0 until seasonsArray.length()) {
+                    val seasonObj = seasonsArray.getJSONObject(i)
+                    val seasonId = seasonObj.optString("id")
+                    episodes.addAll(getEpisodes(id, seasonId, 1))
                 }
             }
         }
+        
+        return episodes.sortedByDescending { it.episode_number }
+    }
 
-        return episodeList.sortedByDescending { it.episode_number }
+    private fun getEpisodes(eid: String, sid: String, page: Int): List<SEpisode> {
+        val episodes = mutableListOf<SEpisode>()
+        var pg = page
+        while (true) {
+            val path = if (ottPath.isEmpty()) "episodes.php" else "$ottPath/episodes.php"
+            val url = "$baseUrl/mobile/$path?s=$sid&series=$eid&t=${System.currentTimeMillis() / 1000}&page=$pg"
+            val request = GET(url, headers)
+            val response = try {
+                client.newCall(request).execute()
+            } catch (e: Exception) {
+                break
+            }
+            if (!response.isSuccessful) break
+            val json = response.body.string()
+            val jsonObj = try {
+                JSONObject(json)
+            } catch (e: Exception) {
+                break
+            }
+            val epsArray = jsonObj.optJSONArray("episodes") ?: break
+            if (epsArray.length() == 0) break
+            
+            for (i in 0 until epsArray.length()) {
+                if (epsArray.isNull(i)) continue
+                val ep = epsArray.getJSONObject(i)
+                val epId = ep.optString("id")
+                val epTitle = ep.optString("t")
+                val epNumStr = ep.optString("ep").replace("E", "")
+                val epNum = epNumStr.toFloatOrNull() ?: 1.0f
+                val seasonStr = ep.optString("s").replace("S", "")
+                
+                val sEpisode = SEpisode.create()
+                sEpisode.name = "S$seasonStr E$epNum - $epTitle"
+                sEpisode.url = epId
+                sEpisode.episode_number = epNum
+                episodes.add(sEpisode)
+            }
+            if (jsonObj.optInt("nextPageShow", 0) == 0) break
+            pg++
+        }
+        return episodes
     }
 
     // ============================ Video Links =============================
 
     override fun videoListRequest(episode: SEpisode): Request {
-        ensureSession()
-        val tm = System.currentTimeMillis() / 1000
-        return GET("$baseUrl/pv/playlist.php?id=${episode.url}&tm=$tm", headers)
+        val apiBase = getApiUrl()
+        val url = "$apiBase/newtv/player.php?id=${episode.url}"
+        
+        val ottValue = if (ott == "dp") "hs" else ott
+        val headers = Headers.Builder()
+            .add("Ott", ottValue)
+            .add("Usertoken", "")
+            .add("Cache-Control", "no-cache, no-store, must-revalidate")
+            .add("Pragma", "no-cache")
+            .add("Expires", "0")
+            .add("X-Requested-With", "NetmirrorNewTV v1.0")
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
+            .add("Accept", "application/json, text/plain, */*")
+            .build()
+            
+        return GET(url, headers)
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val jsonStr = response.body.string()
-        val videoList = mutableListOf<Video>()
-
-        try {
-            val jsonArray = JSONArray(jsonStr)
-            if (jsonArray.length() > 0) {
-                val playlistObj = jsonArray.getJSONObject(0)
-                val sources = playlistObj.optJSONArray("sources")
-                val tracks = playlistObj.optJSONArray("tracks")
-
-                val subtitleTracks = mutableListOf<eu.kanade.tachiyomi.animesource.model.Track>()
-                if (tracks != null) {
-                    for (i in 0 until tracks.length()) {
-                        val track = tracks.getJSONObject(i)
-                        val file = track.optString("file")
-                        val label = track.optString("label")
-                        val kind = track.optString("kind")
-                        if (kind == "captions" && file.isNotEmpty() && label.isNotEmpty()) {
-                            val absoluteFile = when {
-                                file.startsWith("//") -> "https:$file"
-                                file.startsWith("http") -> file
-                                else -> "$baseUrl$file"
-                            }
-                            val cleanedFile = cleanUrl(absoluteFile)
-                            subtitleTracks.add(eu.kanade.tachiyomi.animesource.model.Track(cleanedFile, label))
-                        }
-                    }
-                }
-
-                if (sources != null) {
-                    val videoHeaders = headersBuilder()
-                        .set("Referer", "$baseUrl/")
-                        .build()
-
-                    for (i in 0 until sources.length()) {
-                        val source = sources.getJSONObject(i)
-                        val file = source.optString("file")
-                        val label = source.optString("label")
-                        if (file.isNotEmpty()) {
-                            val absoluteUrl = if (file.startsWith("http")) file else "$baseUrl$file"
-                            val cleanedUrl = cleanUrl(absoluteUrl)
-                            val proxiedUrl = getProxyUrl(cleanedUrl, videoHeaders)
-                            videoList.add(Video(proxiedUrl, label, proxiedUrl, headers = videoHeaders, subtitleTracks = subtitleTracks))
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("NetMirror", "Failed to parse video list. Response: $jsonStr", e)
+        val json = response.body.string()
+        val jsonObj = JSONObject(json)
+        val status = jsonObj.optString("status")
+        val videoLink = jsonObj.optString("video_link")
+        val referer = jsonObj.optString("referer")
+        
+        if (status != "ok" || videoLink.isEmpty()) {
+            return emptyList()
         }
-
-        android.util.Log.d("NetMirror", "Getting the video right: parsed ${videoList.size} video(s)")
-        return videoList.sortVideos()
+        
+        val videoHeaders = Headers.Builder()
+            .set("Referer", referer.ifEmpty { getApiUrl() })
+            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
+            .build()
+            
+        return listOf(
+            Video(videoLink, "CNCVerse", videoLink, headers = videoHeaders)
+        ).sortVideos()
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
@@ -568,25 +373,17 @@ class NetMirror :
 
     override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {
         androidx.preference.ListPreference(screen.context).apply {
-            key = PREF_QUALITY_KEY
+            key = "preferred_quality"
             title = "Preferred Quality"
             entries = arrayOf("1080p", "720p", "480p", "360p")
             entryValues = arrayOf("1080p", "720p", "480p", "360p")
             setDefaultValue("720p")
             summary = "%s"
         }.also(screen::addPreference)
-
-        androidx.preference.EditTextPreference(screen.context).apply {
-            key = PREF_COOKIES_KEY
-            title = "Custom Cookies"
-            summary = "Enter your NetMirror cookies to bypass Cloudflare and Login. Format: cf_clearance=...; t_hash_p=...; user_token=..."
-            dialogTitle = "Custom Cookies"
-            setDefaultValue("")
-        }.also(screen::addPreference)
     }
 
     private fun List<Video>.sortVideos(): List<Video> {
-        val quality = preferences.getString(PREF_QUALITY_KEY, "720p") ?: "720p"
+        val quality = preferences.getString("preferred_quality", "720p") ?: "720p"
         return sortedWith(
             compareBy { video ->
                 val videoQuality = video.quality
@@ -595,334 +392,153 @@ class NetMirror :
                 } else {
                     1
                 }
-            },
+            }
         )
     }
 
-    // ============================== Filters ==============================
-
     override fun getFilterList(): AnimeFilterList = AnimeFilterList()
 
-    private fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String = Companion.getProxyUrl(this, targetUrl, headers)
-
     companion object {
-        private const val PREF_QUALITY_KEY = "preferred_quality"
-        private const val PREF_COOKIES_KEY = "custom_cookies"
+        private val sharedPreferences: SharedPreferences by lazy {
+            Injekt.get<Application>().getSharedPreferences("cncverse_shared_prefs", 0)
+        }
 
-        private var proxy: NetMirrorProxy? = null
+        private var resolvedApiUrl = ""
 
         @Synchronized
-        fun getProxyUrl(source: NetMirror, targetUrl: String, headers: okhttp3.Headers?): String {
-            if (proxy == null) {
-                val userAgent = source.headers.get("User-Agent") ?: ""
-                proxy = NetMirrorProxy(source.client, source.baseUrl, userAgent)
-            }
-            return proxy!!.getProxyUrl(targetUrl, headers)
-        }
-    }
-}
+        private fun getApiUrl(): String {
+            if (resolvedApiUrl.isNotEmpty()) return resolvedApiUrl
+            
+            val newTvBaseHeaders = mapOf(
+                "Cache-Control" to "no-cache, no-store, must-revalidate",
+                "Pragma" to "no-cache",
+                "Expires" to "0",
+                "X-Requested-With" to "NetmirrorNewTV v1.0",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0",
+                "Accept" to "application/json, text/plain, */*"
+            )
 
-class NetMirrorProxy(
-    private val client: OkHttpClient,
-    private val baseUrl: String,
-    private val userAgent: String,
-) {
-    private var serverSocket: ServerSocket? = null
-    private val executor = Executors.newCachedThreadPool()
-    var port: Int = 0
-        private set
+            val newTvDomains = listOf(
+                "aHR0cHM6Ly9tb2JpbGVkZXRlY3RzLmNvbQ==",
+                "aHR0cHM6Ly9tb2JpbGVkZXRlY3QuYXBw",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmFydA==",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmNj",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmNsaWNr",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lmluaw==",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmxpdmU=",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnBybw==",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNob3A=",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNpdGU=",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNwYWNl",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnN0b3Jl",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnZpcA==",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lndpa2k=",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lnh5eg==",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5hcnQ=",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5jYw==",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5pbmZv",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5pbms=",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5saXZl",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5wcm8=",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5zdG9yZQ==",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy50b3A=",
+                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy54eXo="
+            )
 
-    init {
-        try {
-            serverSocket = ServerSocket(0)
-            port = serverSocket!!.localPort
-            executor.execute {
-                while (serverSocket?.isClosed == false) {
-                    try {
-                        val socket = serverSocket!!.accept()
-                        executor.execute { handleSocket(socket) }
-                    } catch (e: Exception) {
-                        android.util.Log.e("NetMirrorProxy", "Accept error", e)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("NetMirrorProxy", "Init error", e)
-        }
-    }
-
-    private fun getProxyExtension(targetUrl: String): String {
-        val uri = try {
-            targetUrl.toHttpUrl()
-        } catch (_: Exception) {
-            null
-        }
-        val lastPathSegment = uri?.pathSegments?.lastOrNull() ?: ""
-        return when {
-            targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl") -> "playlist.m3u8"
-
-            lastPathSegment.endsWith(".mp4") || targetUrl.contains(".mp4") -> "video.mp4"
-
-            lastPathSegment.endsWith(".mkv") || targetUrl.contains(".mkv") -> "video.mkv"
-
-            lastPathSegment.endsWith(".webm") || targetUrl.contains(".webm") -> "video.webm"
-
-            lastPathSegment.endsWith(".m4s") || targetUrl.contains(".m4s") -> "segment.m4s"
-
-            lastPathSegment.endsWith(".m4v") || targetUrl.contains(".m4v") -> "segment.m4v"
-
-            lastPathSegment.endsWith(".m4a") || targetUrl.contains(".m4a") -> "segment.m4a"
-
-            lastPathSegment.contains(".") -> {
-                val suffix = lastPathSegment.substringAfterLast(".")
-                if (suffix.length in 2..4 && suffix.all { it.isLetterOrDigit() }) {
-                    "file.$suffix"
-                } else {
-                    "segment.ts"
-                }
-            }
-
-            else -> "segment.ts"
-        }
-    }
-
-    fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String {
-        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val headersStr = headers?.let { h ->
-            val sb = StringBuilder()
-            for (i in 0 until h.size) {
-                sb.append(h.name(i)).append(":").append(h.value(i)).append("\n")
-            }
-            sb.toString()
-        } ?: ""
-        val encodedHeaders = Base64.encodeToString(headersStr.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val ext = getProxyExtension(targetUrl)
-        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
-    }
-
-    private fun handleSocket(socket: Socket) {
-        var targetUrl = ""
-        try {
-            val input = socket.getInputStream()
-            val reader = input.bufferedReader()
-            val firstLine = reader.readLine() ?: return
-            val parts = firstLine.split(" ")
-            if (parts.size < 2) return
-            val path = parts[1]
-
-            if (!path.startsWith("/proxy")) {
-                sendError(socket, 404, "Not Found")
-                return
-            }
-
-            val httpUrl = ("http://127.0.0.1$path").toHttpUrl()
-            val encodedUrl = httpUrl.queryParameter("url")
-            val encodedHeaders = httpUrl.queryParameter("headers") ?: ""
-
-            if (encodedUrl.isNullOrEmpty()) {
-                sendError(socket, 400, "Missing url parameter")
-                return
-            }
-
-            targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-            val isM3u8Request = targetUrl.contains(".m3u8") || path.contains(".m3u8")
-
-            val targetHeaders = okhttp3.Headers.Builder()
-            if (encodedHeaders.isNotEmpty()) {
-                val headersStr = String(Base64.decode(encodedHeaders, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-                headersStr.split("\n").forEach { line ->
-                    val headerParts = line.split(":", limit = 2)
-                    if (headerParts.size == 2) {
-                        targetHeaders.set(headerParts[0].trim(), headerParts[1].trim())
-                    }
-                }
-            }
-
-            if (targetHeaders.get("User-Agent").isNullOrEmpty()) {
-                targetHeaders.set("User-Agent", userAgent)
-            }
-
-            // Always add Referer/Origin for NetMirror CDN requests
-            targetHeaders.set("Referer", "$baseUrl/")
-            targetHeaders.set("Origin", baseUrl)
-
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                if (line!!.isEmpty()) break
-                val headerParts = line!!.split(":", limit = 2)
-                if (headerParts.size == 2) {
-                    val name = headerParts[0].trim()
-                    val value = headerParts[1].trim()
-                    if (name.equals("Range", ignoreCase = true) && !isM3u8Request) {
-                        targetHeaders.set(name, value)
-                    }
-                }
-            }
-
-            android.util.Log.d("NetMirrorProxy", "Getting the video right: forwarding proxy request to CDN: $targetUrl")
-            val request = Request.Builder()
-                .url(targetUrl)
-                .headers(targetHeaders.build())
+            val directClient = OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(5, TimeUnit.SECONDS)
                 .build()
 
-            client.newCall(request).execute().use { response ->
-                sendResponse(socket, response, targetUrl, encodedHeaders)
+            for (encoded in newTvDomains) {
+                val base = decodeBase64(encoded).trimEnd('/')
+                try {
+                    val request = Request.Builder()
+                        .url("$base/checknewtv.php")
+                        .apply {
+                            newTvBaseHeaders.forEach { (k, v) -> addHeader(k, v) }
+                        }
+                        .build()
+                    
+                    directClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val json = response.body.string()
+                            val tokenHash = JSONObject(json).optString("token_hash")
+                            if (tokenHash.isNotEmpty()) {
+                                resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
+                                return resolvedApiUrl
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Try next domain
+                }
             }
-        } catch (e: Exception) {
-            android.util.Log.e("NetMirrorProxy", "Socket error for targetUrl=$targetUrl", e)
-            try {
-                sendError(socket, 500, e.message ?: "Internal Error")
-            } catch (_: Exception) {}
-        } finally {
-            try {
-                socket.close()
-            } catch (_: Exception) {}
+            throw Exception("Failed to resolve NewTV API base URL")
         }
-    }
 
-    private fun sendResponse(socket: Socket, response: Response, targetUrl: String, encodedHeaders: String) {
-        val out = socket.getOutputStream()
-        val contentType = response.header("Content-Type")
-        val isM3u8 = targetUrl.contains(".m3u8") || contentType?.contains("mpegurl", ignoreCase = true) == true
+        private var cookieValue = ""
+        private var cookieTimestamp = 0L
 
-        var modifiedContentBytes: ByteArray? = null
-        if (isM3u8) {
+        @Synchronized
+        private fun getBypassCookie(): String {
+            val now = System.currentTimeMillis()
+            val savedCookie = sharedPreferences.getString("nf_cookie", null)
+            val savedTimestamp = sharedPreferences.getLong("nf_cookie_timestamp", 0L)
+            
+            if (!savedCookie.isNullOrEmpty() && now - savedTimestamp < 54_000_000) {
+                cookieValue = savedCookie
+                cookieTimestamp = savedTimestamp
+                return savedCookie
+            }
+
             try {
-                val bodyString = response.body.string()
-                val modifiedContent = processM3u8(bodyString, targetUrl, encodedHeaders)
-                modifiedContentBytes = modifiedContent.toByteArray()
+                val formBody = FormBody.Builder()
+                    .add("g-recaptcha-response", UUID.randomUUID().toString())
+                    .build()
+
+                val directClient = OkHttpClient.Builder()
+                    .followRedirects(false)
+                    .followSslRedirects(false)
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(5, TimeUnit.SECONDS)
+                    .build()
+
+                val request = Request.Builder()
+                    .url("https://net52.cc/verify.php")
+                    .post(formBody)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Origin", "https://net22.cc")
+                    .header("Referer", "https://net22.cc/verify2")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+                    .build()
+
+                directClient.newCall(request).execute().use { response ->
+                    val setCookieHeaders = response.headers("Set-Cookie")
+                    for (header in setCookieHeaders) {
+                        if (header.startsWith("t_hash_t=")) {
+                            val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
+                            if (cookie.isNotEmpty()) {
+                                cookieValue = cookie
+                                cookieTimestamp = now
+                                sharedPreferences.edit()
+                                    .putString("nf_cookie", cookie)
+                                    .putLong("nf_cookie_timestamp", now)
+                                    .apply()
+                                return cookie
+                            }
+                        }
+                    }
+                }
             } catch (e: Exception) {
-                android.util.Log.e("NetMirrorProxy", "sendResponse m3u8 modify error", e)
+                e.printStackTrace()
             }
+            return cookieValue
         }
 
-        out.write("HTTP/1.1 ${response.code} ${response.message}\r\n".toByteArray())
-
-        val headers = response.headers
-        for (i in 0 until headers.size) {
-            val name = headers.name(i)
-            val value = headers.value(i)
-            if (name.equals("Connection", ignoreCase = true) ||
-                name.equals("Transfer-Encoding", ignoreCase = true) ||
-                name.equals("Content-Type", ignoreCase = true) ||
-                (name.equals("Content-Length", ignoreCase = true) && isM3u8)
-            ) {
-                continue
-            }
-            out.write("$name: $value\r\n".toByteArray())
+        private fun decodeBase64(value: String): String {
+            return String(android.util.Base64.decode(value, android.util.Base64.DEFAULT))
         }
-
-        if (isM3u8 && modifiedContentBytes != null) {
-            out.write("Content-Length: ${modifiedContentBytes.size}\r\n".toByteArray())
-            out.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
-        } else {
-            if (!contentType.isNullOrEmpty()) {
-                out.write("Content-Type: $contentType\r\n".toByteArray())
-            } else {
-                val proxyExt = getProxyExtension(targetUrl)
-                val fallbackType = when {
-                    proxyExt.endsWith(".mp4") -> "video/mp4"
-                    proxyExt.endsWith(".m4s") -> "video/iso.segment"
-                    proxyExt.endsWith(".m4v") -> "video/x-m4v"
-                    proxyExt.endsWith(".m4a") -> "audio/mp4"
-                    proxyExt.endsWith(".mkv") -> "video/x-matroska"
-                    proxyExt.endsWith(".webm") -> "video/webm"
-                    else -> "video/mp2t"
-                }
-                out.write("Content-Type: $fallbackType\r\n".toByteArray())
-            }
-        }
-        out.write("Connection: close\r\n\r\n".toByteArray())
-
-        if (isM3u8 && modifiedContentBytes != null) {
-            out.write(modifiedContentBytes)
-        } else {
-            response.body.byteStream().use { input ->
-                val buffer = ByteArray(32768)
-                var bytesRead: Int
-                while (input.read(buffer).also { bytesRead = it } != -1) {
-                    out.write(buffer, 0, bytesRead)
-                }
-            }
-        }
-        out.flush()
-    }
-
-    private val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
-
-    private fun processM3u8(content: String, playlistUrl: String, encodedHeaders: String): String {
-        val lines = content.split(Regex("""\r?\n"""))
-        val builder = StringBuilder(content.length * 2)
-
-        for (line in lines) {
-            var trimmed = line.trim()
-            if (trimmed.isEmpty()) {
-                builder.append("\n")
-                continue
-            }
-
-            if (trimmed.startsWith("#")) {
-                if (trimmed.startsWith("#EXT-X-KEY") || trimmed.startsWith("#EXT-X-MAP") || trimmed.startsWith("#EXT-X-MEDIA")) {
-                    uriRegex.find(trimmed)?.let { match ->
-                        val uriValue = match.groupValues[1]
-                        val cleanUriValue = cleanUrl(uriValue)
-                        val proxiedUri = getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, cleanUriValue), encodedHeaders)
-                        builder.append(trimmed.replace(uriValue, proxiedUri))
-                    } ?: builder.append(trimmed)
-                } else if (!trimmed.startsWith("#EXT-X-PLAYLIST-TYPE")) {
-                    builder.append(trimmed)
-                }
-            } else {
-                val cleanedLine = cleanUrl(trimmed)
-                builder.append(getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, cleanedLine), encodedHeaders))
-            }
-            builder.append("\n")
-        }
-
-        if (content.contains("#EXTINF") && !content.contains("#EXT-X-STREAM-INF")) {
-            val result = builder.toString()
-            return if (!result.contains("#EXT-X-ENDLIST")) {
-                result.replace("#EXTM3U\n", "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n") + "#EXT-X-ENDLIST"
-            } else {
-                result.replace("#EXTM3U\n", "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n")
-            }
-        }
-
-        return builder.toString()
-    }
-
-    private fun getProxyUrlWithEncodedHeaders(targetUrl: String, encodedHeaders: String): String {
-        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val ext = getProxyExtension(targetUrl)
-        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
-    }
-
-    private fun resolveUrl(baseUrl: String, relativeUrl: String): String = try {
-        val baseHttpUrl = baseUrl.toHttpUrl()
-        val resolvedHttpUrl = baseHttpUrl.resolve(relativeUrl)
-        if (resolvedHttpUrl != null) {
-            if (resolvedHttpUrl.querySize == 0 && baseHttpUrl.querySize > 0) {
-                val builder = resolvedHttpUrl.newBuilder()
-                for (i in 0 until baseHttpUrl.querySize) {
-                    builder.addQueryParameter(baseHttpUrl.queryParameterName(i), baseHttpUrl.queryParameterValue(i))
-                }
-                builder.build().toString()
-            } else {
-                resolvedHttpUrl.toString()
-            }
-        } else {
-            relativeUrl
-        }
-    } catch (_: Exception) {
-        relativeUrl
-    }
-
-    private fun sendError(socket: Socket, code: Int, message: String) {
-        val out = socket.getOutputStream()
-        out.write("HTTP/1.1 $code $message\r\n".toByteArray())
-        out.write("Content-Type: text/plain\r\n".toByteArray())
-        out.write("\r\n".toByteArray())
-        out.write(message.toByteArray())
-        out.flush()
     }
 }
