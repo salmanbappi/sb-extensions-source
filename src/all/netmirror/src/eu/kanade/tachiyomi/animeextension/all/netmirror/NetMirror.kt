@@ -51,13 +51,29 @@ class NetMirror :
             val request = chain.request()
             val host = request.url.host
 
+            val cookieManager = android.webkit.CookieManager.getInstance()
+            val rawCookies = cookieManager.getCookie(request.url.toString())
+            val newRequest = if (!rawCookies.isNullOrEmpty() && (host.contains("net52.cc") || host.contains("net11.cc"))) {
+                request.newBuilder()
+                    .header("Cookie", rawCookies)
+                    .build()
+            } else {
+                request
+            }
+
             var response = try {
-                chain.proceed(request)
+                chain.proceed(newRequest)
             } catch (e: Exception) {
                 if (host.contains("net52.cc") || host.contains("net11.cc")) {
                     sessionWarmedUp.set(false)
                     warmupWebViewSession()
-                    chain.proceed(request)
+                    val updatedCookies = cookieManager.getCookie(request.url.toString())
+                    val retriedRequest = if (!updatedCookies.isNullOrEmpty()) {
+                        request.newBuilder().header("Cookie", updatedCookies).build()
+                    } else {
+                        newRequest
+                    }
+                    chain.proceed(retriedRequest)
                 } else {
                     throw e
                 }
@@ -67,7 +83,13 @@ class NetMirror :
                 response.close()
                 sessionWarmedUp.set(false)
                 warmupWebViewSession()
-                response = chain.proceed(request)
+                val updatedCookies = cookieManager.getCookie(request.url.toString())
+                val retriedRequest = if (!updatedCookies.isNullOrEmpty()) {
+                    request.newBuilder().header("Cookie", updatedCookies).build()
+                } else {
+                    newRequest
+                }
+                response = chain.proceed(retriedRequest)
             }
 
             response
@@ -75,28 +97,9 @@ class NetMirror :
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
-        .set("User-Agent", USER_AGENT)
         .set("Referer", "$baseUrl/")
 
     private val sessionWarmedUp = AtomicBoolean(false)
-
-    private fun copyCookiesToOkHttp() {
-        try {
-            val cookieManager = android.webkit.CookieManager.getInstance()
-            val urlsToCopy = listOf(baseUrl, "https://net52.cc")
-            for (url in urlsToCopy) {
-                val rawCookies = cookieManager.getCookie(url) ?: continue
-                val httpUrl = url.toHttpUrl()
-                val cookies = rawCookies.split(";").mapNotNull {
-                    okhttp3.Cookie.parse(httpUrl, it.trim())
-                }
-                client.cookieJar.saveFromResponse(httpUrl, cookies)
-                android.util.Log.d("NetMirrorWebView", "Copied cookies for $url: $rawCookies")
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("NetMirrorWebView", "Failed to copy cookies", e)
-        }
-    }
 
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
     private fun warmupWebViewSession() {
@@ -116,7 +119,11 @@ class NetMirror :
                 wv.settings.databaseEnabled = true
                 wv.settings.useWideViewPort = true
                 wv.settings.loadWithOverviewMode = false
-                wv.settings.userAgentString = USER_AGENT
+
+                val userAgent = headers.get("User-Agent")
+                if (userAgent != null) {
+                    wv.settings.userAgentString = userAgent
+                }
 
                 val cm = android.webkit.CookieManager.getInstance()
                 cm.setAcceptCookie(true)
@@ -179,7 +186,6 @@ class NetMirror :
                 sessionWarmedUp.set(false)
             } else {
                 android.util.Log.d("NetMirrorWebView", "WebView warmup completed successfully")
-                copyCookiesToOkHttp()
             }
         } catch (_: InterruptedException) {
             sessionWarmedUp.set(false)
@@ -551,7 +557,6 @@ class NetMirror :
     private fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String = Companion.getProxyUrl(this, targetUrl, headers)
 
     companion object {
-        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
         private const val PREF_QUALITY_KEY = "preferred_quality"
 
         private var proxy: NetMirrorProxy? = null
@@ -559,7 +564,8 @@ class NetMirror :
         @Synchronized
         fun getProxyUrl(source: NetMirror, targetUrl: String, headers: okhttp3.Headers?): String {
             if (proxy == null) {
-                proxy = NetMirrorProxy(source.client, source.baseUrl, USER_AGENT)
+                val userAgent = source.headers.get("User-Agent") ?: ""
+                proxy = NetMirrorProxy(source.client, source.baseUrl, userAgent)
             }
             return proxy!!.getProxyUrl(targetUrl, headers)
         }
