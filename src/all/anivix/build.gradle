@@ -1,0 +1,8 @@
+ext {
+    extName = 'Anivix'
+    extClass = '.Anivix'
+    extVersionCode = 1000
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
