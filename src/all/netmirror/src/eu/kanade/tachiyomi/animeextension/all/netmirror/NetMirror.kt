@@ -357,6 +357,7 @@ class CNCVerseSource(
         val videoHeaders = Headers.Builder()
             .set("Referer", referer.ifEmpty { getApiUrl() })
             .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
+            .set("Cookie", "hd=on")
             .build()
 
         return listOf(
