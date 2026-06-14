@@ -460,7 +460,7 @@ class Animex :
             }.thenBy { video ->
                 val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
                 if (isPreferredServer) 0 else 1
-            }
+            },
         )
 
         return videos
