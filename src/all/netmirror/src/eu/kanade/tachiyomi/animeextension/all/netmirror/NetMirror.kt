@@ -51,7 +51,7 @@ class NetMirror :
         Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     }
 
-    private fun getCookiesForRequest(urlStr: String): String {
+    private fun getCookiesForRequest(urlStr: String, existingCookies: String? = null): String {
         val customCookies = preferences.getString(PREF_COOKIES_KEY, "") ?: ""
         if (customCookies.isNotEmpty()) return customCookies
         return try {
@@ -59,60 +59,72 @@ class NetMirror :
             val urlCookies = cm.getCookie(urlStr) ?: ""
             val baseCookies = cm.getCookie(baseUrl) ?: ""
 
-            if (urlCookies.contains("cf_clearance")) {
-                urlCookies
-            } else if (baseCookies.contains("cf_clearance")) {
-                if (urlCookies.isNotEmpty()) "$urlCookies; $baseCookies" else baseCookies
-            } else {
-                urlCookies.ifEmpty { baseCookies }
+            val cookieMap = mutableMapOf<String, String>()
+
+            fun addCookies(cookieStr: String?) {
+                cookieStr?.split(";")?.forEach {
+                    val parts = it.split("=", limit = 2)
+                    if (parts.size == 2) {
+                        val name = parts[0].trim()
+                        val value = parts[1].trim()
+                        if (name.isNotEmpty()) cookieMap[name] = value
+                    }
+                }
             }
+
+            addCookies(existingCookies)
+            addCookies(baseCookies)
+            addCookies(urlCookies)
+
+            cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
         } catch (_: Exception) {
-            ""
+            existingCookies ?: ""
         }
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
             val host = request.url.host
 
-            val rawCookies = getCookiesForRequest(request.url.toString())
-            val newRequest = if (rawCookies.isNotEmpty() && (host.contains("net52.cc") || host.contains("net11.cc"))) {
-                request.newBuilder()
-                    .header("Cookie", rawCookies)
-                    .build()
-            } else {
-                request
-            }
-
-            var response = try {
-                chain.proceed(newRequest)
-            } catch (e: Exception) {
-                if (host.contains("net52.cc") || host.contains("net11.cc")) {
-                    sessionWarmedUp.set(false)
-                    warmupWebViewSession("https://$host/")
-                    val updatedCookies = getCookiesForRequest(request.url.toString())
-                    val retriedRequest = if (updatedCookies.isNotEmpty()) {
-                        request.newBuilder().header("Cookie", updatedCookies).build()
-                    } else {
-                        newRequest
+            if (host.contains("net52.cc") || host.contains("net11.cc")) {
+                val rawCookies = getCookiesForRequest(request.url.toString(), request.header("Cookie"))
+                if (rawCookies.isNotEmpty()) {
+                    val newRequest = request.newBuilder()
+                        .header("Cookie", rawCookies)
+                        .build()
+                    return@addInterceptor try {
+                        chain.proceed(newRequest)
+                    } catch (e: Exception) {
+                        sessionWarmedUp.set(false)
+                        warmupWebViewSession("https://$host/")
+                        val updatedCookies = getCookiesForRequest(request.url.toString(), request.header("Cookie"))
+                        val retriedRequest = if (updatedCookies.isNotEmpty()) {
+                            request.newBuilder().header("Cookie", updatedCookies).build()
+                        } else {
+                            newRequest
+                        }
+                        chain.proceed(retriedRequest)
                     }
-                    chain.proceed(retriedRequest)
-                } else {
-                    throw e
                 }
             }
+            chain.proceed(request)
+        }
+        .addInterceptor(CloudflareInterceptor(network.client))
+        .addInterceptor { chain ->
+            val request = chain.request()
+            val host = request.url.host
+            var response = chain.proceed(request)
 
             if ((host.contains("net52.cc") || host.contains("net11.cc")) && (response.code == 403 || response.code == 503)) {
                 response.close()
                 sessionWarmedUp.set(false)
                 warmupWebViewSession("https://$host/")
-                val updatedCookies = getCookiesForRequest(request.url.toString())
+                val updatedCookies = getCookiesForRequest(request.url.toString(), request.header("Cookie"))
                 val retriedRequest = if (updatedCookies.isNotEmpty()) {
                     request.newBuilder().header("Cookie", updatedCookies).build()
                 } else {
-                    newRequest
+                    request
                 }
                 response = chain.proceed(retriedRequest)
             }
@@ -167,28 +179,30 @@ class NetMirror :
                 wv.webViewClient = object : android.webkit.WebViewClient() {
                     override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
                         android.util.Log.d("NetMirrorWebView", "Page finished: $url, title: ${view?.title}")
-                        if (url != null && !url.contains("verify2") && !url.contains("challenge")) {
-                            latch.countDown()
-                            return
-                        }
 
                         view?.evaluateJavascript(
                             """
                             (function() {
                                 var checkInterval = setInterval(() => {
-                                    if (document.querySelector("#challenge-form") == null &&
-                                        document.querySelector("#challenge-stage") == null &&
-                                        !document.title.includes("Just a moment")) {
+                                    const isChallenge = document.querySelector("#challenge-form") != null || 
+                                                        document.querySelector("#challenge-stage") != null || 
+                                                        document.querySelector("#challenge-running") != null ||
+                                                        document.title.includes("Just a moment") ||
+                                                        document.title.includes("Cloudflare");
+                                                        
+                                    if (!isChallenge) {
                                         clearInterval(checkInterval);
                                         NetMirrorJSI.leave();
                                     } else {
                                         const simpleChallenge = document.querySelector("#challenge-stage > div > input[type='button']")
                                         if (simpleChallenge != null) simpleChallenge.click()
 
-                                        const turnstile = document.querySelector("div.hcaptcha-box > iframe")
+                                        const turnstile = document.querySelector("div.hcaptcha-box > iframe, div#turnstile-wrapper iframe")
                                         if (turnstile != null) {
-                                            const button = turnstile.contentWindow.document.querySelector("input[type='checkbox']")
-                                            if (button != null) button.click()
+                                            try {
+                                                const button = turnstile.contentWindow.document.querySelector("input[type='checkbox']")
+                                                if (button != null) button.click()
+                                            } catch(e) {}
                                         }
                                     }
                                 }, 1000);
@@ -206,7 +220,7 @@ class NetMirror :
         }
 
         try {
-            if (!latch.await(30, TimeUnit.SECONDS)) {
+            if (!latch.await(45, TimeUnit.SECONDS)) {
                 android.util.Log.w("NetMirrorWebView", "Timeout waiting for WebView warmup")
                 sessionWarmedUp.set(false)
             } else {
