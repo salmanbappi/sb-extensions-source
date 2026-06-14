@@ -799,7 +799,7 @@ class NetMirrorProxy(
         val builder = StringBuilder(content.length * 2)
 
         for (line in lines) {
-            val trimmed = line.trim()
+            var trimmed = line.trim()
             if (trimmed.isEmpty()) {
                 builder.append("\n")
                 continue
@@ -809,13 +809,17 @@ class NetMirrorProxy(
                 if (trimmed.startsWith("#EXT-X-KEY") || trimmed.startsWith("#EXT-X-MAP") || trimmed.startsWith("#EXT-X-MEDIA")) {
                     uriRegex.find(trimmed)?.let { match ->
                         val uriValue = match.groupValues[1]
-                        val proxiedUri = getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, uriValue), encodedHeaders)
+                        val cleanUriValue = if (uriValue.startsWith("https://.")) uriValue.replace("https://.", "https://s13.") else uriValue
+                        val proxiedUri = getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, cleanUriValue), encodedHeaders)
                         builder.append(trimmed.replace(uriValue, proxiedUri))
                     } ?: builder.append(trimmed)
                 } else if (!trimmed.startsWith("#EXT-X-PLAYLIST-TYPE")) {
                     builder.append(trimmed)
                 }
             } else {
+                if (trimmed.startsWith("https://.")) {
+                    trimmed = trimmed.replace("https://.", "https://s13.")
+                }
                 builder.append(getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, trimmed), encodedHeaders))
             }
             builder.append("\n")
