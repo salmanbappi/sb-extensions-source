@@ -58,7 +58,7 @@ class NetMirror :
             val cm = android.webkit.CookieManager.getInstance()
             val urlCookies = cm.getCookie(urlStr) ?: ""
             val baseCookies = cm.getCookie(baseUrl) ?: ""
-            
+
             if (urlCookies.contains("cf_clearance")) {
                 urlCookies
             } else if (baseCookies.contains("cf_clearance")) {
@@ -166,7 +166,7 @@ class NetMirror :
 
                 wv.webViewClient = object : android.webkit.WebViewClient() {
                     override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                        android.util.Log.d("NetMirrorWebView", "Page finished: ${url}, title: ${view?.title}")
+                        android.util.Log.d("NetMirrorWebView", "Page finished: $url, title: ${view?.title}")
                         if (url != null && !url.contains("verify2") && !url.contains("challenge")) {
                             latch.countDown()
                             return
