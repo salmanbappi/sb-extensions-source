@@ -16,6 +16,9 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -26,12 +29,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.concurrent.TimeUnit
 
 class Animex :
     AnimeHttpSource(),
@@ -532,7 +532,7 @@ class Animex :
                     }
                 }.thenBy { (_, speed) ->
                     speed
-                }
+                },
             ).map { it.first }
         } else {
             workingVideos.sortedWith(
@@ -548,7 +548,7 @@ class Animex :
                     if (isPreferredServer) 0 else 1
                 }.thenBy { (_, speed) ->
                     speed
-                }
+                },
             ).map { it.first }
         }
 
