@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import kotlinx.serialization.Serializable
@@ -435,16 +436,46 @@ class Animex :
                                 else -> ""
                             }
                         }
-                        val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                        videos.add(
-                            Video(
-                                streamUrl,
-                                qualityLabel,
-                                streamUrl,
-                                headers = videoHeaders,
-                                subtitleTracks = subtitleTracks,
-                            ),
-                        )
+
+                        if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+                            try {
+                                val playlistUtils = PlaylistUtils(client, headers)
+                                val playlistVideos = playlistUtils.extractFromHls(
+                                    playlistUrl = streamUrl,
+                                    referer = videoHeaders.get("Referer") ?: "https://animex.one/",
+                                    masterHeaders = videoHeaders,
+                                    videoHeaders = videoHeaders,
+                                    videoNameGen = { hlsQuality ->
+                                        val parsedQuality = if (hlsQuality == "Video") quality else hlsQuality
+                                        "$providerName: $parsedQuality ($categoryLabel)$subStyle"
+                                    },
+                                    subtitleList = subtitleTracks,
+                                )
+                                videos.addAll(playlistVideos)
+                            } catch (e: Exception) {
+                                val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
+                                videos.add(
+                                    Video(
+                                        streamUrl,
+                                        qualityLabel,
+                                        streamUrl,
+                                        headers = videoHeaders,
+                                        subtitleTracks = subtitleTracks,
+                                    ),
+                                )
+                            }
+                        } else {
+                            val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
+                            videos.add(
+                                Video(
+                                    streamUrl,
+                                    qualityLabel,
+                                    streamUrl,
+                                    headers = videoHeaders,
+                                    subtitleTracks = subtitleTracks,
+                                ),
+                            )
+                        }
                     }
                 } else {
                     sourcesResponse.close()
