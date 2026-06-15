@@ -1,75 +1,78 @@
 <div align="center">
 
-| Install on AniZen | Build | Discord |
-|:-----------------:|:-----:|:-------:|
+# ![app icon](./.github/readme-images/app-icon.png) Extensions Source
+
+A collection of extension catalogues for compatible Android anime players.
+
+| Install Repo | Build Status | Discord |
+|:------------:|:------------:|:-------:|
 | [![Install](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=flat&labelColor=red)](https://intradeus.github.io/http-protocol-redirector/?r=anizen://add-repo?url=https://raw.githubusercontent.com/salmanbappi/extensions-repo/main/index.min.json) | ![CI](https://github.com/salmanbappi/sb-extensions-source/actions/workflows/build_push.yml/badge.svg) | [![Discord](https://img.shields.io/discord/1377136877491982366.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/85MZhUX688) |
 
-[![Sponsor me on GitHub](https://custom-icon-badges.demolab.com/badge/-Sponsor-ea4aaa?style=for-the-badge&logo=heart&logoColor=white)](https://github.com/sponsors/salmanbappi "Sponsor me on GitHub")
-
 ![Visitor Count](https://count.getloli.com/get/@salmanbappi?theme=capoo-2)
+
 </div>
 
-# ![app icon](./.github/readme-images/app-icon.png) AniZen Extensions
+---
 
-AniZen is a free and open source anime player for Android 6.0 and above.
+This repository contains the source code for various anime extensions.
 
-This repository contains the available extension catalogues for the [AniZen](https://github.com/salmanbappi/AniZen) player.
+## 🚀 How to Add the Repository
 
-## Recommended App
+### Option 1: Automatic
+Click the **"Click here to install repo"** button in the table above if you are on a compatible device with an extension installer.
 
-### [AniZen](https://github.com/salmanbappi/AniZen)
-
-## How to add the repo
-
-* You can add our repo by visiting the [Extensions Repository](https://github.com/salmanbappi/extensions-repo)
-* Otherwise, copy & paste the following URL:
+### Option 2: Manual Link
+Copy and paste the repository URL into your app's extension settings:
 
 ```text
 https://raw.githubusercontent.com/salmanbappi/extensions-repo/main/index.min.json
 ```
 
-### Manual downloads
+### Option 3: Direct APK Download
+If you prefer manual APK installation, download the compiled files directly from the [`repo` branch](https://github.com/salmanbappi/extensions-repo/tree/repo/apk) of the repository.
 
-If you prefer to directly download the APK files, they are available in the [`repo` branch](https://github.com/salmanbappi/extensions-repo/tree/repo/apk) of the extensions repository.
+---
 
-## Requests
+## 🛠️ Requests and Issues
 
-To request a new source or bug fix, [create an issue](https://github.com/salmanbappi/sb-extensions-source/issues/new/choose).
+To request a new source, suggest features, or report bug fixes:
+* Please [create an issue](https://github.com/salmanbappi/sb-extensions-source/issues/new/choose).
+* Work is done entirely on a voluntary basis. Creating an issue does not guarantee immediate implementation or support.
+* Some sources might be too complex or difficult to maintain due to changes in source websites.
 
-Please note that creating an issue does not mean that the source will be added or fixed in a timely fashion, because the work is volunteer-based. Some sources may also be impossible to do or prohibitively difficult to maintain.
+---
 
-If you would like to see a request fulfilled and have the necessary skills to do so, consider contributing! Issues are up-for-grabs for any developer if there is no assigned user already.
+## 🤝 Contributing
 
-## Contributing
+Contributions are highly appreciated!
+* Check out the [issue backlog](https://github.com/salmanbappi/sb-extensions-source/issues) for pending requests and bug reports.
+* Read the [CONTRIBUTING.md](./CONTRIBUTING.md) guide to get started with setup and development.
+* Please review and respect our [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
 
-Contributions are welcome!
+---
 
-Check out the repo's [issue backlog](https://github.com/salmanbappi/sb-extensions-source/issues) for source requests and bug reports.
+## ⚖️ License
 
-To get started with development, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+```text
+Copyright 2015 Javier Tomás
 
-It might also be good to read our [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-## License
+http://www.apache.org/licenses/LICENSE-2.0
 
-    Copyright 2015 Javier Tomás
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
 
-    Licensed under the Apache License, Version 2.0 (the "License");
-    you may not use this file except in compliance with the License.
-    You may obtain a copy of the License at
+---
 
-    http://www.apache.org/licenses/LICENSE-2.0
+## ⚠️ Disclaimer
 
-    Unless required by applicable law or agreed to in writing, software
-    distributed under the License is distributed on an "AS IS" BASIS,
-    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-    See the License for the specific language governing permissions and
-    limitations under the License.
-
-## Disclaimer
-
-This project does not have any affiliation with the content providers available.
-
-All credits to the codebase go to the original contributors.
-
-The developer of this application does not have any affiliation with the content providers available.
+* This repository does not host any video content. It merely contains scripts to crawl publicly available websites.
+* This project is not affiliated with the content providers or websites indexed.
+* All credits for the base extension structure go to the original contributors of the upstream ecosystem.
