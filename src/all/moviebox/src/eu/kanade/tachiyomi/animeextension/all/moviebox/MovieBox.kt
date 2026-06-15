@@ -541,6 +541,16 @@ class MovieBox :
     private val JsonElement?.str get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
     private val JsonElement?.bool get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false
 
+
+    override fun List<Video>.sort(): List<Video> {
+        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+        val audio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT)!!
+        return this.sortedWith(
+            compareByDescending<Video> { it.quality.contains(audio, ignoreCase = true) }
+                .thenByDescending { it.quality.contains(quality, ignoreCase = true) },
+        )
+    }
+
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
             key = PREF_HOST_KEY
@@ -548,6 +558,24 @@ class MovieBox :
             entries = arrayOf("Official (Aoneroom)", "Mirror (Netfilm)", "H5 API")
             entryValues = apiHosts.toTypedArray()
             setDefaultValue(apiHosts[0])
+            summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        ListPreference(screen.context).apply {
+            key = PREF_QUALITY_KEY
+            title = PREF_QUALITY_TITLE
+            entries = PREF_QUALITY_ENTRIES
+            entryValues = PREF_QUALITY_VALUES
+            setDefaultValue(PREF_QUALITY_DEFAULT)
+            summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        ListPreference(screen.context).apply {
+            key = PREF_AUDIO_KEY
+            title = PREF_AUDIO_TITLE
+            entries = PREF_AUDIO_ENTRIES
+            entryValues = PREF_AUDIO_VALUES
+            setDefaultValue(PREF_AUDIO_DEFAULT)
             summary = "%s"
         }.also { screen.addPreference(it) }
     }
@@ -670,5 +698,17 @@ class MovieBox :
 
     companion object {
         private const val PREF_HOST_KEY = "api_host"
+
+        private const val PREF_QUALITY_KEY = "preferred_quality"
+        private const val PREF_QUALITY_TITLE = "Preferred Quality"
+        private const val PREF_QUALITY_DEFAULT = "1080"
+        private val PREF_QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
+        private val PREF_QUALITY_VALUES = arrayOf("1080", "720", "480", "360")
+
+        private const val PREF_AUDIO_KEY = "preferred_audio"
+        private const val PREF_AUDIO_TITLE = "Preferred Audio (Dub/Sub)"
+        private const val PREF_AUDIO_DEFAULT = "English"
+        private val PREF_AUDIO_ENTRIES = arrayOf("English", "Original", "Japanese", "Hindi", "Tagalog")
+        private val PREF_AUDIO_VALUES = arrayOf("English", "Original", "Japanese", "Hindi", "Tagalog")
     }
 }
