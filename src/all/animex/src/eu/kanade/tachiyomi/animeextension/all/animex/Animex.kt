@@ -26,6 +26,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -62,7 +66,7 @@ class Animex :
 
     private fun absoluteUrl(url: String): String = if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
 
-    private fun getPreferredServer(): String = preferences.getString("pref_preferred_server", "Hoshi") ?: "Hoshi"
+    private fun getPreferredServer(): String = preferences.getString("pref_preferred_server", "auto") ?: "auto"
 
     // ============================== POPULAR / LATEST ==============================
 
@@ -485,22 +489,70 @@ class Animex :
             }
         }
 
-        val preferredServer = getPreferredServer()
-        videos.sortWith(
-            compareBy<Video> { video ->
-                if (preferredType == "soft" || preferredType == "hard") {
-                    val hasPreferredType = video.quality.contains(preferredType, ignoreCase = true)
-                    if (hasPreferredType) 0 else 1
-                } else {
-                    0
-                }
-            }.thenBy { video ->
-                val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
-                if (isPreferredServer) 0 else 1
-            },
-        )
+        val speedTestClient = client.newBuilder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            .build()
 
-        return videos
+        val workingVideos = coroutineScope {
+            videos.map { video ->
+                async {
+                    try {
+                        val request = Request.Builder()
+                            .url(video.videoUrl)
+                            .apply {
+                                video.headers?.let { headers(it) }
+                            }
+                            .build()
+                        val start = System.currentTimeMillis()
+                        speedTestClient.newCall(request).execute().use { response ->
+                            if (response.isSuccessful) {
+                                val speed = System.currentTimeMillis() - start
+                                video to speed
+                            } else {
+                                null
+                            }
+                        }
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            }.awaitAll().filterNotNull()
+        }
+
+        val preferredServer = getPreferredServer()
+        val sortedVideos = if (preferredServer == "auto") {
+            workingVideos.sortedWith(
+                compareBy<Pair<Video, Long>> { (video, _) ->
+                    if (preferredType == "soft" || preferredType == "hard") {
+                        val hasPreferredType = video.quality.contains(preferredType, ignoreCase = true)
+                        if (hasPreferredType) 0 else 1
+                    } else {
+                        0
+                    }
+                }.thenBy { (_, speed) ->
+                    speed
+                }
+            ).map { it.first }
+        } else {
+            workingVideos.sortedWith(
+                compareBy<Pair<Video, Long>> { (video, _) ->
+                    if (preferredType == "soft" || preferredType == "hard") {
+                        val hasPreferredType = video.quality.contains(preferredType, ignoreCase = true)
+                        if (hasPreferredType) 0 else 1
+                    } else {
+                        0
+                    }
+                }.thenBy { (video, _) ->
+                    val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
+                    if (isPreferredServer) 0 else 1
+                }.thenBy { (_, speed) ->
+                    speed
+                }
+            ).map { it.first }
+        }
+
+        return sortedVideos
     }
 
     // ============================== FILTERS ==============================
@@ -622,9 +674,9 @@ class Animex :
         ListPreference(screen.context).apply {
             key = "pref_preferred_server"
             title = "Preferred Server"
-            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
-            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
-            setDefaultValue("beep")
+            entries = arrayOf("Auto", "Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
+            entryValues = arrayOf("auto", "beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
+            setDefaultValue("auto")
             summary = "%s"
         }.also { screen.addPreference(it) }
     }
