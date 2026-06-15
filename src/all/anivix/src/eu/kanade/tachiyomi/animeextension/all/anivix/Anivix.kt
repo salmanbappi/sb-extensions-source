@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import kotlinx.serialization.Serializable
@@ -37,6 +38,8 @@ class Anivix :
     override val lang = "all"
     override val supportsLatest = true
     override val id: Long = 1287389172635928174L
+
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     private val json: Json by lazy {
         Json {
@@ -314,15 +317,25 @@ class Anivix :
             val subtitleTracks = source.tracks.map { track ->
                 Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
             }
-            videos.add(
-                Video(
-                    streamUrl,
-                    "${source.label} (HLS)",
-                    streamUrl,
-                    headers = headers,
-                    subtitleTracks = subtitleTracks,
-                ),
-            )
+            try {
+                val extractedVideos = playlistUtils.extractFromHls(
+                    playlistUrl = streamUrl,
+                    referer = "$baseUrl/",
+                    videoNameGen = { quality -> "${source.label} - $quality" },
+                    subtitleList = subtitleTracks,
+                )
+                videos.addAll(extractedVideos)
+            } catch (e: Exception) {
+                videos.add(
+                    Video(
+                        streamUrl,
+                        "${source.label} (HLS)",
+                        streamUrl,
+                        headers = headers,
+                        subtitleTracks = subtitleTracks,
+                    ),
+                )
+            }
         }
 
         val preferredServer = getPreferredServer()
