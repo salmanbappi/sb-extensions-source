@@ -541,7 +541,6 @@ class MovieBox :
     private val JsonElement?.str get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
     private val JsonElement?.bool get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false
 
-
     override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
         val audio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT)!!
