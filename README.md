@@ -1,6 +1,6 @@
 <div align="center">
 
-# ![app icon](./.github/readme-images/app-icon.png) Extensions Source
+# Extensions Source
 
 A collection of extension catalogues for compatible Android anime players.
 
