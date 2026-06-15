@@ -420,7 +420,7 @@ class MovieBox :
             }
         }
 
-        val idsString = allIds.joinToString(",") { "${it.first}:${it.second}" }
+        val idsString = allIds.joinToString("~~") { "${it.first}:${it.second}" }
         seasonsMap.forEach { (seNum, epSet) ->
             epSet.sorted().forEach { epNum ->
                 episodes.add(
@@ -459,8 +459,8 @@ class MovieBox :
         val ep = parts[1]
         val idsString = parts[2]
         val token = if (parts.size > 4) parts[4] else null
-        val subjectIds = idsString.split(",").mapNotNull {
-            val p = it.split(":")
+        val subjectIds = idsString.split("~~").mapNotNull {
+            val p = it.split(":", limit = 2)
             if (p.size == 2) Pair(p[0], p[1]) else null
         }
 
