@@ -707,7 +707,7 @@ class MovieBox :
         private const val PREF_AUDIO_KEY = "preferred_audio"
         private const val PREF_AUDIO_TITLE = "Preferred Audio (Dub/Sub)"
         private const val PREF_AUDIO_DEFAULT = "English"
-        private val PREF_AUDIO_ENTRIES = arrayOf("English", "Original", "Japanese", "Hindi", "Tagalog")
-        private val PREF_AUDIO_VALUES = arrayOf("English", "Original", "Japanese", "Hindi", "Tagalog")
+        private val PREF_AUDIO_ENTRIES = arrayOf("English", "Original", "Original Audio", "Japanese", "Hindi", "Telugu", "Tamil", "Portuguese (Brazil)", "Tagalog")
+        private val PREF_AUDIO_VALUES = arrayOf("English", "Original", "Original Audio", "Japanese", "Hindi", "Telugu", "Tamil", "ptbr", "Tagalog")
     }
 }
