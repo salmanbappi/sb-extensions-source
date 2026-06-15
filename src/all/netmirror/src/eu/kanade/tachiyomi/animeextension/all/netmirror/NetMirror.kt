@@ -46,7 +46,7 @@ class CNCVerseSource(
 ) : AnimeHttpSource(),
     ConfigurableAnimeSource {
 
-    override val baseUrl = "https://net52.cc"
+    override val baseUrl = "https://net11.cc"
     override val lang = "all"
     override val supportsLatest = false
 
@@ -128,9 +128,11 @@ class CNCVerseSource(
         val articles = document.select(".tray-container article, #top10 .top10-post")
         for (element in articles) {
             val id = element.selectFirst("a")?.attr("data-post") ?: element.attr("data-post") ?: continue
-            val title = element.selectFirst("img")?.attr("alt")
-                ?: element.selectFirst(".card-title")?.text()
-                ?: element.selectFirst("h3")?.text()
+            val title = element.selectFirst("img")?.attr("alt")?.takeIf { it.isNotEmpty() }
+                ?: element.selectFirst("img")?.attr("title")?.takeIf { it.isNotEmpty() }
+                ?: element.selectFirst("a")?.attr("title")?.takeIf { it.isNotEmpty() }
+                ?: element.selectFirst(".card-title")?.text()?.takeIf { it.isNotEmpty() }
+                ?: element.selectFirst("h3")?.text()?.takeIf { it.isNotEmpty() }
                 ?: ""
             if (id.isNotEmpty()) {
                 val anime = SAnime.create()
@@ -355,20 +357,61 @@ class CNCVerseSource(
             return emptyList()
         }
 
+        val cookieVal = getBypassCookie()
+        val cookieHeader = buildString {
+            if (cookieVal.isNotEmpty()) {
+                append("t_hash_t=$cookieVal; ")
+            }
+            append("ott=$ott; ")
+            append("hd=on")
+            if (studio.isNotEmpty()) {
+                append("; studio=$studio")
+            }
+        }
+
         val videoHeaders = Headers.Builder()
             .set("Referer", referer.ifEmpty { getApiUrl() })
             .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
-            .set("Cookie", "hd=on")
+            .set("Cookie", cookieHeader)
             .build()
 
+        val playlistUtils = PlaylistUtils(client, headers)
+        
+        val masterHeadersGen = { baseHeaders: Headers, ref: String ->
+            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
+            headers.newBuilder().apply {
+                if (cookieVal.isNotEmpty()) {
+                    set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
+                }
+            }.build()
+        }
+
+        val videoHeadersGen = { baseHeaders: Headers, ref: String, videoUrl: String ->
+            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref, videoUrl)
+            headers.newBuilder().apply {
+                if (cookieVal.isNotEmpty()) {
+                    set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
+                }
+            }.build()
+        }
+
         return try {
-            PlaylistUtils(client, headers).extractFromHls(
+            playlistUtils.extractFromHls(
                 playlistUrl = videoLink,
                 referer = referer.ifEmpty { getApiUrl() },
-                masterHeaders = videoHeaders,
-                videoHeaders = videoHeaders,
+                masterHeadersGen = masterHeadersGen,
+                videoHeadersGen = videoHeadersGen,
                 videoNameGen = { "CNCVerse - $it" },
-            )
+            ).map { video ->
+                Video(
+                    video.url,
+                    video.quality,
+                    video.videoUrl,
+                    headers = video.headers,
+                    subtitleTracks = playlistUtils.fixSubtitles(video.subtitleTracks),
+                    audioTracks = video.audioTracks
+                )
+            }
         } catch (e: Exception) {
             listOf(
                 Video(videoLink, "CNCVerse", videoLink, headers = videoHeaders),
@@ -514,7 +557,7 @@ class CNCVerseSource(
                     .build()
 
                 val request = Request.Builder()
-                    .url("https://net52.cc/verify.php")
+                    .url("https://net11.cc/verify.php")
                     .post(formBody)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
                     .header("Content-Type", "application/x-www-form-urlencoded")
