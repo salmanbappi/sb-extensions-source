@@ -402,16 +402,7 @@ class CNCVerseSource(
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
                 videoNameGen = { "CNCVerse - $it" },
-            ).map { video ->
-                Video(
-                    video.url,
-                    video.quality,
-                    video.videoUrl,
-                    headers = video.headers,
-                    subtitleTracks = playlistUtils.fixSubtitles(video.subtitleTracks),
-                    audioTracks = video.audioTracks,
-                )
-            }
+            )
         } catch (e: Exception) {
             listOf(
                 Video(videoLink, "CNCVerse", videoLink, headers = videoHeaders),
