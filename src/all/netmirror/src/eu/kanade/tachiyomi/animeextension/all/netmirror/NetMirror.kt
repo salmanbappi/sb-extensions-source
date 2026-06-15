@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import okhttp3.FormBody
 import okhttp3.Headers
@@ -360,9 +361,19 @@ class CNCVerseSource(
             .set("Cookie", "hd=on")
             .build()
 
-        return listOf(
-            Video(videoLink, "CNCVerse", videoLink, headers = videoHeaders),
-        ).sortVideos()
+        return try {
+            PlaylistUtils(client, headers).extractFromHls(
+                playlistUrl = videoLink,
+                referer = referer.ifEmpty { getApiUrl() },
+                masterHeaders = videoHeaders,
+                videoHeaders = videoHeaders,
+                videoNameGen = { "CNCVerse - $it" },
+            )
+        } catch (e: Exception) {
+            listOf(
+                Video(videoLink, "CNCVerse", videoLink, headers = videoHeaders),
+            )
+        }.sortVideos()
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()

@@ -2,11 +2,12 @@ ext {
     extName = 'NetMirror'
     extClass = '.NetMirror'
     author = '@salmanbappi'
-    extVersionCode = 1021
+    extVersionCode = 1022
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation(project(":lib:cloudflare-interceptor"))
+    implementation(project(":lib:playlist-utils"))
 }
