@@ -499,7 +499,7 @@ class Animex :
                 async {
                     try {
                         val request = Request.Builder()
-                            .url(video.videoUrl)
+                            .url(video.url)
                             .apply {
                                 video.headers?.let { headers(it) }
                             }
