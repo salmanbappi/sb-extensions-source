@@ -376,7 +376,7 @@ class CNCVerseSource(
             .build()
 
         val playlistUtils = PlaylistUtils(client, headers)
-        
+
         val masterHeadersGen = { baseHeaders: Headers, ref: String ->
             val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
             headers.newBuilder().apply {
@@ -409,7 +409,7 @@ class CNCVerseSource(
                     video.videoUrl,
                     headers = video.headers,
                     subtitleTracks = playlistUtils.fixSubtitles(video.subtitleTracks),
-                    audioTracks = video.audioTracks
+                    audioTracks = video.audioTracks,
                 )
             }
         } catch (e: Exception) {
