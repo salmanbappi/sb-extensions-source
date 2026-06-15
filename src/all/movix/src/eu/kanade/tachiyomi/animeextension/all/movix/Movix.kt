@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -29,6 +30,8 @@ class Movix : AnimeHttpSource() {
     override val lang = "all"
     override val supportsLatest = true
     override val id: Long = 5181466391484419901L
+
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     private val json: Json by lazy {
         Json {
@@ -287,22 +290,17 @@ class Movix : AnimeHttpSource() {
 
     override fun videoListParse(response: Response): List<Video> {
         val responseBody = response.body.string()
-        val videos = mutableListOf<Video>()
-
         val vidLink = json.decodeFromString<VidLinkResponse>(responseBody)
         if (vidLink.success && vidLink.url != null) {
             val streamUrl = absoluteUrl(vidLink.url)
-            videos.add(
-                Video(
-                    streamUrl,
-                    "VidLink (HLS)",
-                    streamUrl,
-                    headers = headers,
-                ),
+            return playlistUtils.extractFromHls(
+                playlistUrl = streamUrl,
+                referer = "$baseUrl/",
+                videoNameGen = { quality -> "VidLink - $quality" },
             )
         }
 
-        return videos
+        return emptyList()
     }
 
     // ============================== FILTERS ==============================

@@ -1,8 +1,13 @@
 ext {
     extName = 'Movix'
     extClass = '.Movix'
-    extVersionCode = 1002
+    extVersionCode = 1003
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+}
+
