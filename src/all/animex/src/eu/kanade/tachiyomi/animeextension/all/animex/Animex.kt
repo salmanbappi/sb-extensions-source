@@ -391,8 +391,7 @@ class Animex :
         val parts = episode.url.split("/")
         val slug = parts.getOrNull(2) ?: throw Exception("Invalid episode URL: ${episode.url}")
         val epNum = parts.getOrNull(3) ?: throw Exception("Invalid episode URL: ${episode.url}")
-        val preferredType = preferences.getString("pref_preferred_type", "sub") ?: "sub"
-        val preferredSubType = preferences.getString("pref_sub_type", "any") ?: "any"
+        val preferredType = preferences.getString("pref_preferred_type", "soft") ?: "soft"
 
         val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
         val serversResponse = client.newCall(serversRequest).execute()
@@ -407,7 +406,8 @@ class Animex :
 
         providers.forEach { provider ->
             val providerId = provider.id
-            val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$preferredType&providerId=$providerId", headers)
+            val apiType = if (preferredType == "dub") "dub" else "sub"
+            val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$apiType&providerId=$providerId", headers)
             try {
                 val sourcesResponse = client.newCall(sourcesRequest).execute()
                 if (sourcesResponse.isSuccessful) {
@@ -488,8 +488,8 @@ class Animex :
         val preferredServer = getPreferredServer()
         videos.sortWith(
             compareBy<Video> { video ->
-                if (preferredSubType != "any") {
-                    val hasPreferredType = video.quality.contains(preferredSubType, ignoreCase = true)
+                if (preferredType == "soft" || preferredType == "hard") {
+                    val hasPreferredType = video.quality.contains(preferredType, ignoreCase = true)
                     if (hasPreferredType) 0 else 1
                 } else {
                     0
@@ -497,7 +497,7 @@ class Animex :
             }.thenBy { video ->
                 val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
                 if (isPreferredServer) 0 else 1
-            },
+            }
         )
 
         return videos
