@@ -46,7 +46,7 @@ class CNCVerseSource(
 ) : AnimeHttpSource(),
     ConfigurableAnimeSource {
 
-    override val baseUrl = "https://net11.cc"
+    override val baseUrl = "https://net52.cc"
     override val lang = "all"
     override val supportsLatest = false
 
@@ -557,7 +557,7 @@ class CNCVerseSource(
                     .build()
 
                 val request = Request.Builder()
-                    .url("https://net11.cc/verify.php")
+                    .url("https://net52.cc/verify.php")
                     .post(formBody)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
                     .header("Content-Type", "application/x-www-form-urlencoded")
