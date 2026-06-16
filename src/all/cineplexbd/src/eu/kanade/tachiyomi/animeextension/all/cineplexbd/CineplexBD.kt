@@ -439,9 +439,7 @@ class CineplexBD :
             ).map { MyCheckBox(it) },
         )
 
-    private fun cleanEpisodeName(rawName: String, season: String, epKey: String): String {
-        return "Episode $epKey"
-    }
+    private fun cleanEpisodeName(rawName: String, season: String, epKey: String): String = "Episode $epKey"
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
 }
