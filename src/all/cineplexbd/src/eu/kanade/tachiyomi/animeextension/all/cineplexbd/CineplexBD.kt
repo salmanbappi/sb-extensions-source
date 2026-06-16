@@ -298,8 +298,9 @@ class CineplexBD :
 
     override fun videoListParse(response: Response): List<Video> {
         val url = response.request.url.toString()
-        if (url.endsWith(".mp4") || url.endsWith(".mkv") || url.contains("/Data/")) {
-            return listOf(Video(url, "Direct", url))
+        if (url.endsWith(".mp4") || url.endsWith(".mkv") || url.contains("/Data/") || url.contains(".m3u8")) {
+            val quality = if (url.contains(".m3u8")) "HLS" else "Direct"
+            return listOf(Video(url, quality, url))
         }
 
         val html = response.body.string()
