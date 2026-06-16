@@ -34,7 +34,9 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 
-class Movix : AnimeHttpSource(), ConfigurableAnimeSource {
+class Movix :
+    AnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     override val name = "MOVIX"
     override val baseUrl = "https://hdmovix.cc"
