@@ -31,7 +31,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.util.concurrent.TimeUnit
 
 class Animex :
     AnimeHttpSource(),
@@ -489,70 +488,26 @@ class Animex :
             }
         }
 
-        val speedTestClient = client.newBuilder()
-            .connectTimeout(3, TimeUnit.SECONDS)
-            .readTimeout(3, TimeUnit.SECONDS)
-            .build()
-
-        val workingVideos = coroutineScope {
-            videos.map { video ->
-                async {
-                    try {
-                        val request = Request.Builder()
-                            .url(video.url)
-                            .apply {
-                                video.headers?.let { headers(it) }
-                            }
-                            .build()
-                        val start = System.currentTimeMillis()
-                        speedTestClient.newCall(request).execute().use { response ->
-                            if (response.isSuccessful) {
-                                val speed = System.currentTimeMillis() - start
-                                video to speed
-                            } else {
-                                null
-                            }
-                        }
-                    } catch (e: Exception) {
-                        null
-                    }
-                }
-            }.awaitAll().filterNotNull()
-        }
-
         val preferredServer = getPreferredServer()
-        val sortedVideos = if (preferredServer == "auto") {
-            workingVideos.sortedWith(
-                compareBy<Pair<Video, Long>> { (video, _) ->
-                    if (preferredType == "soft" || preferredType == "hard") {
-                        val hasPreferredType = video.quality.contains(preferredType, ignoreCase = true)
-                        if (hasPreferredType) 0 else 1
-                    } else {
-                        0
-                    }
-                }.thenBy { (_, speed) ->
-                    speed
-                },
-            ).map { it.first }
-        } else {
-            workingVideos.sortedWith(
-                compareBy<Pair<Video, Long>> { (video, _) ->
-                    if (preferredType == "soft" || preferredType == "hard") {
-                        val hasPreferredType = video.quality.contains(preferredType, ignoreCase = true)
-                        if (hasPreferredType) 0 else 1
-                    } else {
-                        0
-                    }
-                }.thenBy { (video, _) ->
+        videos.sortWith(
+            compareBy<Video> { video ->
+                if (preferredType == "soft" || preferredType == "hard") {
+                    val hasPreferredType = video.quality.contains(preferredType, ignoreCase = true)
+                    if (hasPreferredType) 0 else 1
+                } else {
+                    0
+                }
+            }.thenBy { video ->
+                if (preferredServer != "auto") {
                     val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
                     if (isPreferredServer) 0 else 1
-                }.thenBy { (_, speed) ->
-                    speed
-                },
-            ).map { it.first }
-        }
+                } else {
+                    0
+                }
+            },
+        )
 
-        return sortedVideos
+        return videos
     }
 
     // ============================== FILTERS ==============================
