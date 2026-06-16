@@ -1,9 +1,9 @@
 package eu.kanade.tachiyomi.animeextension.all.cineplexbd
 
-import androidx.preference.PreferenceScreen
 import android.app.Application
 import android.content.SharedPreferences
 import androidx.preference.ListPreference
+import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
@@ -428,7 +428,7 @@ class CineplexBD :
 
         val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         return videos.sortedWith(
-            compareByDescending { it.quality.contains(preferredQuality) }
+            compareByDescending { it.quality.contains(preferredQuality) },
         )
     }
 
