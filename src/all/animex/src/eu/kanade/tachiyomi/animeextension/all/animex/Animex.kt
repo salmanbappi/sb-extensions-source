@@ -65,7 +65,10 @@ class Animex :
 
     private fun absoluteUrl(url: String): String = if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
 
-    private fun getPreferredServer(): String = preferences.getString("pref_preferred_server", "auto") ?: "auto"
+    private fun getPreferredServer(): String {
+        val server = preferences.getString("pref_preferred_server", "beep") ?: "beep"
+        return if (server == "auto") "beep" else server
+    }
 
     // ============================== POPULAR / LATEST ==============================
 
@@ -404,106 +407,115 @@ class Animex :
         }
 
         val serversData = json.decodeFromString<ServersResponse>(serversResponse.body.string())
-        val providers = if (preferredType == "dub") serversData.dubProviders else serversData.subProviders
-        val videos = mutableListOf<Video>()
+        val tasks = serversData.subProviders.map { it to "sub" } + serversData.dubProviders.map { it to "dub" }
 
-        providers.forEach { provider ->
-            val providerId = provider.id
-            val apiType = if (preferredType == "dub") "dub" else "sub"
-            val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$apiType&providerId=$providerId", headers)
-            try {
-                val sourcesResponse = client.newCall(sourcesRequest).execute()
-                if (sourcesResponse.isSuccessful) {
-                    val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
-                    val subtitleTracks = sourcesData.tracks?.map { track ->
-                        Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
-                    } ?: emptyList()
+        val videos = coroutineScope {
+            tasks.map { (provider, apiType) ->
+                async {
+                    val providerId = provider.id
+                    val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$apiType&providerId=$providerId", headers)
+                    try {
+                        client.newCall(sourcesRequest).execute().use { sourcesResponse ->
+                            if (sourcesResponse.isSuccessful) {
+                                val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
+                                val subtitleTracks = sourcesData.tracks?.map { track ->
+                                    Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
+                                } ?: emptyList()
 
-                    val videoHeaders = headersBuilder().apply {
-                        sourcesData.headers?.forEach { (key, value) ->
-                            set(key, value)
-                        }
-                    }.build()
+                                val videoHeaders = headersBuilder().apply {
+                                    sourcesData.headers?.forEach { (key, value) ->
+                                        set(key, value)
+                                    }
+                                }.build()
 
-                    sourcesData.sources.forEach { source ->
-                        val streamUrl = absoluteUrl(source.url)
-                        val providerName = providerId.uppercase()
-                        val quality = source.quality ?: "Auto"
-                        val categoryLabel = preferredType.uppercase()
-                        val subStyle = if (preferredType == "dub") {
-                            ""
-                        } else {
-                            when {
-                                provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
-                                provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
-                                else -> ""
+                                val providerVideos = mutableListOf<Video>()
+                                sourcesData.sources.forEach { source ->
+                                    val streamUrl = absoluteUrl(source.url)
+                                    val providerName = providerId.uppercase()
+                                    val quality = source.quality ?: "Auto"
+                                    val categoryLabel = apiType.uppercase()
+                                    val subStyle = if (apiType == "dub") {
+                                        ""
+                                    } else {
+                                        when {
+                                            provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
+                                            provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
+                                            else -> ""
+                                        }
+                                    }
+
+                                    if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+                                        try {
+                                            val playlistUtils = PlaylistUtils(client, headers)
+                                            val playlistVideos = playlistUtils.extractFromHls(
+                                                playlistUrl = streamUrl,
+                                                referer = videoHeaders.get("Referer") ?: "https://animex.one/",
+                                                masterHeaders = videoHeaders,
+                                                videoHeaders = videoHeaders,
+                                                videoNameGen = { hlsQuality ->
+                                                    val parsedQuality = if (hlsQuality == "Video") quality else hlsQuality
+                                                    "$providerName: $parsedQuality ($categoryLabel)$subStyle"
+                                                },
+                                                subtitleList = subtitleTracks,
+                                            )
+                                            providerVideos.addAll(playlistVideos)
+                                        } catch (e: Exception) {
+                                            val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
+                                            providerVideos.add(
+                                                Video(
+                                                    streamUrl,
+                                                    qualityLabel,
+                                                    streamUrl,
+                                                    headers = videoHeaders,
+                                                    subtitleTracks = subtitleTracks,
+                                                ),
+                                            )
+                                        }
+                                    } else {
+                                        val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
+                                        providerVideos.add(
+                                            Video(
+                                                streamUrl,
+                                                qualityLabel,
+                                                streamUrl,
+                                                headers = videoHeaders,
+                                                subtitleTracks = subtitleTracks,
+                                            ),
+                                        )
+                                    }
+                                }
+                                providerVideos
+                            } else {
+                                emptyList()
                             }
                         }
-
-                        if (streamUrl.contains(".m3u8", ignoreCase = true)) {
-                            try {
-                                val playlistUtils = PlaylistUtils(client, headers)
-                                val playlistVideos = playlistUtils.extractFromHls(
-                                    playlistUrl = streamUrl,
-                                    referer = videoHeaders.get("Referer") ?: "https://animex.one/",
-                                    masterHeaders = videoHeaders,
-                                    videoHeaders = videoHeaders,
-                                    videoNameGen = { hlsQuality ->
-                                        val parsedQuality = if (hlsQuality == "Video") quality else hlsQuality
-                                        "$providerName: $parsedQuality ($categoryLabel)$subStyle"
-                                    },
-                                    subtitleList = subtitleTracks,
-                                )
-                                videos.addAll(playlistVideos)
-                            } catch (e: Exception) {
-                                val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                                videos.add(
-                                    Video(
-                                        streamUrl,
-                                        qualityLabel,
-                                        streamUrl,
-                                        headers = videoHeaders,
-                                        subtitleTracks = subtitleTracks,
-                                    ),
-                                )
-                            }
-                        } else {
-                            val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                            videos.add(
-                                Video(
-                                    streamUrl,
-                                    qualityLabel,
-                                    streamUrl,
-                                    headers = videoHeaders,
-                                    subtitleTracks = subtitleTracks,
-                                ),
-                            )
-                        }
+                    } catch (e: Exception) {
+                        emptyList()
                     }
-                } else {
-                    sourcesResponse.close()
                 }
-            } catch (e: Exception) {
-                // Ignore individual provider errors
-            }
+            }.awaitAll().flatten().toMutableList()
         }
 
         val preferredServer = getPreferredServer()
         videos.sortWith(
             compareBy<Video> { video ->
-                if (preferredType == "soft" || preferredType == "hard") {
-                    val hasPreferredType = video.quality.contains(preferredType, ignoreCase = true)
-                    if (hasPreferredType) 0 else 1
-                } else {
-                    0
+                val matchesPreferred = when (preferredType) {
+                    "soft" -> video.quality.contains("[Soft Subs]", ignoreCase = true)
+                    "hard" -> video.quality.contains("[Hard Subs]", ignoreCase = true)
+                    "dub" -> video.quality.contains("(DUB)", ignoreCase = true)
+                    else -> false
                 }
+                if (matchesPreferred) 0 else 1
             }.thenBy { video ->
-                if (preferredServer != "auto") {
-                    val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
-                    if (isPreferredServer) 0 else 1
-                } else {
-                    0
+                val matchesCategory = when (preferredType) {
+                    "soft", "hard" -> video.quality.contains("(SUB)", ignoreCase = true)
+                    "dub" -> video.quality.contains("(DUB)", ignoreCase = true)
+                    else -> false
                 }
+                if (matchesCategory) 0 else 1
+            }.thenBy { video ->
+                val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
+                if (isPreferredServer) 0 else 1
             },
         )
 
@@ -629,9 +641,9 @@ class Animex :
         ListPreference(screen.context).apply {
             key = "pref_preferred_server"
             title = "Preferred Server"
-            entries = arrayOf("Auto", "Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
-            entryValues = arrayOf("auto", "beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
-            setDefaultValue("auto")
+            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
+            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
+            setDefaultValue("beep")
             summary = "%s"
         }.also { screen.addPreference(it) }
     }
