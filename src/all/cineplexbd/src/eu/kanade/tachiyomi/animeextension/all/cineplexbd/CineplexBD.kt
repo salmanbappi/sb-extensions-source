@@ -273,6 +273,29 @@ class CineplexBD :
                     anime.artist = castList.joinToString()
                 }
             } catch (e: Exception) {}
+        } else {
+            try {
+                val castList = doc.select(".cast-img").map { it.attr("alt") }
+                if (castList.isNotEmpty()) {
+                    anime.artist = castList.joinToString()
+                }
+
+                val trailerBtn = doc.selectFirst("button[onclick*=openTrailer]")
+                val trailerKey = trailerBtn?.attr("onclick")?.substringAfter("openTrailer('")?.substringBefore("')")
+                if (!trailerKey.isNullOrBlank()) {
+                    anime.description = (anime.description + "\nTrailer: https://www.youtube.com/watch?v=$trailerKey").trim()
+                }
+
+                val pillScore = doc.selectFirst(".pill:contains(★)")?.text()
+                if (!pillScore.isNullOrBlank() && !anime.description.contains("Score:") && !anime.description.contains("Rating:")) {
+                    anime.description = (anime.description + "\nRating: $pillScore").trim()
+                }
+
+                val countryChip = doc.selectFirst(".chip[class*=sky]")?.text()
+                if (!countryChip.isNullOrBlank()) {
+                    anime.description = (anime.description + "\nCountry: $countryChip").trim()
+                }
+            } catch (e: Exception) {}
         }
 
         return anime
@@ -403,33 +426,27 @@ class CineplexBD :
 
     override fun videoListParse(response: Response): List<Video> {
         val url = response.request.url.toString()
-        val videos = mutableListOf<Video>()
-
         if (url.endsWith(".mp4") || url.endsWith(".mkv") || url.contains("/Data/") || url.contains(".m3u8")) {
             val quality = if (url.contains(".m3u8")) "HLS" else "Direct"
-            videos.add(Video(url, quality, url))
-        } else {
-            val html = response.body.string()
-
-            // Try regex first (modern player style)
-            var videoUrl = Regex("""const videoSrc\s*=\s*["'](.*?)["']""").find(html)?.groupValues?.get(1)
-
-            // Fallback to Jsoup (legacy/other pages)
-            if (videoUrl.isNullOrBlank()) {
-                videoUrl = Jsoup.parse(html).selectFirst("source[type='video/mp4'], source")?.attr("src")
-            }
-
-            if (!videoUrl.isNullOrBlank()) {
-                val finalUrl = if (videoUrl.startsWith("http")) videoUrl else "$baseUrl/${videoUrl.trimStart('/')}"
-                val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
-                videos.add(Video(finalUrl, quality, finalUrl))
-            }
+            return listOf(Video(url, quality, url))
         }
 
-        val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-        return videos.sortedWith(
-            compareByDescending { it.quality.contains(preferredQuality) },
-        )
+        val html = response.body.string()
+
+        // Try regex first (modern player style)
+        var videoUrl = Regex("""const videoSrc\s*=\s*["'](.*?)["']""").find(html)?.groupValues?.get(1)
+
+        // Fallback to Jsoup (legacy/other pages)
+        if (videoUrl.isNullOrBlank()) {
+            videoUrl = Jsoup.parse(html).selectFirst("source[type='video/mp4'], source")?.attr("src")
+        }
+
+        if (!videoUrl.isNullOrBlank()) {
+            val finalUrl = if (videoUrl.startsWith("http")) videoUrl else "$baseUrl/${videoUrl.trimStart('/')}"
+            val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
+            return listOf(Video(finalUrl, quality, finalUrl))
+        }
+        return emptyList()
     }
 
     override fun getFilterList() = AnimeFilterList(
@@ -503,15 +520,6 @@ class CineplexBD :
     private fun cleanEpisodeName(rawName: String, season: String, epKey: String): String = "Episode $epKey"
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        ListPreference(screen.context).apply {
-            key = PREF_QUALITY_KEY
-            title = "Preferred Quality"
-            entries = arrayOf("1080p", "720p", "480p", "360p")
-            entryValues = arrayOf("1080p", "720p", "480p", "360p")
-            setDefaultValue(PREF_QUALITY_DEFAULT)
-            summary = "%s"
-        }.also { screen.addPreference(it) }
-
         SwitchPreferenceCompat(screen.context).apply {
             key = PREF_STATS_KEY
             title = "Show Episode Stats"
@@ -521,9 +529,6 @@ class CineplexBD :
     }
 
     companion object {
-        private const val PREF_QUALITY_KEY = "preferred_quality"
-        private const val PREF_QUALITY_DEFAULT = "1080p"
-
         private const val PREF_STATS_KEY = "show_episode_stats"
         private const val PREF_STATS_DEFAULT = true
     }
