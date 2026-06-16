@@ -283,17 +283,18 @@ class CineplexBD :
                 val trailerBtn = doc.selectFirst("button[onclick*=openTrailer]")
                 val trailerKey = trailerBtn?.attr("onclick")?.substringAfter("openTrailer('")?.substringBefore("')")
                 if (!trailerKey.isNullOrBlank()) {
-                    anime.description = (anime.description + "\nTrailer: https://www.youtube.com/watch?v=$trailerKey").trim()
+                    anime.description = "${anime.description.orEmpty()}\nTrailer: https://www.youtube.com/watch?v=$trailerKey".trim()
                 }
 
                 val pillScore = doc.selectFirst(".pill:contains(★)")?.text()
-                if (!pillScore.isNullOrBlank() && !anime.description.contains("Score:") && !anime.description.contains("Rating:")) {
-                    anime.description = (anime.description + "\nRating: $pillScore").trim()
+                val desc = anime.description.orEmpty()
+                if (!pillScore.isNullOrBlank() && !desc.contains("Score:") && !desc.contains("Rating:")) {
+                    anime.description = "$desc\nRating: $pillScore".trim()
                 }
 
                 val countryChip = doc.selectFirst(".chip[class*=sky]")?.text()
                 if (!countryChip.isNullOrBlank()) {
-                    anime.description = (anime.description + "\nCountry: $countryChip").trim()
+                    anime.description = "${anime.description.orEmpty()}\nCountry: $countryChip".trim()
                 }
             } catch (e: Exception) {}
         }
