@@ -440,21 +440,7 @@ class CineplexBD :
         )
 
     private fun cleanEpisodeName(rawName: String, season: String, epKey: String): String {
-        val langMatch = Regex("""\[([^]]+)]""").find(rawName)
-        val lang = langMatch?.value
-
-        val qualityMatch = Regex("""\b(\d{3,4}[Pp])\b""").find(rawName)
-        val quality = qualityMatch?.value
-
-        val nameBuilder = StringBuilder()
-        nameBuilder.append("Episode $epKey")
-        if (lang != null) {
-            nameBuilder.append(" $lang")
-        }
-        if (quality != null) {
-            nameBuilder.append(" [$quality]")
-        }
-        return nameBuilder.toString()
+        return "Episode $epKey"
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
