@@ -1,5 +1,10 @@
 package eu.kanade.tachiyomi.animeextension.all.movix
 
+import android.app.Application
+import android.content.SharedPreferences
+import androidx.preference.ListPreference
+import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -16,14 +21,20 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import okhttp3.CookieJar
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 
-class Movix : AnimeHttpSource() {
+class Movix : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override val name = "MOVIX"
     override val baseUrl = "https://hdmovix.cc"
@@ -32,6 +43,13 @@ class Movix : AnimeHttpSource() {
     override val id: Long = 5181466391484419901L
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+
+    private val preferences: SharedPreferences by lazy {
+        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
+    }
+
+    private fun getPreferredServer(): String = preferences.getString("pref_preferred_server", "VidLink") ?: "VidLink"
+    private fun getPreferredQuality(): String = preferences.getString("pref_preferred_quality", "1080p") ?: "1080p"
 
     private val json: Json by lazy {
         Json {
@@ -285,13 +303,14 @@ class Movix : AnimeHttpSource() {
         val servers = listOf(
             ServerInfo("VidLink", "/api/vidlink"),
             ServerInfo("AutoEmbed", "/api/autoembed"),
-            ServerInfo("VidKing", "/api/en"),
+            ServerInfo("VidKing (EN)", "/api/en"),
+            ServerInfo("VidKing (ES)", "/api/es"),
             ServerInfo("VaPlayer", "/api/vaplayer"),
             ServerInfo("Xpass", "/api/xpass"),
             ServerInfo("VKMovie", "/api/vkmovie"),
         )
 
-        return coroutineScope {
+        val results = coroutineScope {
             servers.map { server ->
                 async {
                     try {
@@ -317,6 +336,16 @@ class Movix : AnimeHttpSource() {
                 }
             }.awaitAll().flatten()
         }
+
+        val preferredServer = getPreferredServer()
+        val preferredQuality = getPreferredQuality()
+
+        return results.sortedWith(
+            compareBy(
+                { !it.quality.contains(preferredServer, ignoreCase = true) },
+                { !it.quality.contains(preferredQuality, ignoreCase = true) },
+            ),
+        )
     }
 
     private fun parseServerVideos(responseBody: String, serverName: String): List<Video> {
@@ -338,24 +367,64 @@ class Movix : AnimeHttpSource() {
                     }
                 }
 
-                // 3. Check sources list (e.g. vkmovie, autoembed)
-                if (res.sources != null && res.sources.isNotEmpty()) {
-                    res.sources.forEachIndexed { index, source ->
-                        val label = source.label ?: source.server ?: "Mirror ${index + 1}"
+                // 3. Check sources as Object Map (e.g. VidKing ES)
+                val sourceMap = if (res.sources != null && res.sources is JsonObject) {
+                    try {
+                        json.decodeFromJsonElement<Map<String, String>>(res.sources)
+                    } catch (e: Exception) {
+                        null
+                    }
+                } else {
+                    null
+                }
+                if (sourceMap != null && sourceMap.isNotEmpty()) {
+                    sourceMap.forEach { (quality, qUrl) ->
+                        videos.addAll(extractVideos(qUrl, "$serverName - $quality"))
+                    }
+                }
+
+                // 4. Check sources as Array List (e.g. vkmovie, autoembed)
+                val sourceList = if (res.sources != null && res.sources is JsonArray) {
+                    try {
+                        json.decodeFromJsonElement<List<SourceItem>>(res.sources)
+                    } catch (e: Exception) {
+                        null
+                    }
+                } else {
+                    null
+                }
+                if (sourceList != null && sourceList.isNotEmpty()) {
+                    sourceList.forEachIndexed { index, source ->
+                        val baseLabel = source.label ?: source.server ?: "Mirror ${index + 1}"
+                        var label = "$serverName ($baseLabel)"
+
+                        val details = mutableListOf<String>()
+                        if (!source.language.isNullOrEmpty()) {
+                            details.add(source.language)
+                        } else if (!source.flag.isNullOrEmpty()) {
+                            details.add(source.flag.uppercase())
+                        }
+                        if (!source.title.isNullOrEmpty()) {
+                            details.add(source.title)
+                        }
+                        if (details.isNotEmpty()) {
+                            label += " [${details.joinToString(" - ")}]"
+                        }
+
                         val sUrl = source.url ?: source.link ?: source.stream_url
                         if (sUrl != null) {
                             if (source.qualities != null && source.qualities.isNotEmpty()) {
                                 source.qualities.forEach { (quality, qUrl) ->
-                                    videos.addAll(extractVideos(qUrl, "$serverName ($label) - $quality"))
+                                    videos.addAll(extractVideos(qUrl, "$label - $quality"))
                                 }
                             } else {
-                                videos.addAll(extractVideos(sUrl, "$serverName ($label)"))
+                                videos.addAll(extractVideos(sUrl, label))
                             }
                         }
                     }
                 }
 
-                // 4. Fallback/Standard single url (e.g. vidlink, autoembed)
+                // 5. Fallback/Standard single url (e.g. vidlink, autoembed)
                 val fallbackUrl = res.url ?: res.stream_url
                 if (fallbackUrl != null && videos.isEmpty()) {
                     videos.addAll(extractVideos(fallbackUrl, serverName))
@@ -477,6 +546,36 @@ class Movix : AnimeHttpSource() {
     class GenreCheckBox(name: String, val movieVal: String?, val tvVal: String?) : AnimeFilter.CheckBox(name)
 
     class YearFilter : AnimeFilter.Text("Release Year")
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        val serverList = arrayOf(
+            "VidLink",
+            "AutoEmbed",
+            "VidKing (EN)",
+            "VidKing (ES)",
+            "VaPlayer",
+            "Xpass",
+            "VKMovie",
+        )
+        ListPreference(screen.context).apply {
+            key = "pref_preferred_server"
+            title = "Preferred Server"
+            entries = serverList
+            entryValues = serverList
+            setDefaultValue("VidLink")
+            summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        val qualityList = arrayOf("1080p", "720p", "480p", "360p")
+        ListPreference(screen.context).apply {
+            key = "pref_preferred_quality"
+            title = "Preferred Quality"
+            entries = qualityList
+            entryValues = qualityList
+            setDefaultValue("1080p")
+            summary = "%s"
+        }.also { screen.addPreference(it) }
+    }
 }
 
 // ============================== SESSION INTERCEPTOR ==============================
@@ -602,7 +701,7 @@ data class ServerResponse(
     val stream_url: String? = null,
     val stream_urls: List<String>? = null,
     val qualities: Map<String, String>? = null,
-    val sources: List<SourceItem>? = null,
+    val sources: JsonElement? = null,
 )
 
 @Serializable
@@ -613,6 +712,9 @@ data class SourceItem(
     val qualities: Map<String, String>? = null,
     val label: String? = null,
     val server: String? = null,
+    val language: String? = null,
+    val flag: String? = null,
+    val title: String? = null,
 )
 
 private data class ServerInfo(val name: String, val apiPath: String)
