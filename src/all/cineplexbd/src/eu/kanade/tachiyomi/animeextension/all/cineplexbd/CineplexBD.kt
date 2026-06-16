@@ -1,6 +1,10 @@
 package eu.kanade.tachiyomi.animeextension.all.cineplexbd
 
 import androidx.preference.PreferenceScreen
+import android.app.Application
+import android.content.SharedPreferences
+import androidx.preference.ListPreference
+import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -36,6 +40,10 @@ class CineplexBD :
     override val id: Long = 5181466391484419848L
 
     private val json: Json by lazy { Injekt.get() }
+
+    private val preferences: SharedPreferences by lazy {
+        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
+    }
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/search.php?q=&year[]=2026&year[]=2025&page=$page")
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/search.php?q=&page=$page")
@@ -278,14 +286,46 @@ class CineplexBD :
     override fun episodeListParse(response: Response): List<SEpisode> {
         val url = response.request.url.toString()
         val episodes = mutableListOf<SEpisode>()
+        val showStats = preferences.getBoolean(PREF_STATS_KEY, PREF_STATS_DEFAULT)
 
         if (url.contains("view.php") || url.contains("tview.php")) {
             val id = url.substringAfter("id=").substringBefore("&")
+            var epViews: String? = null
+            var epDate: Long = 0L
+            if (showStats) {
+                try {
+                    val playerResponse = client.newCall(GET("$baseUrl/player.php?id=$id", headers)).execute()
+                    val playerDoc = Jsoup.parse(playerResponse.body.string())
+
+                    val viewsSpan = playerDoc.selectFirst("span:contains(👁️)")
+                    if (viewsSpan != null) {
+                        epViews = viewsSpan.text().replace("👁️", "").trim() + " views"
+                    }
+
+                    val downloadsSpan = playerDoc.selectFirst("span:contains(⬇️)")
+                    if (downloadsSpan != null && epViews != null) {
+                        epViews += " | " + downloadsSpan.text().replace("⬇️", "").trim() + " downloads"
+                    }
+
+                    val dateSpan = playerDoc.selectFirst("span:contains(Uploaded:)")
+                    if (dateSpan != null) {
+                        val dateStr = dateSpan.text().substringAfter("Uploaded:").trim()
+                        epDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(dateStr)?.time ?: 0L
+                    }
+                } catch (e: Exception) {}
+            }
+
             episodes.add(
                 SEpisode.create().apply {
                     name = "Movie"
                     episode_number = 1f
                     this.url = "/player.php?id=$id"
+                    if (showStats && epViews != null) {
+                        scanlator = epViews
+                    }
+                    if (epDate != 0L) {
+                        date_upload = epDate
+                    }
                 },
             )
         } else if (url.contains("watch.php")) {
@@ -325,10 +365,25 @@ class CineplexBD :
                             }
 
                             val epName = cleanEpisodeName(rawName, season, epNum.toInt().toString())
+
+                            var epViews: String? = null
+                            if (showStats) {
+                                try {
+                                    val epCard = doc.selectFirst("a[data-ep=${epNum.toInt()}]")
+                                    val viewsSpan = epCard?.selectFirst(".meta-views")
+                                    if (viewsSpan != null) {
+                                        epViews = viewsSpan.text().trim()
+                                    }
+                                } catch (e: Exception) {}
+                            }
+
                             SEpisode.create().apply {
                                 name = if (seasons.size > 1) "S$season $epName" else epName
                                 episode_number = epNum + (season.toIntOrNull() ?: 0) * 1000f
                                 this.url = epPath
+                                if (showStats && epViews != null) {
+                                    scanlator = epViews
+                                }
                             }
                         } catch (e: Exception) {
                             null
@@ -348,27 +403,33 @@ class CineplexBD :
 
     override fun videoListParse(response: Response): List<Video> {
         val url = response.request.url.toString()
+        val videos = mutableListOf<Video>()
+
         if (url.endsWith(".mp4") || url.endsWith(".mkv") || url.contains("/Data/") || url.contains(".m3u8")) {
             val quality = if (url.contains(".m3u8")) "HLS" else "Direct"
-            return listOf(Video(url, quality, url))
+            videos.add(Video(url, quality, url))
+        } else {
+            val html = response.body.string()
+
+            // Try regex first (modern player style)
+            var videoUrl = Regex("""const videoSrc\s*=\s*["'](.*?)["']""").find(html)?.groupValues?.get(1)
+
+            // Fallback to Jsoup (legacy/other pages)
+            if (videoUrl.isNullOrBlank()) {
+                videoUrl = Jsoup.parse(html).selectFirst("source[type='video/mp4'], source")?.attr("src")
+            }
+
+            if (!videoUrl.isNullOrBlank()) {
+                val finalUrl = if (videoUrl.startsWith("http")) videoUrl else "$baseUrl/${videoUrl.trimStart('/')}"
+                val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
+                videos.add(Video(finalUrl, quality, finalUrl))
+            }
         }
 
-        val html = response.body.string()
-
-        // Try regex first (modern player style)
-        var videoUrl = Regex("""const videoSrc\s*=\s*["'](.*?)["']""").find(html)?.groupValues?.get(1)
-
-        // Fallback to Jsoup (legacy/other pages)
-        if (videoUrl.isNullOrBlank()) {
-            videoUrl = Jsoup.parse(html).selectFirst("source[type='video/mp4'], source")?.attr("src")
-        }
-
-        if (!videoUrl.isNullOrBlank()) {
-            val finalUrl = if (videoUrl.startsWith("http")) videoUrl else "$baseUrl/${videoUrl.trimStart('/')}"
-            val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
-            return listOf(Video(finalUrl, quality, finalUrl))
-        }
-        return emptyList()
+        val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        return videos.sortedWith(
+            compareByDescending { it.quality.contains(preferredQuality) }
+        )
     }
 
     override fun getFilterList() = AnimeFilterList(
@@ -441,5 +502,29 @@ class CineplexBD :
 
     private fun cleanEpisodeName(rawName: String, season: String, epKey: String): String = "Episode $epKey"
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {}
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        ListPreference(screen.context).apply {
+            key = PREF_QUALITY_KEY
+            title = "Preferred Quality"
+            entries = arrayOf("1080p", "720p", "480p", "360p")
+            entryValues = arrayOf("1080p", "720p", "480p", "360p")
+            setDefaultValue(PREF_QUALITY_DEFAULT)
+            summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_STATS_KEY
+            title = "Show Episode Stats"
+            summary = "Show views and downloads in the episode list (takes effect on refresh)."
+            setDefaultValue(PREF_STATS_DEFAULT)
+        }.also { screen.addPreference(it) }
+    }
+
+    companion object {
+        private const val PREF_QUALITY_KEY = "preferred_quality"
+        private const val PREF_QUALITY_DEFAULT = "1080p"
+
+        private const val PREF_STATS_KEY = "show_episode_stats"
+        private const val PREF_STATS_DEFAULT = true
+    }
 }
