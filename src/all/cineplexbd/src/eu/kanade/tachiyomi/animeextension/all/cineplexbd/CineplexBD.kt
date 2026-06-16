@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -181,7 +182,7 @@ class CineplexBD :
 
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.asJsoup()
-        return SAnime.create().apply {
+        val anime = SAnime.create().apply {
             val rawTitle = doc.selectFirst("h1, .movie-title, title")?.text()?.replace(" — Watch", "") ?: ""
             title = rawTitle
             description = doc.selectFirst("p.leading-relaxed, #synopsis, .description")?.text() ?: ""
@@ -219,6 +220,54 @@ class CineplexBD :
 
             description = (description + extraInfo).trim()
         }
+
+        val url = response.request.url.toString()
+        if (url.contains("watch.php")) {
+            val id = if (url.contains("series_id=")) {
+                url.substringAfter("series_id=").substringBefore("&")
+            } else {
+                url.substringAfter("id=").substringBefore("&")
+            }
+            try {
+                val metaUrl = "$baseUrl/watch.php?id=$id&season=1&meta=1"
+                val metaResponse = client.newCall(GET(metaUrl, headers)).execute()
+                val metaJson = json.decodeFromString<JsonObject>(metaResponse.body.string())
+
+                val syn = metaJson["synopsis"]?.jsonPrimitive?.content
+                val baseDescription = if (!syn.isNullOrBlank()) syn else doc.selectFirst("p.leading-relaxed, #synopsis, .description")?.text() ?: ""
+
+                var extraInfo = ""
+                val rating = metaJson["rating"]?.jsonPrimitive?.content
+                val ratingSrc = metaJson["ratingSrc"]?.jsonPrimitive?.content
+                if (!rating.isNullOrBlank()) {
+                    extraInfo += "\nRating: $rating ($ratingSrc)"
+                }
+
+                val country = metaJson["country"]?.jsonPrimitive?.content
+                if (!country.isNullOrBlank()) {
+                    extraInfo += "\nCountry: $country"
+                }
+
+                val year = doc.select("span.chip:matches(\\d{4})").text()
+                val duration = doc.select("span.chip:matches(\\d+h \\d+m)").text()
+                val lang = doc.select("span.chip:contains(Lang:)").text()
+
+                if (!year.isNullOrBlank()) extraInfo += "\nYear: $year"
+                if (!duration.isNullOrBlank()) extraInfo += "\nDuration: $duration"
+                if (!lang.isNullOrBlank()) extraInfo += "\n$lang"
+
+                anime.description = (baseDescription + extraInfo).trim()
+
+                val castList = metaJson["cast"]?.jsonArray?.mapNotNull {
+                    it.jsonObject["name"]?.jsonPrimitive?.content
+                }
+                if (!castList.isNullOrEmpty()) {
+                    anime.artist = castList.joinToString()
+                }
+            } catch (e: Exception) {}
+        }
+
+        return anime
     }
 
     override fun episodeListRequest(anime: SAnime): Request {
@@ -275,8 +324,9 @@ class CineplexBD :
                                 epNum = match?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
                             }
 
+                            val epName = cleanEpisodeName(rawName, season, epNum.toInt().toString())
                             SEpisode.create().apply {
-                                name = if (seasons.size > 1) "S$season $rawName" else rawName
+                                name = if (seasons.size > 1) "S$season $epName" else epName
                                 episode_number = epNum + (season.toIntOrNull() ?: 0) * 1000f
                                 this.url = epPath
                             }
@@ -388,6 +438,24 @@ class CineplexBD :
                 "Mystery", "Romance", "Sci-Fi", "Short", "Sport", "Thriller", "War", "Western",
             ).map { MyCheckBox(it) },
         )
+
+    private fun cleanEpisodeName(rawName: String, season: String, epKey: String): String {
+        val langMatch = Regex("""\[([^]]+)]""").find(rawName)
+        val lang = langMatch?.value
+
+        val qualityMatch = Regex("""\b(\d{3,4}[Pp])\b""").find(rawName)
+        val quality = qualityMatch?.value
+
+        val nameBuilder = StringBuilder()
+        nameBuilder.append("Episode $epKey")
+        if (lang != null) {
+            nameBuilder.append(" $lang")
+        }
+        if (quality != null) {
+            nameBuilder.append(" [$quality]")
+        }
+        return nameBuilder.toString()
+    }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
 }
