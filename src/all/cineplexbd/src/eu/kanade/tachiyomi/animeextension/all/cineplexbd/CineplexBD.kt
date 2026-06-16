@@ -367,13 +367,14 @@ class CineplexBD :
                 listOf("1")
             }
 
+            var totalEpisodeCount = 1f
             seasons.forEach { season ->
                 try {
                     val metaUrl = "$baseUrl/watch.php?id=$id&season=$season&meta=1"
                     val metaResponse = client.newCall(GET(metaUrl, headers)).execute()
                     val metaJson = json.decodeFromString<JsonObject>(metaResponse.body.string())
 
-                    metaJson["episodes"]?.jsonObject?.entries?.mapNotNull { (key, value) ->
+                    val seasonEpisodes = metaJson["episodes"]?.jsonObject?.entries?.mapNotNull { (key, value) ->
                         try {
                             val epJson = value.jsonObject
                             val rawName = epJson["title"]?.jsonPrimitive?.content ?: "Episode $key"
@@ -403,7 +404,7 @@ class CineplexBD :
 
                             SEpisode.create().apply {
                                 name = if (seasons.size > 1) "S$season $epName" else epName
-                                episode_number = epNum + (season.toIntOrNull() ?: 0) * 1000f
+                                episode_number = epNum
                                 this.url = epPath
                                 if (showStats && epViews != null) {
                                     scanlator = epViews
@@ -412,7 +413,14 @@ class CineplexBD :
                         } catch (e: Exception) {
                             null
                         }
-                    }?.sortedBy { it.episode_number }?.let { episodes.addAll(it) }
+                    }?.sortedBy { it.episode_number }
+
+                    if (seasonEpisodes != null) {
+                        for (episode in seasonEpisodes) {
+                            episode.episode_number = totalEpisodeCount++
+                            episodes.add(episode)
+                        }
+                    }
                 } catch (e: Exception) {}
             }
         }
