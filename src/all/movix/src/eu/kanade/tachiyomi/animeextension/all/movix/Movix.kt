@@ -268,39 +268,120 @@ class Movix : AnimeHttpSource() {
 
     // ============================== VIDEO LIST (SOURCES) ==============================
 
-    override fun videoListRequest(episode: SEpisode): Request {
+    override fun videoListRequest(episode: SEpisode): Request = throw Exception("Not used")
+
+    override fun videoListParse(response: Response): List<Video> = throw Exception("Not used")
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val epUrl = episode.url
-        return when {
-            epUrl.startsWith("/movie/") -> {
-                val tmdbId = epUrl.substringAfter("/movie/")
-                GET("$baseUrl/api/vidlink/movie/$tmdbId", headers)
-            }
+        val isTv = epUrl.startsWith("/tv/")
+        val (tmdbId, season, episodeNum) = if (isTv) {
+            val parts = epUrl.substringAfter("/tv/").split("/")
+            Triple(parts[0], parts[1], parts[2])
+        } else {
+            Triple(epUrl.substringAfter("/movie/"), "", "")
+        }
 
-            epUrl.startsWith("/tv/") -> {
-                val parts = epUrl.substringAfter("/tv/").split("/")
-                val tmdbId = parts[0]
-                val season = parts[1]
-                val epNum = parts[2]
-                GET("$baseUrl/api/vidlink/tv/$tmdbId/$season/$epNum", headers)
-            }
+        val servers = listOf(
+            ServerInfo("VidLink", "/api/vidlink"),
+            ServerInfo("AutoEmbed", "/api/autoembed"),
+            ServerInfo("VidKing", "/api/en"),
+            ServerInfo("VaPlayer", "/api/vaplayer"),
+            ServerInfo("Xpass", "/api/xpass"),
+            ServerInfo("VKMovie", "/api/vkmovie"),
+        )
 
-            else -> throw Exception("Invalid video request URL: $epUrl")
+        return coroutineScope {
+            servers.map { server ->
+                async {
+                    try {
+                        val request = GET(
+                            if (isTv) {
+                                "$baseUrl${server.apiPath}/tv/$tmdbId/$season/$episodeNum"
+                            } else {
+                                "$baseUrl${server.apiPath}/movie/$tmdbId"
+                            },
+                            headers,
+                        )
+                        val response = client.newCall(request).execute()
+                        if (response.isSuccessful) {
+                            val body = response.body.string()
+                            parseServerVideos(body, server.name)
+                        } else {
+                            response.close()
+                            emptyList()
+                        }
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
+                }
+            }.awaitAll().flatten()
         }
     }
 
-    override fun videoListParse(response: Response): List<Video> {
-        val responseBody = response.body.string()
-        val vidLink = json.decodeFromString<VidLinkResponse>(responseBody)
-        if (vidLink.success && vidLink.url != null) {
-            val streamUrl = absoluteUrl(vidLink.url)
-            return playlistUtils.extractFromHls(
-                playlistUrl = streamUrl,
-                referer = "$baseUrl/",
-                videoNameGen = { quality -> "VidLink - $quality" },
-            )
-        }
+    private fun parseServerVideos(responseBody: String, serverName: String): List<Video> {
+        val videos = mutableListOf<Video>()
+        try {
+            val res = json.decodeFromString<ServerResponse>(responseBody)
+            if (res.success == true || res.url != null) {
+                // 1. Check direct qualities map (e.g. vidking, xpass)
+                if (res.qualities != null && res.qualities.isNotEmpty()) {
+                    res.qualities.forEach { (quality, qUrl) ->
+                        videos.addAll(extractVideos(qUrl, "$serverName - $quality"))
+                    }
+                }
 
-        return emptyList()
+                // 2. Check stream_urls list (e.g. vaplayer)
+                if (res.stream_urls != null && res.stream_urls.isNotEmpty()) {
+                    res.stream_urls.forEachIndexed { index, qUrl ->
+                        videos.addAll(extractVideos(qUrl, "$serverName - Mirror ${index + 1}"))
+                    }
+                }
+
+                // 3. Check sources list (e.g. vkmovie, autoembed)
+                if (res.sources != null && res.sources.isNotEmpty()) {
+                    res.sources.forEachIndexed { index, source ->
+                        val label = source.label ?: source.server ?: "Mirror ${index + 1}"
+                        val sUrl = source.url ?: source.link ?: source.stream_url
+                        if (sUrl != null) {
+                            if (source.qualities != null && source.qualities.isNotEmpty()) {
+                                source.qualities.forEach { (quality, qUrl) ->
+                                    videos.addAll(extractVideos(qUrl, "$serverName ($label) - $quality"))
+                                }
+                            } else {
+                                videos.addAll(extractVideos(sUrl, "$serverName ($label)"))
+                            }
+                        }
+                    }
+                }
+
+                // 4. Fallback/Standard single url (e.g. vidlink, autoembed)
+                val fallbackUrl = res.url ?: res.stream_url
+                if (fallbackUrl != null && videos.isEmpty()) {
+                    videos.addAll(extractVideos(fallbackUrl, serverName))
+                }
+            }
+        } catch (e: Exception) {
+            // ignore parsing errors for this server
+        }
+        return videos
+    }
+
+    private fun extractVideos(playlistUrl: String, label: String): List<Video> {
+        val absUrl = absoluteUrl(playlistUrl)
+        return try {
+            if (absUrl.contains(".m3u8") || absUrl.contains("hls-proxy")) {
+                playlistUtils.extractFromHls(
+                    playlistUrl = absUrl,
+                    referer = "$baseUrl/",
+                    videoNameGen = { quality -> "$label - $quality" },
+                )
+            } else {
+                listOf(Video(absUrl, label, absUrl, headers))
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     // ============================== FILTERS ==============================
@@ -513,3 +594,25 @@ data class VidLinkResponse(
     val ref: String? = null,
     val sig: String? = null,
 )
+
+@Serializable
+data class ServerResponse(
+    val success: Boolean? = null,
+    val url: String? = null,
+    val stream_url: String? = null,
+    val stream_urls: List<String>? = null,
+    val qualities: Map<String, String>? = null,
+    val sources: List<SourceItem>? = null,
+)
+
+@Serializable
+data class SourceItem(
+    val url: String? = null,
+    val link: String? = null,
+    val stream_url: String? = null,
+    val qualities: Map<String, String>? = null,
+    val label: String? = null,
+    val server: String? = null,
+)
+
+private data class ServerInfo(val name: String, val apiPath: String)
