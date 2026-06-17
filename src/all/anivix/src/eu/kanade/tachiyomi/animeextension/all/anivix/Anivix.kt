@@ -40,14 +40,14 @@ class Anivix : Source() {
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
-    private val json: Json by lazy {
+    override val json: Json by lazy {
         Json {
             ignoreUnknownKeys = true
             coerceInputValues = true
         }
     }
 
-    private val preferences: SharedPreferences by lazy {
+    override val preferences: SharedPreferences by lazy {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     }
 
