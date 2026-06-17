@@ -308,7 +308,7 @@ class Udvash : Source() {
                 decodedUrl.contains("360P", true) -> "360p"
                 else -> "Source ${index + 1}"
             }
-            Video(videoUrl = decodedUrl, videoTitle = quality, url = decodedUrl)
+            Video(videoUrl = decodedUrl, videoTitle = quality)
         }
     }
 

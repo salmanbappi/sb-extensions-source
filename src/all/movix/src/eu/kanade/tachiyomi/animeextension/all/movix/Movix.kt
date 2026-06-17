@@ -33,10 +33,9 @@ import okhttp3.Request
 import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import extensions.utils.Source
 import java.net.URLEncoder
 
-import extensions.utils.Source
-...
 class Movix : Source() {
 
     override val name = "MOVIX"
@@ -47,14 +46,7 @@ class Movix : Source() {
 
     private val playlistUtils by lazy { PlaylistUtils(hlsClient, headers) }
 
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
-
-    private fun getPreferredServer(): String = preferences.getString("pref_preferred_server", "VidLink") ?: "VidLink"
-    private fun getPreferredQuality(): String = preferences.getString("pref_preferred_quality", "1080p") ?: "1080p"
-
-    private val json: Json by lazy {
+    override val json: Json by lazy {
         Json {
             ignoreUnknownKeys = true
             coerceInputValues = true
@@ -480,7 +472,7 @@ class Movix : Source() {
                     videoNameGen = { quality -> "$label - $quality" },
                 )
             } else {
-                listOf(Video(videoUrl = absUrl, videoTitle = label, url = absUrl, headers = headers))
+                listOf(Video(videoUrl = absUrl, videoTitle = label, headers = headers))
             }
         } catch (e: Exception) {
             emptyList()

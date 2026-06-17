@@ -456,11 +456,11 @@ class AgniSYS :
 
         // Direct stream (no transcoding)
         val directUrl = "$baseUrl/Videos/${item.id}/stream?static=True&api_key=$accessToken"
-        streams.add(Video(videoUrl = directUrl, videoTitle = "Direct Stream", url = directUrl, headers = videoHeaders))
+        streams.add(Video(videoUrl = directUrl, videoTitle = "Direct Stream", headers = videoHeaders))
 
         // Also offer a transcoded HLS stream for slow connections
         val hlsUrl = "$baseUrl/Videos/${item.id}/master.m3u8?api_key=$accessToken&VideoCodec=h264&AudioCodec=aac&MaxStreamingBitrate=8000000"
-        streams.add(Video(videoUrl = hlsUrl, videoTitle = "HLS (8Mbps)", url = hlsUrl, headers = videoHeaders))
+        streams.add(Video(videoUrl = hlsUrl, videoTitle = "HLS (8Mbps)", headers = videoHeaders))
 
         return streams
     }

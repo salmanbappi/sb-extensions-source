@@ -30,7 +30,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 import extensions.utils.Source
-...
+
 class Anivix : Source() {
 
     override val name = "Anivix"
@@ -330,7 +330,6 @@ class Anivix : Source() {
                     Video(
                         videoUrl = streamUrl,
                         videoTitle = "${source.label} (HLS)",
-                        url = streamUrl,
                         headers = headers,
                         subtitleTracks = subtitleTracks,
                     ),

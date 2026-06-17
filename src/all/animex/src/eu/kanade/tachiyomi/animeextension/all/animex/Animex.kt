@@ -464,7 +464,6 @@ class Animex : Source() {
                                                 Video(
                                                     videoUrl = streamUrl,
                                                     videoTitle = qualityLabel,
-                                                    url = streamUrl,
                                                     headers = videoHeaders,
                                                     subtitleTracks = subtitleTracks,
                                                 ),
