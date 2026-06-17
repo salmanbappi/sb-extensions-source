@@ -440,7 +440,13 @@ class Nepu :
 
     // ============================ Video Links =============================
 
-    override fun videoListParse(response: Response): List<Video> {
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val request = videoListRequest(episode)
+        val response = client.newCall(request).execute()
+        return videoListParse(response)
+    }
+
+    private fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val videoList = java.util.Collections.synchronizedList(mutableListOf<Video>())
         val pageUrl = response.request.url.toString()
@@ -607,12 +613,6 @@ class Nepu :
             Video(videoUrl = proxiedUrl, videoTitle = video.videoTitle, subtitleTracks = video.subtitleTracks, audioTracks = video.audioTracks)
         }
     }
-
-    override fun videoListSelector(): String = throw UnsupportedOperationException()
-
-    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
-
-    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
 
     // ============================== Filters ==============================
 
