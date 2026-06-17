@@ -359,8 +359,8 @@ class Movix : Source() {
 
         return results.sortedWith(
             compareBy(
-                { !it.quality.contains(preferredServer, ignoreCase = true) },
-                { !it.quality.contains(preferredQuality, ignoreCase = true) },
+                { !it.videoTitle.contains(preferredServer, ignoreCase = true) },
+                { !it.videoTitle.contains(preferredQuality, ignoreCase = true) },
             ),
         )
     }

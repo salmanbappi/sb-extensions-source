@@ -325,7 +325,7 @@ class Fanush :
         val mediaSource = item.mediaSources?.firstOrNull() ?: return emptyList()
         val videoHeaders = Headers.headersOf("Authorization", getAuthHeader(deviceInfo, accessToken))
         val staticUrl = "$baseUrl/Videos/${item.id}/stream?static=True"
-        return listOf(Video(staticUrl, "Source", staticUrl, headers = videoHeaders))
+        return listOf(Video(videoUrl = staticUrl, videoTitle = "Source", headers = videoHeaders))
     }
 
     private fun getItemsUrl(startIndex: Int): HttpUrl = "$baseUrl/Users/$userId/Items".toHttpUrl().newBuilder().apply {

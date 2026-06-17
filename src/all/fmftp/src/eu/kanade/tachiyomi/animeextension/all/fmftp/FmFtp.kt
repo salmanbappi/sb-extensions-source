@@ -140,7 +140,7 @@ class FmFtp : Source() {
         val type = episode.url.substringAfter("type=").substringBefore("&")
         val id = episode.url.substringAfter("id=")
         val videoUrl = "$apiBaseUrl/stream/video/stream?type=$type&id=$id"
-        return listOf(Video(videoUrl, "Direct", videoUrl))
+        return listOf(Video(videoUrl = videoUrl, videoTitle = "Direct"))
     }
 
     private fun diceCoefficient(s1: String, s2: String): Double {
