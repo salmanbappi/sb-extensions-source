@@ -40,9 +40,11 @@ class InfoMedia : Source() {
 
     override val id: Long = 3615736726452648083L
 
-    private val json: Json by injectLazy()
+    override val json: Json by injectLazy()
 
     private val seriesRegex = Regex("""(.+)\s+S(\d+)E(\d+).*""", RegexOption.IGNORE_CASE)
+
+    override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {}
 
     override fun popularAnimeRequest(page: Int): Request {
         val pagePath = if (page == 1) "" else "page/$page/"
