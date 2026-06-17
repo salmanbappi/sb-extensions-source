@@ -39,13 +39,14 @@ class NetMirror : AnimeSourceFactory {
     )
 }
 
+import extensions.utils.Source
+
 class CNCVerseSource(
     override val name: String,
     private val ott: String,
     private val studio: String,
     override val id: Long,
-) : AnimeHttpSource(),
-    ConfigurableAnimeSource {
+) : Source() {
 
     override val baseUrl = "https://net52.cc"
     override val lang = "all"
@@ -418,9 +419,8 @@ class CNCVerseSource(
         } ?: emptyList()
 
         val adaptiveVideo = Video(
-            videoLink,
-            "$name - Auto (Adaptive)",
-            videoLink,
+            videoUrl = videoLink,
+            videoTitle = "$name - Auto (Adaptive)",
             headers = videoHeaders,
             subtitleTracks = mappedSubtitles,
         )
@@ -430,9 +430,8 @@ class CNCVerseSource(
                 video
             } else {
                 Video(
-                    video.url,
-                    video.quality,
-                    video.videoUrl,
+                    videoUrl = video.videoUrl,
+                    videoTitle = video.videoTitle,
                     headers = video.headers,
                     subtitleTracks = video.subtitleTracks.map { track ->
                         if (track.url.endsWith(".m3u8")) {

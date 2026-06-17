@@ -43,6 +43,8 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
+import extensions.utils.Source
+
 class FtpBd(
     override val name: String,
     override val baseUrl: String,
@@ -51,8 +53,7 @@ class FtpBd(
     private val popularPath: String,
     private val searchPaths: List<String>,
     private val serverCategories: Array<String>,
-) : AnimeHttpSource(),
-    ConfigurableAnimeSource {
+) : Source() {
 
     private val baseDomain: String
         get() = try {
@@ -605,7 +606,7 @@ class FtpBd(
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .add("Referer", baseUrl + "/")
             .build()
-        return listOf(Video(videoUrl, "Direct Video", videoUrl, headers = headers))
+        return listOf(Video(videoUrl = videoUrl, videoTitle = "Direct Video", headers = headers))
     }
 
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()

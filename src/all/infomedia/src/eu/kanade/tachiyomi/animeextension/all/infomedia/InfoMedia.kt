@@ -25,7 +25,9 @@ import uy.kohesive.injekt.injectLazy
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-class InfoMedia : AnimeHttpSource() {
+import extensions.utils.Source
+
+class InfoMedia : Source() {
 
     override val name = "InfoMedia"
 
@@ -175,7 +177,7 @@ class InfoMedia : AnimeHttpSource() {
                             if (src.startsWith("/")) {
                                 src = "$baseUrl$src"
                             }
-                            videoList.add(Video(src, "Stream", src))
+                            videoList.add(Video(videoUrl = src, videoTitle = "Stream"))
                         }
                     }
                 } catch (e: Exception) {}

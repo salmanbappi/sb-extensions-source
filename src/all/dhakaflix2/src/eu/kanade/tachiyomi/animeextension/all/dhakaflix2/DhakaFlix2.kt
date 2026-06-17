@@ -68,14 +68,15 @@ private val YEAR_REGEX = Regex("""\s+[\[\(]?\d{4}[\]\)]?.*""", RegexOption.IGNOR
 private val QUALITY_REGEX = Regex("""\s+(720p|1080p|WEB-DL|BluRay|HDRip|HDTC|HDCAM|ESub|Dual Audio).*""", RegexOption.IGNORE_CASE)
 private val DASH_REGEX = Regex("""\s+-\s+\d+\s+.*""", RegexOption.IGNORE_CASE)
 
+import extensions.utils.Source
+
 class DhakaFlix2(
     override val name: String,
     override val baseUrl: String,
     override val id: Long,
     private val serverPath: String,
     private val serverCategories: Array<String>,
-) : AnimeHttpSource(),
-    ConfigurableAnimeSource {
+) : Source() {
 
     override val lang = "all"
     override val supportsLatest = true
@@ -781,7 +782,7 @@ class DhakaFlix2(
         val url = fixUrl(episode.url)
         val httpUrl = url.toHttpUrlOrNull()
         val referer = httpUrl?.let { "${it.scheme}://${it.host}/" } ?: "$baseUrl/"
-        return listOf(Video(url, "Video", url, headers = headersBuilder().add("Referer", referer).build()))
+        return listOf(Video(videoUrl = url, videoTitle = "Video", headers = headersBuilder().add("Referer", referer).build()))
     }
     override fun episodeListParse(response: Response): List<SEpisode> = throw Exception("Not used")
     override fun videoListParse(response: Response): List<Video> = throw Exception("Not used")

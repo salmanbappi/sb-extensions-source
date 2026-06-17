@@ -27,7 +27,9 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.util.concurrent.TimeUnit
 
-class Dflix : AnimeHttpSource() {
+import extensions.utils.Source
+
+class Dflix : Source() {
 
     override val name = "Dflix"
 
@@ -391,7 +393,7 @@ class Dflix : AnimeHttpSource() {
             .add("Referer", "$baseUrl/")
             .add("Cookie", cm.getCookiesHeaders())
             .build()
-        return listOf(Video(episode.url, "Video", fixUrl(episode.url), videoHeaders))
+        return listOf(Video(videoUrl = fixUrl(episode.url), videoTitle = "Video", headers = videoHeaders))
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> = throw Exception("Not used")
