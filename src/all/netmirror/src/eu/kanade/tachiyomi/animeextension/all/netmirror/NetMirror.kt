@@ -405,20 +405,6 @@ class CNCVerseSource(
             emptyList()
         }
 
-        val mappedSubtitles = videos.firstOrNull()?.subtitleTracks?.map { track ->
-            if (track.url.endsWith(".m3u8")) {
-                Track(track.url.substringBeforeLast(".m3u8") + ".vtt", track.lang)
-            } else {
-                track
-            }
-        } ?: emptyList()
-
-        val adaptiveVideo = Video(
-            videoUrl = videoLink,
-            videoTitle = "$name - Auto (Adaptive)",
-            headers = videoHeaders,
-            subtitleTracks = mappedSubtitles,
-        )
 
         val mappedVideos = videos.map { video ->
             if (video.subtitleTracks.isEmpty()) {
@@ -440,7 +426,7 @@ class CNCVerseSource(
             }
         }
 
-        return (listOf(adaptiveVideo) + mappedVideos).sortVideos()
+        return mappedVideos.sortVideos()
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
@@ -451,15 +437,15 @@ class CNCVerseSource(
         androidx.preference.ListPreference(screen.context).apply {
             key = "preferred_quality"
             title = "Preferred Quality"
-            entries = arrayOf("Auto (Adaptive)", "1080p", "720p", "480p", "360p")
-            entryValues = arrayOf("Auto (Adaptive)", "1080p", "720p", "480p", "360p")
-            setDefaultValue("Auto (Adaptive)")
+            entries = arrayOf("1080p", "720p", "480p", "360p")
+            entryValues = arrayOf("1080p", "720p", "480p", "360p")
+            setDefaultValue("1080p")
             summary = "%s"
         }.also(screen::addPreference)
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val quality = preferences.getString("preferred_quality", "Auto (Adaptive)") ?: "Auto (Adaptive)"
+        val quality = preferences.getString("preferred_quality", "1080p") ?: "1080p"
         return sortedWith(
             compareBy { video ->
                 val videoQuality = video.videoTitle
