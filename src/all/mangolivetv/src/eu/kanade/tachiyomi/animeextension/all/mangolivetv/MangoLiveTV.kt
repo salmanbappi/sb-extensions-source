@@ -91,7 +91,7 @@ class MangoLiveTV :
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val url = episode.url
-        return listOf(Video(url, "Live Stream", url))
+        return listOf(Video(videoUrl = url, videoTitle = "Live Stream"))
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(CategoryFilter())

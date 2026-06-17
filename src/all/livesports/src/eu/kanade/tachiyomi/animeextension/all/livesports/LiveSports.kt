@@ -86,7 +86,7 @@ class LiveSports :
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val url = episode.url
-        return listOf(Video(url, "Live Stream", url))
+        return listOf(Video(videoUrl = url, videoTitle = "Live Stream"))
     }
 
     private fun fixUrl(url: String): String = if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"

@@ -73,9 +73,8 @@ class FilemoonExtractor(
         val subPref = preferences?.getString(PREF_SUBTITLE_KEY, PREF_SUBTITLE_DEFAULT).orEmpty()
         return videoList.map {
             Video(
-                url = it.url,
-                quality = it.quality,
-                videoUrl = it.videoUrl,
+                videoUrl = it.videoUrl ?: "",
+                videoTitle = it.videoTitle,
                 headers = it.headers,
                 audioTracks = it.audioTracks,
                 subtitleTracks = it.subtitleTracks.filter { tracks -> tracks.lang.contains(subPref, true) },
