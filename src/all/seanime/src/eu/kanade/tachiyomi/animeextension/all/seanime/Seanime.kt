@@ -103,7 +103,6 @@ data class DownloadInfoEpisodeDto(
     val episode: EpisodeDto,
 )
 
-
 @Serializable
 data class EpisodeDto(
     val episodeNumber: Int,
