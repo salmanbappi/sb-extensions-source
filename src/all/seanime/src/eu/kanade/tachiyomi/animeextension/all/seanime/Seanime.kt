@@ -88,7 +88,21 @@ data class AnimeEntryDataDto(
     val mediaId: Int,
     val media: BaseMediaDto,
     val episodes: List<EpisodeDto> = emptyList(),
+    val downloadInfo: DownloadInfoDto? = null,
 )
+
+@Serializable
+data class DownloadInfoDto(
+    val episodesToDownload: List<DownloadInfoEpisodeDto> = emptyList(),
+)
+
+@Serializable
+data class DownloadInfoEpisodeDto(
+    val episodeNumber: Int,
+    val aniDBEpisode: String = "",
+    val episode: EpisodeDto,
+)
+
 
 @Serializable
 data class EpisodeDto(
@@ -690,29 +704,20 @@ class Seanime :
                     preview_url = ep.image
                 }
             }.reversed()
-        } else {
+        } else if (mode == MODE_LOCAL) {
             val response = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
             if (response.isSuccessful) {
                 val entryDto = response.parseAs<AnimeEntryResponseDto>(json)
                 val allEpisodes = entryDto.data.episodes
+                val localEpisodes = allEpisodes.filter { it.isDownloaded }
 
-                val filteredEpisodes = if (mode == MODE_LOCAL) {
-                    allEpisodes.filter { it.isDownloaded }
-                } else {
-                    allEpisodes
+                if (localEpisodes.isEmpty()) {
+                    throw Exception("No downloaded episodes found in library. Switch to 'Torrent Stream' or 'Online Stream' mode in extension settings.")
                 }
 
-                if (filteredEpisodes.isEmpty()) {
-                    throw Exception("No episodes found in library for this title. Try switching to 'Online Stream' mode in extension settings.")
-                }
-
-                return filteredEpisodes.map { ep ->
+                return localEpisodes.map { ep ->
                     SEpisode.create().apply {
-                        if (mode == MODE_LOCAL) {
-                            this.url = "local:${ep.localFile?.path}"
-                        } else {
-                            this.url = "torrent:$mediaId:${ep.episodeNumber}:${ep.episodeNumber}"
-                        }
+                        this.url = "local:${ep.localFile?.path}"
                         val epName = ep.displayTitle ?: "Episode ${ep.episodeNumber}"
                         val epSubTitle = ep.episodeTitle
                         name = if (!epSubTitle.isNullOrBlank()) "$epName - $epSubTitle" else epName
@@ -724,6 +729,49 @@ class Seanime :
             } else {
                 response.close()
                 throw Exception("This title is not in your Seanime library. Add it to your library or switch to 'Online Stream' mode in extension settings.")
+            }
+        } else { // MODE_TORRENT
+            val response = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
+            if (response.isSuccessful) {
+                val entryDto = response.parseAs<AnimeEntryResponseDto>(json)
+
+                val episodesList = entryDto.data.downloadInfo?.episodesToDownload
+                if (!episodesList.isNullOrEmpty()) {
+                    return episodesList.map { downloadInfoEp ->
+                        val ep = downloadInfoEp.episode
+                        SEpisode.create().apply {
+                            val aniDBEp = downloadInfoEp.aniDBEpisode
+                            this.url = "torrent:$mediaId:${ep.episodeNumber}:$aniDBEp"
+                            val epName = ep.displayTitle ?: "Episode ${ep.episodeNumber}"
+                            val epSubTitle = ep.episodeTitle
+                            name = if (!epSubTitle.isNullOrBlank()) "$epName - $epSubTitle" else epName
+                            episode_number = ep.episodeNumber.toFloat()
+                            summary = ep.episodeMetadata?.summary
+                            preview_url = ep.episodeMetadata?.image
+                        }
+                    }.reversed()
+                }
+
+                // Fall back to entryDto.data.episodes
+                val allEpisodes = entryDto.data.episodes
+                if (allEpisodes.isEmpty()) {
+                    throw Exception("No episodes found for this title. Try switching to 'Online Stream' mode in extension settings.")
+                }
+
+                return allEpisodes.map { ep ->
+                    SEpisode.create().apply {
+                        this.url = "torrent:$mediaId:${ep.episodeNumber}:${ep.episodeNumber}"
+                        val epName = ep.displayTitle ?: "Episode ${ep.episodeNumber}"
+                        val epSubTitle = ep.episodeTitle
+                        name = if (!epSubTitle.isNullOrBlank()) "$epName - $epSubTitle" else epName
+                        episode_number = ep.episodeNumber.toFloat()
+                        summary = ep.episodeMetadata?.summary
+                        preview_url = ep.episodeMetadata?.image
+                    }
+                }.reversed()
+            } else {
+                response.close()
+                throw Exception("Failed to fetch details from Seanime server. Make sure the server is running and accessible.")
             }
         }
     }
