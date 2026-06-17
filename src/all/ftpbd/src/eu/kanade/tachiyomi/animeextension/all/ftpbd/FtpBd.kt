@@ -65,7 +65,6 @@ class FtpBd(
 
     override val supportsLatest = true
 
-
     private val omdbJson = Json {
         ignoreUnknownKeys = true
         isLenient = true

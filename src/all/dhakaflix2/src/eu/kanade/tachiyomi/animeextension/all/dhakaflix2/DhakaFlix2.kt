@@ -16,9 +16,9 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
+import extensions.utils.Source
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import extensions.utils.Source
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
@@ -121,7 +121,6 @@ class DhakaFlix2(
             return response
         }
     }
-
 
     private val searchCache = mutableMapOf<String, List<SAnime>>()
     private val cacheTime = mutableMapOf<String, Long>()
