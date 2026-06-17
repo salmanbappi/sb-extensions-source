@@ -57,12 +57,12 @@ abstract class Source : ConfigurableAnimeSource, AnimeHttpSource() {
     open fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        return listOf(Hoster("Default", episode.url))
+        return listOf(Hoster(hosterName = "Default", hosterUrl = episode.url))
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val episode = SEpisode.create().apply {
-            url = hoster.url
+            url = hoster.hosterUrl
         }
         return getVideoList(episode)
     }
