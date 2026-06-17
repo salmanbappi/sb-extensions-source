@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
+import extensions.utils.Source
 import extensions.utils.asJsoup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -42,8 +43,6 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
-
-import extensions.utils.Source
 
 class FtpBd(
     override val name: String,

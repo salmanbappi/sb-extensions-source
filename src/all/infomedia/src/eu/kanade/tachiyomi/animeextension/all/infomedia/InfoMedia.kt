@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import extensions.utils.Source
 import extensions.utils.asJsoup
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -24,8 +25,6 @@ import org.jsoup.nodes.Element
 import uy.kohesive.injekt.injectLazy
 import java.net.URLDecoder
 import java.net.URLEncoder
-
-import extensions.utils.Source
 
 class InfoMedia : Source() {
 
