@@ -4,11 +4,10 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
-import extensions.utils.commonEmptyHeaders
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 
-class VidMolyExtractor(private val client: OkHttpClient, headers: Headers = commonEmptyHeaders) {
+class VidMolyExtractor(private val client: OkHttpClient, headers: Headers = Headers.headersOf()) {
 
     private val baseUrl = "https://vidmoly.to"
 
