@@ -337,7 +337,7 @@ class Anivix : Source() {
         }
 
         val preferredServer = getPreferredServer()
-        videos.sortBy { !it.quality.contains(preferredServer, ignoreCase = true) }
+        videos.sortBy { !it.videoTitle.contains(preferredServer, ignoreCase = true) }
 
         return videos
     }

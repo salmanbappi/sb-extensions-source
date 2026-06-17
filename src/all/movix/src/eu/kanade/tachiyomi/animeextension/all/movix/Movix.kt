@@ -46,6 +46,13 @@ class Movix : Source() {
 
     private val playlistUtils by lazy { PlaylistUtils(hlsClient, headers) }
 
+    private val preferences: SharedPreferences by lazy {
+        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
+    }
+
+    private fun getPreferredServer(): String = preferences.getString("pref_preferred_server", "VidLink") ?: "VidLink"
+    private fun getPreferredQuality(): String = preferences.getString("pref_preferred_quality", "1080p") ?: "1080p"
+
     override val json: Json by lazy {
         Json {
             ignoreUnknownKeys = true
