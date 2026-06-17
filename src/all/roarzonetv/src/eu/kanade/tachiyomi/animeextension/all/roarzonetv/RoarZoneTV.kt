@@ -99,7 +99,7 @@ class RoarZoneTV :
             ?: Regex("""source src=['"](.*?)['"]""").find(html)?.groupValues?.get(1)
             ?: throw Exception("Could not find stream URL")
 
-        return listOf(Video(streamUrl, "Live Stream", streamUrl))
+        return listOf(Video(videoUrl = streamUrl, videoTitle = "Live Stream"))
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
