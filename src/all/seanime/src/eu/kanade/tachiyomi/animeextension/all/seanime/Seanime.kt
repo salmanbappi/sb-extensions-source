@@ -283,6 +283,7 @@ class Seanime :
     override val json = Json {
         isLenient = true
         ignoreUnknownKeys = true
+        coerceInputValues = true
     }
 
     private var cachedHeaders: okhttp3.Headers? = null
@@ -724,7 +725,7 @@ class Seanime :
 
                     return list.sortedWith(
                         compareByDescending<Video> { it.videoTitle.contains(preferredQuality, ignoreCase = true) }
-                            .thenByDescending { it.videoTitle.contains(preferredServer, ignoreCase = true) },
+                            .thenByDescending { preferredServer.isNotBlank() && it.videoTitle.contains(preferredServer, ignoreCase = true) },
                     )
                 } else {
                     response.close()
@@ -807,7 +808,7 @@ class Seanime :
                 arrayOf(
                     "Local Files — play downloaded files from your library",
                     "Torrent Stream — stream via Seanime's torrent client",
-                    "Online Stream — stream from online providers (e.g. GogoAnime)",
+                    "Online Stream — stream from online providers",
                 )
             entryValues = arrayOf(MODE_LOCAL, MODE_TORRENT, MODE_ONLINE)
             setDefaultValue(DEFAULT_STREAMING_MODE)
@@ -818,14 +819,15 @@ class Seanime :
         EditTextPreference(screen.context).apply {
             key = PREF_PREFERRED_PROVIDER
             title = "[Online] Provider ID"
-            summary =
-                preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)
-                    ?.let { "Current: $it" } ?: DEFAULT_PREFERRED_PROVIDER
+            summary = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER).let {
+                if (it.isNullOrBlank()) "Not set" else "Current: $it"
+            }
             setDefaultValue(DEFAULT_PREFERRED_PROVIDER)
             dialogTitle = "Online Stream Provider"
-            dialogMessage = "The provider extension ID used for online streaming.\nExamples: gogoanime, zoro, 9anime"
+            dialogMessage = "The provider extension ID used for online streaming."
             setOnPreferenceChangeListener { pref, newValue ->
-                pref.summary = "Current: ${(newValue as String).trim()}"
+                val value = (newValue as String).trim()
+                pref.summary = if (value.isBlank()) "Not set" else "Current: $value"
                 true
             }
         }.also(screen::addPreference)
@@ -842,14 +844,15 @@ class Seanime :
         EditTextPreference(screen.context).apply {
             key = PREF_PREFERRED_SERVER
             title = "[Online] Preferred Server Keyword"
-            summary =
-                preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)
-                    ?.let { "Current: $it" } ?: DEFAULT_PREFERRED_SERVER
+            summary = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER).let {
+                if (it.isNullOrBlank()) "Not set" else "Current: $it"
+            }
             setDefaultValue(DEFAULT_PREFERRED_SERVER)
             dialogTitle = "Preferred Server"
-            dialogMessage = "Keyword matching your preferred CDN/server name.\nExamples: gogoplay, streamsb, vidstreaming"
+            dialogMessage = "Keyword matching your preferred server name."
             setOnPreferenceChangeListener { pref, newValue ->
-                pref.summary = "Current: ${(newValue as String).trim()}"
+                val value = (newValue as String).trim()
+                pref.summary = if (value.isBlank()) "Not set" else "Current: $value"
                 true
             }
         }.also(screen::addPreference)
@@ -879,10 +882,10 @@ class Seanime :
         private const val DEFAULT_PREFERRED_QUALITY = "Source"
 
         private const val PREF_PREFERRED_SERVER = "pref_preferred_server"
-        private const val DEFAULT_PREFERRED_SERVER = "gogoplay"
+        private const val DEFAULT_PREFERRED_SERVER = ""
 
         private const val PREF_PREFERRED_PROVIDER = "pref_preferred_provider"
-        private const val DEFAULT_PREFERRED_PROVIDER = "gogoanime"
+        private const val DEFAULT_PREFERRED_PROVIDER = ""
 
         private const val PREF_DUBBED = "pref_dubbed"
         private const val DEFAULT_DUBBED = false
