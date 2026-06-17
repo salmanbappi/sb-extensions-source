@@ -36,7 +36,7 @@ android {
         targetSdk 34
         applicationId pkgName
         versionCode theme == null ? extVersionCode : theme.baseVersionCode + overrideVersionCode
-        versionName "14.$versionCode"
+        versionName "16.$versionCode"
         base {
             archivesName = "aniyomi-${project.parent.name}.${project.name}-v$versionName"
         }
