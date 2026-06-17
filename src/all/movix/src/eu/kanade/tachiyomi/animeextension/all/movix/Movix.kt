@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -44,7 +45,7 @@ class Movix :
     override val supportsLatest = true
     override val id: Long = 5181466391484419901L
 
-    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val playlistUtils by lazy { PlaylistUtils(hlsClient, headers) }
 
     private val preferences: SharedPreferences by lazy {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0)
@@ -62,7 +63,19 @@ class Movix :
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(MovixInterceptor(network.client.cookieJar))
+        .dispatcher(okhttp3.Dispatcher().apply {
+            maxRequestsPerHost = 30
+            maxRequests = 100
+        })
         .build()
+
+    private val hlsClient by lazy {
+        client.newBuilder()
+            .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -350,92 +363,94 @@ class Movix :
         )
     }
 
-    private fun parseServerVideos(responseBody: String, serverName: String): List<Video> {
-        val videos = mutableListOf<Video>()
-        try {
-            val res = json.decodeFromString<ServerResponse>(responseBody)
-            if (res.success == true || res.url != null) {
-                // 1. Check direct qualities map (e.g. vidking, xpass)
-                if (res.qualities != null && res.qualities.isNotEmpty()) {
-                    res.qualities.forEach { (quality, qUrl) ->
-                        videos.addAll(extractVideos(qUrl, "$serverName - $quality"))
+    private suspend fun parseServerVideos(responseBody: String, serverName: String): List<Video> {
+        return coroutineScope {
+            val deferredVideos = mutableListOf<Deferred<List<Video>>>()
+            try {
+                val res = json.decodeFromString<ServerResponse>(responseBody)
+                if (res.success == true || res.url != null) {
+                    // 1. Check direct qualities map (e.g. vidking, xpass)
+                    if (res.qualities != null && res.qualities.isNotEmpty()) {
+                        res.qualities.forEach { (quality, qUrl) ->
+                            deferredVideos.add(async { extractVideos(qUrl, "$serverName - $quality") })
+                        }
                     }
-                }
 
-                // 2. Check stream_urls list (e.g. vaplayer)
-                if (res.stream_urls != null && res.stream_urls.isNotEmpty()) {
-                    res.stream_urls.forEachIndexed { index, qUrl ->
-                        videos.addAll(extractVideos(qUrl, "$serverName - Mirror ${index + 1}"))
+                    // 2. Check stream_urls list (e.g. vaplayer)
+                    if (res.stream_urls != null && res.stream_urls.isNotEmpty()) {
+                        res.stream_urls.forEachIndexed { index, qUrl ->
+                            deferredVideos.add(async { extractVideos(qUrl, "$serverName - Mirror ${index + 1}") })
+                        }
                     }
-                }
 
-                // 3. Check sources as Object Map (e.g. VidKing ES)
-                val sourceMap = if (res.sources != null && res.sources is JsonObject) {
-                    try {
-                        json.decodeFromJsonElement<Map<String, String>>(res.sources)
-                    } catch (e: Exception) {
+                    // 3. Check sources as Object Map (e.g. VidKing ES)
+                    val sourceMap = if (res.sources != null && res.sources is JsonObject) {
+                        try {
+                            json.decodeFromJsonElement<Map<String, String>>(res.sources)
+                        } catch (e: Exception) {
+                            null
+                        }
+                    } else {
                         null
                     }
-                } else {
-                    null
-                }
-                if (sourceMap != null && sourceMap.isNotEmpty()) {
-                    sourceMap.forEach { (quality, qUrl) ->
-                        videos.addAll(extractVideos(qUrl, "$serverName - $quality"))
+                    if (sourceMap != null && sourceMap.isNotEmpty()) {
+                        sourceMap.forEach { (quality, qUrl) ->
+                            deferredVideos.add(async { extractVideos(qUrl, "$serverName - $quality") })
+                        }
                     }
-                }
 
-                // 4. Check sources as Array List (e.g. vkmovie, autoembed)
-                val sourceList = if (res.sources != null && res.sources is JsonArray) {
-                    try {
-                        json.decodeFromJsonElement<List<SourceItem>>(res.sources)
-                    } catch (e: Exception) {
+                    // 4. Check sources as Array List (e.g. vkmovie, autoembed)
+                    val sourceList = if (res.sources != null && res.sources is JsonArray) {
+                        try {
+                            json.decodeFromJsonElement<List<SourceItem>>(res.sources)
+                        } catch (e: Exception) {
+                            null
+                        }
+                    } else {
                         null
                     }
-                } else {
-                    null
-                }
-                if (sourceList != null && sourceList.isNotEmpty()) {
-                    sourceList.forEachIndexed { index, source ->
-                        val baseLabel = source.label ?: source.server ?: "Mirror ${index + 1}"
-                        var label = "$serverName ($baseLabel)"
+                    if (sourceList != null && sourceList.isNotEmpty()) {
+                        sourceList.forEach { source ->
+                            val baseLabel = source.label ?: source.server ?: "Mirror"
+                            var label = "$serverName ($baseLabel)"
 
-                        val details = mutableListOf<String>()
-                        if (!source.language.isNullOrEmpty()) {
-                            details.add(source.language)
-                        } else if (!source.flag.isNullOrEmpty()) {
-                            details.add(source.flag.uppercase())
-                        }
-                        if (!source.title.isNullOrEmpty()) {
-                            details.add(source.title)
-                        }
-                        if (details.isNotEmpty()) {
-                            label += " [${details.joinToString(" - ")}]"
-                        }
+                            val details = mutableListOf<String>()
+                            if (!source.language.isNullOrEmpty()) {
+                                details.add(source.language)
+                            } else if (!source.flag.isNullOrEmpty()) {
+                                details.add(source.flag.uppercase())
+                            }
+                            if (!source.title.isNullOrEmpty()) {
+                                details.add(source.title)
+                            }
+                            if (details.isNotEmpty()) {
+                                label += " [${details.joinToString(" - ")}]"
+                            }
 
-                        val sUrl = source.url ?: source.link ?: source.stream_url
-                        if (sUrl != null) {
-                            if (source.qualities != null && source.qualities.isNotEmpty()) {
-                                source.qualities.forEach { (quality, qUrl) ->
-                                    videos.addAll(extractVideos(qUrl, "$label - $quality"))
+                            val sUrl = source.url ?: source.link ?: source.stream_url
+                            if (sUrl != null) {
+                                if (source.qualities != null && source.qualities.isNotEmpty()) {
+                                    source.qualities.forEach { (quality, qUrl) ->
+                                        deferredVideos.add(async { extractVideos(qUrl, "$label - $quality") })
+                                    }
+                                } else {
+                                    deferredVideos.add(async { extractVideos(sUrl, label) })
                                 }
-                            } else {
-                                videos.addAll(extractVideos(sUrl, label))
                             }
                         }
                     }
-                }
 
-                // 5. Fallback/Standard single url (e.g. vidlink, autoembed)
-                val fallbackUrl = res.url ?: res.stream_url
-                if (fallbackUrl != null && videos.isEmpty()) {
-                    videos.addAll(extractVideos(fallbackUrl, serverName))
+                    // 5. Fallback/Standard single url (e.g. vidlink, autoembed)
+                    val fallbackUrl = res.url ?: res.stream_url
+                    if (fallbackUrl != null && deferredVideos.isEmpty()) {
+                        deferredVideos.add(async { extractVideos(fallbackUrl, serverName) })
+                    }
                 }
+            } catch (e: Exception) {
+                // ignore parsing errors for this server
             }
-        } catch (e: Exception) {
-            // ignore parsing errors for this server
+            deferredVideos.awaitAll().flatten()
         }
-        return videos
     }
 
     private fun extractVideos(playlistUrl: String, label: String): List<Video> {
