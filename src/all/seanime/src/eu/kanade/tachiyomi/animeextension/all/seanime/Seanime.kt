@@ -702,7 +702,7 @@ class Seanime :
                     summary = ep.description
                     preview_url = ep.image
                 }
-            }.reversed()
+            }.sortedByDescending { it.episode_number }
         } else if (mode == MODE_LOCAL) {
             val response = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
             if (response.isSuccessful) {
@@ -724,7 +724,7 @@ class Seanime :
                         summary = ep.episodeMetadata?.summary
                         preview_url = ep.episodeMetadata?.image
                     }
-                }.reversed()
+                }.sortedByDescending { it.episode_number }
             } else {
                 response.close()
                 throw Exception("This title is not in your Seanime library. Add it to your library or switch to 'Online Stream' mode in extension settings.")
@@ -748,7 +748,7 @@ class Seanime :
                             summary = ep.episodeMetadata?.summary
                             preview_url = ep.episodeMetadata?.image
                         }
-                    }.reversed()
+                    }.sortedByDescending { it.episode_number }
                 }
 
                 // Fall back to entryDto.data.episodes
@@ -767,7 +767,7 @@ class Seanime :
                         summary = ep.episodeMetadata?.summary
                         preview_url = ep.episodeMetadata?.image
                     }
-                }.reversed()
+                }.sortedByDescending { it.episode_number }
             } else {
                 response.close()
                 throw Exception("Failed to fetch details from Seanime server. Make sure the server is running and accessible.")
