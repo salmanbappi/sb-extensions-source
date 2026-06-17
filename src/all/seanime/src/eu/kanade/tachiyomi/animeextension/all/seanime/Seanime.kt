@@ -1,13 +1,14 @@
 package eu.kanade.tachiyomi.animeextension.all.seanime
 
-import android.app.Application
-import android.content.SharedPreferences
+import android.content.Context
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
+import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.UnmeteredSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -160,6 +161,13 @@ data class AniListData(
 @Serializable
 data class AniListPage(
     val media: List<AniListMedia>,
+    val pageInfo: AniListPageInfo? = null,
+)
+
+@Serializable
+data class AniListPageInfo(
+    val hasNextPage: Boolean = false,
+    val currentPage: Int = 1,
 )
 
 @Serializable
@@ -170,6 +178,84 @@ data class AniListMedia(
     val description: String? = null,
     val genres: List<String> = emptyList(),
     val status: String? = null,
+    val format: String? = null,
+    val season: String? = null,
+    val seasonYear: Int? = null,
+    val episodes: Int? = null,
+    val averageScore: Int? = null,
+)
+
+// ============================== FILTERS ==============================
+
+class StatusFilter : AnimeFilter.Select<String>(
+    "Status",
+    arrayOf("Any", "Currently Airing", "Finished", "Not Yet Aired", "Cancelled"),
+    0,
+) {
+    val toAniList get() = when (values[state]) {
+        "Currently Airing" -> "RELEASING"
+        "Finished" -> "FINISHED"
+        "Not Yet Aired" -> "NOT_YET_RELEASED"
+        "Cancelled" -> "CANCELLED"
+        else -> null
+    }
+    private val values = arrayOf("Any", "Currently Airing", "Finished", "Not Yet Aired", "Cancelled")
+}
+
+class FormatFilter : AnimeFilter.Select<String>(
+    "Format",
+    arrayOf("Any", "TV", "TV Short", "Movie", "Special", "OVA", "ONA", "Music"),
+    0,
+) {
+    val toAniList get() = when (values[state]) {
+        "TV" -> "TV"
+        "TV Short" -> "TV_SHORT"
+        "Movie" -> "MOVIE"
+        "Special" -> "SPECIAL"
+        "OVA" -> "OVA"
+        "ONA" -> "ONA"
+        "Music" -> "MUSIC"
+        else -> null
+    }
+    private val values = arrayOf("Any", "TV", "TV Short", "Movie", "Special", "OVA", "ONA", "Music")
+}
+
+class SeasonFilter : AnimeFilter.Select<String>(
+    "Season",
+    arrayOf("Any", "Winter", "Spring", "Summer", "Fall"),
+    0,
+) {
+    val toAniList get() = when (values[state]) {
+        "Winter" -> "WINTER"
+        "Spring" -> "SPRING"
+        "Summer" -> "SUMMER"
+        "Fall" -> "FALL"
+        else -> null
+    }
+    private val values = arrayOf("Any", "Winter", "Spring", "Summer", "Fall")
+}
+
+class SeasonYearFilter : AnimeFilter.Text("Season Year", "")
+
+class SortFilter : AnimeFilter.Select<String>(
+    "Sort By",
+    arrayOf("Popularity", "Score", "Trending", "Newest", "Title"),
+    0,
+) {
+    val toAniList get() = when (values[state]) {
+        "Score" -> "SCORE_DESC"
+        "Trending" -> "TRENDING_DESC"
+        "Newest" -> "START_DATE_DESC"
+        "Title" -> "TITLE_ROMAJI"
+        else -> "POPULARITY_DESC"
+    }
+    private val values = arrayOf("Popularity", "Score", "Trending", "Newest", "Title")
+}
+
+class GenreFilter(genres: Array<String>) : AnimeFilter.Select<String>(
+    "Genre",
+    genres,
+    0,
 )
 
 // ============================== MAIN EXTENSION CLASS ==============================
@@ -181,7 +267,7 @@ class Seanime :
 
     override val name = "Seanime"
     override val lang = "all"
-    override val supportsLatest = false
+    override val supportsLatest = true
     override val id: Long = 85274903847291047L
 
     override val baseUrl: String
@@ -192,7 +278,6 @@ class Seanime :
         ignoreUnknownKeys = true
     }
 
-    // Cache to prevent repetitive mappings during sorting
     private var cachedHeaders: okhttp3.Headers? = null
     private var lastPassword = ""
 
@@ -243,7 +328,7 @@ class Seanime :
             else -> SAnime.UNKNOWN
         }
         season_number = parseSeasonNumber(animeTitle)
-        url = mediaId.toString()
+        url = "library:$mediaId"
         initialized = true
     }
 
@@ -262,38 +347,58 @@ class Seanime :
             else -> SAnime.UNKNOWN
         }
         season_number = parseSeasonNumber(animeTitle)
-        url = id.toString()
+        url = "anilist:$id"
         initialized = true
     }
 
     // ============================== SOURCE INTERFACE OVERRIDES ==============================
 
+    /**
+     * Popular = AniList trending/popular anime (always has results, no local library needed)
+     */
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val headers = getSeanimeHeaders()
-        val response = client.newCall(GET("$baseUrl/api/v1/library/collection", headers)).await()
-        if (response.isSuccessful) {
-            val collection = response.parseAs<LibraryCollectionDto>(json)
-            val animeList = collection.lists.flatMap { list ->
-                list.entries.map { it.toSAnime() }
-            }.distinctBy { it.url }
-            return AnimesPage(animeList, false)
-        } else {
-            response.close()
-            throw Exception("Failed to fetch library collection (Code: ${response.code})")
+        val showLibrary = preferences.getBoolean(PREF_SHOW_LIBRARY_IN_BROWSE, DEFAULT_SHOW_LIBRARY_IN_BROWSE)
+
+        if (showLibrary) {
+            val headers = getSeanimeHeaders()
+            val response = client.newCall(GET("$baseUrl/api/v1/library/collection", headers)).await()
+            if (response.isSuccessful) {
+                val collection = response.parseAs<LibraryCollectionDto>(json)
+                val animeList = collection.lists.flatMap { list ->
+                    list.entries.map { it.toSAnime() }
+                }.distinctBy { it.url }
+                // If library is non-empty, show it; otherwise fall back to AniList popular
+                if (animeList.isNotEmpty()) {
+                    return AnimesPage(animeList, false)
+                }
+            } else {
+                response.close()
+            }
         }
+
+        // Fall back to AniList popular
+        return fetchAniListPage(page, sortBy = "POPULARITY_DESC")
     }
 
-    override suspend fun getLatestUpdates(page: Int): AnimesPage = getPopularAnime(page)
+    /**
+     * Latest = Currently airing anime from AniList (always has results)
+     */
+    override suspend fun getLatestUpdates(page: Int): AnimesPage {
+        return fetchAniListPage(page, sortBy = "START_DATE_DESC", status = "RELEASING")
+    }
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        if (query.isBlank()) {
-            return getPopularAnime(page)
-        }
+        val statusFilter = filters.filterIsInstance<StatusFilter>().firstOrNull()
+        val formatFilter = filters.filterIsInstance<FormatFilter>().firstOrNull()
+        val seasonFilter = filters.filterIsInstance<SeasonFilter>().firstOrNull()
+        val seasonYearFilter = filters.filterIsInstance<SeasonYearFilter>().firstOrNull()
+        val sortFilter = filters.filterIsInstance<SortFilter>().firstOrNull()
+        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
 
         val mode = preferences.getString(PREF_STREAMING_MODE, DEFAULT_STREAMING_MODE)!!
-        if (mode == MODE_ONLINE) {
-            return searchAniList(page, query)
-        } else {
+
+        // If in local mode AND query is set AND no other filters, search local library
+        if (query.isNotBlank() && mode != MODE_ONLINE) {
             val headers = getSeanimeHeaders()
             val response = client.newCall(GET("$baseUrl/api/v1/library/collection", headers)).await()
             if (response.isSuccessful) {
@@ -304,102 +409,184 @@ class Seanime :
                     anime.title.contains(query, ignoreCase = true) ||
                         (anime.genre?.contains(query, ignoreCase = true) == true)
                 }
-                return AnimesPage(filteredList, false)
+                if (filteredList.isNotEmpty()) {
+                    return AnimesPage(filteredList, false)
+                }
             } else {
                 response.close()
-                throw Exception("Failed to search library collection (Code: ${response.code})")
             }
         }
+
+        // Use AniList for broader search (always works)
+        return fetchAniListPage(
+            page = page,
+            query = query.ifBlank { null },
+            sortBy = sortFilter?.toAniList ?: "POPULARITY_DESC",
+            status = statusFilter?.toAniList,
+            format = formatFilter?.toAniList,
+            season = seasonFilter?.toAniList,
+            seasonYear = seasonYearFilter?.state?.toIntOrNull(),
+            genre = if ((genreFilter?.state ?: 0) > 0) GENRE_LIST.getOrNull((genreFilter?.state ?: 0)) else null,
+        )
     }
 
-    private suspend fun searchAniList(page: Int, query: String): AnimesPage {
-        val graphQLQuery = """
-            query (${'$'}search: String, ${'$'}page: Int) {
-              Page (page: ${'$'}page, perPage: 20) {
-                media (search: ${'$'}search, type: ANIME) {
-                  id
-                  title {
-                    userPreferred
-                    english
-                    romaji
-                  }
-                  coverImage {
-                    large
-                  }
-                  description
-                  status
-                  genres
-                }
-              }
-            }
-        """.trimIndent()
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        AnimeFilter.Header("Filter results using AniList"),
+        SortFilter(),
+        StatusFilter(),
+        FormatFilter(),
+        GenreFilter(arrayOf("Any") + GENRE_LIST),
+        SeasonFilter(),
+        SeasonYearFilter(),
+    )
 
-        val bodyJson = buildJsonObject {
-            put("query", graphQLQuery)
-            put(
-                "variables",
-                buildJsonObject {
-                    put("search", query)
-                    put("page", page)
-                },
-            )
+    private suspend fun fetchAniListPage(
+        page: Int,
+        query: String? = null,
+        sortBy: String = "POPULARITY_DESC",
+        status: String? = null,
+        format: String? = null,
+        season: String? = null,
+        seasonYear: Int? = null,
+        genre: String? = null,
+    ): AnimesPage {
+        val graphQLQuery = buildString {
+            append("query (")
+            append("\$page: Int, \$perPage: Int, ")
+            if (query != null) append("\$search: String, ")
+            if (status != null) append("\$status: MediaStatus, ")
+            if (format != null) append("\$format: MediaFormat, ")
+            if (season != null) append("\$season: MediaSeason, ")
+            if (seasonYear != null) append("\$seasonYear: Int, ")
+            if (genre != null) append("\$genre: String, ")
+            append("\$sort: [MediaSort]")
+            append(") {\n")
+            append("  Page(page: \$page, perPage: \$perPage) {\n")
+            append("    pageInfo { hasNextPage currentPage }\n")
+            append("    media(\n")
+            append("      type: ANIME\n")
+            if (query != null) append("      search: \$search\n")
+            if (status != null) append("      status: \$status\n")
+            if (format != null) append("      format: \$format\n")
+            if (season != null) append("      season: \$season\n")
+            if (seasonYear != null) append("      seasonYear: \$seasonYear\n")
+            if (genre != null) append("      genre: \$genre\n")
+            append("      sort: \$sort\n")
+            append("      isAdult: false\n")
+            append("    ) {\n")
+            append("      id\n")
+            append("      title { userPreferred english romaji }\n")
+            append("      coverImage { large }\n")
+            append("      description\n")
+            append("      genres\n")
+            append("      status\n")
+            append("      format\n")
+            append("      season\n")
+            append("      seasonYear\n")
+            append("      episodes\n")
+            append("      averageScore\n")
+            append("    }\n")
+            append("  }\n")
+            append("}")
         }
 
+        // Build request body manually to properly serialize sort as a JSON array
+        val variablesParts = buildList {
+            add("\"page\":$page")
+            add("\"perPage\":20")
+            add("\"sort\":[\"$sortBy\"]")
+            if (query != null) add("\"search\":${jsonString(query)}")
+            if (status != null) add("\"status\":\"$status\"")
+            if (format != null) add("\"format\":\"$format\"")
+            if (season != null) add("\"season\":\"$season\"")
+            if (seasonYear != null) add("\"seasonYear\":$seasonYear")
+            if (genre != null) add("\"genre\":${jsonString(genre)}")
+        }
+        val variablesJson = "{${variablesParts.joinToString(",")}}"
+
+        // Escape the query for embedding in JSON string
+        val escapedQuery = graphQLQuery
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+
+        val bodyRaw = "{\"query\":\"$escapedQuery\",\"variables\":$variablesJson}"
+
         val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
-        val requestBody = bodyJson.toString().toRequestBody(mediaType)
+        val requestBody = bodyRaw.toRequestBody(mediaType)
 
         val response = client.newCall(
             okhttp3.Request.Builder()
                 .url("https://graphql.anilist.co")
                 .post(requestBody)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
                 .build(),
         ).await()
 
         if (response.isSuccessful) {
             val aniListResponse = response.parseAs<AniListResponse>(json)
             val list = aniListResponse.data.Page.media.map { it.toSAnime() }
-            return AnimesPage(list, list.size >= 20)
+            val hasNext = aniListResponse.data.Page.pageInfo?.hasNextPage ?: (list.size >= 20)
+            return AnimesPage(list, hasNext)
         } else {
             response.close()
-            throw Exception("Failed to search AniList (Code: ${response.code})")
+            throw Exception("Failed to fetch from AniList (Code: ${response.code})")
         }
     }
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val mediaId = anime.url.toInt()
-        val headers = getSeanimeHeaders()
-        val response = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
-        if (response.isSuccessful) {
-            val entryDto = response.parseAs<AnimeEntryResponseDto>(json)
-            val media = entryDto.data.media
-            return SAnime.create().apply {
-                val animeTitle = media.title?.userPreferred
-                    ?: media.title?.english
-                    ?: media.title?.romaji
-                    ?: "Anime $mediaId"
-                title = animeTitle
-                thumbnail_url = media.coverImage?.large ?: media.coverImage?.medium
-                description = media.description
-                genre = media.genres.joinToString(", ")
-                status = when (media.status?.uppercase()) {
-                    "FINISHED" -> SAnime.COMPLETED
-                    "RELEASING" -> SAnime.ONGOING
-                    else -> SAnime.UNKNOWN
+        val url = anime.url
+
+        // If this is a local library entry
+        if (url.startsWith("library:")) {
+            val mediaId = url.removePrefix("library:").toInt()
+            val headers = getSeanimeHeaders()
+            val response = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
+            if (response.isSuccessful) {
+                val entryDto = response.parseAs<AnimeEntryResponseDto>(json)
+                val media = entryDto.data.media
+                return SAnime.create().apply {
+                    val animeTitle = media.title?.userPreferred
+                        ?: media.title?.english
+                        ?: media.title?.romaji
+                        ?: "Anime $mediaId"
+                    title = animeTitle
+                    thumbnail_url = media.coverImage?.large ?: media.coverImage?.medium
+                    description = media.description
+                    genre = media.genres.joinToString(", ")
+                    status = when (media.status?.uppercase()) {
+                        "FINISHED" -> SAnime.COMPLETED
+                        "RELEASING" -> SAnime.ONGOING
+                        else -> SAnime.UNKNOWN
+                    }
+                    season_number = parseSeasonNumber(animeTitle)
+                    this.url = "library:$mediaId"
+                    initialized = true
                 }
-                season_number = parseSeasonNumber(animeTitle)
-                url = mediaId.toString()
-                initialized = true
+            } else {
+                response.close()
+                return anime
             }
-        } else {
-            response.close()
-            return anime
         }
+
+        // AniList entry - details are already populated
+        return anime
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val mediaId = anime.url.toInt()
+        val url = anime.url
         val mode = preferences.getString(PREF_STREAMING_MODE, DEFAULT_STREAMING_MODE)!!
         val headers = getSeanimeHeaders()
+
+        // Resolve mediaId - for anilist entries, try library first, then online
+        val mediaId: Int = when {
+            url.startsWith("library:") -> url.removePrefix("library:").toInt()
+            url.startsWith("anilist:") -> url.removePrefix("anilist:").toInt()
+            else -> url.toIntOrNull() ?: throw Exception("Invalid anime URL: $url")
+        }
 
         if (mode == MODE_ONLINE) {
             val provider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)!!
@@ -415,7 +602,7 @@ class Seanime :
                 val epListResponse = response.parseAs<OnlineEpisodeListResponseDto>(json)
                 return epListResponse.data.episodes.map { ep ->
                     SEpisode.create().apply {
-                        url = "online:$mediaId:${ep.number}:$provider:$dubbed"
+                        this.url = "online:$mediaId:${ep.number}:$provider:$dubbed"
                         name = ep.title.ifBlank { "Episode ${ep.number}" }
                         episode_number = ep.number.toFloat()
                     }
@@ -436,12 +623,16 @@ class Seanime :
                     allEpisodes
                 }
 
+                if (filteredEpisodes.isEmpty()) {
+                    throw Exception("No episodes found in library for this title. Try switching to 'Online Stream' mode in extension settings.")
+                }
+
                 return filteredEpisodes.map { ep ->
                     SEpisode.create().apply {
                         if (mode == MODE_LOCAL) {
-                            url = "local:${ep.localFile?.path}"
+                            this.url = "local:${ep.localFile?.path}"
                         } else {
-                            url = "torrent:$mediaId:${ep.episodeNumber}:${ep.episodeNumber}"
+                            this.url = "torrent:$mediaId:${ep.episodeNumber}:${ep.episodeNumber}"
                         }
                         val epName = ep.displayTitle ?: "Episode ${ep.episodeNumber}"
                         val epSubTitle = ep.episodeTitle
@@ -453,7 +644,7 @@ class Seanime :
                 }.reversed()
             } else {
                 response.close()
-                throw Exception("Failed to fetch library entry (Code: ${response.code})")
+                throw Exception("This title is not in your Seanime library. Add it to your library or switch to 'Online Stream' mode in extension settings.")
             }
         }
     }
@@ -542,70 +733,147 @@ class Seanime :
 
     private suspend fun okhttp3.Call.await(): Response = withContext(Dispatchers.IO) { execute() }
 
+    /** Safely encodes a string as a JSON string literal including surrounding quotes */
+    private fun jsonString(value: String): String {
+        val escaped = value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+        return "\"$escaped\""
+    }
+
     // ============================== PREFERENCES SETUP ==============================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        EditTextPreference(screen.context).apply {
-            key = PREF_BASE_URL
-            title = "Base URL"
-            summary = "Seanime Server URL (default: http://127.0.0.1:43211)"
-            setDefaultValue(DEFAULT_BASE_URL)
-            setOnPreferenceChangeListener { _, newValue ->
-                try {
-                    val newUrl = (newValue as String).trim()
-                    newUrl.removeSuffix("/")
+        // ── Server Settings ──────────────────────────────────────────────
+        PreferenceCategory(screen.context).apply {
+            title = "🖥️  Server Connection"
+        }.also { category ->
+            screen.addPreference(category)
+
+            EditTextPreference(screen.context).apply {
+                key = PREF_BASE_URL
+                title = "Server URL"
+                summary = preferences.getString(PREF_BASE_URL, DEFAULT_BASE_URL)
+                    ?.let { "Current: $it\nTap to change" }
+                    ?: "Tap to set your Seanime server address"
+                setDefaultValue(DEFAULT_BASE_URL)
+                dialogTitle = "Seanime Server URL"
+                dialogMessage = "Enter the full URL of your Seanime server.\nExample: http://192.168.1.10:43211"
+                setOnPreferenceChangeListener { pref, newValue ->
+                    val newUrl = (newValue as String).trim().removeSuffix("/")
+                    pref.summary = "Current: $newUrl\nTap to change"
                     true
-                } catch (e: Exception) {
-                    false
                 }
-            }
-        }.also(screen::addPreference)
+            }.also(category::addPreference)
 
-        EditTextPreference(screen.context).apply {
-            key = PREF_SERVER_PASSWORD
-            title = "Server Password"
-            summary = "Password of the Seanime server (leave blank if none)"
-            setDefaultValue(DEFAULT_SERVER_PASSWORD)
-        }.also(screen::addPreference)
+            EditTextPreference(screen.context).apply {
+                key = PREF_SERVER_PASSWORD
+                title = "Server Password"
+                summary = if (preferences.getString(PREF_SERVER_PASSWORD, DEFAULT_SERVER_PASSWORD).isNullOrBlank()) {
+                    "Not set (tap to add)"
+                } else {
+                    "Password is set (tap to change)"
+                }
+                setDefaultValue(DEFAULT_SERVER_PASSWORD)
+                dialogTitle = "Server Password"
+                dialogMessage = "Leave empty if your Seanime server has no password."
+                setOnPreferenceChangeListener { pref, newValue ->
+                    val v = (newValue as String).trim()
+                    pref.summary = if (v.isBlank()) "Not set (tap to add)" else "Password is set (tap to change)"
+                    cachedHeaders = null // Invalidate cached headers
+                    true
+                }
+            }.also(category::addPreference)
+        }
 
-        ListPreference(screen.context).apply {
-            key = PREF_STREAMING_MODE
-            title = "Streaming Mode"
-            entries = arrayOf("Local Library Only", "Torrent Stream", "Online Stream")
-            entryValues = arrayOf(MODE_LOCAL, MODE_TORRENT, MODE_ONLINE)
-            setDefaultValue(DEFAULT_STREAMING_MODE)
-            summary = "%s"
-        }.also(screen::addPreference)
+        // ── Browsing ─────────────────────────────────────────────────────
+        PreferenceCategory(screen.context).apply {
+            title = "🔍  Browsing"
+        }.also { category ->
+            screen.addPreference(category)
 
-        ListPreference(screen.context).apply {
-            key = PREF_PREFERRED_QUALITY
-            title = "Preferred Quality (Online Stream)"
-            entries = arrayOf("Source", "1080p", "720p", "480p", "360p")
-            entryValues = arrayOf("Source", "1080p", "720p", "480p", "360p")
-            setDefaultValue(DEFAULT_PREFERRED_QUALITY)
-            summary = "%s"
-        }.also(screen::addPreference)
+            SwitchPreferenceCompat(screen.context).apply {
+                key = PREF_SHOW_LIBRARY_IN_BROWSE
+                title = "Show Library in Popular Tab"
+                summary = "When ON: Popular tab shows your Seanime library (falls back to AniList if empty).\nWhen OFF: Popular tab always shows AniList trending anime."
+                setDefaultValue(DEFAULT_SHOW_LIBRARY_IN_BROWSE)
+            }.also(category::addPreference)
+        }
 
-        EditTextPreference(screen.context).apply {
-            key = PREF_PREFERRED_SERVER
-            title = "Preferred Server Keyword"
-            summary = "Preferred server/host for online streaming (e.g. gogoplay)"
-            setDefaultValue(DEFAULT_PREFERRED_SERVER)
-        }.also(screen::addPreference)
+        // ── Streaming Mode ───────────────────────────────────────────────
+        PreferenceCategory(screen.context).apply {
+            title = "▶️  Streaming Mode"
+        }.also { category ->
+            screen.addPreference(category)
 
-        EditTextPreference(screen.context).apply {
-            key = PREF_PREFERRED_PROVIDER
-            title = "Default Online Stream Provider"
-            summary = "Provider extension ID used for online streams (e.g. gogoanime)"
-            setDefaultValue(DEFAULT_PREFERRED_PROVIDER)
-        }.also(screen::addPreference)
+            ListPreference(screen.context).apply {
+                key = PREF_STREAMING_MODE
+                title = "Playback Source"
+                entries = arrayOf(
+                    "📁  Local Files Only — Play downloaded files from your library",
+                    "🧲  Torrent Stream — Stream via Seanime's built-in torrent client",
+                    "🌐  Online Stream — Stream from online providers (e.g. GogoAnime)",
+                )
+                entryValues = arrayOf(MODE_LOCAL, MODE_TORRENT, MODE_ONLINE)
+                setDefaultValue(DEFAULT_STREAMING_MODE)
+                summary = "%s"
+            }.also(category::addPreference)
+        }
 
-        SwitchPreferenceCompat(screen.context).apply {
-            key = PREF_DUBBED
-            title = "Dubbed Mode"
-            summary = "Check to request dubbed versions of online streams if available"
-            setDefaultValue(DEFAULT_DUBBED)
-        }.also(screen::addPreference)
+        // ── Online Stream Settings ───────────────────────────────────────
+        PreferenceCategory(screen.context).apply {
+            title = "🌐  Online Stream Settings"
+            dependency = null // always visible so user knows what to set before switching
+        }.also { category ->
+            screen.addPreference(category)
+
+            EditTextPreference(screen.context).apply {
+                key = PREF_PREFERRED_PROVIDER
+                title = "Online Provider ID"
+                summary = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)
+                    ?.let { "Current: $it" } ?: DEFAULT_PREFERRED_PROVIDER
+                setDefaultValue(DEFAULT_PREFERRED_PROVIDER)
+                dialogTitle = "Online Stream Provider"
+                dialogMessage = "The provider extension ID used for online streaming.\nExamples: gogoanime, zoro, 9anime"
+                setOnPreferenceChangeListener { pref, newValue ->
+                    pref.summary = "Current: ${(newValue as String).trim()}"
+                    true
+                }
+            }.also(category::addPreference)
+
+            ListPreference(screen.context).apply {
+                key = PREF_PREFERRED_QUALITY
+                title = "Preferred Quality"
+                entries = arrayOf("Source (Best)", "1080p", "720p", "480p", "360p")
+                entryValues = arrayOf("Source", "1080p", "720p", "480p", "360p")
+                setDefaultValue(DEFAULT_PREFERRED_QUALITY)
+                summary = "%s"
+            }.also(category::addPreference)
+
+            EditTextPreference(screen.context).apply {
+                key = PREF_PREFERRED_SERVER
+                title = "Preferred Server Keyword"
+                summary = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)
+                    ?.let { "Current: $it" } ?: DEFAULT_PREFERRED_SERVER
+                setDefaultValue(DEFAULT_PREFERRED_SERVER)
+                dialogTitle = "Preferred Server"
+                dialogMessage = "Enter a keyword matching your preferred CDN/server name.\nExample: gogoplay, streamsb, vidstreaming"
+                setOnPreferenceChangeListener { pref, newValue ->
+                    pref.summary = "Current: ${(newValue as String).trim()}"
+                    true
+                }
+            }.also(category::addPreference)
+
+            SwitchPreferenceCompat(screen.context).apply {
+                key = PREF_DUBBED
+                title = "Dubbed Audio"
+                summary = "Request dubbed versions of episodes when available"
+                setDefaultValue(DEFAULT_DUBBED)
+            }.also(category::addPreference)
+        }
     }
 
     companion object {
@@ -619,7 +887,7 @@ class Seanime :
         private const val MODE_LOCAL = "local"
         private const val MODE_TORRENT = "torrent"
         private const val MODE_ONLINE = "online"
-        private const val DEFAULT_STREAMING_MODE = MODE_LOCAL
+        private const val DEFAULT_STREAMING_MODE = MODE_TORRENT
 
         private const val PREF_PREFERRED_QUALITY = "pref_preferred_quality"
         private const val DEFAULT_PREFERRED_QUALITY = "Source"
@@ -632,5 +900,14 @@ class Seanime :
 
         private const val PREF_DUBBED = "pref_dubbed"
         private const val DEFAULT_DUBBED = false
+
+        private const val PREF_SHOW_LIBRARY_IN_BROWSE = "pref_show_library_in_browse"
+        private const val DEFAULT_SHOW_LIBRARY_IN_BROWSE = false
+
+        private val GENRE_LIST = arrayOf(
+            "Action", "Adventure", "Comedy", "Drama", "Ecchi", "Fantasy",
+            "Horror", "Mahou Shoujo", "Mecha", "Music", "Mystery", "Psychological",
+            "Romance", "Sci-Fi", "Slice of Life", "Sports", "Supernatural", "Thriller",
+        )
     }
 }
