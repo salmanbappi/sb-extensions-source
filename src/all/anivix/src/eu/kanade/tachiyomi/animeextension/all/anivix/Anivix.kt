@@ -47,10 +47,6 @@ class Anivix : Source() {
         }
     }
 
-    override val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
-
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(AnivixInterceptor(network.client.cookieJar))
         .build()
