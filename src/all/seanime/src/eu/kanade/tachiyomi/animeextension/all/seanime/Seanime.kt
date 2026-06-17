@@ -147,6 +147,16 @@ data class OnlineVideoSourceDto(
 )
 
 @Serializable
+data class SeanimeExtensionListResponseDto(
+    val data: List<SeanimeExtensionDto> = emptyList(),
+)
+
+@Serializable
+data class SeanimeExtensionDto(
+    val id: String,
+)
+
+@Serializable
 data class AniListResponse(
     val data: AniListData,
 )
@@ -308,6 +318,28 @@ class Seanime :
     private fun sha256(input: String): String {
         val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
         return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private suspend fun resolveProvider(headers: okhttp3.Headers, preferredProvider: String): String {
+        val trimmed = preferredProvider.trim().lowercase()
+        if (trimmed.isNotBlank()) {
+            return trimmed
+        }
+        try {
+            val response = client.newCall(GET("$baseUrl/api/v1/extensions/list/onlinestream-provider", headers)).await()
+            if (response.isSuccessful) {
+                val extListResponse = response.parseAs<SeanimeExtensionListResponseDto>(json)
+                val firstExt = extListResponse.data.firstOrNull()
+                if (firstExt != null) {
+                    return firstExt.id
+                }
+            } else {
+                response.close()
+            }
+        } catch (e: Exception) {
+            // Fallback
+        }
+        return ""
     }
 
     private fun parseSeasonNumber(title: String): Double {
@@ -595,7 +627,8 @@ class Seanime :
         }
 
         if (mode == MODE_ONLINE) {
-            val provider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)!!
+            val preferredProvider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)!!
+            val provider = resolveProvider(headers, preferredProvider)
             val dubbed = preferences.getBoolean(PREF_DUBBED, DEFAULT_DUBBED)
             val body = buildJsonObject {
                 put("mediaId", mediaId)
