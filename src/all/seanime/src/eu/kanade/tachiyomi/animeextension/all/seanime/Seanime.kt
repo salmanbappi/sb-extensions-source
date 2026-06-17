@@ -121,9 +121,9 @@ data class OnlineEpisodeListResponseDataDto(
 
 @Serializable
 data class OnlineEpisodeDto(
-    val id: String,
+    val id: String? = null,
     val number: Int,
-    val url: String,
+    val url: String? = null,
     val title: String = "",
 )
 
