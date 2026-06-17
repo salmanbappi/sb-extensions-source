@@ -25,13 +25,12 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import extensions.utils.Source
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 
-class CineplexBD :
-    AnimeHttpSource(),
-    ConfigurableAnimeSource {
+class CineplexBD : Source() {
 
     override val name = "Cineplex BD"
     override val baseUrl = "http://cineplexbd.net"
@@ -39,11 +38,7 @@ class CineplexBD :
     override val supportsLatest = true
     override val id: Long = 5181466391484419848L
 
-    private val json: Json by lazy { Injekt.get() }
 
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/search.php?q=&year[]=2026&year[]=2025&page=$page")
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/search.php?q=&page=$page")
@@ -437,7 +432,7 @@ class CineplexBD :
         val url = response.request.url.toString()
         if (url.endsWith(".mp4") || url.endsWith(".mkv") || url.contains("/Data/") || url.contains(".m3u8")) {
             val quality = if (url.contains(".m3u8")) "HLS" else "Direct"
-            return listOf(Video(url, quality, url))
+            return listOf(Video(videoUrl = url, videoTitle = quality))
         }
 
         val html = response.body.string()
@@ -453,7 +448,7 @@ class CineplexBD :
         if (!videoUrl.isNullOrBlank()) {
             val finalUrl = if (videoUrl.startsWith("http")) videoUrl else "$baseUrl/${videoUrl.trimStart('/')}"
             val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
-            return listOf(Video(finalUrl, quality, finalUrl))
+            return listOf(Video(videoUrl = finalUrl, videoTitle = quality))
         }
         return emptyList()
     }

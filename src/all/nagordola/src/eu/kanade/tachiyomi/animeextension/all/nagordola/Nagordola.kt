@@ -29,13 +29,12 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import extensions.utils.Source
 import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 
 @OptIn(ExperimentalSerializationApi::class)
-class Nagordola :
-    AnimeHttpSource(),
-    ConfigurableAnimeSource {
+class Nagordola : Source() {
 
     override val name = "Nagordola"
 
@@ -58,15 +57,11 @@ class Nagordola :
         )
         .build()
 
-    private val json: Json by injectLazy()
+
 
     private val omdbJson = Json {
         ignoreUnknownKeys = true
         isLenient = true
-    }
-
-    private val preferences: SharedPreferences by lazy {
-        uy.kohesive.injekt.Injekt.get<Application>().getSharedPreferences("source_$id", 0)
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
@@ -341,7 +336,7 @@ class Nagordola :
     override fun videoListParse(response: Response): List<Video> {
         val res = json.decodeFromString<AListResponse<AListGetFile>>(response.body?.string().orEmpty())
         val videoUrl = res.data?.raw_url ?: return emptyList()
-        return listOf(Video(videoUrl, "Direct", videoUrl))
+        return listOf(Video(videoUrl = videoUrl, videoTitle = "Direct"))
     }
 
     // ============================== Filters ===============================
