@@ -127,6 +127,8 @@ data class OnlineEpisodeDto(
     val number: Int,
     val url: String? = null,
     val title: String = "",
+    val image: String? = null,
+    val description: String? = null,
 )
 
 @Serializable
@@ -627,23 +629,7 @@ class Seanime :
                 throw Exception("No online streaming extensions installed in Seanime. Please install one in your Seanime server.")
             }
 
-            // 2. Fetch library metadata first to get summaries and thumbnails
-            val libraryMetadata = mutableMapOf<Int, EpisodeDto>()
-            try {
-                val libraryResponse = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
-                if (libraryResponse.isSuccessful) {
-                    val entryDto = libraryResponse.parseAs<AnimeEntryResponseDto>(json)
-                    entryDto.data.episodes.forEach { ep ->
-                        libraryMetadata[ep.episodeNumber] = ep
-                    }
-                } else {
-                    libraryResponse.close()
-                }
-            } catch (e: Exception) {
-                // Ignore library fetch error and proceed without metadata
-            }
-
-            // 3. Concurrently fetch episode lists from all providers
+            // 2. Concurrently fetch episode lists from all providers
             val episodesLists = withContext(Dispatchers.IO) {
                 providers.map { provider ->
                     async {
@@ -673,7 +659,7 @@ class Seanime :
                 throw Exception("Failed to fetch episode list from any online provider.")
             }
 
-            // 4. Find the provider that has the most episodes
+            // 3. Find the provider that has the most episodes
             val bestEntry = episodesLists.maxByOrNull { it.second.size }
                 ?: throw Exception("No episodes found from any online provider.")
 
@@ -682,9 +668,9 @@ class Seanime :
             return bestEpisodes.map { ep ->
                 SEpisode.create().apply {
                     this.url = "online:$mediaId:${ep.number}"
-                    val meta = libraryMetadata[ep.number]
-                    val epName = meta?.displayTitle ?: "Episode ${ep.number}"
-                    val epSubTitle = meta?.episodeTitle ?: ep.title
+                    
+                    val epName = "Episode ${ep.number}"
+                    val epSubTitle = ep.title
 
                     name = if (!epSubTitle.isNullOrBlank() && epSubTitle.trim() != epName.trim()) {
                         if (epSubTitle.contains("Episode ${ep.number}", ignoreCase = true) ||
@@ -700,8 +686,8 @@ class Seanime :
                     }
 
                     episode_number = ep.number.toFloat()
-                    summary = meta?.episodeMetadata?.summary
-                    preview_url = meta?.episodeMetadata?.image
+                    summary = ep.description
+                    preview_url = ep.image
                 }
             }.reversed()
         } else {
