@@ -265,7 +265,6 @@ class GenreFilter(genres: Array<String>) :
         0,
     )
 
-
 // ============================== MAIN EXTENSION CLASS ==============================
 
 class Seanime :
