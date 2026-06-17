@@ -35,20 +35,20 @@ import java.security.MessageDigest
 
 @Serializable
 data class LibraryCollectionDto(
-    val lists: List<LibraryCollectionListDto> = emptyList()
+    val lists: List<LibraryCollectionListDto> = emptyList(),
 )
 
 @Serializable
 data class LibraryCollectionListDto(
     val type: String? = null,
     val status: String? = null,
-    val entries: List<LibraryCollectionEntryDto> = emptyList()
+    val entries: List<LibraryCollectionEntryDto> = emptyList(),
 )
 
 @Serializable
 data class LibraryCollectionEntryDto(
     val mediaId: Int,
-    val media: BaseMediaDto
+    val media: BaseMediaDto,
 )
 
 @Serializable
@@ -68,25 +68,25 @@ data class BaseMediaDto(
 data class MediaTitleDto(
     val userPreferred: String? = null,
     val english: String? = null,
-    val romaji: String? = null
+    val romaji: String? = null,
 )
 
 @Serializable
 data class MediaCoverImageDto(
     val large: String? = null,
-    val medium: String? = null
+    val medium: String? = null,
 )
 
 @Serializable
 data class AnimeEntryResponseDto(
-    val data: AnimeEntryDataDto
+    val data: AnimeEntryDataDto,
 )
 
 @Serializable
 data class AnimeEntryDataDto(
     val mediaId: Int,
     val media: BaseMediaDto,
-    val episodes: List<EpisodeDto> = emptyList()
+    val episodes: List<EpisodeDto> = emptyList(),
 )
 
 @Serializable
@@ -96,28 +96,28 @@ data class EpisodeDto(
     val episodeTitle: String? = null,
     val isDownloaded: Boolean = false,
     val localFile: LocalFileDto? = null,
-    val episodeMetadata: EpisodeMetadataDto? = null
+    val episodeMetadata: EpisodeMetadataDto? = null,
 )
 
 @Serializable
 data class LocalFileDto(
-    val path: String
+    val path: String,
 )
 
 @Serializable
 data class EpisodeMetadataDto(
     val summary: String? = null,
-    val image: String? = null
+    val image: String? = null,
 )
 
 @Serializable
 data class OnlineEpisodeListResponseDto(
-    val data: OnlineEpisodeListResponseDataDto
+    val data: OnlineEpisodeListResponseDataDto,
 )
 
 @Serializable
 data class OnlineEpisodeListResponseDataDto(
-    val episodes: List<OnlineEpisodeDto> = emptyList()
+    val episodes: List<OnlineEpisodeDto> = emptyList(),
 )
 
 @Serializable
@@ -125,18 +125,18 @@ data class OnlineEpisodeDto(
     val id: String,
     val number: Int,
     val url: String,
-    val title: String = ""
+    val title: String = "",
 )
 
 @Serializable
 data class OnlineEpisodeSourceDto(
-    val data: OnlineEpisodeSourceDataDto
+    val data: OnlineEpisodeSourceDataDto,
 )
 
 @Serializable
 data class OnlineEpisodeSourceDataDto(
     val number: Int,
-    val videoSources: List<OnlineVideoSourceDto> = emptyList()
+    val videoSources: List<OnlineVideoSourceDto> = emptyList(),
 )
 
 @Serializable
@@ -144,22 +144,22 @@ data class OnlineVideoSourceDto(
     val url: String,
     val server: String,
     val quality: String,
-    val headers: Map<String, String> = emptyMap()
+    val headers: Map<String, String> = emptyMap(),
 )
 
 @Serializable
 data class AniListResponse(
-    val data: AniListData
+    val data: AniListData,
 )
 
 @Serializable
 data class AniListData(
-    val Page: AniListPage
+    val Page: AniListPage,
 )
 
 @Serializable
 data class AniListPage(
-    val media: List<AniListMedia>
+    val media: List<AniListMedia>,
 )
 
 @Serializable
@@ -169,7 +169,7 @@ data class AniListMedia(
     val coverImage: MediaCoverImageDto? = null,
     val description: String? = null,
     val genres: List<String> = emptyList(),
-    val status: String? = null
+    val status: String? = null,
 )
 
 // ============================== MAIN EXTENSION CLASS ==============================
@@ -283,9 +283,7 @@ class Seanime :
         }
     }
 
-    override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        return getPopularAnime(page)
-    }
+    override suspend fun getLatestUpdates(page: Int): AnimesPage = getPopularAnime(page)
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         if (query.isBlank()) {
@@ -338,10 +336,13 @@ class Seanime :
 
         val bodyJson = buildJsonObject {
             put("query", graphQLQuery)
-            put("variables", buildJsonObject {
-                put("search", query)
-                put("page", page)
-            })
+            put(
+                "variables",
+                buildJsonObject {
+                    put("search", query)
+                    put("page", page)
+                },
+            )
         }
 
         val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
@@ -351,7 +352,7 @@ class Seanime :
             okhttp3.Request.Builder()
                 .url("https://graphql.anilist.co")
                 .post(requestBody)
-                .build()
+                .build(),
         ).await()
 
         if (response.isSuccessful) {
@@ -468,6 +469,7 @@ class Seanime :
                 val videoUrl = "$baseUrl/api/v1/mediastream/file?path=$encodedPath"
                 return listOf(Video(videoUrl, "Local Server (Direct Stream)", videoUrl, headers = headers))
             }
+
             urlStr.startsWith("torrent:") -> {
                 val parts = urlStr.removePrefix("torrent:").split(":")
                 val mediaId = parts[0].toInt()
@@ -492,6 +494,7 @@ class Seanime :
                     throw Exception("Failed to start torrent stream (Code: ${response.code})")
                 }
             }
+
             urlStr.startsWith("online:") -> {
                 val parts = urlStr.removePrefix("online:").split(":")
                 val mediaId = parts[0].toInt()
@@ -525,13 +528,14 @@ class Seanime :
 
                     return list.sortedWith(
                         compareByDescending<Video> { it.quality.contains(preferredQuality, ignoreCase = true) }
-                            .thenByDescending { it.quality.contains(preferredServer, ignoreCase = true) }
+                            .thenByDescending { it.quality.contains(preferredServer, ignoreCase = true) },
                     )
                 } else {
                     response.close()
                     throw Exception("Failed to fetch online stream sources (Code: ${response.code})")
                 }
             }
+
             else -> return emptyList()
         }
     }
