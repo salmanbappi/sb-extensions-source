@@ -24,6 +24,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import extensions.utils.Source
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -39,8 +40,6 @@ class NetMirror : AnimeSourceFactory {
     )
 }
 
-import extensions.utils.Source
-
 class CNCVerseSource(
     override val name: String,
     private val ott: String,
@@ -51,10 +50,6 @@ class CNCVerseSource(
     override val baseUrl = "https://net52.cc"
     override val lang = "all"
     override val supportsLatest = false
-
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
 
     private val ottPath: String
         get() = when (ott) {
@@ -463,11 +458,11 @@ class CNCVerseSource(
         }.also(screen::addPreference)
     }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString("preferred_quality", "Auto (Adaptive)") ?: "Auto (Adaptive)"
         return sortedWith(
             compareBy { video ->
-                val videoQuality = video.quality
+                val videoQuality = video.videoTitle
                 if (videoQuality.contains(quality)) {
                     0
                 } else {

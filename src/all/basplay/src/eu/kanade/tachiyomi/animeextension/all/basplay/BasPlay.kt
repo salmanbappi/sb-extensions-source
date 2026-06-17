@@ -257,7 +257,7 @@ class BasPlay :
             if (videoSrc != null) url = fixUrl(videoSrc)
         }
         val encodedUrl = url.replace(" ", "%20").replace("&", "%26")
-        return listOf(Video(encodedUrl, "Direct", encodedUrl))
+        return listOf(Video(videoUrl = encodedUrl, videoTitle = "Direct", url = encodedUrl))
     }
 
     private fun fixUrl(url: String): String = if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
