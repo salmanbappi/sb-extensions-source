@@ -661,10 +661,10 @@ class Seanime :
                         val meta = libraryMetadata[ep.number]
                         val epName = meta?.displayTitle ?: "Episode ${ep.number}"
                         val epSubTitle = meta?.episodeTitle ?: ep.title
-                        
+
                         name = if (!epSubTitle.isNullOrBlank() && epSubTitle.trim() != epName.trim()) {
-                            if (epSubTitle.contains("Episode ${ep.number}", ignoreCase = true) || 
-                                epSubTitle.contains("Ep. ${ep.number}", ignoreCase = true) || 
+                            if (epSubTitle.contains("Episode ${ep.number}", ignoreCase = true) ||
+                                epSubTitle.contains("Ep. ${ep.number}", ignoreCase = true) ||
                                 epSubTitle.contains(epName, ignoreCase = true)
                             ) {
                                 epSubTitle
@@ -674,7 +674,7 @@ class Seanime :
                         } else {
                             epName
                         }
-                        
+
                         episode_number = ep.number.toFloat()
                         summary = meta?.episodeMetadata?.summary
                         preview_url = meta?.episodeMetadata?.image
