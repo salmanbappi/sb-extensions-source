@@ -1,9 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.all.seanime
 
-import android.content.Context
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
-import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -193,15 +191,15 @@ class StatusFilter :
         arrayOf("Any", "Currently Airing", "Finished", "Not Yet Aired", "Cancelled"),
         0,
     ) {
-    val toAniList get() = when (values[state]) {
-        "Currently Airing" -> "RELEASING"
-        "Finished" -> "FINISHED"
-        "Not Yet Aired" -> "NOT_YET_RELEASED"
-        "Cancelled" -> "CANCELLED"
-        else -> null
-    }
-    private val values = arrayOf("Any", "Currently Airing", "Finished", "Not Yet Aired", "Cancelled")
-}
+    private val statusValues = arrayOf("Any", "Currently Airing", "Finished", "Not Yet Aired", "Cancelled")
+    val toAniList
+        get() = when (statusValues[state]) {
+            "Currently Airing" -> "RELEASING"
+            "Finished" -> "FINISHED"
+            "Not Yet Aired" -> "NOT_YET_RELEASED"
+            "Cancelled" -> "CANCELLED"
+            else -> null
+        }
 
 class FormatFilter :
     AnimeFilter.Select<String>(
@@ -209,18 +207,18 @@ class FormatFilter :
         arrayOf("Any", "TV", "TV Short", "Movie", "Special", "OVA", "ONA", "Music"),
         0,
     ) {
-    val toAniList get() = when (values[state]) {
-        "TV" -> "TV"
-        "TV Short" -> "TV_SHORT"
-        "Movie" -> "MOVIE"
-        "Special" -> "SPECIAL"
-        "OVA" -> "OVA"
-        "ONA" -> "ONA"
-        "Music" -> "MUSIC"
-        else -> null
-    }
-    private val values = arrayOf("Any", "TV", "TV Short", "Movie", "Special", "OVA", "ONA", "Music")
-}
+    private val formatValues = arrayOf("Any", "TV", "TV Short", "Movie", "Special", "OVA", "ONA", "Music")
+    val toAniList
+        get() = when (formatValues[state]) {
+            "TV" -> "TV"
+            "TV Short" -> "TV_SHORT"
+            "Movie" -> "MOVIE"
+            "Special" -> "SPECIAL"
+            "OVA" -> "OVA"
+            "ONA" -> "ONA"
+            "Music" -> "MUSIC"
+            else -> null
+        }
 
 class SeasonFilter :
     AnimeFilter.Select<String>(
@@ -228,15 +226,15 @@ class SeasonFilter :
         arrayOf("Any", "Winter", "Spring", "Summer", "Fall"),
         0,
     ) {
-    val toAniList get() = when (values[state]) {
-        "Winter" -> "WINTER"
-        "Spring" -> "SPRING"
-        "Summer" -> "SUMMER"
-        "Fall" -> "FALL"
-        else -> null
-    }
-    private val values = arrayOf("Any", "Winter", "Spring", "Summer", "Fall")
-}
+    private val seasonValues = arrayOf("Any", "Winter", "Spring", "Summer", "Fall")
+    val toAniList
+        get() = when (seasonValues[state]) {
+            "Winter" -> "WINTER"
+            "Spring" -> "SPRING"
+            "Summer" -> "SUMMER"
+            "Fall" -> "FALL"
+            else -> null
+        }
 
 class SeasonYearFilter : AnimeFilter.Text("Season Year", "")
 
@@ -246,15 +244,15 @@ class SortFilter :
         arrayOf("Popularity", "Score", "Trending", "Newest", "Title"),
         0,
     ) {
-    val toAniList get() = when (values[state]) {
-        "Score" -> "SCORE_DESC"
-        "Trending" -> "TRENDING_DESC"
-        "Newest" -> "START_DATE_DESC"
-        "Title" -> "TITLE_ROMAJI"
-        else -> "POPULARITY_DESC"
-    }
-    private val values = arrayOf("Popularity", "Score", "Trending", "Newest", "Title")
-}
+    private val sortValues = arrayOf("Popularity", "Score", "Trending", "Newest", "Title")
+    val toAniList
+        get() = when (sortValues[state]) {
+            "Score" -> "SCORE_DESC"
+            "Trending" -> "TRENDING_DESC"
+            "Newest" -> "START_DATE_DESC"
+            "Title" -> "TITLE_ROMAJI"
+            else -> "POPULARITY_DESC"
+        }
 
 class GenreFilter(genres: Array<String>) :
     AnimeFilter.Select<String>(
@@ -750,133 +748,114 @@ class Seanime :
     // ============================== PREFERENCES SETUP ==============================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        // ── Server Settings ──────────────────────────────────────────────
-        PreferenceCategory(screen.context).apply {
-            title = "🖥️  Server Connection"
-        }.also { category ->
-            screen.addPreference(category)
+        // ── Server Connection ───────────────────────────────────────────
+        EditTextPreference(screen.context).apply {
+            key = PREF_BASE_URL
+            title = "[Server] URL"
+            summary = preferences.getString(PREF_BASE_URL, DEFAULT_BASE_URL)
+                ?.let { "Current: $it" }
+                ?: DEFAULT_BASE_URL
+            setDefaultValue(DEFAULT_BASE_URL)
+            dialogTitle = "Seanime Server URL"
+            dialogMessage = "Enter the full URL of your Seanime server.\nExample: http://192.168.1.10:43211"
+            setOnPreferenceChangeListener { pref, newValue ->
+                val newUrl = (newValue as String).trim().removeSuffix("/")
+                pref.summary = "Current: $newUrl"
+                true
+            }
+        }.also(screen::addPreference)
 
-            EditTextPreference(screen.context).apply {
-                key = PREF_BASE_URL
-                title = "Server URL"
-                summary = preferences.getString(PREF_BASE_URL, DEFAULT_BASE_URL)
-                    ?.let { "Current: $it\nTap to change" }
-                    ?: "Tap to set your Seanime server address"
-                setDefaultValue(DEFAULT_BASE_URL)
-                dialogTitle = "Seanime Server URL"
-                dialogMessage = "Enter the full URL of your Seanime server.\nExample: http://192.168.1.10:43211"
-                setOnPreferenceChangeListener { pref, newValue ->
-                    val newUrl = (newValue as String).trim().removeSuffix("/")
-                    pref.summary = "Current: $newUrl\nTap to change"
-                    true
-                }
-            }.also(category::addPreference)
-
-            EditTextPreference(screen.context).apply {
-                key = PREF_SERVER_PASSWORD
-                title = "Server Password"
-                summary = if (preferences.getString(PREF_SERVER_PASSWORD, DEFAULT_SERVER_PASSWORD).isNullOrBlank()) {
-                    "Not set (tap to add)"
+        EditTextPreference(screen.context).apply {
+            key = PREF_SERVER_PASSWORD
+            title = "[Server] Password"
+            summary =
+                if (preferences.getString(PREF_SERVER_PASSWORD, DEFAULT_SERVER_PASSWORD).isNullOrBlank()) {
+                    "Not set (leave blank for no password)"
                 } else {
                     "Password is set (tap to change)"
                 }
-                setDefaultValue(DEFAULT_SERVER_PASSWORD)
-                dialogTitle = "Server Password"
-                dialogMessage = "Leave empty if your Seanime server has no password."
-                setOnPreferenceChangeListener { pref, newValue ->
-                    val v = (newValue as String).trim()
-                    pref.summary = if (v.isBlank()) "Not set (tap to add)" else "Password is set (tap to change)"
-                    cachedHeaders = null // Invalidate cached headers
-                    true
-                }
-            }.also(category::addPreference)
-        }
+            setDefaultValue(DEFAULT_SERVER_PASSWORD)
+            dialogTitle = "Server Password"
+            dialogMessage = "Leave empty if your Seanime server has no password."
+            setOnPreferenceChangeListener { pref, newValue ->
+                val v = (newValue as String).trim()
+                pref.summary =
+                    if (v.isBlank()) "Not set (leave blank for no password)" else "Password is set (tap to change)"
+                cachedHeaders = null
+                true
+            }
+        }.also(screen::addPreference)
 
-        // ── Browsing ─────────────────────────────────────────────────────
-        PreferenceCategory(screen.context).apply {
-            title = "🔍  Browsing"
-        }.also { category ->
-            screen.addPreference(category)
+        // ── Browsing ────────────────────────────────────────────────────
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_SHOW_LIBRARY_IN_BROWSE
+            title = "[Browse] Show Library in Popular Tab"
+            summary =
+                "ON: shows your Seanime library (falls back to AniList trending if empty). OFF: always shows AniList trending."
+            setDefaultValue(DEFAULT_SHOW_LIBRARY_IN_BROWSE)
+        }.also(screen::addPreference)
 
-            SwitchPreferenceCompat(screen.context).apply {
-                key = PREF_SHOW_LIBRARY_IN_BROWSE
-                title = "Show Library in Popular Tab"
-                summary = "When ON: Popular tab shows your Seanime library (falls back to AniList if empty).\nWhen OFF: Popular tab always shows AniList trending anime."
-                setDefaultValue(DEFAULT_SHOW_LIBRARY_IN_BROWSE)
-            }.also(category::addPreference)
-        }
-
-        // ── Streaming Mode ───────────────────────────────────────────────
-        PreferenceCategory(screen.context).apply {
-            title = "▶️  Streaming Mode"
-        }.also { category ->
-            screen.addPreference(category)
-
-            ListPreference(screen.context).apply {
-                key = PREF_STREAMING_MODE
-                title = "Playback Source"
-                entries = arrayOf(
-                    "📁  Local Files Only — Play downloaded files from your library",
-                    "🧲  Torrent Stream — Stream via Seanime's built-in torrent client",
-                    "🌐  Online Stream — Stream from online providers (e.g. GogoAnime)",
+        // ── Streaming Mode ──────────────────────────────────────────────
+        ListPreference(screen.context).apply {
+            key = PREF_STREAMING_MODE
+            title = "[Playback] Streaming Mode"
+            entries =
+                arrayOf(
+                    "Local Files — play downloaded files from your library",
+                    "Torrent Stream — stream via Seanime's torrent client",
+                    "Online Stream — stream from online providers (e.g. GogoAnime)",
                 )
-                entryValues = arrayOf(MODE_LOCAL, MODE_TORRENT, MODE_ONLINE)
-                setDefaultValue(DEFAULT_STREAMING_MODE)
-                summary = "%s"
-            }.also(category::addPreference)
-        }
+            entryValues = arrayOf(MODE_LOCAL, MODE_TORRENT, MODE_ONLINE)
+            setDefaultValue(DEFAULT_STREAMING_MODE)
+            summary = "%s"
+        }.also(screen::addPreference)
 
-        // ── Online Stream Settings ───────────────────────────────────────
-        PreferenceCategory(screen.context).apply {
-            title = "🌐  Online Stream Settings"
-            dependency = null // always visible so user knows what to set before switching
-        }.also { category ->
-            screen.addPreference(category)
-
-            EditTextPreference(screen.context).apply {
-                key = PREF_PREFERRED_PROVIDER
-                title = "Online Provider ID"
-                summary = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)
+        // ── Online Stream Settings ──────────────────────────────────────
+        EditTextPreference(screen.context).apply {
+            key = PREF_PREFERRED_PROVIDER
+            title = "[Online] Provider ID"
+            summary =
+                preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)
                     ?.let { "Current: $it" } ?: DEFAULT_PREFERRED_PROVIDER
-                setDefaultValue(DEFAULT_PREFERRED_PROVIDER)
-                dialogTitle = "Online Stream Provider"
-                dialogMessage = "The provider extension ID used for online streaming.\nExamples: gogoanime, zoro, 9anime"
-                setOnPreferenceChangeListener { pref, newValue ->
-                    pref.summary = "Current: ${(newValue as String).trim()}"
-                    true
-                }
-            }.also(category::addPreference)
+            setDefaultValue(DEFAULT_PREFERRED_PROVIDER)
+            dialogTitle = "Online Stream Provider"
+            dialogMessage = "The provider extension ID used for online streaming.\nExamples: gogoanime, zoro, 9anime"
+            setOnPreferenceChangeListener { pref, newValue ->
+                pref.summary = "Current: ${(newValue as String).trim()}"
+                true
+            }
+        }.also(screen::addPreference)
 
-            ListPreference(screen.context).apply {
-                key = PREF_PREFERRED_QUALITY
-                title = "Preferred Quality"
-                entries = arrayOf("Source (Best)", "1080p", "720p", "480p", "360p")
-                entryValues = arrayOf("Source", "1080p", "720p", "480p", "360p")
-                setDefaultValue(DEFAULT_PREFERRED_QUALITY)
-                summary = "%s"
-            }.also(category::addPreference)
+        ListPreference(screen.context).apply {
+            key = PREF_PREFERRED_QUALITY
+            title = "[Online] Preferred Quality"
+            entries = arrayOf("Source (Best)", "1080p", "720p", "480p", "360p")
+            entryValues = arrayOf("Source", "1080p", "720p", "480p", "360p")
+            setDefaultValue(DEFAULT_PREFERRED_QUALITY)
+            summary = "%s"
+        }.also(screen::addPreference)
 
-            EditTextPreference(screen.context).apply {
-                key = PREF_PREFERRED_SERVER
-                title = "Preferred Server Keyword"
-                summary = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)
+        EditTextPreference(screen.context).apply {
+            key = PREF_PREFERRED_SERVER
+            title = "[Online] Preferred Server Keyword"
+            summary =
+                preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)
                     ?.let { "Current: $it" } ?: DEFAULT_PREFERRED_SERVER
-                setDefaultValue(DEFAULT_PREFERRED_SERVER)
-                dialogTitle = "Preferred Server"
-                dialogMessage = "Enter a keyword matching your preferred CDN/server name.\nExample: gogoplay, streamsb, vidstreaming"
-                setOnPreferenceChangeListener { pref, newValue ->
-                    pref.summary = "Current: ${(newValue as String).trim()}"
-                    true
-                }
-            }.also(category::addPreference)
+            setDefaultValue(DEFAULT_PREFERRED_SERVER)
+            dialogTitle = "Preferred Server"
+            dialogMessage = "Keyword matching your preferred CDN/server name.\nExamples: gogoplay, streamsb, vidstreaming"
+            setOnPreferenceChangeListener { pref, newValue ->
+                pref.summary = "Current: ${(newValue as String).trim()}"
+                true
+            }
+        }.also(screen::addPreference)
 
-            SwitchPreferenceCompat(screen.context).apply {
-                key = PREF_DUBBED
-                title = "Dubbed Audio"
-                summary = "Request dubbed versions of episodes when available"
-                setDefaultValue(DEFAULT_DUBBED)
-            }.also(category::addPreference)
-        }
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_DUBBED
+            title = "[Online] Dubbed Audio"
+            summary = "Request dubbed versions of episodes when available"
+            setDefaultValue(DEFAULT_DUBBED)
+        }.also(screen::addPreference)
     }
 
     companion object {
