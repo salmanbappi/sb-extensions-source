@@ -48,10 +48,6 @@ class Animex : Source() {
         }
     }
 
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
-
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(AnimexInterceptor(network.client.cookieJar))
         .build()
@@ -473,12 +469,12 @@ class Animex : Source() {
                                         val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
                                         providerVideos.add(
                                             Video(
-                                                streamUrl,
-                                                qualityLabel,
-                                                streamUrl,
+                                                videoUrl = streamUrl,
+                                                videoTitle = qualityLabel,
                                                 headers = videoHeaders,
                                                 subtitleTracks = subtitleTracks,
                                             ),
+
                                         )
                                     }
                                 }
