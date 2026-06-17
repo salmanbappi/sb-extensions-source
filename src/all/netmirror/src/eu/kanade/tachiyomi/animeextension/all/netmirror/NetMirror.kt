@@ -92,7 +92,8 @@ class CNCVerseSource(
         }
         .addInterceptor { chain ->
             val request = chain.request()
-            if (request.url.toString().contains(".m3u8")) {
+            val url = request.url.toString()
+            if (url.contains(".m3u8") || url.contains(".vtt")) {
                 val newRequest = request.newBuilder()
                     .header("Cookie", "hd=on")
                     .build()
@@ -407,6 +408,25 @@ class CNCVerseSource(
             listOf(
                 Video(videoLink, "CNCVerse", videoLink, headers = videoHeaders),
             )
+        }.map { video ->
+            if (video.subtitleTracks.isEmpty()) {
+                video
+            } else {
+                Video(
+                    video.url,
+                    video.quality,
+                    video.videoUrl,
+                    headers = video.headers,
+                    subtitleTracks = video.subtitleTracks.map { track ->
+                        if (track.url.endsWith(".m3u8")) {
+                            Track(track.url.substringBeforeLast(".m3u8") + ".vtt", track.lang)
+                        } else {
+                            track
+                        }
+                    },
+                    audioTracks = video.audioTracks,
+                )
+            }
         }.sortVideos()
     }
 
