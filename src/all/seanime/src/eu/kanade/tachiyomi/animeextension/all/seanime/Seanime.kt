@@ -19,6 +19,8 @@ import extensions.utils.delegate
 import extensions.utils.parseAs
 import extensions.utils.toRequestBody
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -320,28 +322,6 @@ class Seanime :
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
-    private suspend fun resolveProvider(headers: okhttp3.Headers, preferredProvider: String): String {
-        val trimmed = preferredProvider.trim().lowercase()
-        if (trimmed.isNotBlank()) {
-            return trimmed
-        }
-        try {
-            val response = client.newCall(GET("$baseUrl/api/v1/extensions/list/onlinestream-provider", headers)).await()
-            if (response.isSuccessful) {
-                val extListResponse = response.parseAs<SeanimeExtensionListResponseDto>(json)
-                val firstExt = extListResponse.data.firstOrNull()
-                if (firstExt != null) {
-                    return firstExt.id
-                }
-            } else {
-                response.close()
-            }
-        } catch (e: Exception) {
-            // Fallback
-        }
-        return ""
-    }
-
     private fun parseSeasonNumber(title: String): Double {
         val regex = Regex("Season\\s+(\\d+)|S(\\d+)", RegexOption.IGNORE_CASE)
         val match = regex.find(title)
@@ -627,16 +607,26 @@ class Seanime :
         }
 
         if (mode == MODE_ONLINE) {
-            val preferredProvider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)!!
-            val provider = resolveProvider(headers, preferredProvider)
             val dubbed = preferences.getBoolean(PREF_DUBBED, DEFAULT_DUBBED)
-            val body = buildJsonObject {
-                put("mediaId", mediaId)
-                put("dubbed", dubbed)
-                put("provider", provider)
-            }.toRequestBody(json)
 
-            // Try to fetch library metadata first to get summaries and thumbnails
+            // 1. Fetch installed online stream providers
+            val providers = try {
+                val response = client.newCall(GET("$baseUrl/api/v1/extensions/list/onlinestream-provider", headers)).await()
+                if (response.isSuccessful) {
+                    response.parseAs<SeanimeExtensionListResponseDto>(json).data
+                } else {
+                    response.close()
+                    emptyList()
+                }
+            } catch (e: Exception) {
+                emptyList()
+            }
+
+            if (providers.isEmpty()) {
+                throw Exception("No online streaming extensions installed in Seanime. Please install one in your Seanime server.")
+            }
+
+            // 2. Fetch library metadata first to get summaries and thumbnails
             val libraryMetadata = mutableMapOf<Int, EpisodeDto>()
             try {
                 val libraryResponse = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
@@ -652,38 +642,67 @@ class Seanime :
                 // Ignore library fetch error and proceed without metadata
             }
 
-            val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-list", headers, body)).await()
-            if (response.isSuccessful) {
-                val epListResponse = response.parseAs<OnlineEpisodeListResponseDto>(json)
-                return epListResponse.data.episodes.map { ep ->
-                    SEpisode.create().apply {
-                        this.url = "online:$mediaId:${ep.number}:$provider:$dubbed"
-                        val meta = libraryMetadata[ep.number]
-                        val epName = meta?.displayTitle ?: "Episode ${ep.number}"
-                        val epSubTitle = meta?.episodeTitle ?: ep.title
-
-                        name = if (!epSubTitle.isNullOrBlank() && epSubTitle.trim() != epName.trim()) {
-                            if (epSubTitle.contains("Episode ${ep.number}", ignoreCase = true) ||
-                                epSubTitle.contains("Ep. ${ep.number}", ignoreCase = true) ||
-                                epSubTitle.contains(epName, ignoreCase = true)
-                            ) {
-                                epSubTitle
+            // 3. Concurrently fetch episode lists from all providers
+            val episodesLists = withContext(Dispatchers.IO) {
+                providers.map { provider ->
+                    async {
+                        try {
+                            val body = buildJsonObject {
+                                put("mediaId", mediaId)
+                                put("dubbed", dubbed)
+                                put("provider", provider.id)
+                            }.toRequestBody(json)
+                            
+                            val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-list", headers, body)).await()
+                            if (response.isSuccessful) {
+                                val epListResponse = response.parseAs<OnlineEpisodeListResponseDto>(json)
+                                provider to epListResponse.data.episodes
                             } else {
-                                "$epName - $epSubTitle"
+                                response.close()
+                                null
                             }
-                        } else {
-                            epName
+                        } catch (e: Exception) {
+                            null
                         }
-
-                        episode_number = ep.number.toFloat()
-                        summary = meta?.episodeMetadata?.summary
-                        preview_url = meta?.episodeMetadata?.image
                     }
-                }.reversed()
-            } else {
-                response.close()
-                throw Exception("Failed to fetch online episodes (Code: ${response.code})")
+                }.awaitAll().filterNotNull()
             }
+
+            if (episodesLists.isEmpty()) {
+                throw Exception("Failed to fetch episode list from any online provider.")
+            }
+
+            // 4. Find the provider that has the most episodes
+            val bestEntry = episodesLists.maxByOrNull { it.second.size }
+                ?: throw Exception("No episodes found from any online provider.")
+            
+            val bestEpisodes = bestEntry.second
+
+            return bestEpisodes.map { ep ->
+                SEpisode.create().apply {
+                    this.url = "online:$mediaId:${ep.number}"
+                    val meta = libraryMetadata[ep.number]
+                    val epName = meta?.displayTitle ?: "Episode ${ep.number}"
+                    val epSubTitle = meta?.episodeTitle ?: ep.title
+                    
+                    name = if (!epSubTitle.isNullOrBlank() && epSubTitle.trim() != epName.trim()) {
+                        if (epSubTitle.contains("Episode ${ep.number}", ignoreCase = true) || 
+                            epSubTitle.contains("Ep. ${ep.number}", ignoreCase = true) || 
+                            epSubTitle.contains(epName, ignoreCase = true)
+                        ) {
+                            epSubTitle
+                        } else {
+                            "$epName - $epSubTitle"
+                        }
+                    } else {
+                        epName
+                    }
+                    
+                    episode_number = ep.number.toFloat()
+                    summary = meta?.episodeMetadata?.summary
+                    preview_url = meta?.episodeMetadata?.image
+                }
+            }.reversed()
         } else {
             val response = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
             if (response.isSuccessful) {
@@ -763,41 +782,76 @@ class Seanime :
                 val parts = urlStr.removePrefix("online:").split(":")
                 val mediaId = parts[0].toInt()
                 val episodeNumber = parts[1].toInt()
-                val provider = parts[2]
-                val dubbed = parts[3].toBoolean()
+                val dubbed = preferences.getBoolean(PREF_DUBBED, DEFAULT_DUBBED)
 
-                val body = buildJsonObject {
-                    put("episodeNumber", episodeNumber)
-                    put("mediaId", mediaId)
-                    put("provider", provider)
-                    put("dubbed", dubbed)
-                }.toRequestBody(json)
+                // 1. Fetch installed online stream providers
+                val providers = try {
+                    val response = client.newCall(GET("$baseUrl/api/v1/extensions/list/onlinestream-provider", headers)).await()
+                    if (response.isSuccessful) {
+                        response.parseAs<SeanimeExtensionListResponseDto>(json).data
+                    } else {
+                        response.close()
+                        emptyList()
+                    }
+                } catch (e: Exception) {
+                    emptyList()
+                }
 
-                val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-source", headers, body)).await()
-                if (response.isSuccessful) {
-                    val sourceDto = response.parseAs<OnlineEpisodeSourceDto>(json)
-                    val videoSources = sourceDto.data.videoSources
+                if (providers.isEmpty()) {
+                    throw Exception("No online streaming extensions installed in Seanime.")
+                }
 
-                    val list = videoSources.flatMap { vs ->
+                // 2. Concurrently fetch video sources from all providers
+                val videoList = withContext(Dispatchers.IO) {
+                    providers.map { provider ->
+                        async {
+                            try {
+                                val body = buildJsonObject {
+                                    put("episodeNumber", episodeNumber)
+                                    put("mediaId", mediaId)
+                                    put("provider", provider.id)
+                                    put("dubbed", dubbed)
+                                }.toRequestBody(json)
+
+                                val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-source", headers, body)).await()
+                                if (response.isSuccessful) {
+                                    val sourceDto = response.parseAs<OnlineEpisodeSourceDto>(json)
+                                    provider to sourceDto.data.videoSources
+                                } else {
+                                    response.close()
+                                    null
+                                }
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+
+                val allVideos = videoList.flatMap { (provider, videoSources) ->
+                    val providerName = provider.name ?: provider.id.replaceFirstChar { it.uppercase() }
+                    videoSources.flatMap { vs ->
                         val videoHeaders = okhttp3.Headers.Builder().apply {
                             headers.forEach { (name, value) -> add(name, value) }
                             vs.headers.forEach { (k, v) -> set(k, v) }
                         }.build()
 
-                        listOf(Video(videoUrl = vs.url, videoTitle = "${vs.server} (${vs.quality})", headers = videoHeaders))
+                        val formattedTitle = "[$providerName] ${vs.server} (${vs.quality})"
+                        listOf(Video(videoUrl = vs.url, videoTitle = formattedTitle, headers = videoHeaders))
                     }
-
-                    val preferredQuality = preferences.getString(PREF_PREFERRED_QUALITY, DEFAULT_PREFERRED_QUALITY)!!
-                    val preferredServer = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)!!
-
-                    return list.sortedWith(
-                        compareByDescending<Video> { it.videoTitle.contains(preferredQuality, ignoreCase = true) }
-                            .thenByDescending { preferredServer.isNotBlank() && it.videoTitle.contains(preferredServer, ignoreCase = true) },
-                    )
-                } else {
-                    response.close()
-                    throw Exception("Failed to fetch online stream sources (Code: ${response.code})")
                 }
+
+                if (allVideos.isEmpty()) {
+                    throw Exception("No video sources found for this episode.")
+                }
+
+                val preferredQuality = preferences.getString(PREF_PREFERRED_QUALITY, DEFAULT_PREFERRED_QUALITY)!!
+                val preferredServer = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)!!
+
+                return allVideos.sortedWith(
+                    compareByDescending<Video> { it.videoTitle.contains(preferredQuality, ignoreCase = true) }
+                        .thenByDescending { preferredServer.isNotBlank() && it.videoTitle.contains(preferredServer, ignoreCase = true) },
+                )
             }
 
             else -> return emptyList()
@@ -883,21 +937,6 @@ class Seanime :
         }.also(screen::addPreference)
 
         // ── Online Stream Settings ──────────────────────────────────────
-        EditTextPreference(screen.context).apply {
-            key = PREF_PREFERRED_PROVIDER
-            title = "[Online] Provider ID"
-            summary = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER).let {
-                if (it.isNullOrBlank()) "Not set" else "Current: $it"
-            }
-            setDefaultValue(DEFAULT_PREFERRED_PROVIDER)
-            dialogTitle = "Online Stream Provider"
-            dialogMessage = "The provider extension ID used for online streaming."
-            setOnPreferenceChangeListener { pref, newValue ->
-                val value = (newValue as String).trim()
-                pref.summary = if (value.isBlank()) "Not set" else "Current: $value"
-                true
-            }
-        }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
             key = PREF_PREFERRED_QUALITY
@@ -951,8 +990,7 @@ class Seanime :
         private const val PREF_PREFERRED_SERVER = "pref_preferred_server"
         private const val DEFAULT_PREFERRED_SERVER = ""
 
-        private const val PREF_PREFERRED_PROVIDER = "pref_preferred_provider"
-        private const val DEFAULT_PREFERRED_PROVIDER = ""
+
 
         private const val PREF_DUBBED = "pref_dubbed"
         private const val DEFAULT_DUBBED = false
