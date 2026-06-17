@@ -668,7 +668,7 @@ class Seanime :
             return bestEpisodes.map { ep ->
                 SEpisode.create().apply {
                     this.url = "online:$mediaId:${ep.number}"
-                    
+
                     val epName = "Episode ${ep.number}"
                     val epSubTitle = ep.title
 
