@@ -200,6 +200,7 @@ class StatusFilter :
             "Cancelled" -> "CANCELLED"
             else -> null
         }
+}
 
 class FormatFilter :
     AnimeFilter.Select<String>(
@@ -219,6 +220,7 @@ class FormatFilter :
             "Music" -> "MUSIC"
             else -> null
         }
+}
 
 class SeasonFilter :
     AnimeFilter.Select<String>(
@@ -235,6 +237,7 @@ class SeasonFilter :
             "Fall" -> "FALL"
             else -> null
         }
+}
 
 class SeasonYearFilter : AnimeFilter.Text("Season Year", "")
 
@@ -253,6 +256,7 @@ class SortFilter :
             "Title" -> "TITLE_ROMAJI"
             else -> "POPULARITY_DESC"
         }
+}
 
 class GenreFilter(genres: Array<String>) :
     AnimeFilter.Select<String>(
@@ -260,6 +264,7 @@ class GenreFilter(genres: Array<String>) :
         genres,
         0,
     )
+
 
 // ============================== MAIN EXTENSION CLASS ==============================
 
