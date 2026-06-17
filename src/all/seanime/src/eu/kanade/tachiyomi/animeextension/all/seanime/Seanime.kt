@@ -652,7 +652,7 @@ class Seanime :
                                 put("dubbed", dubbed)
                                 put("provider", provider.id)
                             }.toRequestBody(json)
-                            
+
                             val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-list", headers, body)).await()
                             if (response.isSuccessful) {
                                 val epListResponse = response.parseAs<OnlineEpisodeListResponseDto>(json)
@@ -675,7 +675,7 @@ class Seanime :
             // 4. Find the provider that has the most episodes
             val bestEntry = episodesLists.maxByOrNull { it.second.size }
                 ?: throw Exception("No episodes found from any online provider.")
-            
+
             val bestEpisodes = bestEntry.second
 
             return bestEpisodes.map { ep ->
@@ -684,10 +684,10 @@ class Seanime :
                     val meta = libraryMetadata[ep.number]
                     val epName = meta?.displayTitle ?: "Episode ${ep.number}"
                     val epSubTitle = meta?.episodeTitle ?: ep.title
-                    
+
                     name = if (!epSubTitle.isNullOrBlank() && epSubTitle.trim() != epName.trim()) {
-                        if (epSubTitle.contains("Episode ${ep.number}", ignoreCase = true) || 
-                            epSubTitle.contains("Ep. ${ep.number}", ignoreCase = true) || 
+                        if (epSubTitle.contains("Episode ${ep.number}", ignoreCase = true) ||
+                            epSubTitle.contains("Ep. ${ep.number}", ignoreCase = true) ||
                             epSubTitle.contains(epName, ignoreCase = true)
                         ) {
                             epSubTitle
@@ -697,7 +697,7 @@ class Seanime :
                     } else {
                         epName
                     }
-                    
+
                     episode_number = ep.number.toFloat()
                     summary = meta?.episodeMetadata?.summary
                     preview_url = meta?.episodeMetadata?.image
@@ -989,8 +989,6 @@ class Seanime :
 
         private const val PREF_PREFERRED_SERVER = "pref_preferred_server"
         private const val DEFAULT_PREFERRED_SERVER = ""
-
-
 
         private const val PREF_DUBBED = "pref_dubbed"
         private const val DEFAULT_DUBBED = false
