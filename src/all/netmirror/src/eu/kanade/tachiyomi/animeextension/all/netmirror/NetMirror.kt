@@ -405,7 +405,6 @@ class CNCVerseSource(
             emptyList()
         }
 
-
         val mappedVideos = videos.map { video ->
             if (video.subtitleTracks.isEmpty()) {
                 video
