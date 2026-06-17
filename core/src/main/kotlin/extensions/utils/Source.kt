@@ -10,7 +10,12 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.animesource.model.Hoster
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okhttp3.Request
 import okhttp3.Response
 import uy.kohesive.injekt.injectLazy
 import kotlin.getValue
@@ -47,6 +52,26 @@ abstract class Source : ConfigurableAnimeSource, AnimeHttpSource() {
     override fun animeDetailsParse(response: Response) = throw UnsupportedOperationException()
     override fun episodeListRequest(anime: SAnime) = throw UnsupportedOperationException()
     override fun episodeListParse(response: Response) = throw UnsupportedOperationException()
-    override fun videoListRequest(episode: SEpisode) = throw UnsupportedOperationException()
-    override fun videoListParse(response: Response) = throw UnsupportedOperationException()
+
+    open fun videoListRequest(episode: SEpisode): Request = throw UnsupportedOperationException()
+    open fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
+
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        return listOf(Hoster("Default", episode.url))
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val episode = SEpisode.create().apply {
+            url = hoster.url
+        }
+        return getVideoList(episode)
+    }
+
+    open suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val request = videoListRequest(episode)
+        val response = client.newCall(request).await()
+        return videoListParse(response)
+    }
+
+    private suspend fun okhttp3.Call.await(): Response = withContext(Dispatchers.IO) { execute() }
 }
