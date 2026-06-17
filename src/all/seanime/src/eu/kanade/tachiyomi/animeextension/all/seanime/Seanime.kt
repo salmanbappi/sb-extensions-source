@@ -187,11 +187,12 @@ data class AniListMedia(
 
 // ============================== FILTERS ==============================
 
-class StatusFilter : AnimeFilter.Select<String>(
-    "Status",
-    arrayOf("Any", "Currently Airing", "Finished", "Not Yet Aired", "Cancelled"),
-    0,
-) {
+class StatusFilter :
+    AnimeFilter.Select<String>(
+        "Status",
+        arrayOf("Any", "Currently Airing", "Finished", "Not Yet Aired", "Cancelled"),
+        0,
+    ) {
     val toAniList get() = when (values[state]) {
         "Currently Airing" -> "RELEASING"
         "Finished" -> "FINISHED"
@@ -202,11 +203,12 @@ class StatusFilter : AnimeFilter.Select<String>(
     private val values = arrayOf("Any", "Currently Airing", "Finished", "Not Yet Aired", "Cancelled")
 }
 
-class FormatFilter : AnimeFilter.Select<String>(
-    "Format",
-    arrayOf("Any", "TV", "TV Short", "Movie", "Special", "OVA", "ONA", "Music"),
-    0,
-) {
+class FormatFilter :
+    AnimeFilter.Select<String>(
+        "Format",
+        arrayOf("Any", "TV", "TV Short", "Movie", "Special", "OVA", "ONA", "Music"),
+        0,
+    ) {
     val toAniList get() = when (values[state]) {
         "TV" -> "TV"
         "TV Short" -> "TV_SHORT"
@@ -220,11 +222,12 @@ class FormatFilter : AnimeFilter.Select<String>(
     private val values = arrayOf("Any", "TV", "TV Short", "Movie", "Special", "OVA", "ONA", "Music")
 }
 
-class SeasonFilter : AnimeFilter.Select<String>(
-    "Season",
-    arrayOf("Any", "Winter", "Spring", "Summer", "Fall"),
-    0,
-) {
+class SeasonFilter :
+    AnimeFilter.Select<String>(
+        "Season",
+        arrayOf("Any", "Winter", "Spring", "Summer", "Fall"),
+        0,
+    ) {
     val toAniList get() = when (values[state]) {
         "Winter" -> "WINTER"
         "Spring" -> "SPRING"
@@ -237,11 +240,12 @@ class SeasonFilter : AnimeFilter.Select<String>(
 
 class SeasonYearFilter : AnimeFilter.Text("Season Year", "")
 
-class SortFilter : AnimeFilter.Select<String>(
-    "Sort By",
-    arrayOf("Popularity", "Score", "Trending", "Newest", "Title"),
-    0,
-) {
+class SortFilter :
+    AnimeFilter.Select<String>(
+        "Sort By",
+        arrayOf("Popularity", "Score", "Trending", "Newest", "Title"),
+        0,
+    ) {
     val toAniList get() = when (values[state]) {
         "Score" -> "SCORE_DESC"
         "Trending" -> "TRENDING_DESC"
@@ -252,11 +256,12 @@ class SortFilter : AnimeFilter.Select<String>(
     private val values = arrayOf("Popularity", "Score", "Trending", "Newest", "Title")
 }
 
-class GenreFilter(genres: Array<String>) : AnimeFilter.Select<String>(
-    "Genre",
-    genres,
-    0,
-)
+class GenreFilter(genres: Array<String>) :
+    AnimeFilter.Select<String>(
+        "Genre",
+        genres,
+        0,
+    )
 
 // ============================== MAIN EXTENSION CLASS ==============================
 
@@ -383,9 +388,7 @@ class Seanime :
     /**
      * Latest = Currently airing anime from AniList (always has results)
      */
-    override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        return fetchAniListPage(page, sortBy = "START_DATE_DESC", status = "RELEASING")
-    }
+    override suspend fun getLatestUpdates(page: Int): AnimesPage = fetchAniListPage(page, sortBy = "START_DATE_DESC", status = "RELEASING")
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         val statusFilter = filters.filterIsInstance<StatusFilter>().firstOrNull()
