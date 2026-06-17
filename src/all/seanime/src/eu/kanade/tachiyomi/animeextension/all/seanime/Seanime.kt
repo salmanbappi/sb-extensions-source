@@ -636,14 +636,48 @@ class Seanime :
                 put("provider", provider)
             }.toRequestBody(json)
 
+            // Try to fetch library metadata first to get summaries and thumbnails
+            val libraryMetadata = mutableMapOf<Int, EpisodeDto>()
+            try {
+                val libraryResponse = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
+                if (libraryResponse.isSuccessful) {
+                    val entryDto = libraryResponse.parseAs<AnimeEntryResponseDto>(json)
+                    entryDto.data.episodes.forEach { ep ->
+                        libraryMetadata[ep.episodeNumber] = ep
+                    }
+                } else {
+                    libraryResponse.close()
+                }
+            } catch (e: Exception) {
+                // Ignore library fetch error and proceed without metadata
+            }
+
             val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-list", headers, body)).await()
             if (response.isSuccessful) {
                 val epListResponse = response.parseAs<OnlineEpisodeListResponseDto>(json)
                 return epListResponse.data.episodes.map { ep ->
                     SEpisode.create().apply {
                         this.url = "online:$mediaId:${ep.number}:$provider:$dubbed"
-                        name = ep.title.ifBlank { "Episode ${ep.number}" }
+                        val meta = libraryMetadata[ep.number]
+                        val epName = meta?.displayTitle ?: "Episode ${ep.number}"
+                        val epSubTitle = meta?.episodeTitle ?: ep.title
+                        
+                        name = if (!epSubTitle.isNullOrBlank() && epSubTitle.trim() != epName.trim()) {
+                            if (epSubTitle.contains("Episode ${ep.number}", ignoreCase = true) || 
+                                epSubTitle.contains("Ep. ${ep.number}", ignoreCase = true) || 
+                                epSubTitle.contains(epName, ignoreCase = true)
+                            ) {
+                                epSubTitle
+                            } else {
+                                "$epName - $epSubTitle"
+                            }
+                        } else {
+                            epName
+                        }
+                        
                         episode_number = ep.number.toFloat()
+                        summary = meta?.episodeMetadata?.summary
+                        preview_url = meta?.episodeMetadata?.image
                     }
                 }.reversed()
             } else {
