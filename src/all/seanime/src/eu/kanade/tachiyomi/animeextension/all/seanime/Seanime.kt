@@ -156,6 +156,7 @@ data class SeanimeExtensionListResponseDto(
 @Serializable
 data class SeanimeExtensionDto(
     val id: String,
+    val name: String? = null,
 )
 
 @Serializable
