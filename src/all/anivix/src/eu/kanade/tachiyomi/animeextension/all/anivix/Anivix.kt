@@ -29,9 +29,9 @@ import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class Anivix :
-    AnimeHttpSource(),
-    ConfigurableAnimeSource {
+import extensions.utils.Source
+...
+class Anivix : Source() {
 
     override val name = "Anivix"
     override val baseUrl = "https://anivix.cc"
@@ -328,9 +328,9 @@ class Anivix :
             } catch (e: Exception) {
                 videos.add(
                     Video(
-                        streamUrl,
-                        "${source.label} (HLS)",
-                        streamUrl,
+                        videoUrl = streamUrl,
+                        videoTitle = "${source.label} (HLS)",
+                        url = streamUrl,
                         headers = headers,
                         subtitleTracks = subtitleTracks,
                     ),

@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
+import extensions.utils.Source
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -28,9 +29,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.Collections
 
-class Udvash :
-    AnimeHttpSource(),
-    ConfigurableAnimeSource {
+class Udvash : Source() {
 
     override val name = "Udvash"
 
@@ -41,10 +40,6 @@ class Udvash :
     override val supportsLatest = false
 
     override val id: Long = 5181466391484419846L
-
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
@@ -313,7 +308,7 @@ class Udvash :
                 decodedUrl.contains("360P", true) -> "360p"
                 else -> "Source ${index + 1}"
             }
-            Video(decodedUrl, quality, decodedUrl)
+            Video(videoUrl = decodedUrl, videoTitle = quality, url = decodedUrl)
         }
     }
 

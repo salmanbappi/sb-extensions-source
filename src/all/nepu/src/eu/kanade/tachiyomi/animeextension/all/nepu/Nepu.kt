@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
@@ -47,6 +48,9 @@ class Nepu :
     override val lang = "all"
 
     override val supportsLatest = true
+
+    override fun seasonListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
+    override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
 
     override val id: Long = 5181466391484419855L
 
@@ -507,7 +511,7 @@ class Nepu :
                                 val mediaHeaders = buildVideoHeaders(finalUrl, refererContext)
 
                                 if (finalUrl.contains(".mp4") || finalUrl.contains(".m3u8")) {
-                                    videoList.add(Video(finalUrl, name, finalUrl, headers = mediaHeaders))
+                                    videoList.add(Video(videoUrl = finalUrl, videoTitle = name, url = finalUrl, headers = mediaHeaders))
                                 } else {
                                     try {
                                         when {
@@ -570,7 +574,7 @@ class Nepu :
                 if (src.isNotBlank() && !src.contains("index.html")) {
                     val videoHeaders = buildVideoHeaders(src, src)
                     if (src.contains(".mp4") || src.contains(".m3u8")) {
-                        videoList.add(Video(src, "Video", src, headers = videoHeaders))
+                        videoList.add(Video(videoUrl = src, videoTitle = "Video", url = src, headers = videoHeaders))
                     } else {
                         try {
                             when {
@@ -600,7 +604,7 @@ class Nepu :
         return videoList.distinctBy { it.videoUrl }.map { video ->
             val videoUrl = video.videoUrl ?: return@map video
             val proxiedUrl = getProxyUrl(videoUrl, video.headers)
-            Video(proxiedUrl, video.quality, proxiedUrl, subtitleTracks = video.subtitleTracks, audioTracks = video.audioTracks)
+            Video(videoUrl = proxiedUrl, videoTitle = video.videoTitle, url = proxiedUrl, subtitleTracks = video.subtitleTracks, audioTracks = video.audioTracks)
         }
     }
 

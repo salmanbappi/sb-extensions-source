@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
+import extensions.utils.Source
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -32,9 +33,7 @@ import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class Animex :
-    AnimeHttpSource(),
-    ConfigurableAnimeSource {
+class Animex : Source() {
 
     override val name = "Animex"
     override val baseUrl = "https://animex.one"
@@ -42,7 +41,7 @@ class Animex :
     override val supportsLatest = true
     override val id: Long = 7391826450193847201L
 
-    private val json: Json by lazy {
+    override val json: Json by lazy {
         Json {
             ignoreUnknownKeys = true
             coerceInputValues = true
@@ -463,9 +462,9 @@ class Animex :
                                             val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
                                             providerVideos.add(
                                                 Video(
-                                                    streamUrl,
-                                                    qualityLabel,
-                                                    streamUrl,
+                                                    videoUrl = streamUrl,
+                                                    videoTitle = qualityLabel,
+                                                    url = streamUrl,
                                                     headers = videoHeaders,
                                                     subtitleTracks = subtitleTracks,
                                                 ),
@@ -500,21 +499,21 @@ class Animex :
         videos.sortWith(
             compareBy<Video> { video ->
                 val matchesPreferred = when (preferredType) {
-                    "soft" -> video.quality.contains("[Soft Subs]", ignoreCase = true)
-                    "hard" -> video.quality.contains("[Hard Subs]", ignoreCase = true)
-                    "dub" -> video.quality.contains("(DUB)", ignoreCase = true)
+                    "soft" -> video.videoTitle.contains("[Soft Subs]", ignoreCase = true)
+                    "hard" -> video.videoTitle.contains("[Hard Subs]", ignoreCase = true)
+                    "dub" -> video.videoTitle.contains("(DUB)", ignoreCase = true)
                     else -> false
                 }
                 if (matchesPreferred) 0 else 1
             }.thenBy { video ->
                 val matchesCategory = when (preferredType) {
-                    "soft", "hard" -> video.quality.contains("(SUB)", ignoreCase = true)
-                    "dub" -> video.quality.contains("(DUB)", ignoreCase = true)
+                    "soft", "hard" -> video.videoTitle.contains("(SUB)", ignoreCase = true)
+                    "dub" -> video.videoTitle.contains("(DUB)", ignoreCase = true)
                     else -> false
                 }
                 if (matchesCategory) 0 else 1
             }.thenBy { video ->
-                val isPreferredServer = video.quality.contains(preferredServer, ignoreCase = true)
+                val isPreferredServer = video.videoTitle.contains(preferredServer, ignoreCase = true)
                 if (isPreferredServer) 0 else 1
             },
         )
