@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import extensions.utils.Source
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
@@ -67,8 +68,6 @@ private val EPISODE_TEXT_REGEX = Regex("""\s+(?:Episode|Ep)\s*\d+.*""", RegexOpt
 private val YEAR_REGEX = Regex("""\s+[\[\(]?\d{4}[\]\)]?.*""", RegexOption.IGNORE_CASE)
 private val QUALITY_REGEX = Regex("""\s+(720p|1080p|WEB-DL|BluRay|HDRip|HDTC|HDCAM|ESub|Dual Audio).*""", RegexOption.IGNORE_CASE)
 private val DASH_REGEX = Regex("""\s+-\s+\d+\s+.*""", RegexOption.IGNORE_CASE)
-
-import extensions.utils.Source
 
 class DhakaFlix2(
     override val name: String,
@@ -123,9 +122,6 @@ class DhakaFlix2(
         }
     }
 
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
 
     private val searchCache = mutableMapOf<String, List<SAnime>>()
     private val cacheTime = mutableMapOf<String, Long>()

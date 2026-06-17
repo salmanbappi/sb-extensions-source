@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.model.Hoster
+import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -38,20 +39,20 @@ abstract class Source : ConfigurableAnimeSource, AnimeHttpSource() {
     }
 
     // TODO: Remove with ext lib 16
-    override fun popularAnimeRequest(page: Int) = throw UnsupportedOperationException()
-    override fun popularAnimeParse(response: Response) = throw UnsupportedOperationException()
-    override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
-    override fun latestUpdatesParse(response: Response) = throw UnsupportedOperationException()
+    override fun popularAnimeRequest(page: Int): Request = throw UnsupportedOperationException()
+    override fun popularAnimeParse(response: Response): AnimesPage = throw UnsupportedOperationException()
+    override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException()
+    override fun latestUpdatesParse(response: Response): AnimesPage = throw UnsupportedOperationException()
     override fun searchAnimeRequest(
         page: Int,
         query: String,
         filters: AnimeFilterList,
-    ) = throw UnsupportedOperationException()
-    override fun searchAnimeParse(response: Response) = throw UnsupportedOperationException()
-    override fun animeDetailsRequest(anime: SAnime) = throw UnsupportedOperationException()
-    override fun animeDetailsParse(response: Response) = throw UnsupportedOperationException()
-    override fun episodeListRequest(anime: SAnime) = throw UnsupportedOperationException()
-    override fun episodeListParse(response: Response) = throw UnsupportedOperationException()
+    ): Request = throw UnsupportedOperationException()
+    override fun searchAnimeParse(response: Response): AnimesPage = throw UnsupportedOperationException()
+    override fun animeDetailsRequest(anime: SAnime): Request = throw UnsupportedOperationException()
+    override fun animeDetailsParse(response: Response): SAnime = throw UnsupportedOperationException()
+    override fun episodeListRequest(anime: SAnime): Request = throw UnsupportedOperationException()
+    override fun episodeListParse(response: Response): List<SEpisode> = throw UnsupportedOperationException()
 
     override fun seasonListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()

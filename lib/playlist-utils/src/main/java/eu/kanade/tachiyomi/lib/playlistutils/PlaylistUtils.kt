@@ -109,9 +109,8 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
         if (PLAYLIST_SEPARATOR !in masterPlaylist) {
             return listOf(
                 Video(
-                    playlistUrl,
-                    videoNameGen("Video"),
-                    playlistUrl,
+                    videoUrl = playlistUrl,
+                    videoTitle = videoNameGen("Video"),
                     headers = masterHeaders,
                     subtitleTracks = subtitleList,
                     audioTracks = audioList,
@@ -207,9 +206,8 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
             } ?: return@mapNotNull null
 
             bandwidth to Video(
-                url = videoUrl,
-                quality = videoNameGen(streamName),
                 videoUrl = videoUrl,
+                videoTitle = videoNameGen(streamName),
                 headers = videoHeadersGen(headers, referer, videoUrl),
                 subtitleTracks = subtitleTracks,
                 audioTracks = audioTracks,
@@ -419,9 +417,8 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
             val videoUrl = videoSrc.text()
 
             Video(
-                videoUrl,
-                videoNameGen(res, bandwidth),
-                videoUrl,
+                videoUrl = videoUrl,
+                videoTitle = videoNameGen(res, bandwidth),
                 audioTracks = audioTracks,
                 subtitleTracks = subtitleList,
                 headers = videoHeadersGen(headers, referer, videoUrl),

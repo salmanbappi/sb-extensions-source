@@ -65,9 +65,6 @@ class FtpBd(
 
     override val supportsLatest = true
 
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
 
     private val omdbJson = Json {
         ignoreUnknownKeys = true

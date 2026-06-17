@@ -38,24 +38,17 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.util.TimeZone
-import java.util.UUID
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import extensions.utils.Source
 
-class MovieBox :
-    AnimeHttpSource(),
-    ConfigurableAnimeSource {
+class MovieBox : Source() {
 
     override val name = "MovieBox"
     override val baseUrl = "https://moviebox.ph"
     override val lang = "all"
     override val supportsLatest = false
     override val id: Long = 3508466391484419848L
-
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
 
     private val apiHosts = listOf(
         "https://api3.aoneroom.com",
@@ -488,10 +481,10 @@ class MovieBox :
                 }
 
                 val langTag = lang.replace("dub", "").replace("dubbed", "").trim()
-                res.split(",").forEach { r -> videos.add(Video(url, "${r.trim()}P ($langTag)", url, headers = headers, subtitleTracks = subtitleTracks)) }
+                res.split(",").forEach { r -> videos.add(Video(videoUrl = url, videoTitle = "${r.trim()}P ($langTag)", headers = headers, subtitleTracks = subtitleTracks)) }
             }
         }
-        return videos
+        return videos.sort()
     }
 
     private val blockedKeywords = listOf(
@@ -541,12 +534,12 @@ class MovieBox :
     private val JsonElement?.str get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
     private val JsonElement?.bool get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false
 
-    override fun List<Video>.sort(): List<Video> {
+    private fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
         val audio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT)!!
         return this.sortedWith(
-            compareByDescending<Video> { it.quality.contains(audio, ignoreCase = true) }
-                .thenByDescending { it.quality.contains(quality, ignoreCase = true) },
+            compareByDescending<Video> { it.videoTitle.contains(audio, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) },
         )
     }
 
