@@ -248,9 +248,9 @@ class Seanime :
     }
 
     private fun AniListMedia.toSAnime(): SAnime = SAnime.create().apply {
-        val animeTitle = title?.userPreferred
-            ?: title?.english
-            ?: title?.romaji
+        val animeTitle = this@toSAnime.title?.userPreferred
+            ?: this@toSAnime.title?.english
+            ?: this@toSAnime.title?.romaji
             ?: "Anime $id"
         title = animeTitle
         thumbnail_url = coverImage?.large
@@ -467,7 +467,7 @@ class Seanime :
                 val filePath = urlStr.removePrefix("local:")
                 val encodedPath = URLEncoder.encode(filePath, "UTF-8")
                 val videoUrl = "$baseUrl/api/v1/mediastream/file?path=$encodedPath"
-                return listOf(Video(videoUrl, "Local Server (Direct Stream)", videoUrl, headers = headers))
+                return listOf(Video(videoUrl = videoUrl, videoTitle = "Local Server (Direct Stream)", headers = headers))
             }
 
             urlStr.startsWith("torrent:") -> {
@@ -488,7 +488,7 @@ class Seanime :
                 if (response.isSuccessful) {
                     response.close()
                     val streamUrl = "$baseUrl/api/v1/torrentstream/stream/video.mp4"
-                    return listOf(Video(streamUrl, "Torrent Stream (Seanime Auto-Select)", streamUrl, headers = headers))
+                    return listOf(Video(videoUrl = streamUrl, videoTitle = "Torrent Stream (Seanime Auto-Select)", headers = headers))
                 } else {
                     response.close()
                     throw Exception("Failed to start torrent stream (Code: ${response.code})")
@@ -516,19 +516,19 @@ class Seanime :
 
                     val list = videoSources.flatMap { vs ->
                         val videoHeaders = okhttp3.Headers.Builder().apply {
-                            headers.forEach { entry -> add(entry.name, entry.value) }
+                            headers.forEach { (name, value) -> add(name, value) }
                             vs.headers.forEach { (k, v) -> set(k, v) }
                         }.build()
 
-                        listOf(Video(vs.url, "${vs.server} (${vs.quality})", vs.url, headers = videoHeaders))
+                        listOf(Video(videoUrl = vs.url, videoTitle = "${vs.server} (${vs.quality})", headers = videoHeaders))
                     }
 
                     val preferredQuality = preferences.getString(PREF_PREFERRED_QUALITY, DEFAULT_PREFERRED_QUALITY)!!
                     val preferredServer = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)!!
 
                     return list.sortedWith(
-                        compareByDescending<Video> { it.quality.contains(preferredQuality, ignoreCase = true) }
-                            .thenByDescending { it.quality.contains(preferredServer, ignoreCase = true) },
+                        compareByDescending<Video> { it.videoTitle.contains(preferredQuality, ignoreCase = true) }
+                            .thenByDescending { it.videoTitle.contains(preferredServer, ignoreCase = true) },
                     )
                 } else {
                     response.close()
