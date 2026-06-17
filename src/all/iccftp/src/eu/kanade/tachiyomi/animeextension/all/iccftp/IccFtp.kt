@@ -368,7 +368,7 @@ class IccFtp :
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         if (episode.url.isBlank()) throw IOException("Video URL is empty")
         val videoUrl = if (episode.url.startsWith("http")) episode.url else "$baseUrl/${episode.url}"
-        return listOf(Video(videoUrl, "Direct", videoUrl))
+        return listOf(Video(videoUrl = videoUrl, videoTitle = "Direct"))
     }
 
     override fun getFilterList() = AnimeFilterList(

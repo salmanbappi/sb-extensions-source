@@ -300,7 +300,7 @@ class RoarZone :
         val container = mediaSource.container ?: "mkv"
         val staticUrl = "$baseUrl/Videos/${item.id}/stream.$container?static=True"
         val quality = "Play: ${mediaSource.name ?: "Video"}"
-        return listOf(Video(staticUrl, quality, staticUrl, headers = videoHeaders))
+        return listOf(Video(videoUrl = staticUrl, videoTitle = quality, headers = videoHeaders))
     }
 
     private fun getItemsUrl(startIndex: Int): HttpUrl = "$baseUrl/Users/$userId/Items".toHttpUrl().newBuilder().apply {
