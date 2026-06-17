@@ -28,13 +28,13 @@ import java.util.concurrent.TimeUnit
 
 class NetMirror : AnimeSourceFactory {
     override fun createSources(): List<AnimeSource> = listOf(
-        CNCVerseSource("CNCVerse (Netflix)", "nf", "", 5181466391484419888L),
-        CNCVerseSource("CNCVerse (Prime Video)", "pv", "", 5181466391484419889L),
-        CNCVerseSource("CNCVerse (Hotstar)", "hs", "", 5181466391484419890L),
-        CNCVerseSource("CNCVerse (Disney)", "dp", "disney", 5181466391484419891L),
-        CNCVerseSource("CNCVerse (Marvel)", "dp", "marvel", 5181466391484419892L),
-        CNCVerseSource("CNCVerse (Star Wars)", "dp", "starwars", 5181466391484419893L),
-        CNCVerseSource("CNCVerse (Pixar)", "dp", "pixar", 5181466391484419894L),
+        CNCVerseSource("Netflix", "nf", "", 5181466391484419888L),
+        CNCVerseSource("Prime Video", "pv", "", 5181466391484419889L),
+        CNCVerseSource("Hotstar", "hs", "", 5181466391484419890L),
+        CNCVerseSource("Disney", "dp", "disney", 5181466391484419891L),
+        CNCVerseSource("Marvel", "dp", "marvel", 5181466391484419892L),
+        CNCVerseSource("Star Wars", "dp", "starwars", 5181466391484419893L),
+        CNCVerseSource("Pixar", "dp", "pixar", 5181466391484419894L),
     )
 }
 
@@ -402,11 +402,11 @@ class CNCVerseSource(
                 referer = referer.ifEmpty { getApiUrl() },
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
-                videoNameGen = { "CNCVerse - $it" },
+                videoNameGen = { "$name - $it" },
             )
         } catch (e: Exception) {
             listOf(
-                Video(videoLink, "CNCVerse", videoLink, headers = videoHeaders),
+                Video(videoLink, name, videoLink, headers = videoHeaders),
             )
         }.map { video ->
             if (video.subtitleTracks.isEmpty()) {
