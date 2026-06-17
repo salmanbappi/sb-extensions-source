@@ -438,15 +438,12 @@ class Nepu :
         return builder.build()
     }
 
+    override fun seasonListSelector(): String = throw UnsupportedOperationException()
+    override fun seasonFromElement(element: org.jsoup.nodes.Element): SAnime = throw UnsupportedOperationException()
+
     // ============================ Video Links =============================
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val request = videoListRequest(episode)
-        val response = client.newCall(request).execute()
-        return videoListParse(response)
-    }
-
-    private fun videoListParse(response: Response): List<Video> {
+    override fun videoListParse(response: Response, hoster: Hoster): List<Video> {
         val document = response.asJsoup()
         val videoList = java.util.Collections.synchronizedList(mutableListOf<Video>())
         val pageUrl = response.request.url.toString()
