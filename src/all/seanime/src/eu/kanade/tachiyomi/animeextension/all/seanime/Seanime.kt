@@ -196,7 +196,7 @@ class Seanime :
     private var cachedHeaders: okhttp3.Headers? = null
     private var lastPassword = ""
 
-    private fun getHeaders(): okhttp3.Headers {
+    private fun getSeanimeHeaders(): okhttp3.Headers {
         val password = preferences.getString(PREF_SERVER_PASSWORD, DEFAULT_SERVER_PASSWORD)!!
         if (cachedHeaders != null && password == lastPassword) {
             return cachedHeaders!!
@@ -269,7 +269,7 @@ class Seanime :
     // ============================== SOURCE INTERFACE OVERRIDES ==============================
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val headers = getHeaders()
+        val headers = getSeanimeHeaders()
         val response = client.newCall(GET("$baseUrl/api/v1/library/collection", headers)).await()
         if (response.isSuccessful) {
             val collection = response.parseAs<LibraryCollectionDto>(json)
@@ -294,7 +294,7 @@ class Seanime :
         if (mode == MODE_ONLINE) {
             return searchAniList(page, query)
         } else {
-            val headers = getHeaders()
+            val headers = getSeanimeHeaders()
             val response = client.newCall(GET("$baseUrl/api/v1/library/collection", headers)).await()
             if (response.isSuccessful) {
                 val collection = response.parseAs<LibraryCollectionDto>(json)
@@ -367,7 +367,7 @@ class Seanime :
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val mediaId = anime.url.toInt()
-        val headers = getHeaders()
+        val headers = getSeanimeHeaders()
         val response = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
         if (response.isSuccessful) {
             val entryDto = response.parseAs<AnimeEntryResponseDto>(json)
@@ -399,7 +399,7 @@ class Seanime :
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val mediaId = anime.url.toInt()
         val mode = preferences.getString(PREF_STREAMING_MODE, DEFAULT_STREAMING_MODE)!!
-        val headers = getHeaders()
+        val headers = getSeanimeHeaders()
 
         if (mode == MODE_ONLINE) {
             val provider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)!!
@@ -460,7 +460,7 @@ class Seanime :
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val urlStr = episode.url
-        val headers = getHeaders()
+        val headers = getSeanimeHeaders()
 
         when {
             urlStr.startsWith("local:") -> {
