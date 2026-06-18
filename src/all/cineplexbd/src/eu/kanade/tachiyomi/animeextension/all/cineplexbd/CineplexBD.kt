@@ -188,9 +188,27 @@ class CineplexBD : Source() {
 
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.asJsoup()
+        val url = response.request.url.toString()
+        val seasonFromUrl = if (url.contains("season=")) {
+            url.substringAfter("season=").substringBefore("&").trimEnd('/').trim()
+        } else {
+            null
+        }
+
         val anime = SAnime.create().apply {
             val rawTitle = doc.selectFirst("h1, .movie-title, title")?.text()?.replace(" — Watch", "") ?: ""
-            title = rawTitle
+            title = if (seasonFromUrl != null) {
+                val seasonOptions = doc.select("select[name=season] option")
+                val optionText = seasonOptions.firstOrNull { it.attr("value").trimEnd('/').trim() == seasonFromUrl }?.text()?.trim()
+                val seasonText = optionText ?: "Season $seasonFromUrl"
+                if (!rawTitle.contains(seasonText, ignoreCase = true)) {
+                    "$rawTitle - $seasonText"
+                } else {
+                    rawTitle
+                }
+            } else {
+                rawTitle
+            }
             description = doc.selectFirst("p.leading-relaxed, #synopsis, .description")?.text() ?: ""
 
             // Metadata parsing
@@ -227,17 +245,18 @@ class CineplexBD : Source() {
             description = (description + extraInfo).trim()
         }
 
-        val url = response.request.url.toString()
         if (url.contains("watch.php")) {
             val id = if (url.contains("series_id=")) {
                 url.substringAfter("series_id=").substringBefore("&")
             } else {
                 url.substringAfter("id=").substringBefore("&")
-            }
+            }.trimEnd('/').trim()
             try {
-                val metaUrl = "$baseUrl/watch.php?id=$id&season=1&meta=1"
+                val metaUrl = "$baseUrl/watch.php?id=$id&season=${seasonFromUrl ?: "1"}&meta=1"
                 val metaResponse = client.newCall(GET(metaUrl, headers)).execute()
-                val metaJson = json.decodeFromString<JsonObject>(metaResponse.body.string())
+                val responseBodyString = metaResponse.body.string()
+                metaResponse.close()
+                val metaJson = json.decodeFromString<JsonObject>(responseBodyString)
 
                 val syn = metaJson["synopsis"]?.jsonPrimitive?.content
                 val baseDescription = if (!syn.isNullOrBlank()) syn else doc.selectFirst("p.leading-relaxed, #synopsis, .description")?.text() ?: ""
@@ -362,13 +381,15 @@ class CineplexBD : Source() {
         val showStats = preferences.getBoolean(PREF_STATS_KEY, PREF_STATS_DEFAULT)
 
         if (url.contains("view.php") || url.contains("tview.php")) {
-            val id = url.substringAfter("id=").substringBefore("&")
+            val id = url.substringAfter("id=").substringBefore("&").trimEnd('/').trim()
             var epViews: String? = null
             var epDate: Long = 0L
             if (showStats) {
                 try {
                     val playerResponse = client.newCall(GET("$baseUrl/player.php?id=$id", headers)).execute()
-                    val playerDoc = Jsoup.parse(playerResponse.body.string())
+                    val responseBodyString = playerResponse.body.string()
+                    playerResponse.close()
+                    val playerDoc = Jsoup.parse(responseBodyString)
 
                     val viewsSpan = playerDoc.selectFirst("span:contains(👁️)")
                     if (viewsSpan != null) {
@@ -407,10 +428,10 @@ class CineplexBD : Source() {
                 url.substringAfter("series_id=").substringBefore("&")
             } else {
                 url.substringAfter("id=").substringBefore("&")
-            }
+            }.trimEnd('/').trim()
 
             val seasonFromUrl = if (url.contains("season=")) {
-                url.substringAfter("season=").substringBefore("&")
+                url.substringAfter("season=").substringBefore("&").trimEnd('/').trim()
             } else {
                 null
             }
@@ -420,7 +441,7 @@ class CineplexBD : Source() {
             } else {
                 val seasonOptions = doc.select("select[name=season] option")
                 if (seasonOptions.isNotEmpty()) {
-                    seasonOptions.map { it.attr("value") }
+                    seasonOptions.map { it.attr("value").trimEnd('/').trim() }
                 } else {
                     listOf("1")
                 }
@@ -435,7 +456,9 @@ class CineplexBD : Source() {
                     } else {
                         try {
                             val htmlResponse = client.newCall(GET("$baseUrl/watch.php?id=$id&season=$season", headers)).execute()
-                            Jsoup.parse(htmlResponse.body.string())
+                            val responseBodyString = htmlResponse.body.string()
+                            htmlResponse.close()
+                            Jsoup.parse(responseBodyString)
                         } catch (e: Exception) {
                             doc
                         }
@@ -443,7 +466,9 @@ class CineplexBD : Source() {
 
                     val metaUrl = "$baseUrl/watch.php?id=$id&season=$season&meta=1"
                     val metaResponse = client.newCall(GET(metaUrl, headers)).execute()
-                    val metaJson = json.decodeFromString<JsonObject>(metaResponse.body.string())
+                    val responseBodyString = metaResponse.body.string()
+                    metaResponse.close()
+                    val metaJson = json.decodeFromString<JsonObject>(responseBodyString)
 
                     val seasonEpisodes = metaJson["episodes"]?.jsonObject?.entries?.mapNotNull { (key, value) ->
                         try {

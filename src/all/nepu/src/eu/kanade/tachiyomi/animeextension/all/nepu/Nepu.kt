@@ -360,8 +360,30 @@ class Nepu :
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         val sheader = document.selectFirst("div.sheader, div.detail-content, .detail-header, .app-section")
-        title = sheader?.selectFirst("div.data > h1, div.caption h1, h1")?.text()
+        val rawTitle = sheader?.selectFirst("div.data > h1, div.caption h1, h1")?.text()
             ?: document.selectFirst("h1.title, .entry-title, .m-title, .jws-post-title, h1")?.text() ?: ""
+        
+        val url = document.location()
+        val seasonFromUrl = if (url.contains("season=")) {
+            try {
+                java.net.URLDecoder.decode(url.substringAfter("season=").substringBefore("&"), "UTF-8").trimEnd('/').trim()
+            } catch (e: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+
+        title = if (seasonFromUrl != null) {
+            if (!rawTitle.contains(seasonFromUrl, ignoreCase = true)) {
+                "$rawTitle - $seasonFromUrl"
+            } else {
+                rawTitle
+            }
+        } else {
+            rawTitle
+        }
+
         description = document.selectFirst("div#info p, .description, .entry-content p, .storyline, #edit-2, div.detail div.text, meta[name='description'], meta[property='og:description']")?.let {
             if (it.tagName() == "meta") it.attr("content") else it.text()
         }
@@ -369,7 +391,6 @@ class Nepu :
         status = SAnime.UNKNOWN
         thumbnail_url = sheader?.extractImageUrl() ?: document.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
 
-        val url = document.location()
         val isTvShow = (url.contains("/serie/") || url.contains("/show/")) && !url.contains("season=")
         val splitEnabled = preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)
         var seasons = document.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane")
@@ -421,7 +442,11 @@ class Nepu :
         }
 
         val seasonFromUrl = if (url.contains("season=")) {
-            java.net.URLDecoder.decode(url.substringAfter("season=").substringBefore("&"), "UTF-8")
+            try {
+                java.net.URLDecoder.decode(url.substringAfter("season=").substringBefore("&"), "UTF-8").trimEnd('/').trim()
+            } catch (e: Exception) {
+                null
+            }
         } else {
             null
         }
@@ -450,12 +475,12 @@ class Nepu :
                     ?: season.selectFirst("span.se-t")?.text()
                     ?: season.selectFirst("h2, h3, .season-title")?.text()
                     ?: ""
-                seasonName = seasonName.trim()
+                seasonName = seasonName.trimEnd('/').trim()
                 if (seasonName.toIntOrNull() != null) {
                     seasonName = "Season $seasonName"
                 }
 
-                if (seasonFromUrl == null || seasonName == seasonFromUrl) {
+                if (seasonFromUrl == null || seasonName.equals(seasonFromUrl, ignoreCase = true)) {
                     val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
                     episodes.forEach { element ->
                         episodeList.add(
