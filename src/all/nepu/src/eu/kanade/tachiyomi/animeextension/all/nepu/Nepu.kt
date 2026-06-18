@@ -376,7 +376,7 @@ class Nepu : ParsedAnimeHttpSource() {
                 }
 
                 val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
-                
+
                 val seasonEpisodes = episodes.map { element ->
                     episodeFromElement(element).apply {
                         name = if (seasonName.isNotBlank()) "$seasonName - $name" else name
