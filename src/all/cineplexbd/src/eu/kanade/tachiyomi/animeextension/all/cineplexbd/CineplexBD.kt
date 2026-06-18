@@ -295,6 +295,39 @@ class CineplexBD : Source() {
         return anime
     }
 
+    override fun seasonListRequest(anime: SAnime): Request {
+        val url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
+        return GET(baseUrl + url, headers)
+    }
+
+    override fun seasonListParse(response: Response): List<SAnime> {
+        val url = response.request.url.toString()
+        if (!preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)) {
+            throw UnsupportedOperationException("Season splitter is disabled")
+        }
+        if (url.contains("view.php") || url.contains("tview.php")) {
+            throw UnsupportedOperationException("Movies do not have seasons")
+        }
+        val doc = response.asJsoup()
+        val seasonOptions = doc.select("select[name=season] option")
+        if (seasonOptions.size <= 1) {
+            throw UnsupportedOperationException("Single season series do not need splitting")
+        }
+        val id = if (url.contains("series_id=")) {
+            url.substringAfter("series_id=").substringBefore("&")
+        } else {
+            url.substringAfter("id=").substringBefore("&")
+        }
+        return seasonOptions.map { option ->
+            val seasonNum = option.attr("value")
+            val seasonName = option.text().trim()
+            SAnime.create().apply {
+                this.url = "/watch.php?id=$id&season=$seasonNum"
+                this.title = seasonName
+            }
+        }
+    }
+
     override fun episodeListRequest(anime: SAnime): Request {
         val url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
         return GET(baseUrl + url, headers)
@@ -353,16 +386,38 @@ class CineplexBD : Source() {
                 url.substringAfter("id=").substringBefore("&")
             }
 
-            val seasonOptions = doc.select("select[name=season] option")
-            val seasons = if (seasonOptions.isNotEmpty()) {
-                seasonOptions.map { it.attr("value") }
+            val seasonFromUrl = if (url.contains("season=")) {
+                url.substringAfter("season=").substringBefore("&")
             } else {
-                listOf("1")
+                null
+            }
+
+            val seasons = if (seasonFromUrl != null) {
+                listOf(seasonFromUrl)
+            } else {
+                val seasonOptions = doc.select("select[name=season] option")
+                if (seasonOptions.isNotEmpty()) {
+                    seasonOptions.map { it.attr("value") }
+                } else {
+                    listOf("1")
+                }
             }
 
             var totalEpisodeCount = 1f
+            val firstSeason = seasons.firstOrNull()
             seasons.forEach { season ->
                 try {
+                    val seasonDoc = if (season == firstSeason) {
+                        doc
+                    } else {
+                        try {
+                            val htmlResponse = client.newCall(GET("$baseUrl/watch.php?id=$id&season=$season", headers)).execute()
+                            Jsoup.parse(htmlResponse.body.string())
+                        } catch (e: Exception) {
+                            doc
+                        }
+                    }
+
                     val metaUrl = "$baseUrl/watch.php?id=$id&season=$season&meta=1"
                     val metaResponse = client.newCall(GET(metaUrl, headers)).execute()
                     val metaJson = json.decodeFromString<JsonObject>(metaResponse.body.string())
@@ -387,7 +442,7 @@ class CineplexBD : Source() {
                             var epViews: String? = null
                             if (showStats) {
                                 try {
-                                    val epCard = doc.selectFirst("a[data-ep=${epNum.toInt()}]")
+                                    val epCard = seasonDoc.selectFirst("a[data-ep=${epNum.toInt()}]")
                                     val viewsSpan = epCard?.selectFirst(".meta-views")
                                     if (viewsSpan != null) {
                                         epViews = viewsSpan.text().trim()
@@ -395,12 +450,44 @@ class CineplexBD : Source() {
                                 } catch (e: Exception) {}
                             }
 
+                            // Fetch thumbnail
+                            var thumbnail: String? = null
+                            try {
+                                val jsonStill = epJson["still"]?.jsonPrimitive?.content
+                                if (!jsonStill.isNullOrBlank()) {
+                                    thumbnail = jsonStill
+                                }
+                                if (thumbnail.isNullOrBlank()) {
+                                    val epCard = seasonDoc.selectFirst("a[data-ep=${epNum.toInt()}]")
+                                    val imgElement = epCard?.selectFirst("img")
+                                    val imgSrc = imgElement?.attr("src") ?: imgElement?.attr("data-src")
+                                    if (!imgSrc.isNullOrBlank()) {
+                                        thumbnail = if (imgSrc.startsWith("http")) imgSrc else "$baseUrl/${imgSrc.trimStart('/')}"
+                                    }
+                                }
+                            } catch (e: Exception) {}
+
+                            // Fetch summary
+                            var epSummary: String? = null
+                            try {
+                                epSummary = epJson["synopsis"]?.jsonPrimitive?.content
+                                    ?: epJson["description"]?.jsonPrimitive?.content
+                                    ?: epJson["summary"]?.jsonPrimitive?.content
+                                    ?: epJson["overview"]?.jsonPrimitive?.content
+                            } catch (e: Exception) {}
+
                             SEpisode.create().apply {
                                 name = if (seasons.size > 1) "S$season $epName" else epName
                                 episode_number = epNum
                                 this.url = epPath
                                 if (showStats && epViews != null) {
                                     scanlator = epViews
+                                }
+                                if (!thumbnail.isNullOrBlank()) {
+                                    preview_url = thumbnail
+                                }
+                                if (!epSummary.isNullOrBlank()) {
+                                    summary = epSummary
                                 }
                             }
                         } catch (e: Exception) {
@@ -528,10 +615,20 @@ class CineplexBD : Source() {
             summary = "Show views and downloads in the episode list (takes effect on refresh)."
             setDefaultValue(PREF_STATS_DEFAULT)
         }.also { screen.addPreference(it) }
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_SEASON_SPLITTER_KEY
+            title = "Season splitter"
+            summary = "Split seasons into separate listings (takes effect on refresh)."
+            setDefaultValue(PREF_SEASON_SPLITTER_DEFAULT)
+        }.also { screen.addPreference(it) }
     }
 
     companion object {
         private const val PREF_STATS_KEY = "show_episode_stats"
         private const val PREF_STATS_DEFAULT = true
+
+        private const val PREF_SEASON_SPLITTER_KEY = "season_splitter"
+        private const val PREF_SEASON_SPLITTER_DEFAULT = true
     }
 }
