@@ -84,7 +84,7 @@ class Nepu :
                 } else {
                     null
                 }
-            )
+                )
                 ?: season.selectFirst(".se-q .title")?.text()
                 ?: season.selectFirst("span.title")?.text()
                 ?: season.selectFirst("span.se-t")?.text()
