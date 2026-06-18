@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -174,6 +175,10 @@ class CineplexBD : Source() {
         thumbnail_url = rawImg?.let {
             if (it.startsWith("http")) it else "$baseUrl/${it.trimStart('/')}"
         }
+
+        val isTvShow = url.contains("watch.php") && !url.contains("season=")
+        val splitEnabled = preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)
+        fetch_type = if (isTvShow && splitEnabled) FetchType.Seasons else FetchType.Episodes
     }
 
     override fun animeDetailsRequest(anime: SAnime): Request {
@@ -292,6 +297,17 @@ class CineplexBD : Source() {
             } catch (e: Exception) {}
         }
 
+        val isTvShow = url.contains("watch.php") && !url.contains("season=")
+        val splitEnabled = preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)
+        val seasonOptions = doc.select("select[name=season] option")
+        val hasMultipleSeasons = seasonOptions.size > 1
+
+        anime.fetch_type = if (isTvShow && splitEnabled && hasMultipleSeasons) {
+            FetchType.Seasons
+        } else {
+            FetchType.Episodes
+        }
+
         return anime
     }
 
@@ -318,12 +334,19 @@ class CineplexBD : Source() {
         } else {
             url.substringAfter("id=").substringBefore("&")
         }
+        val detailsImg = doc.selectFirst("img.poster, .tvCard img, .movie-poster img")
+        val rawDetailsImg = detailsImg?.attr("data-src")?.takeIf { it.isNotEmpty() } ?: detailsImg?.attr("src")
+        val thumbnailUrl = rawDetailsImg?.let {
+            if (it.startsWith("http")) it else "$baseUrl/${it.trimStart('/')}"
+        }
         return seasonOptions.map { option ->
             val seasonNum = option.attr("value")
             val seasonName = option.text().trim()
             SAnime.create().apply {
                 this.url = "/watch.php?id=$id&season=$seasonNum"
                 this.title = seasonName
+                this.thumbnail_url = thumbnailUrl
+                this.fetch_type = FetchType.Episodes
             }
         }
     }

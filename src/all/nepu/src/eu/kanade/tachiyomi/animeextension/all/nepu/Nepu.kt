@@ -4,10 +4,12 @@ import android.app.Application
 import android.content.SharedPreferences
 import android.util.Base64
 import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -49,7 +51,58 @@ class Nepu :
 
     override val supportsLatest = true
 
-    override fun seasonListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
+    override fun seasonListParse(response: Response): List<SAnime> {
+        val doc = response.asJsoup()
+        val url = response.request.url.toString()
+        if (!preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)) {
+            throw UnsupportedOperationException("Season splitter is disabled")
+        }
+        if (url.contains("/movie/")) {
+            throw UnsupportedOperationException("Movies do not have seasons")
+        }
+
+        var seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane")
+        if (seasons.isEmpty()) {
+            seasons = doc.select("div.episodes")
+        }
+        if (seasons.size <= 1) {
+            throw UnsupportedOperationException("Single season series do not need splitting")
+        }
+
+        val path = response.request.url.encodedPath
+
+        val sheader = doc.selectFirst("div.sheader, div.detail-content, .detail-header, .app-section")
+        val thumbnailUrl = sheader?.extractImageUrl() ?: doc.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
+
+        return seasons.map { season ->
+            val seasonId = season.attr("id")
+            var seasonName = (
+                if (seasonId.isNotEmpty()) {
+                    doc.selectFirst("a[href='#$seasonId']")?.text()
+                        ?: doc.selectFirst("button[data-bs-target='#$seasonId']")?.text()
+                        ?: doc.selectFirst("button[data-target='#$seasonId']")?.text()
+                } else {
+                    null
+                }
+            )
+                ?: season.selectFirst(".se-q .title")?.text()
+                ?: season.selectFirst("span.title")?.text()
+                ?: season.selectFirst("span.se-t")?.text()
+                ?: season.selectFirst("h2, h3, .season-title")?.text()
+                ?: ""
+            seasonName = seasonName.trim()
+            if (seasonName.toIntOrNull() != null) {
+                seasonName = "Season $seasonName"
+            }
+
+            SAnime.create().apply {
+                this.url = "$path?season=${java.net.URLEncoder.encode(seasonName, "UTF-8")}"
+                this.title = seasonName
+                this.thumbnail_url = thumbnailUrl
+                this.fetch_type = FetchType.Episodes
+            }
+        }
+    }
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
 
     override val id: Long = 5181466391484419855L
@@ -160,6 +213,10 @@ class Nepu :
             ?: link.attr("title")
             ?: ""
         thumbnail_url = element.extractImageUrl()
+
+        val isTvShow = url.contains("/serie/") || url.contains("/show/")
+        val splitEnabled = preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)
+        fetch_type = if (isTvShow && splitEnabled) FetchType.Seasons else FetchType.Episodes
     }
 
     override fun popularAnimeNextPageSelector(): String? = "ul.pagination a.page-link:contains(Next)"
@@ -311,6 +368,21 @@ class Nepu :
         genre = document.select("div.sgeneros a, .genres a, .entry-content .genre a, .ganre-wrapper a, div.video-attr:contains(Genre) a").joinToString { it.text() }
         status = SAnime.UNKNOWN
         thumbnail_url = sheader?.extractImageUrl() ?: document.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
+
+        val url = document.location()
+        val isTvShow = (url.contains("/serie/") || url.contains("/show/")) && !url.contains("season=")
+        val splitEnabled = preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)
+        var seasons = document.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane")
+        if (seasons.isEmpty()) {
+            seasons = document.select("div.episodes")
+        }
+        val hasMultipleSeasons = seasons.size > 1
+
+        fetch_type = if (isTvShow && splitEnabled && hasMultipleSeasons) {
+            FetchType.Seasons
+        } else {
+            FetchType.Episodes
+        }
     }
 
     // ============================== Episodes ==============================
@@ -323,6 +395,15 @@ class Nepu :
         val epTitle = element.selectFirst("span, .name, .ep-title, .episode")?.text() ?: element.text()
         name = epTitle.trim().ifEmpty { "Episode 1" }
         episode_number = parseEpisodeNumber(name)
+
+        val thumbnail = element.extractImageUrl()
+        if (thumbnail.isNotEmpty()) {
+            preview_url = thumbnail
+        }
+        val desc = element.selectFirst(".storyline, .description, .summary, .plot, .ep-desc, .ep-story, p:not(.date)")?.text()?.trim()
+        if (!desc.isNullOrEmpty() && desc != name && desc != epTitle) {
+            summary = desc
+        }
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
@@ -337,6 +418,12 @@ class Nepu :
                     episode_number = 1f
                 },
             )
+        }
+
+        val seasonFromUrl = if (url.contains("season=")) {
+            java.net.URLDecoder.decode(url.substringAfter("season=").substringBefore("&"), "UTF-8")
+        } else {
+            null
         }
 
         var seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane")
@@ -367,13 +454,16 @@ class Nepu :
                 if (seasonName.toIntOrNull() != null) {
                     seasonName = "Season $seasonName"
                 }
-                val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
-                episodes.forEach { element ->
-                    episodeList.add(
-                        episodeFromElement(element).apply {
-                            name = if (seasonName.isNotBlank()) "$seasonName - $name" else name
-                        },
-                    )
+
+                if (seasonFromUrl == null || seasonName == seasonFromUrl) {
+                    val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
+                    episodes.forEach { element ->
+                        episodeList.add(
+                            episodeFromElement(element).apply {
+                                name = if (seasonFromUrl == null && seasonName.isNotBlank()) "$seasonName - $name" else name
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -739,11 +829,23 @@ class Nepu :
         return (2.0 * intersection) / (n1 + n2 - 2).coerceAtLeast(1)
     }
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {}
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        val context = screen.context
+
+        SwitchPreferenceCompat(context).apply {
+            key = PREF_SEASON_SPLITTER_KEY
+            title = "Season splitter"
+            summary = "Split seasons into separate listings (takes effect on refresh)."
+            setDefaultValue(PREF_SEASON_SPLITTER_DEFAULT)
+        }.also { screen.addPreference(it) }
+    }
 
     private fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String = Companion.getProxyUrl(this, targetUrl, headers)
 
     companion object {
+        private const val PREF_SEASON_SPLITTER_KEY = "season_splitter"
+        private const val PREF_SEASON_SPLITTER_DEFAULT = true
+
         private var proxy: LocalProxy? = null
 
         val m3u8Cache = java.util.concurrent.ConcurrentHashMap<String, String>()
