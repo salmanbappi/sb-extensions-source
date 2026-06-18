@@ -362,7 +362,7 @@ class Nepu :
         val sheader = document.selectFirst("div.sheader, div.detail-content, .detail-header, .app-section")
         val rawTitle = sheader?.selectFirst("div.data > h1, div.caption h1, h1")?.text()
             ?: document.selectFirst("h1.title, .entry-title, .m-title, .jws-post-title, h1")?.text() ?: ""
-        
+
         val url = document.location()
         val seasonFromUrl = if (url.contains("season=")) {
             try {
