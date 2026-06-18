@@ -1,11 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.all.nepu
 
 import android.app.Application
-import android.content.SharedPreferences
 import android.util.Base64
-import androidx.preference.PreferenceScreen
-import androidx.preference.SwitchPreferenceCompat
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -39,9 +35,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
 
-class Nepu :
-    ParsedAnimeHttpSource(),
-    ConfigurableAnimeSource {
+class Nepu : ParsedAnimeHttpSource() {
 
     override val name = "Nepu"
 
@@ -51,65 +45,9 @@ class Nepu :
 
     override val supportsLatest = true
 
-    override fun seasonListParse(response: Response): List<SAnime> {
-        val doc = response.asJsoup()
-        val url = response.request.url.toString()
-        if (!preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)) {
-            throw UnsupportedOperationException("Season splitter is disabled")
-        }
-        if (url.contains("/movie/")) {
-            throw UnsupportedOperationException("Movies do not have seasons")
-        }
-
-        var seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane")
-        if (seasons.isEmpty()) {
-            seasons = doc.select("div.episodes")
-        }
-        if (seasons.size <= 1) {
-            throw UnsupportedOperationException("Single season series do not need splitting")
-        }
-
-        val path = response.request.url.encodedPath
-
-        val sheader = doc.selectFirst("div.sheader, div.detail-content, .detail-header, .app-section")
-        val thumbnailUrl = sheader?.extractImageUrl() ?: doc.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
-
-        return seasons.map { season ->
-            val seasonId = season.attr("id")
-            var seasonName = (
-                if (seasonId.isNotEmpty()) {
-                    doc.selectFirst("a[href='#$seasonId']")?.text()
-                        ?: doc.selectFirst("button[data-bs-target='#$seasonId']")?.text()
-                        ?: doc.selectFirst("button[data-target='#$seasonId']")?.text()
-                } else {
-                    null
-                }
-                )
-                ?: season.selectFirst(".se-q .title")?.text()
-                ?: season.selectFirst("span.title")?.text()
-                ?: season.selectFirst("span.se-t")?.text()
-                ?: season.selectFirst("h2, h3, .season-title")?.text()
-                ?: ""
-            seasonName = seasonName.trim()
-            if (seasonName.toIntOrNull() != null) {
-                seasonName = "Season $seasonName"
-            }
-
-            SAnime.create().apply {
-                this.url = "$path?season=${java.net.URLEncoder.encode(seasonName, "UTF-8")}"
-                this.title = seasonName
-                this.thumbnail_url = thumbnailUrl
-                this.fetch_type = FetchType.Episodes
-            }
-        }
-    }
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
 
     override val id: Long = 5181466391484419855L
-
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(CloudflareInterceptor(network.client))
@@ -214,9 +152,7 @@ class Nepu :
             ?: ""
         thumbnail_url = element.extractImageUrl()
 
-        val isTvShow = url.contains("/serie/") || url.contains("/show/")
-        val splitEnabled = preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)
-        fetch_type = if (isTvShow && splitEnabled) FetchType.Seasons else FetchType.Episodes
+        fetch_type = FetchType.Episodes
     }
 
     override fun popularAnimeNextPageSelector(): String? = "ul.pagination a.page-link:contains(Next)"
@@ -360,29 +296,8 @@ class Nepu :
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         val sheader = document.selectFirst("div.sheader, div.detail-content, .detail-header, .app-section")
-        val rawTitle = sheader?.selectFirst("div.data > h1, div.caption h1, h1")?.text()
+        title = sheader?.selectFirst("div.data > h1, div.caption h1, h1")?.text()
             ?: document.selectFirst("h1.title, .entry-title, .m-title, .jws-post-title, h1")?.text() ?: ""
-
-        val url = document.location()
-        val seasonFromUrl = if (url.contains("season=")) {
-            try {
-                java.net.URLDecoder.decode(url.substringAfter("season=").substringBefore("&"), "UTF-8").trimEnd('/').trim()
-            } catch (e: Exception) {
-                null
-            }
-        } else {
-            null
-        }
-
-        title = if (seasonFromUrl != null) {
-            if (!rawTitle.contains(seasonFromUrl, ignoreCase = true)) {
-                "$rawTitle - $seasonFromUrl"
-            } else {
-                rawTitle
-            }
-        } else {
-            rawTitle
-        }
 
         description = document.selectFirst("div#info p, .description, .entry-content p, .storyline, #edit-2, div.detail div.text, meta[name='description'], meta[property='og:description']")?.let {
             if (it.tagName() == "meta") it.attr("content") else it.text()
@@ -391,19 +306,7 @@ class Nepu :
         status = SAnime.UNKNOWN
         thumbnail_url = sheader?.extractImageUrl() ?: document.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
 
-        val isTvShow = (url.contains("/serie/") || url.contains("/show/")) && !url.contains("season=")
-        val splitEnabled = preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)
-        var seasons = document.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane")
-        if (seasons.isEmpty()) {
-            seasons = document.select("div.episodes")
-        }
-        val hasMultipleSeasons = seasons.size > 1
-
-        fetch_type = if (isTvShow && splitEnabled && hasMultipleSeasons) {
-            FetchType.Seasons
-        } else {
-            FetchType.Episodes
-        }
+        fetch_type = FetchType.Episodes
     }
 
     // ============================== Episodes ==============================
@@ -441,22 +344,14 @@ class Nepu :
             )
         }
 
-        val seasonFromUrl = if (url.contains("season=")) {
-            try {
-                java.net.URLDecoder.decode(url.substringAfter("season=").substringBefore("&"), "UTF-8").trimEnd('/').trim()
-            } catch (e: Exception) {
-                null
-            }
-        } else {
-            null
-        }
-
         var seasons = doc.select("div.season-list div.tab-pane, div#seasons > div, div.tab-pane")
         if (seasons.isEmpty()) {
             seasons = doc.select("div.episodes")
         }
 
         val episodeList = mutableListOf<SEpisode>()
+
+        var totalEpisodeCount = 1f
 
         if (seasons.isNotEmpty()) {
             seasons.forEach { season ->
@@ -480,15 +375,17 @@ class Nepu :
                     seasonName = "Season $seasonName"
                 }
 
-                if (seasonFromUrl == null || seasonName.equals(seasonFromUrl, ignoreCase = true)) {
-                    val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
-                    episodes.forEach { element ->
-                        episodeList.add(
-                            episodeFromElement(element).apply {
-                                name = if (seasonFromUrl == null && seasonName.isNotBlank()) "$seasonName - $name" else name
-                            },
-                        )
+                val episodes = season.select("a").filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
+                
+                val seasonEpisodes = episodes.map { element ->
+                    episodeFromElement(element).apply {
+                        name = if (seasonName.isNotBlank()) "$seasonName - $name" else name
                     }
+                }.sortedBy { it.episode_number }
+
+                seasonEpisodes.forEach { episode ->
+                    episode.episode_number = totalEpisodeCount++
+                    episodeList.add(episode)
                 }
             }
         }
@@ -496,7 +393,11 @@ class Nepu :
         if (episodeList.isEmpty()) {
             val episodes = doc.select(episodeListSelector()).filter { it.attr("href").contains("/episode/") || it.attr("href").contains("/serie/") || it.attr("href").contains("/show/") || it.attr("href").contains("/movie/") }
             if (episodes.isNotEmpty()) {
-                episodeList.addAll(episodes.map { episodeFromElement(it) })
+                val sortedEpisodes = episodes.map { episodeFromElement(it) }.sortedBy { it.episode_number }
+                sortedEpisodes.forEach { episode ->
+                    episode.episode_number = totalEpisodeCount++
+                    episodeList.add(episode)
+                }
             }
         }
 
@@ -854,23 +755,9 @@ class Nepu :
         return (2.0 * intersection) / (n1 + n2 - 2).coerceAtLeast(1)
     }
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        val context = screen.context
-
-        SwitchPreferenceCompat(context).apply {
-            key = PREF_SEASON_SPLITTER_KEY
-            title = "Season splitter"
-            summary = "Split seasons into separate listings (takes effect on refresh)."
-            setDefaultValue(PREF_SEASON_SPLITTER_DEFAULT)
-        }.also { screen.addPreference(it) }
-    }
-
     private fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String = Companion.getProxyUrl(this, targetUrl, headers)
 
     companion object {
-        private const val PREF_SEASON_SPLITTER_KEY = "season_splitter"
-        private const val PREF_SEASON_SPLITTER_DEFAULT = true
-
         private var proxy: LocalProxy? = null
 
         val m3u8Cache = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -1180,6 +1067,72 @@ class LocalProxy(
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "segment.ts"
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
+    }
+
+    private fun resolveUrl(baseUrl: String, relativeUrl: String): String = try {
+        baseUrl.toHttpUrl().resolve(relativeUrl)?.toString() ?: relativeUrl
+    } catch (_: Exception) {
+        relativeUrl
+    }
+
+    private fun sendError(socket: Socket, code: Int, message: String) {
+        val out = socket.getOutputStream()
+        out.write("HTTP/1.1 $code $message\r\n".toByteArray())
+        out.write("Content-Type: text/plain\r\n".toByteArray())
+        out.write("\r\n".toByteArray())
+        out.write(message.toByteArray())
+        out.flush()
+    }
+}
+P") || trimmed.startsWith("#EXT-X-MEDIA")) {
+                    uriRegex.find(trimmed)?.let { match ->
+                        val uriValue = match.groupValues[1]
+                        val proxiedUri = getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, uriValue), encodedHeaders)
+                        builder.append(trimmed.replace(uriValue, proxiedUri))
+                    } ?: builder.append(trimmed)
+                } else if (!trimmed.startsWith("#EXT-X-PLAYLIST-TYPE")) {
+                    builder.append(trimmed)
+                }
+            } else {
+                builder.append(getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, trimmed), encodedHeaders))
+            }
+            builder.append("\n")
+        }
+
+        if (content.contains("#EXTINF") && !content.contains("#EXT-X-STREAM-INF")) {
+            val result = builder.toString()
+            return if (!result.contains("#EXT-X-ENDLIST")) {
+                result.replace("#EXTM3U\n", "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n") + "#EXT-X-ENDLIST"
+            } else {
+                result.replace("#EXTM3U\n", "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n")
+            }
+        }
+
+        return builder.toString()
+    }
+
+    private fun getProxyUrlWithEncodedHeaders(targetUrl: String, encodedHeaders: String): String {
+        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "segment.ts"
+        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
+    }
+
+    private fun resolveUrl(baseUrl: String, relativeUrl: String): String = try {
+        baseUrl.toHttpUrl().resolve(relativeUrl)?.toString() ?: relativeUrl
+    } catch (_: Exception) {
+        relativeUrl
+    }
+
+    private fun sendError(socket: Socket, code: Int, message: String) {
+        val out = socket.getOutputStream()
+        out.write("HTTP/1.1 $code $message\r\n".toByteArray())
+        out.write("Content-Type: text/plain\r\n".toByteArray())
+        out.write("\r\n".toByteArray())
+        out.write(message.toByteArray())
+        out.flush()
+    }
+}
+      return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
     }
 
     private fun resolveUrl(baseUrl: String, relativeUrl: String): String = try {
