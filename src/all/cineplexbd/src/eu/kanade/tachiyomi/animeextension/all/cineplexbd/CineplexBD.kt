@@ -246,13 +246,14 @@ class CineplexBD : Source() {
         }
 
         if (url.contains("watch.php")) {
+            val paramName = if (url.contains("series_id=")) "series_id" else "id"
             val id = if (url.contains("series_id=")) {
                 url.substringAfter("series_id=").substringBefore("&")
             } else {
                 url.substringAfter("id=").substringBefore("&")
             }.trimEnd('/').trim()
             try {
-                val metaUrl = "$baseUrl/watch.php?id=$id&season=${seasonFromUrl ?: "1"}&meta=1"
+                val metaUrl = "$baseUrl/watch.php?$paramName=$id&season=${seasonFromUrl ?: "1"}&meta=1"
                 val metaResponse = client.newCall(GET(metaUrl, headers)).execute()
                 val responseBodyString = metaResponse.body.string()
                 metaResponse.close()
@@ -348,11 +349,12 @@ class CineplexBD : Source() {
         if (seasonOptions.size <= 1) {
             throw UnsupportedOperationException("Single season series do not need splitting")
         }
+        val paramName = if (url.contains("series_id=")) "series_id" else "id"
         val id = if (url.contains("series_id=")) {
             url.substringAfter("series_id=").substringBefore("&")
         } else {
             url.substringAfter("id=").substringBefore("&")
-        }
+        }.trimEnd('/').trim()
         val detailsImg = doc.selectFirst("img.poster, .tvCard img, .movie-poster img")
         val rawDetailsImg = detailsImg?.attr("data-src")?.takeIf { it.isNotEmpty() } ?: detailsImg?.attr("src")
         val thumbnailUrl = rawDetailsImg?.let {
@@ -362,7 +364,7 @@ class CineplexBD : Source() {
             val seasonNum = option.attr("value")
             val seasonName = option.text().trim()
             SAnime.create().apply {
-                this.url = "/watch.php?id=$id&season=$seasonNum"
+                this.url = "/watch.php?$paramName=$id&season=$seasonNum"
                 this.title = seasonName
                 this.thumbnail_url = thumbnailUrl
                 this.fetch_type = FetchType.Episodes
@@ -424,6 +426,7 @@ class CineplexBD : Source() {
             )
         } else if (url.contains("watch.php")) {
             val doc = response.asJsoup()
+            val paramName = if (url.contains("series_id=")) "series_id" else "id"
             val id = if (url.contains("series_id=")) {
                 url.substringAfter("series_id=").substringBefore("&")
             } else {
@@ -455,7 +458,7 @@ class CineplexBD : Source() {
                         doc
                     } else {
                         try {
-                            val htmlResponse = client.newCall(GET("$baseUrl/watch.php?id=$id&season=$season", headers)).execute()
+                            val htmlResponse = client.newCall(GET("$baseUrl/watch.php?$paramName=$id&season=$season", headers)).execute()
                             val responseBodyString = htmlResponse.body.string()
                             htmlResponse.close()
                             Jsoup.parse(responseBodyString)
@@ -464,87 +467,131 @@ class CineplexBD : Source() {
                         }
                     }
 
-                    val metaUrl = "$baseUrl/watch.php?id=$id&season=$season&meta=1"
-                    val metaResponse = client.newCall(GET(metaUrl, headers)).execute()
-                    val responseBodyString = metaResponse.body.string()
-                    metaResponse.close()
-                    val metaJson = json.decodeFromString<JsonObject>(responseBodyString)
+                    val seasonEpisodes = try {
+                        val metaUrl = "$baseUrl/watch.php?$paramName=$id&season=$season&meta=1"
+                        val metaResponse = client.newCall(GET(metaUrl, headers)).execute()
+                        val responseBodyString = metaResponse.body.string()
+                        metaResponse.close()
+                        val metaJson = json.decodeFromString<JsonObject>(responseBodyString)
 
-                    val seasonEpisodes = metaJson["episodes"]?.jsonObject?.entries?.mapNotNull { (key, value) ->
-                        try {
-                            val epJson = value.jsonObject
-                            val rawName = epJson["title"]?.jsonPrimitive?.content ?: "Episode $key"
-                            val epPath = epJson["path"]?.jsonPrimitive?.content ?: ""
+                        metaJson["episodes"]?.jsonObject?.entries?.mapNotNull { (key, value) ->
+                            try {
+                                val epJson = value.jsonObject
+                                val rawName = epJson["title"]?.jsonPrimitive?.content ?: "Episode $key"
+                                val epPath = epJson["path"]?.jsonPrimitive?.content ?: ""
 
-                            var epNum = epJson["episode_number"]?.jsonPrimitive?.content?.toFloatOrNull()
-                                ?: key.toFloatOrNull()
-                                ?: 0f
+                                var epNum = epJson["episode_number"]?.jsonPrimitive?.content?.toFloatOrNull()
+                                    ?: key.toFloatOrNull()
+                                    ?: 0f
 
-                            if (epNum == 0f) {
-                                val match = Regex("""(?i)E(\d+)""").find(rawName)
-                                epNum = match?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
-                            }
+                                if (epNum == 0f) {
+                                    val match = Regex("""(?i)E(\d+)""").find(rawName)
+                                    epNum = match?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
+                                }
 
-                            val epName = cleanEpisodeName(rawName, season, epNum.toInt().toString())
+                                val epName = cleanEpisodeName(rawName, season, epNum.toInt().toString())
 
-                            var epViews: String? = null
-                            if (showStats) {
+                                var epViews: String? = null
+                                if (showStats) {
+                                    try {
+                                        val epCard = seasonDoc.selectFirst("a[data-ep=${epNum.toInt()}]")
+                                        val viewsSpan = epCard?.selectFirst(".meta-views")
+                                        if (viewsSpan != null) {
+                                            epViews = viewsSpan.text().trim()
+                                        }
+                                    } catch (e: Exception) {}
+                                }
+
+                                // Fetch thumbnail
+                                var thumbnail: String? = null
                                 try {
-                                    val epCard = seasonDoc.selectFirst("a[data-ep=${epNum.toInt()}]")
-                                    val viewsSpan = epCard?.selectFirst(".meta-views")
-                                    if (viewsSpan != null) {
-                                        epViews = viewsSpan.text().trim()
+                                    val jsonStill = epJson["still"]?.jsonPrimitive?.content
+                                    if (!jsonStill.isNullOrBlank()) {
+                                        thumbnail = jsonStill
+                                    }
+                                    if (thumbnail.isNullOrBlank()) {
+                                        val epCard = seasonDoc.selectFirst("a[data-ep=${epNum.toInt()}]")
+                                        val imgElement = epCard?.selectFirst("img")
+                                        val imgSrc = imgElement?.attr("src") ?: imgElement?.attr("data-src")
+                                        if (!imgSrc.isNullOrBlank()) {
+                                            thumbnail = if (imgSrc.startsWith("http")) imgSrc else "$baseUrl/${imgSrc.trimStart('/')}"
+                                        }
                                     }
                                 } catch (e: Exception) {}
-                            }
 
-                            // Fetch thumbnail
-                            var thumbnail: String? = null
-                            try {
-                                val jsonStill = epJson["still"]?.jsonPrimitive?.content
-                                if (!jsonStill.isNullOrBlank()) {
-                                    thumbnail = jsonStill
-                                }
-                                if (thumbnail.isNullOrBlank()) {
-                                    val epCard = seasonDoc.selectFirst("a[data-ep=${epNum.toInt()}]")
-                                    val imgElement = epCard?.selectFirst("img")
-                                    val imgSrc = imgElement?.attr("src") ?: imgElement?.attr("data-src")
-                                    if (!imgSrc.isNullOrBlank()) {
-                                        thumbnail = if (imgSrc.startsWith("http")) imgSrc else "$baseUrl/${imgSrc.trimStart('/')}"
+                                // Fetch summary
+                                var epSummary: String? = null
+                                try {
+                                    epSummary = epJson["synopsis"]?.jsonPrimitive?.content
+                                        ?: epJson["description"]?.jsonPrimitive?.content
+                                        ?: epJson["summary"]?.jsonPrimitive?.content
+                                        ?: epJson["overview"]?.jsonPrimitive?.content
+                                } catch (e: Exception) {}
+
+                                SEpisode.create().apply {
+                                    name = if (seasons.size > 1) "S$season $epName" else epName
+                                    episode_number = epNum
+                                    this.url = epPath
+                                    if (showStats && epViews != null) {
+                                        scanlator = epViews
+                                    }
+                                    if (!thumbnail.isNullOrBlank()) {
+                                        preview_url = thumbnail
+                                    }
+                                    if (!epSummary.isNullOrBlank()) {
+                                        summary = epSummary
                                     }
                                 }
-                            } catch (e: Exception) {}
-
-                            // Fetch summary
-                            var epSummary: String? = null
-                            try {
-                                epSummary = epJson["synopsis"]?.jsonPrimitive?.content
-                                    ?: epJson["description"]?.jsonPrimitive?.content
-                                    ?: epJson["summary"]?.jsonPrimitive?.content
-                                    ?: epJson["overview"]?.jsonPrimitive?.content
-                            } catch (e: Exception) {}
-
-                            SEpisode.create().apply {
-                                name = if (seasons.size > 1) "S$season $epName" else epName
-                                episode_number = epNum
-                                this.url = epPath
-                                if (showStats && epViews != null) {
-                                    scanlator = epViews
-                                }
-                                if (!thumbnail.isNullOrBlank()) {
-                                    preview_url = thumbnail
-                                }
-                                if (!epSummary.isNullOrBlank()) {
-                                    summary = epSummary
-                                }
+                            } catch (e: Exception) {
+                                null
                             }
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }?.sortedBy { it.episode_number }
+                        }?.sortedBy { it.episode_number }
+                    } catch (e: Exception) {
+                        null
+                    }
 
-                    if (seasonEpisodes != null) {
-                        for (episode in seasonEpisodes) {
+                    val finalSeasonEpisodes = if (seasonEpisodes.isNullOrEmpty()) {
+                        seasonDoc.select("a.ep-card").mapNotNull { card ->
+                            try {
+                                val epPath = card.attr("href")
+                                if (epPath.isNullOrBlank()) return@mapNotNull null
+                                val epNumStr = card.attr("data-ep")
+                                val epNum = epNumStr.toFloatOrNull() ?: 0f
+
+                                val rawName = card.selectFirst("span.truncate")?.text() ?: "Episode $epNumStr"
+                                val epName = cleanEpisodeName(rawName, season, epNum.toInt().toString())
+
+                                val imgEl = card.selectFirst("img")
+                                val imgSrc = imgEl?.attr("src") ?: imgEl?.attr("data-src")
+                                val thumbnail = if (!imgSrc.isNullOrBlank()) {
+                                    if (imgSrc.startsWith("http")) imgSrc else "$baseUrl/${imgSrc.trimStart('/')}"
+                                } else {
+                                    null
+                                }
+
+                                val epViews = if (showStats) card.selectFirst(".meta-views")?.text()?.trim() else null
+
+                                SEpisode.create().apply {
+                                    name = if (seasons.size > 1) "S$season $epName" else epName
+                                    episode_number = epNum
+                                    this.url = epPath
+                                    if (showStats && epViews != null) {
+                                        scanlator = epViews
+                                    }
+                                    if (!thumbnail.isNullOrBlank()) {
+                                        preview_url = thumbnail
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }.sortedBy { it.episode_number }
+                    } else {
+                        seasonEpisodes
+                    }
+
+                    if (finalSeasonEpisodes != null) {
+                        for (episode in finalSeasonEpisodes) {
                             episode.episode_number = totalEpisodeCount++
                             episodes.add(episode)
                         }
