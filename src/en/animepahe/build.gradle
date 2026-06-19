@@ -8,5 +8,7 @@ apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation(project(":lib:unpacker"))
-    implementation(libs.jsunpacker)
+    implementation(libs.jsunpacker) {
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+    }
 }
