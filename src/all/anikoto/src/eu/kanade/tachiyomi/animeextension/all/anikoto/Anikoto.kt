@@ -95,24 +95,20 @@ class Anikoto : Source() {
             .build()
     }
 
-    private fun vidtubePageHeaders(): Headers {
-        return Headers.Builder()
-            .add("User-Agent", USER_AGENT)
-            .add("Referer", "https://vidtube.site/")
-            .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .add("Accept-Language", "en-US,en;q=0.9")
-            .build()
-    }
+    private fun vidtubePageHeaders(): Headers = Headers.Builder()
+        .add("User-Agent", USER_AGENT)
+        .add("Referer", "https://vidtube.site/")
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .add("Accept-Language", "en-US,en;q=0.9")
+        .build()
 
-    private fun vidtubeApiHeaders(): Headers {
-        return Headers.Builder()
-            .add("User-Agent", USER_AGENT)
-            .add("Referer", "https://vidtube.site/")
-            .add("X-Requested-With", "XMLHttpRequest")
-            .add("Accept", "*/*")
-            .add("Accept-Language", "en-US,en;q=0.9")
-            .build()
-    }
+    private fun vidtubeApiHeaders(): Headers = Headers.Builder()
+        .add("User-Agent", USER_AGENT)
+        .add("Referer", "https://vidtube.site/")
+        .add("X-Requested-With", "XMLHttpRequest")
+        .add("Accept", "*/*")
+        .add("Accept-Language", "en-US,en;q=0.9")
+        .build()
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
         logi("getPopularAnime(page=$page)")
@@ -140,21 +136,25 @@ class Anikoto : Source() {
                         urlBuilder.addQueryParameter("sort", q)
                     }
                 }
+
                 is GenreFilter -> {
                     filter.toQueries().forEach {
                         urlBuilder.addQueryParameter("genre[]", it)
                     }
                 }
+
                 is TypeFilter -> {
                     filter.toQueries().forEach {
                         urlBuilder.addQueryParameter("term_type[]", it)
                     }
                 }
+
                 is StatusFilter -> {
                     filter.toQueries().forEach {
                         urlBuilder.addQueryParameter("status[]", it)
                     }
                 }
+
                 is LanguageFilter -> {
                     filter.toQueries().forEach {
                         urlBuilder.addQueryParameter("language[]", it)
@@ -350,8 +350,8 @@ class Anikoto : Source() {
                         url = videoUrl,
                         quality = title,
                         videoUrl = videoUrl,
-                        subtitleTracks = subtitleTracks
-                    )
+                        subtitleTracks = subtitleTracks,
+                    ),
                 )
                 logi("  + Video: $title -> $videoUrl")
             }
@@ -394,7 +394,7 @@ class Anikoto : Source() {
         label: String,
         token: String,
         audioType: String,
-        slug: String
+        slug: String,
     ): LocalProxyServer.AudioStream? {
         logi("--- resolving: $label ---")
         val encodedToken = URLEncoder.encode(token, "UTF-8")
@@ -431,7 +431,7 @@ class Anikoto : Source() {
     private suspend fun resolveVidTubeStream(
         iframeUrl: String,
         audioType: String,
-        hosterName: String
+        hosterName: String,
     ): LocalProxyServer.AudioStream? {
         logi("resolveVidTubeStream: iframeUrl=$iframeUrl, type=$audioType")
         try {
@@ -454,7 +454,7 @@ class Anikoto : Source() {
                 Request.Builder()
                     .url(step2Url)
                     .headers(vidtubeApiHeaders())
-                    .build()
+                    .build(),
             ).execute()
             logi("VidTube Step2: response code=${step2Response.code}")
             if (step2Response.isSuccessful) {
@@ -613,7 +613,7 @@ class Anikoto : Source() {
         }
         return list.sortedWith(
             compareByDescending<Video> { it.quality.startsWith(prefAudioLabel, ignoreCase = true) }
-                .thenByDescending { it.quality.contains(prefQuality, ignoreCase = true) }
+                .thenByDescending { it.quality.contains(prefQuality, ignoreCase = true) },
         )
     }
 
@@ -740,7 +740,7 @@ class Anikoto : Source() {
                 title = "Preferred quality",
                 summary = "Sorts videos so this quality is on top",
                 entries = listOf("1080p", "720p", "480p", "360p"),
-                entryValues = listOf("1080", PREF_QUALITY_DEFAULT, "480", "360")
+                entryValues = listOf("1080", PREF_QUALITY_DEFAULT, "480", "360"),
             )
             screen.addListPreference(
                 key = PREF_AUDIO,
@@ -748,7 +748,7 @@ class Anikoto : Source() {
                 title = "Preferred audio",
                 summary = "Sub, Dub, or Hsub first",
                 entries = listOf("Sub", "Dub", "Hsub"),
-                entryValues = listOf(PREF_AUDIO_DEFAULT, "A-DUB", "H-SUB")
+                entryValues = listOf(PREF_AUDIO_DEFAULT, "A-DUB", "H-SUB"),
             )
             screen.addListPreference(
                 key = PREF_TITLE_LANG,
@@ -756,7 +756,7 @@ class Anikoto : Source() {
                 title = "Title language",
                 summary = "Show English or Japanese titles",
                 entries = listOf("English", "Japanese"),
-                entryValues = listOf(PREF_TITLE_LANG_DEFAULT, "jp")
+                entryValues = listOf(PREF_TITLE_LANG_DEFAULT, "jp"),
             )
             screen.addListPreference(
                 key = PREF_BUFFER,
@@ -764,7 +764,7 @@ class Anikoto : Source() {
                 title = "Pre-fetch buffer",
                 summary = "How much to download ahead of playback. Higher = smoother but more data.",
                 entries = listOf("10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"),
-                entryValues = listOf(PREF_BUFFER_DEFAULT, "20", "30", "40", "50", "60", "70", "80", "90", "100")
+                entryValues = listOf(PREF_BUFFER_DEFAULT, "20", "30", "40", "50", "60", "70", "80", "90", "100"),
             )
             logi("setupPreferenceScreen: done")
         } catch (e: Exception) {
@@ -803,12 +803,12 @@ data class VariantInfo(
     val url: String,
     val bandwidth: Int,
     val quality: String,
-    val resolution: Int
+    val resolution: Int,
 )
 
 data class HosterTask(
     val label: String,
     val token: String,
     val audioType: String,
-    val source: String
+    val source: String,
 )

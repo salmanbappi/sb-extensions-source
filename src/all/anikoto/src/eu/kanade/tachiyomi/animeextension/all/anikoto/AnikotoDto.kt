@@ -11,55 +11,55 @@ import kotlinx.serialization.json.jsonPrimitive
 @Serializable
 data class EpisodeListResponse(
     val status: Int = 0,
-    val result: String = ""
+    val result: String = "",
 )
 
 @Serializable
 data class ServerListResponse(
     val status: Int = 0,
-    val result: String = ""
+    val result: String = "",
 )
 
 @Serializable
 data class ServerResponse(
     val status: Int = 0,
-    val result: ServerResult? = null
+    val result: ServerResult? = null,
 )
 
 @Serializable
 data class ServerResult(
     val url: String = "",
-    @SerialName("skip_data") val skipData: SkipData? = null
+    @SerialName("skip_data") val skipData: SkipData? = null,
 )
 
 @Serializable
 data class SkipData(
     val intro: List<Float> = emptyList(),
-    val outro: List<Float> = emptyList()
+    val outro: List<Float> = emptyList(),
 )
 
 @Serializable
 data class VidTubeSourcesResponse(
     val sources: VidTubeSources? = null,
-    val tracks: List<VidTubeTrack> = emptyList()
+    val tracks: List<VidTubeTrack> = emptyList(),
 )
 
 @Serializable
 data class VidTubeSources(
-    val file: String = ""
+    val file: String = "",
 )
 
 @Serializable
 data class VidTubeTrack(
     val file: String = "",
     val label: String = "",
-    val kind: String = ""
+    val kind: String = "",
 )
 
 data class MapperStreamToken(
     val serverName: String,
     val audio: String,
-    val token: String
+    val token: String,
 )
 
 data class EpisodeMeta(
@@ -70,26 +70,24 @@ data class EpisodeMeta(
     val dataIds: String,
     val hasSub: Boolean,
     val hasDub: Boolean,
-    val epTitle: String
+    val epTitle: String,
 ) {
-    fun encode(): String {
-        return buildString {
-            append(slug)
-            append("/ep-")
-            append(epNum)
-            append("|")
-            append(malId)
-            append("|")
-            append(timestamp)
-            append("|")
-            append(dataIds)
-            append("|")
-            append(if (hasSub) "1" else "0")
-            append("|")
-            append(if (hasDub) "1" else "0")
-            append("|")
-            append(epTitle.replace("|", "│"))
-        }
+    fun encode(): String = buildString {
+        append(slug)
+        append("/ep-")
+        append(epNum)
+        append("|")
+        append(malId)
+        append("|")
+        append(timestamp)
+        append("|")
+        append(dataIds)
+        append("|")
+        append(if (hasSub) "1" else "0")
+        append("|")
+        append(if (hasDub) "1" else "0")
+        append("|")
+        append(epTitle.replace("|", "│"))
     }
 
     companion object {
@@ -129,8 +127,6 @@ fun parseMapperResponse(obj: JsonObject): List<MapperStreamToken> {
     return out
 }
 
-private fun extractUrl(el: JsonElement): String? {
-    return runCatching {
-        el.jsonObject["url"]?.jsonPrimitive?.contentOrNull
-    }.getOrNull()
-}
+private fun extractUrl(el: JsonElement): String? = runCatching {
+    el.jsonObject["url"]?.jsonPrimitive?.contentOrNull
+}.getOrNull()

@@ -22,7 +22,7 @@ import kotlin.math.min
 
 class LocalProxyServer(
     client: OkHttpClient,
-    private val segmentHeaders: Headers
+    private val segmentHeaders: Headers,
 ) {
     companion object {
         private const val IDLE_TIMEOUT_MS = 600000L
@@ -74,18 +74,18 @@ class LocalProxyServer(
         val quality: String,
         val bandwidth: Int,
         val resolution: Int,
-        val segments: List<SegmentInfo>
+        val segments: List<SegmentInfo>,
     )
 
     data class SegmentInfo(
         val url: String,
-        val duration: Double
+        val duration: Double,
     )
 
     data class SubtitleData(
         val url: String,
         val label: String,
-        val language: String
+        val language: String,
     )
 
     data class AudioStream(
@@ -93,11 +93,11 @@ class LocalProxyServer(
         val audioLabel: String,
         val hosterName: String,
         val variants: List<VariantData>,
-        val subtitles: List<SubtitleData>
+        val subtitles: List<SubtitleData>,
     )
 
     data class Playlist(
-        val streams: List<AudioStream>
+        val streams: List<AudioStream>,
     )
 
     fun start() {
@@ -336,7 +336,7 @@ class LocalProxyServer(
         variant: VariantData,
         audioType: String,
         quality: String,
-        currentIndex: Int
+        currentIndex: Int,
     ) {
         if (prefetchCount <= 0) return
         val gen = prefetchGeneration.get()

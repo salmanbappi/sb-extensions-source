@@ -5,20 +5,21 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 
 class TriStateCheckBox(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
 
-class SortFilter : AnimeFilter.Sort(
-    "Sort by",
-    arrayOf(
-        "Default",
-        "Latest updated",
-        "Latest added",
-        "Score",
-        "Name A-Z",
-        "Release date",
-        "Most viewed",
-        "Number of episodes"
-    ),
-    null
-) {
+class SortFilter :
+    AnimeFilter.Sort(
+        "Sort by",
+        arrayOf(
+            "Default",
+            "Latest updated",
+            "Latest added",
+            "Score",
+            "Name A-Z",
+            "Release date",
+            "Most viewed",
+            "Number of episodes",
+        ),
+        null,
+    ) {
     fun toQuery(): String? {
         val values = arrayOf(
             "default",
@@ -28,7 +29,7 @@ class SortFilter : AnimeFilter.Sort(
             "name-az",
             "release-date",
             "most-viewed",
-            "number_of_episodes"
+            "number_of_episodes",
         )
         val st = state ?: return null
         return if (st.index >= 0 && st.index < values.size) {
@@ -39,47 +40,43 @@ class SortFilter : AnimeFilter.Sort(
     }
 }
 
-class GenreFilter : AnimeFilter.Group<AnimeFilter.CheckBox>(
-    "Genres",
-    GENRES.map { TriStateCheckBox(it.second, it.first) }
-) {
-    fun toQueries(): List<String> {
-        return state.filter { it.state }.map {
-            (it as TriStateCheckBox).id
-        }
+class GenreFilter :
+    AnimeFilter.Group<AnimeFilter.CheckBox>(
+        "Genres",
+        GENRES.map { TriStateCheckBox(it.second, it.first) },
+    ) {
+    fun toQueries(): List<String> = state.filter { it.state }.map {
+        (it as TriStateCheckBox).id
     }
 }
 
-class TypeFilter : AnimeFilter.Group<AnimeFilter.CheckBox>(
-    "Type",
-    TYPES.map { TriStateCheckBox(it.second, it.first) }
-) {
-    fun toQueries(): List<String> {
-        return state.filter { it.state }.map {
-            (it as TriStateCheckBox).id
-        }
+class TypeFilter :
+    AnimeFilter.Group<AnimeFilter.CheckBox>(
+        "Type",
+        TYPES.map { TriStateCheckBox(it.second, it.first) },
+    ) {
+    fun toQueries(): List<String> = state.filter { it.state }.map {
+        (it as TriStateCheckBox).id
     }
 }
 
-class StatusFilter : AnimeFilter.Group<AnimeFilter.CheckBox>(
-    "Status",
-    STATUSES.map { TriStateCheckBox(it.second, it.first) }
-) {
-    fun toQueries(): List<String> {
-        return state.filter { it.state }.map {
-            (it as TriStateCheckBox).id
-        }
+class StatusFilter :
+    AnimeFilter.Group<AnimeFilter.CheckBox>(
+        "Status",
+        STATUSES.map { TriStateCheckBox(it.second, it.first) },
+    ) {
+    fun toQueries(): List<String> = state.filter { it.state }.map {
+        (it as TriStateCheckBox).id
     }
 }
 
-class LanguageFilter : AnimeFilter.Group<AnimeFilter.CheckBox>(
-    "Language",
-    LANGUAGES.map { TriStateCheckBox(it.second, it.first) }
-) {
-    fun toQueries(): List<String> {
-        return state.filter { it.state }.map {
-            (it as TriStateCheckBox).id
-        }
+class LanguageFilter :
+    AnimeFilter.Group<AnimeFilter.CheckBox>(
+        "Language",
+        LANGUAGES.map { TriStateCheckBox(it.second, it.first) },
+    ) {
+    fun toQueries(): List<String> = state.filter { it.state }.map {
+        (it as TriStateCheckBox).id
     }
 }
 
@@ -127,7 +124,7 @@ private val GENRES = listOf(
     Pair("2316", "Suspense"),
     Pair("54", "Thriller"),
     Pair("32", "Unknown"),
-    Pair("58", "Vampire")
+    Pair("58", "Vampire"),
 )
 
 private val TYPES = listOf(
@@ -136,28 +133,26 @@ private val TYPES = listOf(
     Pair("OVA", "OVA"),
     Pair("ONA", "ONA"),
     Pair("Special", "Special"),
-    Pair("Music", "Music")
+    Pair("Music", "Music"),
 )
 
 private val STATUSES = listOf(
     Pair("finished-airing", "Finished Airing"),
     Pair("currently-airing", "Currently Airing"),
-    Pair("not-yet-aired", "Not Yet Aired")
+    Pair("not-yet-aired", "Not Yet Aired"),
 )
 
 private val LANGUAGES = listOf(
     Pair("sub", "Sub"),
-    Pair("dub", "Dub")
+    Pair("dub", "Dub"),
 )
 
-fun getAnikotoFilters(): AnimeFilterList {
-    return AnimeFilterList(
-        SortFilter(),
-        GenreFilter(),
-        TypeFilter(),
-        StatusFilter(),
-        LanguageFilter(),
-        AnimeFilter.Separator(),
-        AnimeFilter.Header("Note: sub/dub filter here filters anime, not episodes.")
-    )
-}
+fun getAnikotoFilters(): AnimeFilterList = AnimeFilterList(
+    SortFilter(),
+    GenreFilter(),
+    TypeFilter(),
+    StatusFilter(),
+    LanguageFilter(),
+    AnimeFilter.Separator(),
+    AnimeFilter.Header("Note: sub/dub filter here filters anime, not episodes."),
+)
