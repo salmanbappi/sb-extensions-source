@@ -33,12 +33,10 @@ class FourKHDHub : Source() {
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return if (page == 1) {
-            GET(baseUrl, headers)
-        } else {
-            GET("$baseUrl/?pagex=$page", headers)
-        }
+    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
+        GET(baseUrl, headers)
+    } else {
+        GET("$baseUrl/?pagex=$page", headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -61,7 +59,7 @@ class FourKHDHub : Source() {
             }
         }
 
-        val hasNextPage = doc.select("link[rel=next]").isNotEmpty() || 
+        val hasNextPage = doc.select("link[rel=next]").isNotEmpty() ||
             doc.select("a.pagination-item:contains(Next), a:contains(Next), a.next").isNotEmpty()
 
         return AnimesPage(animeList, hasNextPage)
@@ -70,17 +68,15 @@ class FourKHDHub : Source() {
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return if (query.isNotBlank()) {
-            val url = "$baseUrl/".toHttpUrlOrNull()!!.newBuilder()
-                .addQueryParameter("s", query)
-            if (page > 1) {
-                url.addQueryParameter("pagex", page.toString())
-            }
-            GET(url.toString(), headers)
-        } else {
-            popularAnimeRequest(page)
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
+        val url = "$baseUrl/".toHttpUrlOrNull()!!.newBuilder()
+            .addQueryParameter("s", query)
+        if (page > 1) {
+            url.addQueryParameter("pagex", page.toString())
         }
+        GET(url.toString(), headers)
+    } else {
+        popularAnimeRequest(page)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
@@ -105,8 +101,8 @@ class FourKHDHub : Source() {
 
             genre = doc.select(".badge.badge-outline a").joinToString { it.text() }
 
-            val stars = doc.select(".metadata-item").firstOrNull { 
-                it.selectFirst(".metadata-label")?.text()?.contains("Stars", ignoreCase = true) == true 
+            val stars = doc.select(".metadata-item").firstOrNull {
+                it.selectFirst(".metadata-label")?.text()?.contains("Stars", ignoreCase = true) == true
             }
             artist = stars?.selectFirst(".metadata-value")?.text()
 
@@ -169,11 +165,13 @@ class FourKHDHub : Source() {
                 val epNum = key.second
                 val firstItem = list.first()
 
-                episodes.add(SEpisode.create().apply {
-                    name = "$seasonPrefix - ${firstItem.third}"
-                    episode_number = epNum
-                    url = "$pagePath?season=${URLDecoder.decode(seasonPrefix, "UTF-8")}&episode=$epNum"
-                })
+                episodes.add(
+                    SEpisode.create().apply {
+                        name = "$seasonPrefix - ${firstItem.third}"
+                        episode_number = epNum
+                        url = "$pagePath?season=${URLDecoder.decode(seasonPrefix, "UTF-8")}&episode=$epNum"
+                    },
+                )
             }
         } else {
             // 2. Movie/Download item logic
@@ -186,11 +184,13 @@ class FourKHDHub : Source() {
                 }
 
                 if (validMovieItems.isNotEmpty()) {
-                    episodes.add(SEpisode.create().apply {
-                        name = "Movie"
-                        episode_number = 1f
-                        url = "$pagePath?movie=true"
-                    })
+                    episodes.add(
+                        SEpisode.create().apply {
+                            name = "Movie"
+                            episode_number = 1f
+                            url = "$pagePath?movie=true"
+                        },
+                    )
                 }
             }
         }
@@ -243,6 +243,7 @@ class FourKHDHub : Source() {
                             link.contains("hubcloud.", ignoreCase = true) -> {
                                 list.addAll(resolveHubCloud(link, suffix))
                             }
+
                             link.contains("hubdrive.", ignoreCase = true) -> {
                                 list.addAll(resolveHubDrive(link, suffix))
                             }
@@ -250,7 +251,7 @@ class FourKHDHub : Source() {
                     }
                 }
             } else if (query.contains("season=") && query.contains("episode=")) {
-                val params = query.split("&").associate { 
+                val params = query.split("&").associate {
                     val parts = it.split("=")
                     parts[0] to URLDecoder.decode(parts[1], "UTF-8")
                 }
@@ -280,7 +281,7 @@ class FourKHDHub : Source() {
 
                             if (epNum == targetEpisode) {
                                 val suffix = parseLabelSuffix(filename)
-                                
+
                                 val links = mutableListOf<String>()
                                 element.select("a[href*='hubcloud'], a[href*='hubdrive']").forEach {
                                     links.add(it.attr("href"))
@@ -291,6 +292,7 @@ class FourKHDHub : Source() {
                                         link.contains("hubcloud.", ignoreCase = true) -> {
                                             list.addAll(resolveHubCloud(link, suffix))
                                         }
+
                                         link.contains("hubdrive.", ignoreCase = true) -> {
                                             list.addAll(resolveHubDrive(link, suffix))
                                         }
@@ -301,7 +303,6 @@ class FourKHDHub : Source() {
                     }
                 }
             }
-
         } catch (e: Exception) {
             // ignore
         }
@@ -312,7 +313,7 @@ class FourKHDHub : Source() {
 
         list.sortWith(
             compareByDescending<Video> { it.videoTitle.contains(preferredQuality, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(preferredServer, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(preferredServer, ignoreCase = true) },
         )
 
         return list
