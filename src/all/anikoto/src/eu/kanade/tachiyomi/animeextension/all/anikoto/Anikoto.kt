@@ -371,7 +371,6 @@ class Anikoto : Source() {
 
     override suspend fun resolveVideo(video: Video): Video {
         logi("resolveVideo: switching to ${video.videoTitle}")
-        displayToast("Anikoto: Switching to ${video.videoTitle}", Toast.LENGTH_SHORT)
         activeProxyServer?.onQualitySwitch()
         return video
     }
