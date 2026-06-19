@@ -176,9 +176,7 @@ class CineplexBD : Source() {
             if (it.startsWith("http")) it else "$baseUrl/${it.trimStart('/')}"
         }
 
-        val isTvShow = url.contains("watch.php") && !url.contains("season=")
-        val splitEnabled = preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)
-        fetch_type = if (isTvShow && splitEnabled) FetchType.Seasons else FetchType.Episodes
+        fetch_type = FetchType.Episodes
     }
 
     override fun animeDetailsRequest(anime: SAnime): Request {
@@ -317,60 +315,11 @@ class CineplexBD : Source() {
             } catch (e: Exception) {}
         }
 
-        val isTvShow = url.contains("watch.php") && !url.contains("season=")
-        val splitEnabled = preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)
-        val seasonOptions = doc.select("select[name=season] option")
-        val hasMultipleSeasons = seasonOptions.size > 1
-
-        anime.fetch_type = if (isTvShow && splitEnabled && hasMultipleSeasons) {
-            FetchType.Seasons
-        } else {
-            FetchType.Episodes
-        }
+        anime.fetch_type = FetchType.Episodes
 
         return anime
     }
 
-    override fun seasonListRequest(anime: SAnime): Request {
-        val url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
-        return GET(baseUrl + url, headers)
-    }
-
-    override fun seasonListParse(response: Response): List<SAnime> {
-        val url = response.request.url.toString()
-        if (!preferences.getBoolean(PREF_SEASON_SPLITTER_KEY, PREF_SEASON_SPLITTER_DEFAULT)) {
-            throw UnsupportedOperationException("Season splitter is disabled")
-        }
-        if (url.contains("view.php") || url.contains("tview.php")) {
-            throw UnsupportedOperationException("Movies do not have seasons")
-        }
-        val doc = response.asJsoup()
-        val seasonOptions = doc.select("select[name=season] option")
-        if (seasonOptions.size <= 1) {
-            throw UnsupportedOperationException("Single season series do not need splitting")
-        }
-        val paramName = if (url.contains("series_id=")) "series_id" else "id"
-        val id = if (url.contains("series_id=")) {
-            url.substringAfter("series_id=").substringBefore("&")
-        } else {
-            url.substringAfter("id=").substringBefore("&")
-        }.trimEnd('/').trim()
-        val detailsImg = doc.selectFirst("img.poster, .tvCard img, .movie-poster img")
-        val rawDetailsImg = detailsImg?.attr("data-src")?.takeIf { it.isNotEmpty() } ?: detailsImg?.attr("src")
-        val thumbnailUrl = rawDetailsImg?.let {
-            if (it.startsWith("http")) it else "$baseUrl/${it.trimStart('/')}"
-        }
-        return seasonOptions.map { option ->
-            val seasonNum = option.attr("value")
-            val seasonName = option.text().trim()
-            SAnime.create().apply {
-                this.url = "/watch.php?$paramName=$id&season=$seasonNum"
-                this.title = seasonName
-                this.thumbnail_url = thumbnailUrl
-                this.fetch_type = FetchType.Episodes
-            }
-        }
-    }
 
     override fun episodeListRequest(anime: SAnime): Request {
         val url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
@@ -711,19 +660,11 @@ class CineplexBD : Source() {
             setDefaultValue(PREF_STATS_DEFAULT)
         }.also { screen.addPreference(it) }
 
-        SwitchPreferenceCompat(screen.context).apply {
-            key = PREF_SEASON_SPLITTER_KEY
-            title = "Season splitter"
-            summary = "Split seasons into separate listings (takes effect on refresh)."
-            setDefaultValue(PREF_SEASON_SPLITTER_DEFAULT)
-        }.also { screen.addPreference(it) }
     }
 
     companion object {
         private const val PREF_STATS_KEY = "show_episode_stats"
         private const val PREF_STATS_DEFAULT = true
 
-        private const val PREF_SEASON_SPLITTER_KEY = "season_splitter"
-        private const val PREF_SEASON_SPLITTER_DEFAULT = true
     }
 }
