@@ -224,9 +224,9 @@ class AnimePahe : Source() {
     override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
 
     // =============================== Relation/Suggestions ===============================
-    override fun relatedAnimeListRequest(anime: SAnime) = animeDetailsRequest(anime)
+    fun relatedAnimeListRequest(anime: SAnime) = animeDetailsRequest(anime)
 
-    override fun relatedAnimeListParse(response: Response): List<SAnime> {
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
         val document = response.useAsJsoup()
         val relationAnimes = document.select("div.anime-content div.anime-relation .mx-n1")
         val recommendationAnimes = document.select("div.anime-content div.anime-recommendation .mx-n1")

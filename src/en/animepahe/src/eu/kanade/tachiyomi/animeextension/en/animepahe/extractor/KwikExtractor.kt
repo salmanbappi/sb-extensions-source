@@ -71,9 +71,8 @@ class KwikExtractor(
         val videoUrl = getHlsStreamUrl(kwikUrl, referer)
 
         return Video(
-            videoUrl,
-            quality,
-            videoUrl,
+            videoUrl = videoUrl,
+            videoTitle = quality,
             headers = kwikHeaders,
         )
     }
@@ -93,9 +92,8 @@ class KwikExtractor(
         val videoUrl = getStreamUrlFromKwik(paheUrl)
 
         return Video(
-            videoUrl,
-            quality,
-            videoUrl,
+            videoUrl = videoUrl,
+            videoTitle = quality,
             headers = kwikHeaders,
         )
     }
