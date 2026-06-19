@@ -361,9 +361,8 @@ class AllAnime : Source() {
                     }.build()
 
                     Video(
-                        server.sourceUrl,
-                        "Original (player ${server.sourceName.substringAfter("player@")})",
-                        server.sourceUrl,
+                        videoUrl = server.sourceUrl,
+                        videoTitle = "Original (player ${server.sourceName.substringAfter("player@")})",
                         headers = videoHeaders,
                     ).let(::listOf)
                 }

@@ -52,9 +52,8 @@ class AllAnimeExtractor(private val client: OkHttpClient, private val headers: H
             when {
                 link.mp4 == true -> {
                     Video(
-                        link.link,
-                        "Original ($name - ${link.resolutionStr})",
-                        link.link,
+                        videoUrl = link.link,
+                        videoTitle = "Original ($name - ${link.resolutionStr})",
                         subtitleTracks = subtitles,
                     ).let(::listOf)
                 }
@@ -81,9 +80,8 @@ class AllAnimeExtractor(private val client: OkHttpClient, private val headers: H
                         when (it.format) {
                             "adaptive_dash" ->
                                 Video(
-                                    it.url,
-                                    "Original (AC - Dash${if (it.hardsub_lang.isEmpty()) "" else " - Hardsub: ${it.hardsub_lang}"})",
-                                    it.url,
+                                    videoUrl = it.url,
+                                    videoTitle = "Original (AC - Dash${if (it.hardsub_lang.isEmpty()) "" else " - Hardsub: ${it.hardsub_lang}"})",
                                     subtitleTracks = subtitles,
                                 ).let(::listOf)
 
@@ -108,9 +106,8 @@ class AllAnimeExtractor(private val client: OkHttpClient, private val headers: H
 
                     link.rawUrls?.vids?.map {
                         Video(
-                            it.url,
-                            "$name - ${it.height} ${bytesIntoHumanReadable(it.bandwidth)}",
-                            it.url,
+                            videoUrl = it.url,
+                            videoTitle = "$name - ${it.height} ${bytesIntoHumanReadable(it.bandwidth)}",
                             audioTracks = audioList,
                             subtitleTracks = subtitles,
                         )
