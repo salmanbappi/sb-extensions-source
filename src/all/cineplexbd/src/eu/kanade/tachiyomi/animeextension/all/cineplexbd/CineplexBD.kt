@@ -320,7 +320,6 @@ class CineplexBD : Source() {
         return anime
     }
 
-
     override fun episodeListRequest(anime: SAnime): Request {
         val url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
         return GET(baseUrl + url, headers)
@@ -659,12 +658,10 @@ class CineplexBD : Source() {
             summary = "Show views and downloads in the episode list (takes effect on refresh)."
             setDefaultValue(PREF_STATS_DEFAULT)
         }.also { screen.addPreference(it) }
-
     }
 
     companion object {
         private const val PREF_STATS_KEY = "show_episode_stats"
         private const val PREF_STATS_DEFAULT = true
-
     }
 }
