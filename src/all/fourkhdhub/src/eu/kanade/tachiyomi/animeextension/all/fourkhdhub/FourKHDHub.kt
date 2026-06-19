@@ -32,10 +32,12 @@ class FourKHDHub : Source() {
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
-        GET(baseUrl, headers)
-    } else {
-        GET("$baseUrl/?pagex=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        return if (page == 1) {
+            GET(baseUrl, headers)
+        } else {
+            GET("$baseUrl/?pagex=$page", headers)
+        }
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -58,7 +60,7 @@ class FourKHDHub : Source() {
             }
         }
 
-        val hasNextPage = doc.select("link[rel=next]").isNotEmpty() ||
+        val hasNextPage = doc.select("link[rel=next]").isNotEmpty() || 
             doc.select("a.pagination-item:contains(Next), a:contains(Next), a.next").isNotEmpty()
 
         return AnimesPage(animeList, hasNextPage)
@@ -67,15 +69,17 @@ class FourKHDHub : Source() {
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
-        val url = "$baseUrl/".toHttpUrlOrNull()!!.newBuilder()
-            .addQueryParameter("s", query)
-        if (page > 1) {
-            url.addQueryParameter("pagex", page.toString())
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        return if (query.isNotBlank()) {
+            val url = "$baseUrl/".toHttpUrlOrNull()!!.newBuilder()
+                .addQueryParameter("s", query)
+            if (page > 1) {
+                url.addQueryParameter("pagex", page.toString())
+            }
+            GET(url.toString(), headers)
+        } else {
+            popularAnimeRequest(page)
         }
-        GET(url.toString(), headers)
-    } else {
-        popularAnimeRequest(page)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
@@ -100,8 +104,8 @@ class FourKHDHub : Source() {
 
             genre = doc.select(".badge.badge-outline a").joinToString { it.text() }
 
-            val stars = doc.select(".metadata-item").firstOrNull {
-                it.selectFirst(".metadata-label")?.text()?.contains("Stars", ignoreCase = true) == true
+            val stars = doc.select(".metadata-item").firstOrNull { 
+                it.selectFirst(".metadata-label")?.text()?.contains("Stars", ignoreCase = true) == true 
             }
             artist = stars?.selectFirst(".metadata-value")?.text()
 
@@ -126,77 +130,66 @@ class FourKHDHub : Source() {
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = response.asJsoup()
         val episodes = mutableListOf<SEpisode>()
+        val pagePath = response.request.url.encodedPath
 
         // 1. Series/Individual Episodes logic
         val seriesItems = doc.select(".episode-download-item")
         if (seriesItems.isNotEmpty()) {
-            seriesItems.forEachIndexed { index, element ->
+            val itemsData = seriesItems.mapNotNull { element ->
                 val titleEl = element.selectFirst(".episode-file-title") ?: element.selectFirst(".file-title")
-                val filename = titleEl?.text()?.trim() ?: "Episode ${index + 1}"
+                val filename = titleEl?.text()?.trim() ?: ""
 
-                if (filename.endsWith(".zip", ignoreCase = true)) {
-                    return@forEachIndexed
+                if (filename.endsWith(".zip", ignoreCase = true) || filename.isEmpty()) {
+                    return@mapNotNull null
                 }
 
-                val dlLinks = element.select("a[href*='hubcloud'], a[href*='hubdrive']")
-                if (dlLinks.isEmpty()) {
-                    return@forEachIndexed
-                }
+                val seasonItem = element.parents().firstOrNull { it.hasClass("season-item") || it.hasClass("episode-item") }
+                val seasonPrefix = seasonItem?.selectFirst(".episode-number")?.text()?.trim() ?: "S1"
 
                 val epBadge = element.selectFirst(".badge-psa")?.text() ?: ""
                 var epNum = epBadge.replace("Episode-", "", ignoreCase = true).trim().toFloatOrNull()
 
                 if (epNum == null) {
                     val match = Regex("""(?i)[SE](\d+)""").find(filename)
-                    epNum = match?.groupValues?.get(1)?.toFloatOrNull() ?: (index + 1).toFloat()
+                    epNum = match?.groupValues?.get(1)?.toFloatOrNull()
                 }
 
-                episodes.add(
-                    SEpisode.create().apply {
-                        name = epBadge.takeIf { it.isNotBlank() } ?: filename.substringBefore(".1080p").substringBefore(".720p").replace(".", " ")
-                        episode_number = epNum
-                        val pagePath = response.request.url.encodedPath
-                        url = "$pagePath?file=${URLDecoder.decode(filename, "UTF-8")}"
-                    },
-                )
+                if (epNum == null) return@mapNotNull null
+
+                val cleanName = if (epBadge.isNotBlank()) epBadge else "Episode ${epNum.toInt()}"
+
+                Triple(seasonPrefix, epNum, cleanName)
+            }
+
+            val grouped = itemsData.groupBy { Pair(it.first, it.second) }
+
+            grouped.forEach { (key, list) ->
+                val seasonPrefix = key.first
+                val epNum = key.second
+                val firstItem = list.first()
+
+                episodes.add(SEpisode.create().apply {
+                    name = "$seasonPrefix - ${firstItem.third}"
+                    episode_number = epNum
+                    url = "$pagePath?season=${URLDecoder.decode(seasonPrefix, "UTF-8")}&episode=$epNum"
+                })
             }
         } else {
             // 2. Movie/Download item logic
             val movieItems = doc.select(".download-item")
             if (movieItems.isNotEmpty()) {
-                movieItems.forEachIndexed { index, element ->
+                val validMovieItems = movieItems.filter { element ->
                     val titleEl = element.selectFirst(".file-title") ?: element.selectFirst(".download-header")
-                    val filename = titleEl?.text()?.trim() ?: "Movie Part ${index + 1}"
+                    val filename = titleEl?.text()?.trim() ?: ""
+                    !filename.endsWith(".zip", ignoreCase = true)
+                }
 
-                    if (filename.endsWith(".zip", ignoreCase = true)) {
-                        return@forEachIndexed
-                    }
-
-                    val dlLinks = element.select("a[href*='hubcloud'], a[href*='hubdrive']")
-                    val finalLinks = if (dlLinks.isEmpty()) {
-                        val header = element.selectFirst(".download-header")
-                        val fileId = header?.attr("data-file-id")
-                        if (fileId != null) {
-                            doc.select("#content-$fileId a[href*='hubcloud'], #content-$fileId a[href*='hubdrive']")
-                        } else {
-                            emptyList()
-                        }
-                    } else {
-                        dlLinks
-                    }
-
-                    if (finalLinks.isEmpty()) {
-                        return@forEachIndexed
-                    }
-
-                    episodes.add(
-                        SEpisode.create().apply {
-                            name = filename.substringBefore(" (202").substringBefore(" 2160p").substringBefore(" 1080p").replace(".", " ")
-                            episode_number = (index + 1).toFloat()
-                            val pagePath = response.request.url.encodedPath
-                            url = "$pagePath?file=${URLDecoder.decode(filename, "UTF-8")}"
-                        },
-                    )
+                if (validMovieItems.isNotEmpty()) {
+                    episodes.add(SEpisode.create().apply {
+                        name = "Movie"
+                        episode_number = 1f
+                        url = "$pagePath?movie=true"
+                    })
                 }
             }
         }
@@ -207,10 +200,10 @@ class FourKHDHub : Source() {
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val list = mutableListOf<Video>()
         val urlParam = episode.url
-        val pagePath = urlParam.substringBefore("?file=")
-        val targetFilename = urlParam.substringAfter("?file=", "")
+        val pagePath = urlParam.substringBefore("?")
+        val query = urlParam.substringAfter("?", "")
 
-        if (targetFilename.isEmpty()) return emptyList()
+        if (query.isEmpty()) return emptyList()
 
         try {
             val response = client.newCall(GET(baseUrl + pagePath, headers)).execute()
@@ -219,70 +212,117 @@ class FourKHDHub : Source() {
 
             val doc = Jsoup.parse(html)
 
-            var block: Element? = doc.select(".episode-download-item").firstOrNull {
-                val titleText = it.selectFirst(".episode-file-title")?.text() ?: it.selectFirst(".file-title")?.text() ?: ""
-                titleText.contains(targetFilename, ignoreCase = true)
-            }
+            if (query.contains("movie=true")) {
+                doc.select(".download-item").forEach { element ->
+                    val titleEl = element.selectFirst(".file-title") ?: element.selectFirst(".download-header")
+                    val filename = titleEl?.text()?.trim() ?: ""
 
-            if (block == null) {
-                block = doc.select(".download-item").firstOrNull {
-                    val titleText = it.selectFirst(".file-title")?.text() ?: it.selectFirst(".download-header")?.text() ?: ""
-                    titleText.contains(targetFilename, ignoreCase = true)
-                }
-            }
+                    if (filename.endsWith(".zip", ignoreCase = true)) {
+                        return@forEach
+                    }
 
-            val links = mutableListOf<String>()
-            if (block != null) {
-                block.select("a[href*='hubcloud'], a[href*='hubdrive']").forEach {
-                    links.add(it.attr("href"))
-                }
+                    val suffix = parseLabelSuffix(filename)
 
-                if (links.isEmpty()) {
-                    val fileId = block.selectFirst(".download-header")?.attr("data-file-id")
-                    if (fileId != null) {
-                        doc.select("#content-$fileId a[href*='hubcloud'], #content-$fileId a[href*='hubdrive']").forEach {
-                            links.add(it.attr("href"))
+                    val links = mutableListOf<String>()
+                    element.select("a[href*='hubcloud'], a[href*='hubdrive']").forEach {
+                        links.add(it.attr("href"))
+                    }
+
+                    if (links.isEmpty()) {
+                        val fileId = element.selectFirst(".download-header")?.attr("data-file-id")
+                        if (fileId != null) {
+                            doc.select("#content-$fileId a[href*='hubcloud'], #content-$fileId a[href*='hubdrive']").forEach {
+                                links.add(it.attr("href"))
+                            }
+                        }
+                    }
+
+                    links.distinct().forEach { link ->
+                        when {
+                            link.contains("hubcloud.", ignoreCase = true) -> {
+                                list.addAll(resolveHubCloud(link, suffix))
+                            }
+                            link.contains("hubdrive.", ignoreCase = true) -> {
+                                list.addAll(resolveHubDrive(link, suffix))
+                            }
                         }
                     }
                 }
-            } else {
-                doc.select("a[href*='hubcloud'], a[href*='hubdrive']").forEach {
-                    links.add(it.attr("href"))
+            } else if (query.contains("season=") && query.contains("episode=")) {
+                val params = query.split("&").associate { 
+                    val parts = it.split("=")
+                    parts[0] to URLDecoder.decode(parts[1], "UTF-8")
+                }
+                val targetSeason = params["season"] ?: ""
+                val targetEpisode = params["episode"]?.toFloatOrNull() ?: -1f
+
+                if (targetSeason.isNotEmpty() && targetEpisode != -1f) {
+                    doc.select(".episode-download-item").forEach { element ->
+                        val titleEl = element.selectFirst(".episode-file-title") ?: element.selectFirst(".file-title")
+                        val filename = titleEl?.text()?.trim() ?: ""
+
+                        if (filename.endsWith(".zip", ignoreCase = true) || filename.isEmpty()) {
+                            return@forEach
+                        }
+
+                        val seasonItem = element.parents().firstOrNull { it.hasClass("season-item") || it.hasClass("episode-item") }
+                        val seasonPrefix = seasonItem?.selectFirst(".episode-number")?.text()?.trim() ?: "S1"
+
+                        if (seasonPrefix.equals(targetSeason, ignoreCase = true)) {
+                            val epBadge = element.selectFirst(".badge-psa")?.text() ?: ""
+                            var epNum = epBadge.replace("Episode-", "", ignoreCase = true).trim().toFloatOrNull()
+
+                            if (epNum == null) {
+                                val match = Regex("""(?i)[SE](\d+)""").find(filename)
+                                epNum = match?.groupValues?.get(1)?.toFloatOrNull()
+                            }
+
+                            if (epNum == targetEpisode) {
+                                val suffix = parseLabelSuffix(filename)
+                                
+                                val links = mutableListOf<String>()
+                                element.select("a[href*='hubcloud'], a[href*='hubdrive']").forEach {
+                                    links.add(it.attr("href"))
+                                }
+
+                                links.distinct().forEach { link ->
+                                    when {
+                                        link.contains("hubcloud.", ignoreCase = true) -> {
+                                            list.addAll(resolveHubCloud(link, suffix))
+                                        }
+                                        link.contains("hubdrive.", ignoreCase = true) -> {
+                                            list.addAll(resolveHubDrive(link, suffix))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // Extract labels from target filename
-            val quality = when {
-                targetFilename.contains("2160p", ignoreCase = true) -> "4K"
-                targetFilename.contains("1080p", ignoreCase = true) -> "1080p"
-                targetFilename.contains("720p", ignoreCase = true) -> "720p"
-                else -> ""
-            }
-
-            val format = when {
-                targetFilename.contains("HEVC", ignoreCase = true) || targetFilename.contains("x265", ignoreCase = true) -> "H.265"
-                targetFilename.contains("AV1", ignoreCase = true) -> "AV1"
-                else -> "H.264"
-            }
-
-            val labelSuffix = if (quality.isNotEmpty()) " [$quality - $format]" else ""
-
-            links.distinct().forEach { link ->
-                when {
-                    link.contains("hubcloud.", ignoreCase = true) -> {
-                        list.addAll(resolveHubCloud(link, labelSuffix))
-                    }
-
-                    link.contains("hubdrive.", ignoreCase = true) -> {
-                        list.addAll(resolveHubDrive(link, labelSuffix))
-                    }
-                }
-            }
         } catch (e: Exception) {
             // ignore
         }
 
         return list
+    }
+
+    private fun parseLabelSuffix(filename: String): String {
+        val quality = when {
+            filename.contains("2160p", ignoreCase = true) -> "4K"
+            filename.contains("1080p", ignoreCase = true) -> "1080p"
+            filename.contains("720p", ignoreCase = true) -> "720p"
+            else -> ""
+        }
+
+        val format = when {
+            filename.contains("HEVC", ignoreCase = true) || filename.contains("x265", ignoreCase = true) -> "H.265"
+            filename.contains("AV1", ignoreCase = true) -> "AV1"
+            else -> "H.264"
+        }
+
+        return if (quality.isNotEmpty()) " [$quality - $format]" else ""
     }
 
     private fun resolveHubCloud(hubCloudUrl: String, suffix: String): List<Video> {
