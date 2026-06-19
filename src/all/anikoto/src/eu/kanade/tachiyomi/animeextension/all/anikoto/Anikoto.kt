@@ -160,6 +160,8 @@ class Anikoto : Source() {
                         urlBuilder.addQueryParameter("language[]", it)
                     }
                 }
+
+                else -> {}
             }
         }
         urlBuilder.addQueryParameter("page", page.toString())
@@ -228,8 +230,8 @@ class Anikoto : Source() {
         return episodes.reversed()
     }
 
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        logi("=== getHosterList START ===")
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        logi("=== getVideoList START ===")
         val meta = try {
             EpisodeMeta.decode(episode.url)
         } catch (e: Exception) {
@@ -347,9 +349,8 @@ class Anikoto : Source() {
                 val title = "${stream.hosterName} - ${variant.quality}"
                 allVideos.add(
                     Video(
-                        url = videoUrl,
-                        quality = title,
                         videoUrl = videoUrl,
+                        videoTitle = title,
                         subtitleTracks = subtitleTracks,
                     ),
                 )
@@ -363,29 +364,19 @@ class Anikoto : Source() {
             allVideos
         }
 
-        logi("=== getHosterList END: ${sortedVideos.size} videos ===")
+        logi("=== getVideoList END: ${sortedVideos.size} videos ===")
         if (sortedVideos.isNotEmpty()) {
             val top = sortedVideos.first()
             displayToast("BY 1118000 :)", Toast.LENGTH_SHORT)
-            displayToast("Anikoto: Ready to play - ${top.quality}", Toast.LENGTH_SHORT)
+            displayToast("Anikoto: Ready to play - ${top.videoTitle}", Toast.LENGTH_SHORT)
         }
 
-        return Hoster.Companion.toHosterList(sortedVideos)
-    }
-
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        logi("getVideoList called for hoster: ${hoster.hosterName}")
-        val videoList = hoster.videoList
-        if (videoList != null) {
-            return videoList
-        }
-        logw("videoList is null, returning empty")
-        return emptyList()
+        return sortedVideos
     }
 
     override suspend fun resolveVideo(video: Video): Video {
-        logi("resolveVideo: switching to ${video.quality}")
-        displayToast("Anikoto: Switching to ${video.quality}", Toast.LENGTH_SHORT)
+        logi("resolveVideo: switching to ${video.videoTitle}")
+        displayToast("Anikoto: Switching to ${video.videoTitle}", Toast.LENGTH_SHORT)
         activeProxyServer?.onQualitySwitch()
         return video
     }
@@ -612,8 +603,8 @@ class Anikoto : Source() {
             else -> PREF_AUDIO_DEFAULT
         }
         return list.sortedWith(
-            compareByDescending<Video> { it.quality.startsWith(prefAudioLabel, ignoreCase = true) }
-                .thenByDescending { it.quality.contains(prefQuality, ignoreCase = true) },
+            compareByDescending<Video> { it.videoTitle.startsWith(prefAudioLabel, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
 
