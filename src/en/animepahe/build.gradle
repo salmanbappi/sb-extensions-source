@@ -1,0 +1,12 @@
+ext {
+    extName = 'AnimePahe'
+    extClass = '.AnimePahe'
+    extVersionCode = 44
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:unpacker"))
+    implementation(libs.jsunpacker)
+}
