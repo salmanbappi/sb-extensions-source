@@ -365,11 +365,6 @@ class Anikoto : Source() {
         }
 
         logi("=== getVideoList END: ${sortedVideos.size} videos ===")
-        if (sortedVideos.isNotEmpty()) {
-            val top = sortedVideos.first()
-            displayToast("BY 1118000 :)", Toast.LENGTH_SHORT)
-            displayToast("Anikoto: Ready to play - ${top.videoTitle}", Toast.LENGTH_SHORT)
-        }
 
         return sortedVideos
     }
