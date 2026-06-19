@@ -65,17 +65,13 @@ class AniDB : Source() {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return GET("$baseUrl/browse?sort=order_popular&page=$page", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/browse?sort=order_popular&page=$page", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage = parseAnimesPage(response)
 
     // ============================== Latest ================================
 
-    override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/browse?sort=order_updated&page=$page", headers)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/browse?sort=order_updated&page=$page", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseAnimesPage(response)
 
@@ -94,31 +90,37 @@ class AniDB : Source() {
                         urlBuilder.addQueryParameter("type", filter.toUriPart())
                     }
                 }
+
                 is Filters.StatusFilter -> {
                     if (!filter.isDefault()) {
                         urlBuilder.addQueryParameter("status", filter.toUriPart())
                     }
                 }
+
                 is Filters.SeasonFilter -> {
                     if (!filter.isDefault()) {
                         urlBuilder.addQueryParameter("season", filter.toUriPart())
                     }
                 }
+
                 is Filters.YearFilter -> {
                     if (!filter.isDefault()) {
                         urlBuilder.addQueryParameter("year", filter.toUriPart())
                     }
                 }
+
                 is Filters.GenreFilter -> {
                     if (!filter.isDefault()) {
                         urlBuilder.addQueryParameter("genres", filter.toUriPart())
                     }
                 }
+
                 is Filters.SortFilter -> {
                     if (!filter.isDefault()) {
                         urlBuilder.addQueryParameter("sort", filter.toUriPart())
                     }
                 }
+
                 else -> {}
             }
         }
@@ -130,9 +132,7 @@ class AniDB : Source() {
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request {
-        return GET("$baseUrl${anime.url}", headers)
-    }
+    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
@@ -180,9 +180,7 @@ class AniDB : Source() {
 
     // ============================ Video Links =============================
 
-    override fun videoListRequest(episode: SEpisode): Request {
-        return GET("$baseUrl/api/frontend/episode/${episode.url}/languages", headers)
-    }
+    override fun videoListRequest(episode: SEpisode): Request = GET("$baseUrl/api/frontend/episode/${episode.url}/languages", headers)
 
     override fun videoListParse(response: Response): List<Video> {
         val data = response.parseAs<LanguageListDto>()
