@@ -32,12 +32,10 @@ class FourKHDHub : Source() {
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return if (page == 1) {
-            GET(baseUrl, headers)
-        } else {
-            GET("$baseUrl/?pagex=$page", headers)
-        }
+    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
+        GET(baseUrl, headers)
+    } else {
+        GET("$baseUrl/?pagex=$page", headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -60,7 +58,7 @@ class FourKHDHub : Source() {
             }
         }
 
-        val hasNextPage = doc.select("link[rel=next]").isNotEmpty() || 
+        val hasNextPage = doc.select("link[rel=next]").isNotEmpty() ||
             doc.select("a.pagination-item:contains(Next), a:contains(Next), a.next").isNotEmpty()
 
         return AnimesPage(animeList, hasNextPage)
@@ -69,17 +67,15 @@ class FourKHDHub : Source() {
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return if (query.isNotBlank()) {
-            val url = "$baseUrl/".toHttpUrlOrNull()!!.newBuilder()
-                .addQueryParameter("s", query)
-            if (page > 1) {
-                url.addQueryParameter("pagex", page.toString())
-            }
-            GET(url.toString(), headers)
-        } else {
-            popularAnimeRequest(page)
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
+        val url = "$baseUrl/".toHttpUrlOrNull()!!.newBuilder()
+            .addQueryParameter("s", query)
+        if (page > 1) {
+            url.addQueryParameter("pagex", page.toString())
         }
+        GET(url.toString(), headers)
+    } else {
+        popularAnimeRequest(page)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
@@ -104,8 +100,8 @@ class FourKHDHub : Source() {
 
             genre = doc.select(".badge.badge-outline a").joinToString { it.text() }
 
-            val stars = doc.select(".metadata-item").firstOrNull { 
-                it.selectFirst(".metadata-label")?.text()?.contains("Stars", ignoreCase = true) == true 
+            val stars = doc.select(".metadata-item").firstOrNull {
+                it.selectFirst(".metadata-label")?.text()?.contains("Stars", ignoreCase = true) == true
             }
             artist = stars?.selectFirst(".metadata-value")?.text()
 
@@ -155,12 +151,14 @@ class FourKHDHub : Source() {
                     epNum = match?.groupValues?.get(1)?.toFloatOrNull() ?: (index + 1).toFloat()
                 }
 
-                episodes.add(SEpisode.create().apply {
-                    name = epBadge.takeIf { it.isNotBlank() } ?: filename.substringBefore(".1080p").substringBefore(".720p").replace(".", " ")
-                    episode_number = epNum
-                    val pagePath = response.request.url.encodedPath
-                    url = "$pagePath?file=${URLDecoder.decode(filename, "UTF-8")}"
-                })
+                episodes.add(
+                    SEpisode.create().apply {
+                        name = epBadge.takeIf { it.isNotBlank() } ?: filename.substringBefore(".1080p").substringBefore(".720p").replace(".", " ")
+                        episode_number = epNum
+                        val pagePath = response.request.url.encodedPath
+                        url = "$pagePath?file=${URLDecoder.decode(filename, "UTF-8")}"
+                    },
+                )
             }
         } else {
             // 2. Movie/Download item logic
@@ -191,12 +189,14 @@ class FourKHDHub : Source() {
                         return@forEachIndexed
                     }
 
-                    episodes.add(SEpisode.create().apply {
-                        name = filename.substringBefore(" (202").substringBefore(" 2160p").substringBefore(" 1080p").replace(".", " ")
-                        episode_number = (index + 1).toFloat()
-                        val pagePath = response.request.url.encodedPath
-                        url = "$pagePath?file=${URLDecoder.decode(filename, "UTF-8")}"
-                    })
+                    episodes.add(
+                        SEpisode.create().apply {
+                            name = filename.substringBefore(" (202").substringBefore(" 2160p").substringBefore(" 1080p").replace(".", " ")
+                            episode_number = (index + 1).toFloat()
+                            val pagePath = response.request.url.encodedPath
+                            url = "$pagePath?file=${URLDecoder.decode(filename, "UTF-8")}"
+                        },
+                    )
                 }
             }
         }
@@ -272,12 +272,12 @@ class FourKHDHub : Source() {
                     link.contains("hubcloud.", ignoreCase = true) -> {
                         list.addAll(resolveHubCloud(link, labelSuffix))
                     }
+
                     link.contains("hubdrive.", ignoreCase = true) -> {
                         list.addAll(resolveHubDrive(link, labelSuffix))
                     }
                 }
             }
-
         } catch (e: Exception) {
             // ignore
         }
