@@ -143,9 +143,9 @@ class AniDB : Source() {
             author = document.select("dt:contains(Studios) + dd a").text()
             val statusText = document.select("dt:contains(Status) + dd a").text()
             status = when {
-                statusText.contains("Currently Airing", ignoreCase = true) -> SAnime.STATUS_AIRING
-                statusText.contains("Finished Airing", ignoreCase = true) -> SAnime.STATUS_COMPLETED
-                else -> SAnime.STATUS_UNKNOWN
+                statusText.contains("Currently Airing", ignoreCase = true) -> SAnime.ONGOING
+                statusText.contains("Finished Airing", ignoreCase = true) -> SAnime.COMPLETED
+                else -> SAnime.UNKNOWN
             }
             val genresList = document.select("dt:contains(Themes) + dd a, a[href*=/genres/]").map { it.text() }
             genre = genresList.distinct().joinToString()
@@ -225,16 +225,16 @@ class AniDB : Source() {
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
             title = PREF_QUALITY_TITLE,
-            entries = PREF_QUALITY_ENTRIES.toTypedArray(),
-            entryValues = PREF_QUALITY_ENTRIES.toTypedArray(),
+            entries = PREF_QUALITY_ENTRIES,
+            entryValues = PREF_QUALITY_ENTRIES,
             default = PREF_QUALITY_DEFAULT,
             summary = "%s",
         )
         screen.addListPreference(
             key = PREF_LANG_KEY,
             title = PREF_LANG_TITLE,
-            entries = PREF_LANG_ENTRIES.toTypedArray(),
-            entryValues = PREF_LANG_VALUES.toTypedArray(),
+            entries = PREF_LANG_ENTRIES,
+            entryValues = PREF_LANG_VALUES,
             default = PREF_LANG_DEFAULT,
             summary = "%s",
         )
