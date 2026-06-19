@@ -222,7 +222,15 @@ class FourKHDHub : Source() {
                         return@forEach
                     }
 
-                    val suffix = parseLabelSuffix(filename)
+                    val sizeText = element.selectFirst(".badge-size")?.text()?.trim()
+                        ?: element.select(".badge")
+                            .firstOrNull {
+                                it.text().contains("GB", ignoreCase = true) ||
+                                    it.text().contains("MB", ignoreCase = true)
+                            }?.text()?.trim()
+                        ?: ""
+
+                    val suffix = parseLabelSuffix(filename, sizeText)
 
                     val links = mutableListOf<String>()
                     element.select("a[href*='hubcloud'], a[href*='hubdrive']").forEach {
@@ -280,7 +288,15 @@ class FourKHDHub : Source() {
                             }
 
                             if (epNum == targetEpisode) {
-                                val suffix = parseLabelSuffix(filename)
+                                val sizeText = element.selectFirst(".badge-size")?.text()?.trim()
+                                    ?: element.select(".badge")
+                                        .firstOrNull {
+                                            it.text().contains("GB", ignoreCase = true) ||
+                                                it.text().contains("MB", ignoreCase = true)
+                                        }?.text()?.trim()
+                                    ?: ""
+
+                                val suffix = parseLabelSuffix(filename, sizeText)
 
                                 val links = mutableListOf<String>()
                                 element.select("a[href*='hubcloud'], a[href*='hubdrive']").forEach {
@@ -319,7 +335,7 @@ class FourKHDHub : Source() {
         return list
     }
 
-    private fun parseLabelSuffix(filename: String): String {
+    private fun parseLabelSuffix(filename: String, sizeText: String): String {
         val quality = when {
             filename.contains("2160p", ignoreCase = true) || filename.contains("4K", ignoreCase = true) -> "4K"
             filename.contains("1080p", ignoreCase = true) -> "1080p"
@@ -333,7 +349,14 @@ class FourKHDHub : Source() {
             else -> "H.264"
         }
 
-        return if (quality.isNotEmpty()) " [$quality - $format]" else ""
+        return buildString {
+            if (quality.isNotEmpty()) {
+                append(" [$quality - $format]")
+            }
+            if (sizeText.isNotEmpty()) {
+                append(" ($sizeText)")
+            }
+        }
     }
 
     private fun resolveHubCloud(hubCloudUrl: String, suffix: String): List<Video> {

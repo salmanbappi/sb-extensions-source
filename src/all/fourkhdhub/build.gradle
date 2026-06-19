@@ -1,7 +1,7 @@
 ext {
     extName = '4KHDHub'
     extClass = '.FourKHDHub'
-    extVersionCode = 3
+    extVersionCode = 4
     isNsfw = false
 }
 
