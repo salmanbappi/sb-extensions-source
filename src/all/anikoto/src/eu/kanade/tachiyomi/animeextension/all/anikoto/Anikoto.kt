@@ -359,7 +359,7 @@ class Anikoto : Source() {
         }
 
         val sortedVideos = try {
-            sortVideos(allVideos)
+            allVideos.sortVideos()
         } catch (t: Throwable) {
             allVideos
         }
@@ -594,7 +594,7 @@ class Anikoto : Source() {
         return segments
     }
 
-    private fun sortVideos(list: List<Video>): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferredQuality
         val preferredAudio = preferredAudio
         val prefAudioLabel = when (preferredAudio) {
@@ -602,7 +602,7 @@ class Anikoto : Source() {
             "H-SUB" -> "HSUB"
             else -> PREF_AUDIO_DEFAULT
         }
-        return list.sortedWith(
+        return sortedWith(
             compareByDescending<Video> { it.videoTitle.startsWith(prefAudioLabel, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
