@@ -317,7 +317,7 @@ class FourKHDHub : Source() {
                 val rawUrl = s3El.attr("href")
                 if (rawUrl.isNotEmpty()) {
                     val finalUrl = "${rawUrl}_1$minute"
-                    list.add(Video(finalUrl, "HubCloud (FSLv2)$suffix", finalUrl, headers))
+                    list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (FSLv2)$suffix", headers = headers))
                 }
             }
 
@@ -326,7 +326,7 @@ class FourKHDHub : Source() {
                 val rawUrl = fslEl.attr("href")
                 if (rawUrl.isNotEmpty()) {
                     val finalUrl = "$rawUrl$1$minute"
-                    list.add(Video(finalUrl, "HubCloud (FSL)$suffix", finalUrl, headers))
+                    list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (FSL)$suffix", headers = headers))
                 }
             }
 
@@ -335,7 +335,7 @@ class FourKHDHub : Source() {
                 val scriptMatch = Regex("""pxl\s*=\s*["\']([^"\']+)["\']""").find(html2)
                 if (scriptMatch != null) {
                     val pxlUrl = scriptMatch.groupValues[1]
-                    list.add(Video(pxlUrl, "HubCloud (PixelServer)$suffix", pxlUrl, headers))
+                    list.add(Video(videoUrl = pxlUrl, videoTitle = "HubCloud (PixelServer)$suffix", headers = headers))
                 }
             }
         } catch (e: Exception) {
