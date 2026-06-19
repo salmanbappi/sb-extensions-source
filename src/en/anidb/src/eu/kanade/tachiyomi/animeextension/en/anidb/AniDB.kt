@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
@@ -52,6 +53,10 @@ class AniDB : Source() {
     override val lang = "en"
 
     override val supportsLatest = true
+
+    override val client = network.client.newBuilder()
+        .addInterceptor(CloudflareInterceptor(network.client))
+        .build()
 
     override fun headersBuilder() = super.headersBuilder()
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -129,6 +134,15 @@ class AniDB : Source() {
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = parseAnimesPage(response)
+
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        Filters.TypeFilter(),
+        Filters.StatusFilter(),
+        Filters.SeasonFilter(),
+        Filters.YearFilter(),
+        Filters.GenreFilter(),
+        Filters.SortFilter(),
+    )
 
     // =========================== Anime Details ============================
 
