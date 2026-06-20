@@ -58,7 +58,7 @@ class Animex : Source() {
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain ->
             val request = chain.request().newBuilder()
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                 .build()
             chain.proceed(request)
         }
@@ -66,7 +66,7 @@ class Animex : Source() {
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
         .add("Referer", "https://animex.one/")
         .add("Origin", "https://animex.one")
         .add("Accept", "application/json, text/plain, */*")
@@ -704,7 +704,16 @@ class Animex : Source() {
                                     .build()
                                 val okruExtractor = OkruExtractor(okruClient)
                                 val okruPrefix = "${providerId.uppercase()} ($categoryLabel)$subStyle"
-                                okruExtractor.videosFromUrl(embedUrl, prefix = okruPrefix)
+                                val playHeaders = headersBuilder().build()
+                                okruExtractor.videosFromUrl(embedUrl, prefix = okruPrefix).map { video ->
+                                    Video(
+                                        videoUrl = video.videoUrl,
+                                        videoTitle = video.videoTitle,
+                                        headers = playHeaders,
+                                        subtitleTracks = video.subtitleTracks,
+                                        audioTracks = video.audioTracks,
+                                    )
+                                }
                             } catch (e: Exception) {
                                 emptyList()
                             }
@@ -789,7 +798,7 @@ class Animex : Source() {
                                                     subtitleList = subtitleTracks,
                                                 )
 
-                                                val shouldRewrite = providerId.lowercase() in listOf("mimi", "beep") ||
+                                                val shouldRewrite = providerId.lowercase() in listOf("mimi", "beep", "yuki", "uwu") ||
                                                     streamUrl.contains("vibeplayer") ||
                                                     streamUrl.contains("byteoversea") ||
                                                     streamUrl.contains("ibyteimg") ||
@@ -1046,7 +1055,7 @@ class Animex : Source() {
         fun getProxyUrl(source: Animex, targetUrl: String, headers: okhttp3.Headers?): String {
             if (proxy == null) {
                 proxy = LocalProxy(source.client, source.baseUrl) {
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
                 }
             }
             return proxy!!.getProxyUrl(targetUrl, headers)
