@@ -1041,14 +1041,32 @@ class LocalProxy(
                 if (trimmed.startsWith("#EXT-X-KEY") || trimmed.startsWith("#EXT-X-MAP") || trimmed.startsWith("#EXT-X-MEDIA")) {
                     uriRegex.find(trimmed)?.let { match ->
                         val uriValue = match.groupValues[1]
-                        val proxiedUri = getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, uriValue), encodedHeaders)
+                        var resolvedUri = resolveUrl(playlistUrl, uriValue)
+                        if (resolvedUri.contains("/_nepu_hls/")) {
+                            val base64 = resolvedUri.substringAfterLast("/")
+                            resolvedUri = try {
+                                String(Base64.decode(base64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+                            } catch (_: Exception) {
+                                resolvedUri
+                            }
+                        }
+                        val proxiedUri = getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders)
                         builder.append(trimmed.replace(uriValue, proxiedUri))
                     } ?: builder.append(trimmed)
                 } else if (!trimmed.startsWith("#EXT-X-PLAYLIST-TYPE")) {
                     builder.append(trimmed)
                 }
             } else {
-                builder.append(getProxyUrlWithEncodedHeaders(resolveUrl(playlistUrl, trimmed), encodedHeaders))
+                var resolvedUri = resolveUrl(playlistUrl, trimmed)
+                if (resolvedUri.contains("/_nepu_hls/")) {
+                    val base64 = resolvedUri.substringAfterLast("/")
+                    resolvedUri = try {
+                        String(Base64.decode(base64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+                    } catch (_: Exception) {
+                        resolvedUri
+                    }
+                }
+                builder.append(getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders))
             }
             builder.append("\n")
         }
