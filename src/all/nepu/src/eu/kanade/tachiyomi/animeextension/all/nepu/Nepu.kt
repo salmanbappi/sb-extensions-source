@@ -28,6 +28,10 @@ import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import android.app.Application
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.io.File
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -52,16 +56,97 @@ class Nepu : ParsedAnimeHttpSource() {
         .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
-            if (request.url.host.contains("tmdb.org")) {
-                chain.proceed(request.newBuilder().removeHeader("Referer").build())
-            } else {
+            val host = request.url.host
+            val isNepu = host.contains("nepu.to")
+
+            if (host.contains("tmdb.org")) {
+                return@addInterceptor chain.proceed(request.newBuilder().removeHeader("Referer").build())
+            }
+
+            if (!isNepu) return@addInterceptor chain.proceed(request)
+
+            val requestBuilder = request.newBuilder()
+            var injectedCustomCookies = false
+
+            val cookieHeader = getSavedCookiesHeader()
+            if (cookieHeader.isNotEmpty()) {
+                requestBuilder.header("Cookie", cookieHeader)
+                injectedCustomCookies = true
+            }
+
+            val savedUserAgent = getSavedUserAgent()
+            if (!savedUserAgent.isNullOrBlank()) {
+                requestBuilder.header("User-Agent", savedUserAgent)
+            }
+
+            val response = chain.proceed(requestBuilder.build())
+
+            if (response.code == 403 && injectedCustomCookies) {
+                response.close()
                 chain.proceed(request)
+            } else {
+                response
             }
         }
         .build()
 
-    override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
-        .set("Referer", "$baseUrl/")
+    override fun headersBuilder(): okhttp3.Headers.Builder {
+        val builder = super.headersBuilder()
+            .set("Referer", "$baseUrl/")
+        val savedUserAgent = getSavedUserAgent()
+        if (!savedUserAgent.isNullOrBlank()) {
+            builder.set("User-Agent", savedUserAgent)
+        } else {
+            builder.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        }
+        return builder
+    }
+
+    private var cachedCookieData: JSONObject? = null
+    private var lastCookieRead: Long = 0
+
+    private fun getSavedCookieData(): JSONObject? {
+        val now = System.currentTimeMillis()
+        if (cachedCookieData != null && now - lastCookieRead < 60000) {
+            return cachedCookieData
+        }
+
+        val context = Injekt.get<Application>()
+        var file = File(context.getExternalFilesDir(null), "cookies.json")
+        if (!file.exists()) {
+            file = File("/storage/emulated/0/Download/Serious/cookies.json")
+            if (!file.exists()) {
+                val sdcardFile = File("/sdcard/Download/Serious/cookies.json")
+                if (!sdcardFile.exists()) return null
+                file = sdcardFile
+            }
+        }
+        return try {
+            val data = JSONObject(file.readText())
+            cachedCookieData = data
+            lastCookieRead = now
+            data
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun getSavedUserAgent(): String? = getSavedCookieData()?.optString("userAgent")
+
+    private fun getSavedCookiesHeader(): String {
+        val data = getSavedCookieData() ?: return ""
+        val cookiesArray = data.optJSONArray("cookies") ?: return ""
+        val cookieList = mutableListOf<String>()
+        for (i in 0 until cookiesArray.length()) {
+            val cookieObj = cookiesArray.optJSONObject(i) ?: continue
+            val name = cookieObj.optString("name")
+            val value = cookieObj.optString("value")
+            if (name.isNotEmpty() && value.isNotEmpty()) {
+                cookieList.add("$name=$value")
+            }
+        }
+        return cookieList.joinToString("; ")
+    }
 
     // ============================== Popular ===============================
 
@@ -700,7 +785,7 @@ class Nepu : ParsedAnimeHttpSource() {
         @Synchronized
         fun getProxyUrl(source: Nepu, targetUrl: String, headers: okhttp3.Headers?): String {
             if (proxy == null) {
-                proxy = LocalProxy(source.client, source.baseUrl) { null }
+                proxy = LocalProxy(source.client, source.baseUrl) { source.getSavedUserAgent() }
             }
             return proxy!!.getProxyUrl(targetUrl, headers)
         }
