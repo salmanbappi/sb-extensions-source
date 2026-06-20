@@ -76,6 +76,14 @@ class Nepu : ParsedAnimeHttpSource() {
         } catch (_: Exception) {}
     }
 
+    private val defaultUserAgent by lazy {
+        try {
+            android.webkit.WebSettings.getDefaultUserAgent(Injekt.get<Application>())
+        } catch (_: Exception) {
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        }
+    }
+
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
@@ -93,7 +101,21 @@ class Nepu : ParsedAnimeHttpSource() {
                 injectCookiesToManager()
             }
 
-            chain.proceed(request)
+            val requestBuilder = request.newBuilder()
+
+            val savedUserAgent = getSavedUserAgent()
+            val ua = if (!savedUserAgent.isNullOrBlank()) savedUserAgent else defaultUserAgent
+            requestBuilder.header("User-Agent", ua)
+
+            try {
+                val cookieManager = CookieManager.getInstance()
+                val managerCookies = cookieManager.getCookie("https://nepu.to")
+                if (!managerCookies.isNullOrEmpty()) {
+                    requestBuilder.header("Cookie", managerCookies)
+                }
+            } catch (_: Exception) {}
+
+            chain.proceed(requestBuilder.build())
         }
         .build()
 
@@ -103,6 +125,8 @@ class Nepu : ParsedAnimeHttpSource() {
         val savedUserAgent = getSavedUserAgent()
         if (!savedUserAgent.isNullOrBlank()) {
             builder.set("User-Agent", savedUserAgent)
+        } else {
+            builder.set("User-Agent", defaultUserAgent)
         }
         return builder
     }
@@ -454,9 +478,17 @@ class Nepu : ParsedAnimeHttpSource() {
         }
 
         if (isVideoOnBaseUrl) {
-            val cookieJarCookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
-            if (cookieJarCookies.isNotEmpty() && cookieJarCookies.contains("cf_clearance")) {
-                builder.set("Cookie", cookieJarCookies)
+            try {
+                val cookieManager = CookieManager.getInstance()
+                val managerCookies = cookieManager.getCookie("https://nepu.to")
+                if (!managerCookies.isNullOrEmpty()) {
+                    builder.set("Cookie", managerCookies)
+                }
+            } catch (_: Exception) {
+                val cookieJarCookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+                if (cookieJarCookies.isNotEmpty() && cookieJarCookies.contains("cf_clearance")) {
+                    builder.set("Cookie", cookieJarCookies)
+                }
             }
         }
 
