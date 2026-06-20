@@ -9,8 +9,8 @@ import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
-import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.Hoster
+import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -653,7 +653,7 @@ class Animex : Source() {
 
         val serversData = json.decodeFromString<ServersResponse>(serversResponse.body.string())
         val disabledServers = preferences.getStringSet("pref_disabled_servers", emptySet()) ?: emptySet()
-        
+
         val allTasks = (serversData.subProviders.map { it to "sub" } + serversData.dubProviders.map { it to "dub" })
             .filter { (provider, _) -> provider.id.lowercase() !in disabledServers }
 
