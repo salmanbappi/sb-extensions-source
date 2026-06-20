@@ -473,14 +473,14 @@ class Nepu : ParsedAnimeHttpSource() {
         synchronized(cfLock) {
             val now = System.currentTimeMillis()
             if (now - lastCfSolveTime < 10000) return
-            
+
             try {
                 val getRequest = Request.Builder()
                     .url("$baseUrl/ajax/embed")
                     .headers(headers)
                     .header("Referer", "$baseUrl/")
                     .build()
-                
+
                 client.newCall(getRequest).execute().close()
                 lastCfSolveTime = System.currentTimeMillis()
             } catch (_: Exception) {}
