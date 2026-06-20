@@ -31,7 +31,6 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.io.File
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -62,29 +61,12 @@ class Nepu : ParsedAnimeHttpSource() {
                 return@addInterceptor chain.proceed(request.newBuilder().removeHeader("Referer").build())
             }
 
-            val requestBuilder = request.newBuilder()
-            var injectedCustomCookies = false
-
-            if (host.contains("nepu.to")) {
-                val cookieHeader = getSavedCookiesHeader()
-                if (cookieHeader.isNotEmpty()) {
-                    requestBuilder.header("Cookie", cookieHeader)
-                    injectedCustomCookies = true
-                }
-
-                val savedUserAgent = getSavedUserAgent()
-                if (!savedUserAgent.isNullOrBlank()) {
-                    requestBuilder.header("User-Agent", savedUserAgent)
-                }
-            }
-
-            val finalRequest = requestBuilder.build()
             var response = try {
-                chain.proceed(finalRequest)
+                chain.proceed(request)
             } catch (e: Exception) {
                 if (host.contains("nepu.to")) {
                     warmupWebViewSession()
-                    chain.proceed(finalRequest)
+                    chain.proceed(request)
                 } else {
                     throw e
                 }
@@ -93,70 +75,15 @@ class Nepu : ParsedAnimeHttpSource() {
             if (host.contains("nepu.to") && (response.code == 403 || response.code == 503)) {
                 response.close()
                 warmupWebViewSession()
-                response = chain.proceed(finalRequest)
+                response = chain.proceed(request)
             }
 
             response
         }
         .build()
 
-    override fun headersBuilder(): okhttp3.Headers.Builder {
-        val builder = super.headersBuilder()
-            .set("Referer", "$baseUrl/")
-        val savedUserAgent = getSavedUserAgent()
-        if (!savedUserAgent.isNullOrBlank()) {
-            builder.set("User-Agent", savedUserAgent)
-        } else {
-            builder.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        }
-        return builder
-    }
-
-    private var cachedCookieData: JSONObject? = null
-    private var lastCookieRead: Long = 0
-
-    private fun getSavedCookieData(): JSONObject? {
-        val now = System.currentTimeMillis()
-        if (cachedCookieData != null && now - lastCookieRead < 60000) {
-            return cachedCookieData
-        }
-
-        val context = Injekt.get<Application>()
-        var file = File(context.getExternalFilesDir(null), "cookies.json")
-        if (!file.exists()) {
-            file = File("/storage/emulated/0/Download/Serious/cookies.json")
-            if (!file.exists()) {
-                val sdcardFile = File("/sdcard/Download/Serious/cookies.json")
-                if (!sdcardFile.exists()) return null
-                file = sdcardFile
-            }
-        }
-        return try {
-            val data = JSONObject(file.readText())
-            cachedCookieData = data
-            lastCookieRead = now
-            data
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun getSavedUserAgent(): String? = getSavedCookieData()?.optString("userAgent")
-
-    private fun getSavedCookiesHeader(): String {
-        val data = getSavedCookieData() ?: return ""
-        val cookiesArray = data.optJSONArray("cookies") ?: return ""
-        val cookieList = mutableListOf<String>()
-        for (i in 0 until cookiesArray.length()) {
-            val cookieObj = cookiesArray.optJSONObject(i) ?: continue
-            val name = cookieObj.optString("name")
-            val value = cookieObj.optString("value")
-            if (name.isNotEmpty() && value.isNotEmpty()) {
-                cookieList.add("$name=$value")
-            }
-        }
-        return cookieList.joinToString("; ")
-    }
+    override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
+        .set("Referer", "$baseUrl/")
 
     private val sessionWarmedUp = java.util.concurrent.atomic.AtomicBoolean(false)
 
