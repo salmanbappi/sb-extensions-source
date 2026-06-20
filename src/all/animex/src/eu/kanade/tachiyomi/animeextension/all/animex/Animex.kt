@@ -77,8 +77,6 @@ class Animex : Source() {
         if (url.startsWith("http")) url else base.substringBeforeLast("/") + "/" + url
     }
 
-
-
     private fun extractDash(
         mpdUrl: String,
         headers: Headers,
@@ -961,8 +959,6 @@ class Animex : Source() {
             setDefaultValue(emptySet<String>())
         }.also { screen.addPreference(it) }
     }
-
-
 }
 
 // ============================== SESSION INTERCEPTOR ==============================
@@ -1163,5 +1159,3 @@ data class TrackItem(
     val kind: String? = null,
     val default: Boolean? = null,
 )
-
-
