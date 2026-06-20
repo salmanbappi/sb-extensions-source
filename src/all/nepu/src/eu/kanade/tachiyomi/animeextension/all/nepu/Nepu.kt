@@ -466,6 +466,27 @@ class Nepu : ParsedAnimeHttpSource() {
     override fun seasonListSelector(): String = throw UnsupportedOperationException()
     override fun seasonFromElement(element: org.jsoup.nodes.Element): SAnime = throw UnsupportedOperationException()
 
+    private val cfLock = Any()
+    private var lastCfSolveTime = 0L
+
+    private fun solveCloudflare() {
+        synchronized(cfLock) {
+            val now = System.currentTimeMillis()
+            if (now - lastCfSolveTime < 10000) return
+            
+            try {
+                val getRequest = Request.Builder()
+                    .url("$baseUrl/ajax/embed")
+                    .headers(headers)
+                    .header("Referer", "$baseUrl/")
+                    .build()
+                
+                client.newCall(getRequest).execute().close()
+                lastCfSolveTime = System.currentTimeMillis()
+            } catch (_: Exception) {}
+        }
+    }
+
     // ============================ Video Links =============================
 
     override fun videoListParse(response: Response, hoster: Hoster): List<Video> {
@@ -500,9 +521,16 @@ class Nepu : ParsedAnimeHttpSource() {
                         .build()
 
                     try {
-                        client.newCall(request).execute().use { embedResponse ->
-                            if (!embedResponse.isSuccessful) return@submit
-                            val embedHtml = embedResponse.body.string()
+                        var embedResponse = client.newCall(request).execute()
+                        if (embedResponse.code == 403) {
+                            embedResponse.close()
+                            solveCloudflare()
+                            embedResponse = client.newCall(request).execute()
+                        }
+
+                        embedResponse.use { resp ->
+                            if (!resp.isSuccessful) return@submit
+                            val embedHtml = resp.body.string()
 
                             var extractedUrl: String? = null
 
