@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.all.nepu
 
 import android.app.Application
-import android.webkit.CookieManager
 import android.util.Base64
+import android.webkit.CookieManager
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
