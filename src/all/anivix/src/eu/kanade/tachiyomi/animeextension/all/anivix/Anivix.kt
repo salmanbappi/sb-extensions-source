@@ -13,7 +13,6 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -49,7 +48,6 @@ class Anivix : Source() {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor(AnivixInterceptor(network.client.cookieJar))
         .build()
 
@@ -500,14 +498,7 @@ class AnivixInterceptor(private val cookieJar: CookieJar) : Interceptor {
             }
         }
 
-        val response = chain.proceed(request)
-
-        if (url.contains("/api/") && response.code == 403 && response.headers("Set-Cookie").any { it.contains("movix_session") }) {
-            response.close()
-            return chain.proceed(request)
-        }
-
-        return response
+        return chain.proceed(request)
     }
 }
 

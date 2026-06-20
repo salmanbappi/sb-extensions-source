@@ -13,7 +13,6 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
@@ -51,7 +50,6 @@ class Animex : Source() {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor(AnimexInterceptor(network.client.cookieJar))
         .build()
 
@@ -421,11 +419,15 @@ class Animex : Source() {
                                 emptyList()
                             }
                         } else {
+                            val embedHeaders = headersBuilder().apply {
+                                removeAll("Origin")
+                                removeAll("Accept")
+                            }.build()
                             listOf(
                                 Video(
                                     videoUrl = embedUrl,
                                     videoTitle = providerId.uppercase(),
-                                    headers = headers,
+                                    headers = embedHeaders,
                                 ),
                             )
                         }
@@ -443,6 +445,8 @@ class Animex : Source() {
                                         sourcesData.headers?.forEach { (key, value) ->
                                             set(key, value)
                                         }
+                                        removeAll("Origin")
+                                        removeAll("Accept")
                                     }.build()
 
                                     val providerVideos = mutableListOf<Video>()
@@ -674,9 +678,16 @@ class Animex : Source() {
  */
 class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
     companion object {
-        private const val SESSION_COOKIE = "_amx_id"
         private const val BASE_URL = "https://animex.one"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        private fun hasSession(cookies: List<okhttp3.Cookie>): Boolean {
+            return cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
+        }
+
+        private fun containsSession(cookieHeader: String): Boolean {
+            return cookieHeader.contains("_amx_id") || cookieHeader.contains("animex_session")
+        }
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -686,16 +697,15 @@ class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
         if (url.contains("/api/")) {
             val httpUrl = request.url
             val cookies = cookieJar.loadForRequest(httpUrl)
-            val hasSessionCookie = cookies.any { it.name == SESSION_COOKIE }
 
-            if (!hasSessionCookie) {
+            if (!hasSession(cookies)) {
                 synchronized(this) {
                     val freshCookies = cookieJar.loadForRequest(httpUrl)
-                    if (!freshCookies.any { it.name == SESSION_COOKIE }) {
+                    if (!hasSession(freshCookies)) {
                         val slug = httpUrl.queryParameter("id")
                         val epNum = httpUrl.queryParameter("epNum")
                         val handshakeUrl = if (slug != null && epNum != null) {
-                            "$BASE_URL/watch/$slug-episode-$epNum"
+                            "$BASE_URL/watch/$slug/$epNum"
                         } else {
                             BASE_URL
                         }
@@ -721,7 +731,7 @@ class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
 
         val response = chain.proceed(request)
 
-        if (url.contains("/api/") && response.code == 403 && response.headers("Set-Cookie").any { it.contains(SESSION_COOKIE) }) {
+        if (url.contains("/api/") && response.code == 403 && response.headers("Set-Cookie").any { containsSession(it) }) {
             response.close()
             return chain.proceed(request)
         }
