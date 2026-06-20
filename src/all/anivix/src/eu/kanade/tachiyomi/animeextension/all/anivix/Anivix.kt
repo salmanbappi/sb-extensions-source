@@ -30,6 +30,8 @@ import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
+
 class Anivix : Source() {
 
     override val name = "Anivix"
@@ -48,6 +50,7 @@ class Anivix : Source() {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor(AnivixInterceptor(network.client.cookieJar))
         .build()
 

@@ -33,6 +33,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 
 class Animex : Source() {
 
@@ -50,6 +52,7 @@ class Animex : Source() {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor(AnimexInterceptor(network.client.cookieJar))
         .build()
 

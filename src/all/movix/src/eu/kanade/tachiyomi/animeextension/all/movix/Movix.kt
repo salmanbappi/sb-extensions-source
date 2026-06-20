@@ -36,6 +36,8 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
+
 class Movix : Source() {
 
     override val name = "MOVIX"
@@ -57,6 +59,7 @@ class Movix : Source() {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor(MovixInterceptor(network.client.cookieJar))
         .dispatcher(
             okhttp3.Dispatcher().apply {
