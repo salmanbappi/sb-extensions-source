@@ -27,6 +27,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.CookieJar
+import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -52,6 +54,12 @@ class Animex : Source() {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor { chain ->
+            val request = chain.request().newBuilder()
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .build()
+            chain.proceed(request)
+        }
         .addInterceptor(AnimexInterceptor(network.client.cookieJar))
         .build()
 
@@ -61,7 +69,67 @@ class Animex : Source() {
         .add("Origin", "https://animex.one")
         .add("Accept", "application/json, text/plain, */*")
 
-    private fun absoluteUrl(url: String): String = if (url.startsWith("http")) url else "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
+    private fun absoluteUrl(url: String): String {
+        return when {
+            url.startsWith("http://") || url.startsWith("https://") -> url
+            url.startsWith("//") -> "https:$url"
+            else -> "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
+        }
+    }
+
+    private fun absoluteUrl(url: String, base: String): String {
+        return try {
+            val baseUri = java.net.URI(base)
+            val resolved = baseUri.resolve(url)
+            resolved.toString()
+        } catch (e: Exception) {
+            if (url.startsWith("http")) url else base.substringBeforeLast("/") + "/" + url
+        }
+    }
+
+    private fun getRewrittenHlsPlaylist(playlistUrl: String, headers: Headers): String {
+        val request = GET(playlistUrl, headers)
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+            response.close()
+            throw Exception("Failed to fetch playlist: ${response.code}")
+        }
+        val playlistBody = response.body.string()
+
+        val rewrittenLines = playlistBody.lines().map { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                line
+            } else if (trimmed.startsWith("#")) {
+                if (trimmed.contains("URI=\"")) {
+                    val uriRegex = Regex("""URI="([^"]+)"""")
+                    uriRegex.replace(trimmed) { matchResult ->
+                        val relativeUri = matchResult.groupValues[1]
+                        val absoluteUri = absoluteUrl(relativeUri, playlistUrl)
+                        "URI=\"$absoluteUri\""
+                    }
+                } else {
+                    line
+                }
+            } else {
+                val absUrl = absoluteUrl(trimmed, playlistUrl)
+                val finalUrl = if (!absUrl.contains(".ts", ignoreCase = true) &&
+                    !absUrl.contains(".m3u8", ignoreCase = true) &&
+                    !absUrl.contains(".mp4", ignoreCase = true)) {
+                    if (absUrl.contains("?")) "$absUrl&ext=.ts" else "$absUrl?ext=.ts"
+                } else {
+                    absUrl
+                }
+                finalUrl
+            }
+        }
+        val rewrittenPlaylist = rewrittenLines.joinToString("\n")
+        val base64 = android.util.Base64.encodeToString(
+            rewrittenPlaylist.toByteArray(Charsets.UTF_8),
+            android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
+        )
+        return "data:application/vnd.apple.mpegurl;base64,$base64"
+    }
 
     private fun getPreferredServer(): String {
         val server = preferences.getString("pref_preferred_server", "beep") ?: "beep"
@@ -437,10 +505,18 @@ class Animex : Source() {
                 async {
                     val providerId = provider.id
                     if (provider.type == "embed" && provider.url != null) {
-                        val embedUrl = provider.url
+                        val embedUrl = absoluteUrl(provider.url)
                         if (embedUrl.contains("ok.ru") || embedUrl.contains("okru")) {
                             try {
-                                val okruExtractor = OkruExtractor(client)
+                                val okruClient = client.newBuilder()
+                                    .addInterceptor { chain ->
+                                        val req = chain.request().newBuilder()
+                                            .header("Referer", "https://animex.one/")
+                                            .build()
+                                        chain.proceed(req)
+                                    }
+                                    .build()
+                                val okruExtractor = OkruExtractor(okruClient)
                                 okruExtractor.videosFromUrl(embedUrl, prefix = providerId.uppercase())
                             } catch (e: Exception) {
                                 emptyList()
@@ -517,7 +593,33 @@ class Animex : Source() {
                                                     },
                                                     subtitleList = subtitleTracks,
                                                 )
-                                                providerVideos.addAll(playlistVideos)
+
+                                                val shouldRewrite = providerId.lowercase() in listOf("mimi", "beep") ||
+                                                    streamUrl.contains("vibeplayer") ||
+                                                    streamUrl.contains("byteoversea") ||
+                                                    streamUrl.contains("ibyteimg") ||
+                                                    streamUrl.contains("tiktok")
+
+                                                val finalVideos = if (shouldRewrite) {
+                                                    playlistVideos.map { video ->
+                                                        try {
+                                                            val rewrittenUrl = getRewrittenHlsPlaylist(video.videoUrl, video.headers)
+                                                            Video(
+                                                                videoUrl = rewrittenUrl,
+                                                                videoTitle = video.videoTitle,
+                                                                headers = video.headers,
+                                                                subtitleTracks = video.subtitleTracks,
+                                                                audioTracks = video.audioTracks,
+                                                            )
+                                                        } catch (e: Exception) {
+                                                            video
+                                                        }
+                                                    }
+                                                } else {
+                                                    playlistVideos
+                                                }
+
+                                                providerVideos.addAll(finalVideos)
                                             } catch (e: Exception) {
                                                 val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
                                                 providerVideos.add(
@@ -530,30 +632,15 @@ class Animex : Source() {
                                                 )
                                             }
                                         } else if (streamUrl.contains(".mpd", ignoreCase = true)) {
-                                            try {
-                                                val playlistUtils = PlaylistUtils(client, headers)
-                                                val playlistVideos = playlistUtils.extractFromDash(
-                                                    mpdUrl = streamUrl,
-                                                    videoNameGen = { dashQuality ->
-                                                        val parsedQuality = if (dashQuality == "Video") quality else dashQuality
-                                                        "$providerName: $parsedQuality ($categoryLabel)$subStyle"
-                                                    },
-                                                    mpdHeaders = videoHeaders,
-                                                    videoHeaders = videoHeaders,
-                                                    subtitleList = subtitleTracks,
-                                                )
-                                                providerVideos.addAll(playlistVideos)
-                                            } catch (e: Exception) {
-                                                val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                                                providerVideos.add(
-                                                    Video(
-                                                        videoUrl = streamUrl,
-                                                        videoTitle = qualityLabel,
-                                                        headers = videoHeaders,
-                                                        subtitleTracks = subtitleTracks,
-                                                    ),
-                                                )
-                                            }
+                                            val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
+                                            providerVideos.add(
+                                                Video(
+                                                    videoUrl = streamUrl,
+                                                    videoTitle = qualityLabel,
+                                                    headers = videoHeaders,
+                                                    subtitleTracks = subtitleTracks,
+                                                ),
+                                            )
                                         } else {
                                             val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
                                             providerVideos.add(
