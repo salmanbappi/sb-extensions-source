@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.mp4uploadextractor.Mp4uploadExtractor
 import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
+import eu.kanade.tachiyomi.util.asJsoup
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
@@ -83,8 +84,8 @@ class Animex : Source() {
         if (url.startsWith("http")) url else base.substringBeforeLast("/") + "/" + url
     }
 
-    private fun getRewrittenHlsPlaylist(playlistUrl: String, headers: Headers): String {
-        val request = GET(playlistUrl, headers)
+    private fun getRewrittenHlsPlaylist(playlistUrl: String, headers: Headers?): String {
+        val request = GET(playlistUrl, headers ?: this.headers)
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) {
             response.close()
@@ -126,6 +127,89 @@ class Animex : Source() {
             android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP,
         )
         return "data:application/vnd.apple.mpegurl;base64,$base64"
+    }
+
+    private fun extractDash(
+        mpdUrl: String,
+        headers: Headers,
+        quality: String,
+        providerName: String,
+        categoryLabel: String,
+        subStyle: String,
+        subtitleTracks: List<Track>
+    ): List<Video> {
+        val request = GET(mpdUrl, headers)
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+            response.close()
+            return emptyList()
+        }
+        val doc = response.asJsoup()
+
+        val adaptationSets = doc.select("AdaptationSet")
+        val videoRepresentations = mutableListOf<org.jsoup.nodes.Element>()
+        val audioTracks = mutableListOf<Track>()
+
+        adaptationSets.forEach { adaptationSet ->
+            val mimeType = adaptationSet.attr("mimeType").takeIf { it.isNotEmpty() }
+                ?: adaptationSet.attr("mimetype")
+            val isVideo = mimeType.contains("video", ignoreCase = true)
+            val isAudio = mimeType.contains("audio", ignoreCase = true)
+
+            adaptationSet.select("Representation").forEach { representation ->
+                val repMimeType = representation.attr("mimeType").takeIf { it.isNotEmpty() }
+                    ?: representation.attr("mimetype")
+                val repIsVideo = isVideo || repMimeType.contains("video", ignoreCase = true)
+                val repIsAudio = isAudio || repMimeType.contains("audio", ignoreCase = true)
+
+                if (repIsVideo) {
+                    videoRepresentations.add(representation)
+                } else if (repIsAudio) {
+                    val bandwidth = representation.attr("bandwidth").toLongOrNull()
+                    val formatBytes = { bytes: Long? ->
+                        when {
+                            bytes == null -> ""
+                            bytes >= 1_000_000_000 -> "%.2f GB/s".format(bytes / 1_000_000_000.0)
+                            bytes >= 1_000_000 -> "%.2f MB/s".format(bytes / 1_000_000.0)
+                            bytes >= 1_000 -> "%.2f KB/s".format(bytes / 1_000.0)
+                            else -> "$bytes bytes/s"
+                        }
+                    }
+                    val audioUrl = absoluteUrl(representation.text().trim(), mpdUrl)
+                    audioTracks.add(Track(audioUrl, formatBytes(bandwidth)))
+                }
+            }
+        }
+
+        if (videoRepresentations.isEmpty()) {
+            doc.select("Representation").forEach { representation ->
+                val repMimeType = representation.attr("mimeType").takeIf { it.isNotEmpty() }
+                    ?: representation.attr("mimetype")
+                if (repMimeType.contains("video", ignoreCase = true)) {
+                    videoRepresentations.add(representation)
+                }
+            }
+        }
+
+        return videoRepresentations.map { videoSrc ->
+            val bandwidth = videoSrc.attr("bandwidth")
+            val height = videoSrc.attr("height").takeIf { it.isNotEmpty() }
+                ?: videoSrc.parent()?.attr("height") ?: "Video"
+            val width = videoSrc.attr("width").takeIf { it.isNotEmpty() }
+                ?: videoSrc.parent()?.attr("width") ?: ""
+            val res = if (width.isNotEmpty() && height.isNotEmpty()) "$height (${width}x$height)" else height
+
+            val videoUrl = absoluteUrl(videoSrc.text().trim(), mpdUrl)
+            val videoTitle = "$providerName: $res ($categoryLabel)$subStyle" + if (bandwidth.isNotEmpty()) " - ${bandwidth}" else ""
+
+            Video(
+                videoUrl = videoUrl,
+                videoTitle = videoTitle,
+                audioTracks = audioTracks,
+                subtitleTracks = subtitleTracks,
+                headers = headers,
+            )
+        }
     }
 
     private fun getPreferredServer(): String {
@@ -629,15 +713,28 @@ class Animex : Source() {
                                                 )
                                             }
                                         } else if (streamUrl.contains(".mpd", ignoreCase = true)) {
-                                            val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                                            providerVideos.add(
-                                                Video(
-                                                    videoUrl = streamUrl,
-                                                    videoTitle = qualityLabel,
+                                            try {
+                                                val playlistVideos = extractDash(
+                                                    mpdUrl = streamUrl,
                                                     headers = videoHeaders,
+                                                    quality = quality,
+                                                    providerName = providerName,
+                                                    categoryLabel = categoryLabel,
+                                                    subStyle = subStyle,
                                                     subtitleTracks = subtitleTracks,
-                                                ),
-                                            )
+                                                )
+                                                providerVideos.addAll(playlistVideos)
+                                            } catch (e: Exception) {
+                                                val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
+                                                providerVideos.add(
+                                                    Video(
+                                                        videoUrl = streamUrl,
+                                                        videoTitle = qualityLabel,
+                                                        headers = videoHeaders,
+                                                        subtitleTracks = subtitleTracks,
+                                                    ),
+                                                )
+                                            }
                                         } else {
                                             val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
                                             providerVideos.add(
