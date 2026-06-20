@@ -653,16 +653,7 @@ class Animex : Source() {
                                     .build()
                                 val okruExtractor = OkruExtractor(okruClient)
                                 val okruPrefix = "${providerId.uppercase()} ($categoryLabel)$subStyle"
-                                val playHeaders = headersBuilder().build()
-                                okruExtractor.videosFromUrl(embedUrl, prefix = okruPrefix).map { video ->
-                                    Video(
-                                        videoUrl = video.videoUrl,
-                                        videoTitle = video.videoTitle,
-                                        headers = playHeaders,
-                                        subtitleTracks = video.subtitleTracks,
-                                        audioTracks = video.audioTracks,
-                                    )
-                                }
+                                okruExtractor.videosFromUrl(embedUrl, prefix = okruPrefix)
                             } catch (e: Exception) {
                                 emptyList()
                             }
@@ -730,7 +721,6 @@ class Animex : Source() {
                                                 val playlistUtils = PlaylistUtils(client, headers)
                                                 val playlistVideos = playlistUtils.extractFromHls(
                                                     playlistUrl = streamUrl,
-                                                    referer = videoHeaders.get("Referer") ?: "https://animex.one/",
                                                     masterHeaders = videoHeaders,
                                                     videoHeaders = videoHeaders,
                                                     videoNameGen = { hlsQuality ->
