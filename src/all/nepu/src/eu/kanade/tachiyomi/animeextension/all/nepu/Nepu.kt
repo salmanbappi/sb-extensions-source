@@ -493,12 +493,19 @@ class Nepu : ParsedAnimeHttpSource() {
                         rawUrl.contains(".m3u8") || rawUrl.contains(".mp4") -> {
                             videoList.add(Video(videoUrl = rawUrl, videoTitle = "Nepu", headers = videoHeaders))
                         }
+
                         rawUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(rawUrl, "DoodStream"))
+
                         rawUrl.contains("filemoon") || rawUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(rawUrl, "Filemoon", videoHeaders))
+
                         rawUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(rawUrl, "VidMoly"))
+
                         rawUrl.contains("vidhide") || rawUrl.contains("guccihide") || rawUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(rawUrl, { "VidHide - $it" }))
+
                         rawUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(rawUrl, "Voe"))
+
                         rawUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(rawUrl, "StreamTape"))
+
                         else -> {
                             val extracted = UniversalExtractor(client).videosFromUrl(rawUrl, videoHeaders, prefix = "Nepu")
                             if (extracted.isNotEmpty()) videoList.addAll(extracted)
