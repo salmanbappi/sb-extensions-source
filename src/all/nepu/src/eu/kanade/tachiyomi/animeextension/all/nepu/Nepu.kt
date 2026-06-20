@@ -540,24 +540,72 @@ class Nepu : ParsedAnimeHttpSource() {
     private val cfLock = Any()
     private var lastCfSolveTime = 0L
 
-    private fun solveCloudflare() {
+    private fun solveCloudflareCustom(pageUrl: String) {
         synchronized(cfLock) {
             val now = System.currentTimeMillis()
             if (now - lastCfSolveTime < 10000) return
 
             clearCloudflareCookies()
 
-            try {
-                val getRequest = Request.Builder()
-                    .url("$baseUrl/ajax/embed")
-                    .headers(headers)
-                    .header("Referer", "$baseUrl/")
-                    .build()
+            val latch = java.util.concurrent.CountDownLatch(1)
+            val handler = android.os.Handler(android.os.Looper.getMainLooper())
+            var webView: android.webkit.WebView? = null
 
-                client.newCall(getRequest).execute().close()
-                lastCfSolveTime = System.currentTimeMillis()
+            handler.post {
+                try {
+                    val context = Injekt.get<Application>()
+                    val webview = android.webkit.WebView(context)
+                    webView = webview
+                    
+                    webview.settings.javaScriptEnabled = true
+                    webview.settings.domStorageEnabled = true
+                    webview.settings.databaseEnabled = true
+                    webview.settings.useWideViewPort = true
+                    webview.settings.loadWithOverviewMode = false
+                    webview.settings.userAgentString = defaultUserAgent
+
+                    webview.webViewClient = object : android.webkit.WebViewClient() {
+                        override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                            checkCookie(latch)
+                        }
+                    }
+
+                    webview.loadUrl(pageUrl)
+                } catch (e: Exception) {
+                    latch.countDown()
+                }
+            }
+
+            val executor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+            val pollTask = executor.scheduleWithFixedDelay({
+                checkCookie(latch)
+            }, 1, 1, java.util.concurrent.TimeUnit.SECONDS)
+
+            try {
+                latch.await(15, java.util.concurrent.TimeUnit.SECONDS)
             } catch (_: Exception) {}
+
+            pollTask.cancel(true)
+            executor.shutdown()
+
+            handler.post {
+                try {
+                    webView?.stopLoading()
+                    webView?.destroy()
+                } catch (_: Exception) {}
+            }
+            lastCfSolveTime = System.currentTimeMillis()
         }
+    }
+
+    private fun checkCookie(latch: java.util.concurrent.CountDownLatch) {
+        try {
+            val cookieManager = android.webkit.CookieManager.getInstance()
+            val cookies = cookieManager.getCookie("https://nepu.to")
+            if (!cookies.isNullOrEmpty() && cookies.contains("cf_clearance")) {
+                latch.countDown()
+            }
+        } catch (_: Exception) {}
     }
 
     // ============================ Video Links =============================
@@ -597,7 +645,7 @@ class Nepu : ParsedAnimeHttpSource() {
                         var embedResponse = client.newCall(request).execute()
                         if (embedResponse.code == 403) {
                             embedResponse.close()
-                            solveCloudflare()
+                            solveCloudflareCustom(pageUrl)
                             embedResponse = client.newCall(request).execute()
                         }
 
