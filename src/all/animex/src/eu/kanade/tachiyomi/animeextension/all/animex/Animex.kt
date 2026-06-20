@@ -986,12 +986,11 @@ class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
         // The _amx_id JWT embeds this UA, so it must be consistent across all API calls.
         private const val API_UA =
             "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
         private val API_HOST = "pp.animex.one"
 
-        private fun hasSession(cookies: List<Cookie>): Boolean =
-            cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
+        private fun hasSession(cookies: List<Cookie>): Boolean = cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
 
         private fun parseSessionCookie(header: String, url: okhttp3.HttpUrl): Cookie? {
             // header is the raw Set-Cookie value e.g. "_amx_id=xxx; expires=...; path=/; ..."
