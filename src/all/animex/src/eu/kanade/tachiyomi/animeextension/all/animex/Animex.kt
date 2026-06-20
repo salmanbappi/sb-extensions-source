@@ -525,18 +525,54 @@ class Animex : Source() {
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val request = episodeListRequest(anime)
-        val response = client.newCall(request).execute()
-        return episodeListParse(response, anime)
+        val url = anime.url
+        val slug = when {
+            url.contains("?id=") -> url.substringAfter("?id=").substringBefore("&")
+            url.contains("&id=") -> url.substringAfter("&id=").substringBefore("&")
+            else -> null
+        }
+        val resolvedSlug = if (slug == null) {
+            val anilistId = url.substringAfter("/anime/").substringBefore("?").substringAfterLast("-").toIntOrNull()
+                ?: url.split("/").getOrNull(2)?.toIntOrNull()
+            if (anilistId != null) {
+                resolveSlugFromAnilistId(anilistId)
+            } else {
+                null
+            }
+        } else {
+            slug
+        } ?: throw Exception("Could not resolve slug for URL: ${anime.url}")
+
+        val episodesRequest = GET("https://pp.animex.one/rest/api/episodes?id=$resolvedSlug", headers)
+        val response = client.newCall(episodesRequest).execute()
+        return episodeListParseWithSlug(response, resolvedSlug, anime)
     }
 
-    private fun episodeListParse(response: Response, anime: SAnime): List<SEpisode> {
-        val slug = when {
-            anime.url.contains("?id=") -> anime.url.substringAfter("?id=").substringBefore("&")
-            anime.url.contains("&id=") -> anime.url.substringAfter("&id=").substringBefore("&")
-            else -> anime.url.split("/").getOrNull(3)
-        } ?: throw Exception("Could not extract slug from URL: ${anime.url}")
-        return episodeListParseWithSlug(response, slug, anime)
+    private fun resolveSlugFromAnilistId(anilistId: Int): String? {
+        val queryBody = GraphQLRequest(
+            query = """
+                query GetAnime(${'$'}anilistId: Int) {
+                  anime(anilistId: ${'$'}anilistId) {
+                    id
+                  }
+                }
+            """.trimIndent(),
+            variables = GraphQLVariables(anilistId = anilistId),
+        )
+        val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
+        val request = POST("https://graphql.animex.one/graphql", headers, body)
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val result = json.decodeFromString<GetAnimeResponse>(response.body.string())
+                    result.data.anime?.id
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
@@ -609,6 +645,17 @@ class Animex : Source() {
             tasks.map { (provider, apiType) ->
                 async {
                     val providerId = provider.id
+                    val categoryLabel = apiType.uppercase()
+                    val subStyle = if (apiType == "dub") {
+                        ""
+                    } else {
+                        when {
+                            provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
+                            provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
+                            else -> ""
+                        }
+                    }
+
                     if (provider.type == "embed" && provider.url != null) {
                         val embedUrl = absoluteUrl(provider.url)
                         if (embedUrl.contains("ok.ru") || embedUrl.contains("okru")) {
@@ -627,7 +674,8 @@ class Animex : Source() {
                                     }
                                     .build()
                                 val okruExtractor = OkruExtractor(okruClient)
-                                okruExtractor.videosFromUrl(embedUrl, prefix = providerId.uppercase())
+                                val okruPrefix = "${providerId.uppercase()} ($categoryLabel)$subStyle"
+                                okruExtractor.videosFromUrl(embedUrl, prefix = okruPrefix)
                             } catch (e: Exception) {
                                 emptyList()
                             }
@@ -638,7 +686,8 @@ class Animex : Source() {
                                     removeAll("Accept")
                                 }.build()
                                 val mp4uploadExtractor = Mp4uploadExtractor(client)
-                                mp4uploadExtractor.videosFromUrl(embedUrl, headers = embedHeaders, prefix = "${providerId.uppercase()}: ")
+                                val mp4Prefix = "${providerId.uppercase()}: ($categoryLabel)$subStyle "
+                                mp4uploadExtractor.videosFromUrl(embedUrl, headers = embedHeaders, prefix = mp4Prefix)
                             } catch (e: Exception) {
                                 emptyList()
                             }
@@ -650,7 +699,7 @@ class Animex : Source() {
                             listOf(
                                 Video(
                                     videoUrl = embedUrl,
-                                    videoTitle = providerId.uppercase(),
+                                    videoTitle = "${providerId.uppercase()} ($categoryLabel)$subStyle",
                                     headers = embedHeaders,
                                 ),
                             )
@@ -980,63 +1029,31 @@ class Animex : Source() {
 
 /**
  * Animex uses a session cookie (similar to Anivix's movix_session).
- * We perform a homepage "handshake" before any /api/ call if no session cookie exists.
- * The actual cookie name may need updating once verified via browser DevTools.
+ * We intercept 403 responses on API endpoints and retry after capturing the cookie.
  */
 class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
     companion object {
-        private const val BASE_URL = "https://animex.one"
-        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
         private fun hasSession(cookies: List<okhttp3.Cookie>): Boolean = cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
-
         private fun containsSession(cookieHeader: String): Boolean = cookieHeader.contains("_amx_id") || cookieHeader.contains("animex_session")
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val url = request.url.toString()
-
-        if (url.contains("/api/")) {
-            val httpUrl = request.url
-            val cookies = cookieJar.loadForRequest(httpUrl)
-
-            if (!hasSession(cookies)) {
-                synchronized(this) {
-                    val freshCookies = cookieJar.loadForRequest(httpUrl)
-                    if (!hasSession(freshCookies)) {
-                        val slug = httpUrl.queryParameter("id")
-                        val epNum = httpUrl.queryParameter("epNum")
-                        val handshakeUrl = if (slug != null && epNum != null) {
-                            "$BASE_URL/watch/$slug/$epNum"
-                        } else {
-                            BASE_URL
-                        }
-
-                        val handshakeClient = OkHttpClient.Builder()
-                            .cookieJar(cookieJar)
-                            .build()
-
-                        val handshakeRequest = Request.Builder()
-                            .url(handshakeUrl)
-                            .header("User-Agent", USER_AGENT)
-                            .build()
-
-                        try {
-                            handshakeClient.newCall(handshakeRequest).execute().close()
-                        } catch (e: Exception) {
-                            // Ignore handshake errors — proceed anyway
-                        }
-                    }
-                }
-            }
-        }
-
         val response = chain.proceed(request)
 
-        if (url.contains("/api/") && response.code == 403 && response.headers("Set-Cookie").any { containsSession(it) }) {
-            response.close()
-            return chain.proceed(request)
+        if (url.contains("/api/") && response.code == 403) {
+            synchronized(this) {
+                val cookies = cookieJar.loadForRequest(request.url)
+                if (hasSession(cookies)) {
+                    response.close()
+                    return chain.proceed(request)
+                }
+                if (response.headers("Set-Cookie").any { containsSession(it) }) {
+                    response.close()
+                    return chain.proceed(request)
+                }
+            }
         }
 
         return response
