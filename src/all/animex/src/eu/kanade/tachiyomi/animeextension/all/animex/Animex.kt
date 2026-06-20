@@ -41,6 +41,10 @@ import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
+private const val API_UA =
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
 class Animex : Source() {
 
     override val name = "Animex"
@@ -60,10 +64,12 @@ class Animex : Source() {
         .addNetworkInterceptor(AnimexInterceptor(network.client.cookieJar))
         .build()
 
-    override fun headersBuilder() = super.headersBuilder()
-        .add("Referer", "https://animex.one/")
-        .add("Origin", "https://animex.one")
-        .add("Accept", "application/json, text/plain, */*")
+    override fun headersBuilder() = super.headersBuilder().apply {
+        set("User-Agent", API_UA)
+        set("Referer", "https://animex.one/")
+        set("Origin", "https://animex.one")
+        set("Accept", "application/json, text/plain, */*")
+    }
 
     private fun absoluteUrl(url: String): String = when {
         url.startsWith("http://") || url.startsWith("https://") -> url
@@ -972,12 +978,6 @@ class Animex : Source() {
 class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
 
     companion object {
-        // Stable browser UA pinned for pp.animex.one API requests only.
-        // The _amx_id JWT embeds this UA, so it must be consistent across all API calls.
-        private const val API_UA =
-            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-
         private val API_HOST = "pp.animex.one"
 
         private fun hasSession(cookies: List<Cookie>): Boolean = cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
