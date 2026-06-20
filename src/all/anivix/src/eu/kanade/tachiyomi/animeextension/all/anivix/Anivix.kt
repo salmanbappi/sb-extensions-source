@@ -498,7 +498,14 @@ class AnivixInterceptor(private val cookieJar: CookieJar) : Interceptor {
             }
         }
 
-        return chain.proceed(request)
+        val response = chain.proceed(request)
+
+        if (url.contains("/api/") && response.code == 403 && response.headers("Set-Cookie").any { it.contains("movix_session") }) {
+            response.close()
+            return chain.proceed(request)
+        }
+
+        return response
     }
 }
 

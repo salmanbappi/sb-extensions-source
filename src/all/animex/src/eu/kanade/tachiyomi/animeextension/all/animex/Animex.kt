@@ -32,6 +32,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 
 class Animex : Source() {
 
@@ -408,53 +409,83 @@ class Animex : Source() {
             tasks.map { (provider, apiType) ->
                 async {
                     val providerId = provider.id
-                    val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$apiType&providerId=$providerId", headers)
-                    try {
-                        client.newCall(sourcesRequest).execute().use { sourcesResponse ->
-                            if (sourcesResponse.isSuccessful) {
-                                val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
-                                val subtitleTracks = sourcesData.tracks?.map { track ->
-                                    Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
-                                } ?: emptyList()
+                    if (provider.type == "embed" && provider.url != null) {
+                        val embedUrl = provider.url
+                        if (embedUrl.contains("ok.ru") || embedUrl.contains("okru")) {
+                            try {
+                                val okruExtractor = OkruExtractor(client)
+                                okruExtractor.videosFromUrl(embedUrl, prefix = providerId.uppercase())
+                            } catch (e: Exception) {
+                                emptyList()
+                            }
+                        } else {
+                            listOf(
+                                Video(
+                                    videoUrl = embedUrl,
+                                    videoTitle = providerId.uppercase(),
+                                    headers = headers,
+                                )
+                            )
+                        }
+                    } else {
+                        val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$apiType&providerId=$providerId", headers)
+                        try {
+                            client.newCall(sourcesRequest).execute().use { sourcesResponse ->
+                                if (sourcesResponse.isSuccessful) {
+                                    val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
+                                    val subtitleTracks = sourcesData.tracks?.map { track ->
+                                        Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
+                                    } ?: emptyList()
 
-                                val videoHeaders = headersBuilder().apply {
-                                    sourcesData.headers?.forEach { (key, value) ->
-                                        set(key, value)
-                                    }
-                                }.build()
-
-                                val providerVideos = mutableListOf<Video>()
-                                sourcesData.sources.forEach { source ->
-                                    val streamUrl = absoluteUrl(source.url)
-                                    val providerName = providerId.uppercase()
-                                    val quality = source.quality ?: "Auto"
-                                    val categoryLabel = apiType.uppercase()
-                                    val subStyle = if (apiType == "dub") {
-                                        ""
-                                    } else {
-                                        when {
-                                            provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
-                                            provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
-                                            else -> ""
+                                    val videoHeaders = headersBuilder().apply {
+                                        sourcesData.headers?.forEach { (key, value) ->
+                                            set(key, value)
                                         }
-                                    }
+                                    }.build()
 
-                                    if (streamUrl.contains(".m3u8", ignoreCase = true)) {
-                                        try {
-                                            val playlistUtils = PlaylistUtils(client, headers)
-                                            val playlistVideos = playlistUtils.extractFromHls(
-                                                playlistUrl = streamUrl,
-                                                referer = videoHeaders.get("Referer") ?: "https://animex.one/",
-                                                masterHeaders = videoHeaders,
-                                                videoHeaders = videoHeaders,
-                                                videoNameGen = { hlsQuality ->
-                                                    val parsedQuality = if (hlsQuality == "Video") quality else hlsQuality
-                                                    "$providerName: $parsedQuality ($categoryLabel)$subStyle"
-                                                },
-                                                subtitleList = subtitleTracks,
-                                            )
-                                            providerVideos.addAll(playlistVideos)
-                                        } catch (e: Exception) {
+                                    val providerVideos = mutableListOf<Video>()
+                                    sourcesData.sources.forEach { source ->
+                                        val streamUrl = absoluteUrl(source.url)
+                                        val providerName = providerId.uppercase()
+                                        val quality = source.quality ?: "Auto"
+                                        val categoryLabel = apiType.uppercase()
+                                        val subStyle = if (apiType == "dub") {
+                                            ""
+                                        } else {
+                                            when {
+                                                provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
+                                                provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
+                                                else -> ""
+                                            }
+                                        }
+
+                                        if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+                                            try {
+                                                val playlistUtils = PlaylistUtils(client, headers)
+                                                val playlistVideos = playlistUtils.extractFromHls(
+                                                    playlistUrl = streamUrl,
+                                                    referer = videoHeaders.get("Referer") ?: "https://animex.one/",
+                                                    masterHeaders = videoHeaders,
+                                                    videoHeaders = videoHeaders,
+                                                    videoNameGen = { hlsQuality ->
+                                                        val parsedQuality = if (hlsQuality == "Video") quality else hlsQuality
+                                                        "$providerName: $parsedQuality ($categoryLabel)$subStyle"
+                                                    },
+                                                    subtitleList = subtitleTracks,
+                                                )
+                                                providerVideos.addAll(playlistVideos)
+                                            } catch (e: Exception) {
+                                                val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
+                                                providerVideos.add(
+                                                    Video(
+                                                        videoUrl = streamUrl,
+                                                        videoTitle = qualityLabel,
+                                                        headers = videoHeaders,
+                                                        subtitleTracks = subtitleTracks,
+                                                    ),
+                                                )
+                                            }
+                                        } else {
                                             val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
                                             providerVideos.add(
                                                 Video(
@@ -465,26 +496,15 @@ class Animex : Source() {
                                                 ),
                                             )
                                         }
-                                    } else {
-                                        val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                                        providerVideos.add(
-                                            Video(
-                                                videoUrl = streamUrl,
-                                                videoTitle = qualityLabel,
-                                                headers = videoHeaders,
-                                                subtitleTracks = subtitleTracks,
-                                            ),
-
-                                        )
                                     }
+                                    providerVideos
+                                } else {
+                                    emptyList()
                                 }
-                                providerVideos
-                            } else {
-                                emptyList()
                             }
+                        } catch (e: Exception) {
+                            emptyList()
                         }
-                    } catch (e: Exception) {
-                        emptyList()
                     }
                 }
             }.awaitAll().flatten().toMutableList()
@@ -697,7 +717,14 @@ class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
             }
         }
 
-        return chain.proceed(request)
+        val response = chain.proceed(request)
+
+        if (url.contains("/api/") && response.code == 403 && response.headers("Set-Cookie").any { it.contains(SESSION_COOKIE) }) {
+            response.close()
+            return chain.proceed(request)
+        }
+
+        return response
     }
 }
 
@@ -831,6 +858,8 @@ data class ProviderItem(
     val id: String,
     val default: Boolean? = null,
     val tip: String? = null,
+    val type: String? = null,
+    val url: String? = null,
 )
 
 @Serializable
