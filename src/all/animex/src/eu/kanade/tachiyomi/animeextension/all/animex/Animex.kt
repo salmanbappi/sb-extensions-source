@@ -381,9 +381,10 @@ class Animex : Source() {
         val restEpisodes = json.decodeFromString<List<RestEpisode>>(responseBody)
 
         val animeUrl = anime?.url
-        val titleSlug = animeUrl?.substringAfter("/anime/")?.substringBeforeLast("-")
+        val animePath = animeUrl?.substringAfter("/anime/")?.substringBefore("?")
+        val titleSlug = animePath?.substringBeforeLast("-")
             ?: slug.substringBeforeLast("-")
-        val anilistId = animeUrl?.substringAfter("/anime/")?.substringAfterLast("-")?.substringBefore("?")
+        val anilistId = animePath?.substringAfterLast("-")
             ?: ""
 
         val episodes = restEpisodes.map { episode ->
