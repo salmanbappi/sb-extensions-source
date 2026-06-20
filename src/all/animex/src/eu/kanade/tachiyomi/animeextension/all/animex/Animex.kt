@@ -28,8 +28,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -55,7 +57,7 @@ class Animex : Source() {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(AnimexInterceptor(network.client.cookieJar))
+        .addNetworkInterceptor(AnimexInterceptor(network.client.cookieJar))
         .build()
 
     override fun headersBuilder() = super.headersBuilder()
@@ -964,36 +966,93 @@ class Animex : Source() {
 // ============================== SESSION INTERCEPTOR ==============================
 
 /**
- * Animex uses a session cookie (similar to Anivix's movix_session).
- * We intercept 403 responses on API endpoints and retry after capturing the cookie.
+ * Handles the _amx_id antibot session cookie for pp.animex.one API endpoints.
+ *
+ * How it works:
+ * 1. pp.animex.one issues a JWT _amx_id cookie on the FIRST request (even on 403).
+ *    The JWT encodes: IP, User-Agent, expiry, nonce.
+ * 2. Any subsequent request to the API must carry that same _amx_id cookie.
+ * 3. The UA in the JWT must match the UA of subsequent requests — so we pin
+ *    a stable browser UA specifically for pp.animex.one API calls. Video stream
+ *    URLs (served to MPV) are NOT touched — MPV sets its own UA/headers natively.
+ * 4. We run as a NETWORK interceptor so OkHttp's cookie layer has already
+ *    saved Set-Cookie before we see the response, guaranteeing the jar is
+ *    populated when we retry.
  */
 class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
+
     companion object {
-        private fun hasSession(cookies: List<okhttp3.Cookie>): Boolean = cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
-        private fun containsSession(cookieHeader: String): Boolean = cookieHeader.contains("_amx_id") || cookieHeader.contains("animex_session")
+        // Stable browser UA pinned for pp.animex.one API requests only.
+        // The _amx_id JWT embeds this UA, so it must be consistent across all API calls.
+        private const val API_UA =
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
+        private val API_HOST = "pp.animex.one"
+
+        private fun hasSession(cookies: List<Cookie>): Boolean =
+            cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
+
+        private fun parseSessionCookie(header: String, url: okhttp3.HttpUrl): Cookie? {
+            // header is the raw Set-Cookie value e.g. "_amx_id=xxx; expires=...; path=/; ..."
+            return Cookie.parse(url, header)
+        }
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {
-        val request = chain.request()
-        val url = request.url.toString()
+        val originalRequest = chain.request()
+        val isApiCall = originalRequest.url.host == API_HOST &&
+            originalRequest.url.encodedPath.contains("/api/")
+
+        // Pin the UA for API calls so it matches what the _amx_id JWT was issued for.
+        val request = if (isApiCall) {
+            originalRequest.newBuilder()
+                .header("User-Agent", API_UA)
+                .build()
+        } else {
+            originalRequest
+        }
+
         val response = chain.proceed(request)
 
-        if (url.contains("/api/") && response.code == 403 && request.header("X-Animex-Retry") == null) {
+        // Handle bot-detection 403 on API calls: extract and save the session cookie
+        // then retry immediately. As a network interceptor, OkHttp has already called
+        // CookieJar.saveFromResponse() before we see this response, so the cookie jar
+        // is populated. We still manually parse + save to handle edge cases where
+        // the jar implementation might be no-op for certain cookie attributes.
+        if (isApiCall && response.code == 403 && request.header("X-Animex-Retry") == null) {
             synchronized(this) {
-                val cookies = cookieJar.loadForRequest(request.url)
-                if (hasSession(cookies)) {
-                    response.close()
-                    val newRequest = request.newBuilder()
-                        .header("X-Animex-Retry", "true")
-                        .build()
-                    return chain.proceed(newRequest)
+                val setCookieHeaders = response.headers("Set-Cookie")
+                val sessionHeaders = setCookieHeaders.filter {
+                    it.contains("_amx_id") || it.contains("animex_session")
                 }
-                if (response.headers("Set-Cookie").any { containsSession(it) }) {
+
+                if (sessionHeaders.isNotEmpty()) {
+                    // Manually save each session cookie to ensure the jar has it
+                    val cookiesToSave = sessionHeaders.mapNotNull {
+                        parseSessionCookie(it, request.url)
+                    }
+                    if (cookiesToSave.isNotEmpty()) {
+                        try {
+                            cookieJar.saveFromResponse(request.url, cookiesToSave)
+                        } catch (_: Exception) {}
+                    }
+
                     response.close()
-                    val newRequest = request.newBuilder()
+                    val retryRequest = request.newBuilder()
                         .header("X-Animex-Retry", "true")
                         .build()
-                    return chain.proceed(newRequest)
+                    return chain.proceed(retryRequest)
+                }
+
+                // Cookie already in jar (e.g. expired + re-issued) — just retry
+                val jarCookies = cookieJar.loadForRequest(request.url)
+                if (hasSession(jarCookies)) {
+                    response.close()
+                    val retryRequest = request.newBuilder()
+                        .header("X-Animex-Retry", "true")
+                        .build()
+                    return chain.proceed(retryRequest)
                 }
             }
         }
