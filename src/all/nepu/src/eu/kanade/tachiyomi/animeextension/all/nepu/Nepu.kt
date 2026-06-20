@@ -47,9 +47,7 @@ class Nepu : ParsedAnimeHttpSource() {
 
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
 
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        return listOf(Hoster(hosterName = "Default", hosterUrl = episode.url))
-    }
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(Hoster(hosterName = "Default", hosterUrl = episode.url))
 
     override val id: Long = 5181466391484419855L
 
