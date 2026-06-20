@@ -69,22 +69,18 @@ class Animex : Source() {
         .add("Origin", "https://animex.one")
         .add("Accept", "application/json, text/plain, */*")
 
-    private fun absoluteUrl(url: String): String {
-        return when {
-            url.startsWith("http://") || url.startsWith("https://") -> url
-            url.startsWith("//") -> "https:$url"
-            else -> "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
-        }
+    private fun absoluteUrl(url: String): String = when {
+        url.startsWith("http://") || url.startsWith("https://") -> url
+        url.startsWith("//") -> "https:$url"
+        else -> "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
     }
 
-    private fun absoluteUrl(url: String, base: String): String {
-        return try {
-            val baseUri = java.net.URI(base)
-            val resolved = baseUri.resolve(url)
-            resolved.toString()
-        } catch (e: Exception) {
-            if (url.startsWith("http")) url else base.substringBeforeLast("/") + "/" + url
-        }
+    private fun absoluteUrl(url: String, base: String): String = try {
+        val baseUri = java.net.URI(base)
+        val resolved = baseUri.resolve(url)
+        resolved.toString()
+    } catch (e: Exception) {
+        if (url.startsWith("http")) url else base.substringBeforeLast("/") + "/" + url
     }
 
     private fun getRewrittenHlsPlaylist(playlistUrl: String, headers: Headers): String {
@@ -115,7 +111,8 @@ class Animex : Source() {
                 val absUrl = absoluteUrl(trimmed, playlistUrl)
                 val finalUrl = if (!absUrl.contains(".ts", ignoreCase = true) &&
                     !absUrl.contains(".m3u8", ignoreCase = true) &&
-                    !absUrl.contains(".mp4", ignoreCase = true)) {
+                    !absUrl.contains(".mp4", ignoreCase = true)
+                ) {
                     if (absUrl.contains("?")) "$absUrl&ext=.ts" else "$absUrl?ext=.ts"
                 } else {
                     absUrl
@@ -126,7 +123,7 @@ class Animex : Source() {
         val rewrittenPlaylist = rewrittenLines.joinToString("\n")
         val base64 = android.util.Base64.encodeToString(
             rewrittenPlaylist.toByteArray(Charsets.UTF_8),
-            android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
+            android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP,
         )
         return "data:application/vnd.apple.mpegurl;base64,$base64"
     }
