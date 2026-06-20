@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -32,7 +33,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 
 class Animex : Source() {
 
@@ -424,7 +424,7 @@ class Animex : Source() {
                                     videoUrl = embedUrl,
                                     videoTitle = providerId.uppercase(),
                                     headers = headers,
-                                )
+                                ),
                             )
                         }
                     } else {
