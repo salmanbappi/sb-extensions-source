@@ -17,9 +17,9 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.mp4uploadextractor.Mp4uploadExtractor
 import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
-import eu.kanade.tachiyomi.util.asJsoup
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
+import eu.kanade.tachiyomi.util.asJsoup
 import extensions.utils.Source
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -136,7 +136,7 @@ class Animex : Source() {
         providerName: String,
         categoryLabel: String,
         subStyle: String,
-        subtitleTracks: List<Track>
+        subtitleTracks: List<Track>,
     ): List<Video> {
         val request = GET(mpdUrl, headers)
         val response = client.newCall(request).execute()
@@ -200,7 +200,7 @@ class Animex : Source() {
             val res = if (width.isNotEmpty() && height.isNotEmpty()) "$height (${width}x$height)" else height
 
             val videoUrl = absoluteUrl(videoSrc.text().trim(), mpdUrl)
-            val videoTitle = "$providerName: $res ($categoryLabel)$subStyle" + if (bandwidth.isNotEmpty()) " - ${bandwidth}" else ""
+            val videoTitle = "$providerName: $res ($categoryLabel)$subStyle" + if (bandwidth.isNotEmpty()) " - $bandwidth" else ""
 
             Video(
                 videoUrl = videoUrl,
