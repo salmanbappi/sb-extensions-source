@@ -53,68 +53,6 @@ class Nepu : ParsedAnimeHttpSource() {
 
     override val id: Long = 5181466391484419855L
 
-    private var cookiesInjected = false
-
-    private fun isCfClearanceExpired(value: String): Boolean {
-        try {
-            val match = Regex("""-(\d{10})-""").find(value) ?: return true
-            val timestampSec = match.groupValues[1].toLongOrNull() ?: return true
-            val nowSec = System.currentTimeMillis() / 1000
-            return (nowSec - timestampSec) > 86400 // 24 hours
-        } catch (_: Exception) {
-            return true
-        }
-    }
-
-    private fun clearCloudflareCookies() {
-        try {
-            val cookieManager = CookieManager.getInstance()
-            val domain = "nepu.to"
-            val expiredDate = "Expires=Thu, 01 Jan 1970 00:00:00 GMT"
-            cookieManager.setCookie("https://$domain", "cf_clearance=; Domain=.$domain; Path=/; $expiredDate")
-            cookieManager.setCookie("https://$domain", "cf_clearance=; Domain=$domain; Path=/; $expiredDate")
-            cookieManager.flush()
-        } catch (_: Exception) {}
-    }
-
-    @Synchronized
-    private fun injectCookiesToManager() {
-        if (cookiesInjected) return
-        try {
-            val data = getSavedCookieData() ?: return
-            val cookiesArray = data.optJSONArray("cookies") ?: return
-            val cookieManager = CookieManager.getInstance()
-            val domain = "nepu.to"
-
-            var cfClearance: String? = null
-            for (i in 0 until cookiesArray.length()) {
-                val cookieObj = cookiesArray.optJSONObject(i) ?: continue
-                val name = cookieObj.optString("name")
-                if (name == "cf_clearance") {
-                    cfClearance = cookieObj.optString("value")
-                    break
-                }
-            }
-
-            if (cfClearance != null && isCfClearanceExpired(cfClearance)) {
-                clearCloudflareCookies()
-                cookiesInjected = true
-                return
-            }
-
-            for (i in 0 until cookiesArray.length()) {
-                val cookieObj = cookiesArray.optJSONObject(i) ?: continue
-                val name = cookieObj.optString("name")
-                val value = cookieObj.optString("value")
-                if (name.isNotEmpty() && value.isNotEmpty()) {
-                    cookieManager.setCookie("https://$domain", "$name=$value; Domain=.$domain; Path=/")
-                }
-            }
-            cookieManager.flush()
-            cookiesInjected = true
-        } catch (_: Exception) {}
-    }
-
     private val defaultUserAgent by lazy {
         try {
             android.webkit.WebSettings.getDefaultUserAgent(Injekt.get<Application>())
@@ -128,24 +66,24 @@ class Nepu : ParsedAnimeHttpSource() {
         .addInterceptor { chain ->
             val request = chain.request()
             val host = request.url.host
-            val isNepu = host.contains("nepu.to")
 
             if (host.contains("tmdb.org")) {
                 return@addInterceptor chain.proceed(request.newBuilder().removeHeader("Referer").build())
             }
 
-            if (!isNepu) return@addInterceptor chain.proceed(request)
-
-            if (!cookiesInjected) {
-                injectCookiesToManager()
-            }
+            if (!host.contains("nepu.to")) return@addInterceptor chain.proceed(request)
 
             val requestBuilder = request.newBuilder()
 
+            // Apply User-Agent from cookies.json (if present) or fall back to device WebView UA
             val savedUserAgent = getSavedUserAgent()
             val ua = if (!savedUserAgent.isNullOrBlank()) savedUserAgent else defaultUserAgent
             requestBuilder.header("User-Agent", ua)
 
+            // Pass any cookies already in the WebView CookieManager (e.g. cf_clearance)
+            // Note: we intentionally do NOT write cookies.json into CookieManager here.
+            // Writing stale cf_clearance into CookieManager would overwrite the fresh one
+            // obtained by CloudflareInterceptor after solving the challenge.
             try {
                 val cookieManager = CookieManager.getInstance()
                 val managerCookies = cookieManager.getCookie("https://nepu.to")
@@ -200,7 +138,8 @@ class Nepu : ParsedAnimeHttpSource() {
         }
     }
 
-    private fun getSavedUserAgent(): String? = getSavedCookieData()?.optString("userAgent")
+    // Only read the User-Agent from cookies.json; do NOT inject cookies from it.
+    private fun getSavedUserAgent(): String? = getSavedCookieData()?.optString("userAgent")?.takeIf { it.isNotBlank() }
 
     // ============================== Popular ===============================
 
@@ -537,77 +476,6 @@ class Nepu : ParsedAnimeHttpSource() {
     override fun seasonListSelector(): String = throw UnsupportedOperationException()
     override fun seasonFromElement(element: org.jsoup.nodes.Element): SAnime = throw UnsupportedOperationException()
 
-    private val cfLock = Any()
-    private var lastCfSolveTime = 0L
-
-    private fun solveCloudflareCustom(pageUrl: String) {
-        synchronized(cfLock) {
-            val now = System.currentTimeMillis()
-            if (now - lastCfSolveTime < 10000) return
-
-            clearCloudflareCookies()
-
-            val latch = java.util.concurrent.CountDownLatch(1)
-            val handler = android.os.Handler(android.os.Looper.getMainLooper())
-            var webView: android.webkit.WebView? = null
-
-            handler.post {
-                try {
-                    val context = Injekt.get<Application>()
-                    val webview = android.webkit.WebView(context)
-                    webView = webview
-                    
-                    webview.settings.javaScriptEnabled = true
-                    webview.settings.domStorageEnabled = true
-                    webview.settings.databaseEnabled = true
-                    webview.settings.useWideViewPort = true
-                    webview.settings.loadWithOverviewMode = false
-                    webview.settings.userAgentString = defaultUserAgent
-
-                    webview.webViewClient = object : android.webkit.WebViewClient() {
-                        override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                            checkCookie(latch)
-                        }
-                    }
-
-                    webview.loadUrl(pageUrl)
-                } catch (e: Exception) {
-                    latch.countDown()
-                }
-            }
-
-            val executor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
-            val pollTask = executor.scheduleWithFixedDelay({
-                checkCookie(latch)
-            }, 1, 1, java.util.concurrent.TimeUnit.SECONDS)
-
-            try {
-                latch.await(15, java.util.concurrent.TimeUnit.SECONDS)
-            } catch (_: Exception) {}
-
-            pollTask.cancel(true)
-            executor.shutdown()
-
-            handler.post {
-                try {
-                    webView?.stopLoading()
-                    webView?.destroy()
-                } catch (_: Exception) {}
-            }
-            lastCfSolveTime = System.currentTimeMillis()
-        }
-    }
-
-    private fun checkCookie(latch: java.util.concurrent.CountDownLatch) {
-        try {
-            val cookieManager = android.webkit.CookieManager.getInstance()
-            val cookies = cookieManager.getCookie("https://nepu.to")
-            if (!cookies.isNullOrEmpty() && cookies.contains("cf_clearance")) {
-                latch.countDown()
-            }
-        } catch (_: Exception) {}
-    }
-
     // ============================ Video Links =============================
 
     override fun videoListParse(response: Response, hoster: Hoster): List<Video> {
@@ -642,12 +510,7 @@ class Nepu : ParsedAnimeHttpSource() {
                         .build()
 
                     try {
-                        var embedResponse = client.newCall(request).execute()
-                        if (embedResponse.code == 403) {
-                            embedResponse.close()
-                            solveCloudflareCustom(pageUrl)
-                            embedResponse = client.newCall(request).execute()
-                        }
+                        val embedResponse = client.newCall(request).execute()
 
                         embedResponse.use { resp ->
                             if (!resp.isSuccessful) return@submit
