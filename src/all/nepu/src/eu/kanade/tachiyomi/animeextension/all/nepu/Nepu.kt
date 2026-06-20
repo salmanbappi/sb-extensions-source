@@ -55,6 +55,28 @@ class Nepu : ParsedAnimeHttpSource() {
 
     private var cookiesInjected = false
 
+    private fun isCfClearanceExpired(value: String): Boolean {
+        try {
+            val match = Regex("""-(\d{10})-""").find(value) ?: return true
+            val timestampSec = match.groupValues[1].toLongOrNull() ?: return true
+            val nowSec = System.currentTimeMillis() / 1000
+            return (nowSec - timestampSec) > 86400 // 24 hours
+        } catch (_: Exception) {
+            return true
+        }
+    }
+
+    private fun clearCloudflareCookies() {
+        try {
+            val cookieManager = CookieManager.getInstance()
+            val domain = "nepu.to"
+            val expiredDate = "Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+            cookieManager.setCookie("https://$domain", "cf_clearance=; Domain=.$domain; Path=/; $expiredDate")
+            cookieManager.setCookie("https://$domain", "cf_clearance=; Domain=$domain; Path=/; $expiredDate")
+            cookieManager.flush()
+        } catch (_: Exception) {}
+    }
+
     @Synchronized
     private fun injectCookiesToManager() {
         if (cookiesInjected) return
@@ -63,6 +85,23 @@ class Nepu : ParsedAnimeHttpSource() {
             val cookiesArray = data.optJSONArray("cookies") ?: return
             val cookieManager = CookieManager.getInstance()
             val domain = "nepu.to"
+
+            var cfClearance: String? = null
+            for (i in 0 until cookiesArray.length()) {
+                val cookieObj = cookiesArray.optJSONObject(i) ?: continue
+                val name = cookieObj.optString("name")
+                if (name == "cf_clearance") {
+                    cfClearance = cookieObj.optString("value")
+                    break
+                }
+            }
+
+            if (cfClearance != null && isCfClearanceExpired(cfClearance)) {
+                clearCloudflareCookies()
+                cookiesInjected = true
+                return
+            }
+
             for (i in 0 until cookiesArray.length()) {
                 val cookieObj = cookiesArray.optJSONObject(i) ?: continue
                 val name = cookieObj.optString("name")
@@ -505,6 +544,8 @@ class Nepu : ParsedAnimeHttpSource() {
         synchronized(cfLock) {
             val now = System.currentTimeMillis()
             if (now - lastCfSolveTime < 10000) return
+
+            clearCloudflareCookies()
 
             try {
                 val getRequest = Request.Builder()
