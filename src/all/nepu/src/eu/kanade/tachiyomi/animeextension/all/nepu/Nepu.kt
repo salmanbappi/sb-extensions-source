@@ -516,6 +516,8 @@ class Nepu : ParsedAnimeHttpSource() {
                                 val embedDoc = Jsoup.parse(embedHtml, pageUrl)
                                 extractedUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
                                     ?: embedDoc.selectFirst("video source")?.attr("abs:src")
+                                    ?: Regex("""servedUrl\s*=\s*["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
+                                        ?.replace("\\/", "/")?.replace("\\u0026", "&")
                                     ?: Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
                                         ?.replace("\\/", "/")
                             }
