@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.all.nepu
 
-import android.app.Application
 import android.util.Base64
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -29,8 +28,6 @@ import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -55,82 +52,16 @@ class Nepu : ParsedAnimeHttpSource() {
         .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
-            val host = request.url.host
-
-            if (host.contains("tmdb.org")) {
-                return@addInterceptor chain.proceed(request.newBuilder().removeHeader("Referer").build())
-            }
-
-            var response = try {
+            if (request.url.host.contains("tmdb.org")) {
+                chain.proceed(request.newBuilder().removeHeader("Referer").build())
+            } else {
                 chain.proceed(request)
-            } catch (e: Exception) {
-                if (host.contains("nepu.to")) {
-                    warmupWebViewSession()
-                    chain.proceed(request)
-                } else {
-                    throw e
-                }
             }
-
-            if (host.contains("nepu.to") && (response.code == 403 || response.code == 503)) {
-                response.close()
-                warmupWebViewSession()
-                response = chain.proceed(request)
-            }
-
-            response
         }
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-
-    private val sessionWarmedUp = java.util.concurrent.atomic.AtomicBoolean(false)
-
-    @android.annotation.SuppressLint("SetJavaScriptEnabled")
-    private fun warmupWebViewSession() {
-        if (!sessionWarmedUp.compareAndSet(false, true)) return
-
-        val latch = java.util.concurrent.CountDownLatch(1)
-        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-
-        mainHandler.post {
-            try {
-                val context = Injekt.get<Application>()
-                val wv = android.webkit.WebView(context)
-                wv.settings.javaScriptEnabled = true
-                wv.settings.domStorageEnabled = true
-
-                val cm = android.webkit.CookieManager.getInstance()
-                cm.setAcceptCookie(true)
-                cm.setAcceptThirdPartyCookies(wv, true)
-
-                wv.webViewClient = object : android.webkit.WebViewClient() {
-                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                        mainHandler.postDelayed({
-                            runCatching {
-                                view?.stopLoading()
-                                view?.destroy()
-                            }
-                            latch.countDown()
-                        }, 5000L)
-                    }
-                }
-                wv.loadUrl("$baseUrl/")
-            } catch (_: Exception) {
-                latch.countDown()
-                sessionWarmedUp.set(false)
-            }
-        }
-
-        try {
-            if (!latch.await(15, java.util.concurrent.TimeUnit.SECONDS)) {
-                sessionWarmedUp.set(false)
-            }
-        } catch (_: InterruptedException) {
-            sessionWarmedUp.set(false)
-        }
-    }
 
     // ============================== Popular ===============================
 
