@@ -343,9 +343,11 @@ class Animex : Source() {
     // ============================== EPISODE LIST ==============================
 
     override fun episodeListRequest(anime: SAnime): Request {
-        val slug = anime.url.substringAfter("?id=", "").substringAfter("&id=", "").takeIf { it.isNotEmpty() }
-            ?: anime.url.split("/").getOrNull(3)
-            ?: throw Exception("Could not extract slug from URL: ${anime.url}")
+        val slug = when {
+            anime.url.contains("?id=") -> anime.url.substringAfter("?id=").substringBefore("&")
+            anime.url.contains("&id=") -> anime.url.substringAfter("&id=").substringBefore("&")
+            else -> anime.url.split("/").getOrNull(3)
+        } ?: throw Exception("Could not extract slug from URL: ${anime.url}")
         return GET("https://pp.animex.one/rest/api/episodes?id=$slug", headers)
     }
 
@@ -356,9 +358,11 @@ class Animex : Source() {
     }
 
     private fun episodeListParse(response: Response, anime: SAnime): List<SEpisode> {
-        val slug = anime.url.substringAfter("?id=", "").substringAfter("&id=", "").takeIf { it.isNotEmpty() }
-            ?: anime.url.split("/").getOrNull(3)
-            ?: throw Exception("Could not extract slug from URL: ${anime.url}")
+        val slug = when {
+            anime.url.contains("?id=") -> anime.url.substringAfter("?id=").substringBefore("&")
+            anime.url.contains("&id=") -> anime.url.substringAfter("&id=").substringBefore("&")
+            else -> anime.url.split("/").getOrNull(3)
+        } ?: throw Exception("Could not extract slug from URL: ${anime.url}")
         return episodeListParseWithSlug(response, slug, anime)
     }
 
