@@ -681,13 +681,9 @@ class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
         private const val BASE_URL = "https://animex.one"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-        private fun hasSession(cookies: List<okhttp3.Cookie>): Boolean {
-            return cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
-        }
+        private fun hasSession(cookies: List<okhttp3.Cookie>): Boolean = cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
 
-        private fun containsSession(cookieHeader: String): Boolean {
-            return cookieHeader.contains("_amx_id") || cookieHeader.contains("animex_session")
-        }
+        private fun containsSession(cookieHeader: String): Boolean = cookieHeader.contains("_amx_id") || cookieHeader.contains("animex_session")
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {
