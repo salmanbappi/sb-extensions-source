@@ -1,8 +1,12 @@
 package eu.kanade.tachiyomi.animeextension.all.nepu
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.util.Base64
-import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -12,7 +16,6 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
-import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
@@ -26,16 +29,15 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONObject
-import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.io.File
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class Nepu : ParsedAnimeHttpSource() {
 
@@ -53,93 +55,15 @@ class Nepu : ParsedAnimeHttpSource() {
 
     override val id: Long = 5181466391484419855L
 
-    private val defaultUserAgent by lazy {
-        try {
-            android.webkit.WebSettings.getDefaultUserAgent(Injekt.get<Application>())
-        } catch (_: Exception) {
-            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-        }
-    }
-
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
-            val host = request.url.host
-
-            if (host.contains("tmdb.org")) {
+            if (request.url.host.contains("tmdb.org")) {
                 return@addInterceptor chain.proceed(request.newBuilder().removeHeader("Referer").build())
             }
-
-            if (!host.contains("nepu.to")) return@addInterceptor chain.proceed(request)
-
-            val requestBuilder = request.newBuilder()
-
-            // Apply User-Agent from cookies.json (if present) or fall back to device WebView UA
-            val savedUserAgent = getSavedUserAgent()
-            val ua = if (!savedUserAgent.isNullOrBlank()) savedUserAgent else defaultUserAgent
-            requestBuilder.header("User-Agent", ua)
-
-            // Pass any cookies already in the WebView CookieManager (e.g. cf_clearance)
-            // Note: we intentionally do NOT write cookies.json into CookieManager here.
-            // Writing stale cf_clearance into CookieManager would overwrite the fresh one
-            // obtained by CloudflareInterceptor after solving the challenge.
-            try {
-                val cookieManager = CookieManager.getInstance()
-                val managerCookies = cookieManager.getCookie("https://nepu.to")
-                if (!managerCookies.isNullOrEmpty()) {
-                    requestBuilder.header("Cookie", managerCookies)
-                }
-            } catch (_: Exception) {}
-
-            chain.proceed(requestBuilder.build())
+            chain.proceed(request)
         }
         .build()
-
-    override fun headersBuilder(): okhttp3.Headers.Builder {
-        val builder = super.headersBuilder()
-            .set("Referer", "$baseUrl/")
-        val savedUserAgent = getSavedUserAgent()
-        if (!savedUserAgent.isNullOrBlank()) {
-            builder.set("User-Agent", savedUserAgent)
-        } else {
-            builder.set("User-Agent", defaultUserAgent)
-        }
-        return builder
-    }
-
-    private var cachedCookieData: JSONObject? = null
-    private var lastCookieRead: Long = 0
-
-    @Synchronized
-    private fun getSavedCookieData(): JSONObject? {
-        val now = System.currentTimeMillis()
-        if (cachedCookieData != null && now - lastCookieRead < 60000) {
-            return cachedCookieData
-        }
-
-        val context = Injekt.get<Application>()
-        var file = File(context.getExternalFilesDir(null), "cookies.json")
-        if (!file.exists()) {
-            file = File("/storage/emulated/0/Download/Serious/cookies.json")
-            if (!file.exists()) {
-                val sdcardFile = File("/sdcard/Download/Serious/cookies.json")
-                if (!sdcardFile.exists()) return null
-                file = sdcardFile
-            }
-        }
-        return try {
-            val data = JSONObject(file.readText())
-            cachedCookieData = data
-            lastCookieRead = now
-            data
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    // Only read the User-Agent from cookies.json; do NOT inject cookies from it.
-    private fun getSavedUserAgent(): String? = getSavedCookieData()?.optString("userAgent")?.takeIf { it.isNotBlank() }
 
     // ============================== Popular ===============================
 
@@ -478,136 +402,112 @@ class Nepu : ParsedAnimeHttpSource() {
 
     // ============================ Video Links =============================
 
-    override fun videoListParse(response: Response, hoster: Hoster): List<Video> {
-        val document = response.asJsoup()
-        val videoList = java.util.Collections.synchronizedList(mutableListOf<Video>())
-        val pageUrl = response.request.url.toString()
-        val token = document.selectFirst("input[name=_TOKEN]")?.attr("value")
+    // Patterns that indicate a real video URL (m3u8, mp4, or known hosters)
+    private val videoUrlPatterns = listOf(
+        ".m3u8", ".mp4",
+        "dood", "filemoon", "fmoon", "vidmoly", "vidhide", "guccihide",
+        "streamhide", "voe", "streamtape", "vr-cdn.com",
+    )
 
-        val servers = document.select(".btn-service")
-        val pool = Executors.newFixedThreadPool(5)
-        val futures = servers.map { btn ->
-            pool.submit {
-                val embedId = btn.attr("data-embed")
-                var name = btn.selectFirst(".source-selected")?.text()
-                    ?: btn.selectFirst(".name")?.text()
-                    ?: btn.text()
-                name = name.trim().ifEmpty { "Server" }
+    private fun isVideoUrl(url: String): Boolean = videoUrlPatterns.any { url.contains(it) }
 
-                if (embedId.isNotEmpty()) {
-                    val postBodyBuilder = okhttp3.FormBody.Builder().add("id", embedId)
-                    if (token != null) postBodyBuilder.add("_TOKEN", token)
-                    val postBody = postBodyBuilder.build()
+    /**
+     * Load the episode page in a WebView, intercept all outgoing network requests,
+     * and capture URLs that look like real video sources.
+     * This is needed because /ajax/embed is protected by Cloudflare Managed Challenge
+     * and cannot be fetched programmatically.
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun extractVideoUrlsViaWebView(pageUrl: String): List<String> {
+        val capturedUrls = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val latch = CountDownLatch(1)
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        var webView: WebView? = null
 
-                    val request = Request.Builder()
-                        .url("$baseUrl/ajax/embed")
-                        .post(postBody)
-                        .headers(headers)
-                        .header("X-Requested-With", "XMLHttpRequest")
-                        .header("Referer", pageUrl)
-                        .header("Origin", baseUrl)
-                        .header("Accept", "*/*")
-                        .build()
+        handler.post {
+            try {
+                val context = Injekt.get<Application>()
+                val wv = WebView(context)
+                webView = wv
+                wv.settings.javaScriptEnabled = true
+                wv.settings.domStorageEnabled = true
+                wv.settings.databaseEnabled = true
+                wv.settings.mediaPlaybackRequiresUserGesture = false
 
-                    try {
-                        val embedResponse = client.newCall(request).execute()
-
-                        embedResponse.use { resp ->
-                            if (!resp.isSuccessful) return@submit
-                            val embedHtml = resp.body.string()
-
-                            var extractedUrl: String? = null
-
-                            // Try to parse JSON first (Standard Dooplay)
-                            try {
-                                val jsonMatch = Regex("""["']?(?:embed_url|link|url|file)["']?\s*:\s*["']([^"']+)["']""").find(embedHtml)
-                                if (jsonMatch != null) {
-                                    val url = jsonMatch.groupValues[1].replace("\\/", "/")
-                                    if (url.contains("<iframe")) {
-                                        extractedUrl = Jsoup.parse(url).selectFirst("iframe")?.attr("abs:src")
-                                    } else {
-                                        extractedUrl = url
-                                    }
-                                }
-                            } catch (_: Exception) {}
-
-                            if (extractedUrl.isNullOrBlank()) {
-                                val embedDoc = Jsoup.parse(embedHtml, pageUrl)
-                                extractedUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
-                                    ?: embedDoc.selectFirst("video source")?.attr("abs:src")
-                                    ?: Regex("""servedUrl\s*=\s*["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
-                                        ?.replace("\\/", "/")?.replace("\\u0026", "&")
-                                    ?: Regex("""file"?\s*:\s*["']([^"']+)["']""").find(embedHtml)?.groupValues?.get(1)
-                                        ?.replace("\\/", "/")
-                            }
-
-                            fun sanitize(url: String): String = when {
-                                url.startsWith("http") -> url
-                                url.startsWith("//") -> "https:$url"
-                                url.startsWith("/") -> "$baseUrl$url"
-                                else -> "$baseUrl/$url"
-                            }.trim()
-
-                            fun extractVideos(finalUrl: String, name: String, refererContext: String) {
-                                if (!finalUrl.contains(".")) return
-                                val mediaHeaders = buildVideoHeaders(finalUrl, refererContext)
-
-                                if (finalUrl.contains(".mp4") || finalUrl.contains(".m3u8")) {
-                                    videoList.add(Video(videoUrl = finalUrl, videoTitle = name, headers = mediaHeaders))
-                                } else {
-                                    try {
-                                        when {
-                                            finalUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(finalUrl, "DoodStream"))
-
-                                            finalUrl.contains("filemoon") || finalUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(finalUrl, "Filemoon", mediaHeaders))
-
-                                            finalUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "VidMoly"))
-
-                                            finalUrl.contains("vidhide") || finalUrl.contains("guccihide") || finalUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, mediaHeaders).videosFromUrl(finalUrl, { "VidHide - $it" }))
-
-                                            finalUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, mediaHeaders).videosFromUrl(finalUrl, "Voe"))
-
-                                            finalUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(finalUrl, "StreamTape"))
-
-                                            else -> {
-                                                val extracted = UniversalExtractor(client).videosFromUrl(finalUrl, mediaHeaders, prefix = name)
-                                                if (extracted.isNotEmpty()) videoList.addAll(extracted)
-                                            }
-                                        }
-                                    } catch (_: Exception) {}
-                                }
-                            }
-
-                            if (!extractedUrl.isNullOrBlank()) {
-                                val sanitized = sanitize(extractedUrl)
-                                val refererContext = if (sanitized.contains(".mp4") || sanitized.contains(".m3u8")) pageUrl else sanitized
-
-                                // Pre-fetch M3U8 content before it gets deleted by the server
-                                if (sanitized.contains(".m3u8")) {
-                                    try {
-                                        val m3u8Response = client.newCall(GET(sanitized, buildVideoHeaders(sanitized, refererContext))).execute()
-                                        if (m3u8Response.isSuccessful) {
-                                            val content = m3u8Response.body.string()
-                                            if (content.startsWith("#EXTM3U")) {
-                                                m3u8Cache[sanitized] = content
-                                            }
-                                        }
-                                        m3u8Response.close()
-                                    } catch (_: Exception) {}
-                                }
-
-                                extractVideos(sanitized, name, refererContext)
-                            }
+                wv.webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                    ): WebResourceResponse? {
+                        val url = request?.url?.toString() ?: return null
+                        if (isVideoUrl(url) && !url.startsWith("blob:")) {
+                            capturedUrls.add(url)
+                            // Signal as soon as we have at least one video URL
+                            latch.countDown()
                         }
-                    } catch (_: Exception) {}
+                        return null // let the request proceed normally
+                    }
+
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        // After page finishes, give JS 5 extra seconds to trigger the player
+                        handler.postDelayed({ latch.countDown() }, 5000)
+                    }
                 }
+
+                wv.loadUrl(pageUrl)
+            } catch (e: Exception) {
+                latch.countDown()
             }
         }
-        futures.forEach {
+
+        // Wait up to 30 seconds for a video URL or page timeout
+        latch.await(30, TimeUnit.SECONDS)
+
+        handler.post {
             try {
-                it.get(10, java.util.concurrent.TimeUnit.SECONDS)
+                webView?.stopLoading()
+                webView?.destroy()
+                webView = null
             } catch (_: Exception) {}
         }
+
+        return capturedUrls.distinct()
+    }
+
+    override fun videoListParse(response: Response, hoster: Hoster): List<Video> {
+        val videoList = java.util.Collections.synchronizedList(mutableListOf<Video>())
+        val pageUrl = response.request.url.toString()
+        val document = response.asJsoup()
+
+        // Use WebView to load the page and intercept the actual video requests.
+        // The /ajax/embed endpoint is behind Cloudflare Managed Challenge and cannot
+        // be accessed programmatically — the WebView approach bypasses this entirely.
+        val capturedUrls = extractVideoUrlsViaWebView(pageUrl)
+
+        val pool = Executors.newFixedThreadPool(3)
+        val futures = capturedUrls.map { rawUrl ->
+            pool.submit {
+                val videoHeaders = buildVideoHeaders(rawUrl, pageUrl)
+                try {
+                    when {
+                        rawUrl.contains(".m3u8") || rawUrl.contains(".mp4") -> {
+                            videoList.add(Video(videoUrl = rawUrl, videoTitle = "Nepu", headers = videoHeaders))
+                        }
+                        rawUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(rawUrl, "DoodStream"))
+                        rawUrl.contains("filemoon") || rawUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(rawUrl, "Filemoon", videoHeaders))
+                        rawUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(rawUrl, "VidMoly"))
+                        rawUrl.contains("vidhide") || rawUrl.contains("guccihide") || rawUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(rawUrl, { "VidHide - $it" }))
+                        rawUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(rawUrl, "Voe"))
+                        rawUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(rawUrl, "StreamTape"))
+                        else -> {
+                            val extracted = UniversalExtractor(client).videosFromUrl(rawUrl, videoHeaders, prefix = "Nepu")
+                            if (extracted.isNotEmpty()) videoList.addAll(extracted)
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+        futures.forEach { runCatching { it.get(15, TimeUnit.SECONDS) } }
         pool.shutdown()
 
         if (videoList.isEmpty()) {
