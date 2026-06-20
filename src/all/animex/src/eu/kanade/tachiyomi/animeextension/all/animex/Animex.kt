@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -616,17 +617,31 @@ class Animex : Source() {
 
     override fun videoListParse(response: Response): List<Video> = throw Exception("Not used")
 
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val separator = if (episode.url.contains("?")) "&" else "?"
+        return listOf(
+            Hoster(hosterName = "Soft Sub", hosterUrl = "${episode.url}${separator}type=soft"),
+            Hoster(hosterName = "Hard Sub", hosterUrl = "${episode.url}${separator}type=hard"),
+            Hoster(hosterName = "Dub", hosterUrl = "${episode.url}${separator}type=dub"),
+        )
+    }
+
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val url = episode.url
         val slug: String
         val epNum: String
-        if (episode.url.contains("-episode-")) {
-            epNum = episode.url.substringAfter("-episode-").substringBefore("?")
-            slug = episode.url.substringAfter("?id=")
+        if (url.contains("-episode-")) {
+            epNum = url.substringAfter("-episode-").substringBefore("?")
+            slug = url.substringAfter("?id=").substringBefore("&")
         } else {
-            val parts = episode.url.split("/")
-            slug = parts.getOrNull(2) ?: throw Exception("Invalid episode URL: ${episode.url}")
-            epNum = parts.getOrNull(3) ?: throw Exception("Invalid episode URL: ${episode.url}")
+            val cleanUrl = url.substringBefore("?")
+            val parts = cleanUrl.split("/")
+            slug = parts.getOrNull(2) ?: throw Exception("Invalid episode URL: $url")
+            epNum = parts.getOrNull(3) ?: throw Exception("Invalid episode URL: $url")
         }
+        val type = url.substringAfter("&type=", "").takeIf { it.isNotEmpty() }
+            ?: url.substringAfter("?type=", "").takeIf { it.isNotEmpty() }
+
         val preferredType = preferences.getString("pref_preferred_type", "soft") ?: "soft"
 
         val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
@@ -638,8 +653,22 @@ class Animex : Source() {
 
         val serversData = json.decodeFromString<ServersResponse>(serversResponse.body.string())
         val disabledServers = preferences.getStringSet("pref_disabled_servers", emptySet()) ?: emptySet()
-        val tasks = (serversData.subProviders.map { it to "sub" } + serversData.dubProviders.map { it to "dub" })
+        
+        val allTasks = (serversData.subProviders.map { it to "sub" } + serversData.dubProviders.map { it to "dub" })
             .filter { (provider, _) -> provider.id.lowercase() !in disabledServers }
+
+        val tasks = if (type.isNullOrEmpty()) {
+            allTasks
+        } else {
+            allTasks.filter { (provider, apiType) ->
+                when (type) {
+                    "soft" -> apiType == "sub" && provider.tip?.contains("soft sub", ignoreCase = true) == true
+                    "hard" -> apiType == "sub" && provider.tip?.contains("soft sub", ignoreCase = true) != true
+                    "dub" -> apiType == "dub"
+                    else -> true
+                }
+            }
+        }
 
         val videos = coroutineScope {
             tasks.map { (provider, apiType) ->
@@ -1042,16 +1071,22 @@ class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
         val url = request.url.toString()
         val response = chain.proceed(request)
 
-        if (url.contains("/api/") && response.code == 403) {
+        if (url.contains("/api/") && response.code == 403 && request.header("X-Animex-Retry") == null) {
             synchronized(this) {
                 val cookies = cookieJar.loadForRequest(request.url)
                 if (hasSession(cookies)) {
                     response.close()
-                    return chain.proceed(request)
+                    val newRequest = request.newBuilder()
+                        .header("X-Animex-Retry", "true")
+                        .build()
+                    return chain.proceed(newRequest)
                 }
                 if (response.headers("Set-Cookie").any { containsSession(it) }) {
                     response.close()
-                    return chain.proceed(request)
+                    val newRequest = request.newBuilder()
+                        .header("X-Animex-Retry", "true")
+                        .build()
+                    return chain.proceed(newRequest)
                 }
             }
         }
