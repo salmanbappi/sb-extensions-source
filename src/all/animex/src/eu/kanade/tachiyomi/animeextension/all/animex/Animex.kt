@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.lib.mp4uploadextractor.Mp4uploadExtractor
 import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
@@ -270,7 +271,8 @@ class Animex : Source() {
         val result = json.decodeFromString<CatalogAnimeResponse>(responseBody)
         val animeList = result.data.catalogAnime.items.map { item ->
             SAnime.create().apply {
-                url = "/anime/${item.anilistId}/${item.id}"
+                val titleSlug = item.id.substringBeforeLast("-")
+                url = "/anime/$titleSlug-${item.anilistId}?id=${item.id}"
                 title = item.titleEnglish ?: item.titleRomaji ?: "Unknown Title"
                 thumbnail_url = item.coverImage?.extraLarge
                 description = item.description
@@ -283,9 +285,8 @@ class Animex : Source() {
     // ============================== ANIME DETAILS ==============================
 
     override fun animeDetailsRequest(anime: SAnime): Request {
-        val urlParts = anime.url.split("/")
-        val anilistId = urlParts.getOrNull(2)?.toIntOrNull()
-            ?: anime.url.substringAfter("/anime/").substringBefore("/").toIntOrNull()
+        val anilistId = anime.url.substringAfter("/anime/").substringBefore("?").substringAfterLast("-").toIntOrNull()
+            ?: anime.url.split("/").getOrNull(2)?.toIntOrNull()
             ?: throw Exception("Invalid anime URL: ${anime.url}")
 
         val queryBody = GraphQLRequest(
@@ -342,8 +343,8 @@ class Animex : Source() {
     // ============================== EPISODE LIST ==============================
 
     override fun episodeListRequest(anime: SAnime): Request {
-        val urlParts = anime.url.split("/")
-        val slug = urlParts.getOrNull(3)
+        val slug = anime.url.substringAfter("?id=", "").substringAfter("&id=", "").takeIf { it.isNotEmpty() }
+            ?: anime.url.split("/").getOrNull(3)
             ?: throw Exception("Could not extract slug from URL: ${anime.url}")
         return GET("https://pp.animex.one/rest/api/episodes?id=$slug", headers)
     }
@@ -355,10 +356,10 @@ class Animex : Source() {
     }
 
     private fun episodeListParse(response: Response, anime: SAnime): List<SEpisode> {
-        val urlParts = anime.url.split("/")
-        val slug = urlParts.getOrNull(3)
+        val slug = anime.url.substringAfter("?id=", "").substringAfter("&id=", "").takeIf { it.isNotEmpty() }
+            ?: anime.url.split("/").getOrNull(3)
             ?: throw Exception("Could not extract slug from URL: ${anime.url}")
-        return episodeListParseWithSlug(response, slug)
+        return episodeListParseWithSlug(response, slug, anime)
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
@@ -367,18 +368,29 @@ class Animex : Source() {
         return episodeListParseWithSlug(response, slug)
     }
 
-    private fun episodeListParseWithSlug(response: Response, slug: String): List<SEpisode> {
+    private fun episodeListParseWithSlug(response: Response, slug: String, anime: SAnime? = null): List<SEpisode> {
         if (!response.isSuccessful) {
             response.close()
             return emptyList()
         }
         val responseBody = response.body.string()
         val restEpisodes = json.decodeFromString<List<RestEpisode>>(responseBody)
+
+        val animeUrl = anime?.url
+        val titleSlug = animeUrl?.substringAfter("/anime/")?.substringBeforeLast("-")
+            ?: slug.substringBeforeLast("-")
+        val anilistId = animeUrl?.substringAfter("/anime/")?.substringAfterLast("-")?.substringBefore("?")
+            ?: ""
+
         val episodes = restEpisodes.map { episode ->
             SEpisode.create().apply {
                 name = "Episode ${episode.number}${episode.titles?.en?.let { ": $it" } ?: ""}"
                 episode_number = episode.number.toFloat()
-                url = "/watch/$slug/${episode.number}"
+                url = if (anilistId.isNotEmpty()) {
+                    "/watch/$titleSlug-$anilistId-episode-${episode.number}?id=$slug"
+                } else {
+                    "/watch/$slug/${episode.number}"
+                }
             }
         }
         return episodes.sortedByDescending { it.episode_number }
@@ -391,9 +403,16 @@ class Animex : Source() {
     override fun videoListParse(response: Response): List<Video> = throw Exception("Not used")
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val parts = episode.url.split("/")
-        val slug = parts.getOrNull(2) ?: throw Exception("Invalid episode URL: ${episode.url}")
-        val epNum = parts.getOrNull(3) ?: throw Exception("Invalid episode URL: ${episode.url}")
+        val slug: String
+        val epNum: String
+        if (episode.url.contains("-episode-")) {
+            epNum = episode.url.substringAfter("-episode-").substringBefore("?")
+            slug = episode.url.substringAfter("?id=")
+        } else {
+            val parts = episode.url.split("/")
+            slug = parts.getOrNull(2) ?: throw Exception("Invalid episode URL: ${episode.url}")
+            epNum = parts.getOrNull(3) ?: throw Exception("Invalid episode URL: ${episode.url}")
+        }
         val preferredType = preferences.getString("pref_preferred_type", "soft") ?: "soft"
 
         val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
@@ -421,6 +440,17 @@ class Animex : Source() {
                             } catch (e: Exception) {
                                 emptyList()
                             }
+                        } else if (embedUrl.contains("mp4upload")) {
+                            try {
+                                val embedHeaders = headersBuilder().apply {
+                                    removeAll("Origin")
+                                    removeAll("Accept")
+                                }.build()
+                                val mp4uploadExtractor = Mp4uploadExtractor(client)
+                                mp4uploadExtractor.videosFromUrl(embedUrl, headers = embedHeaders, prefix = "${providerId.uppercase()}: ")
+                            } catch (e: Exception) {
+                                emptyList()
+                            }
                         } else {
                             val embedHeaders = headersBuilder().apply {
                                 removeAll("Origin")
@@ -445,11 +475,11 @@ class Animex : Source() {
                                     } ?: emptyList()
 
                                     val videoHeaders = headersBuilder().apply {
+                                        removeAll("Origin")
+                                        removeAll("Accept")
                                         sourcesData.headers?.forEach { (key, value) ->
                                             set(key, value)
                                         }
-                                        removeAll("Origin")
-                                        removeAll("Accept")
                                     }.build()
 
                                     val providerVideos = mutableListOf<Video>()
@@ -480,6 +510,31 @@ class Animex : Source() {
                                                         val parsedQuality = if (hlsQuality == "Video") quality else hlsQuality
                                                         "$providerName: $parsedQuality ($categoryLabel)$subStyle"
                                                     },
+                                                    subtitleList = subtitleTracks,
+                                                )
+                                                providerVideos.addAll(playlistVideos)
+                                            } catch (e: Exception) {
+                                                val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
+                                                providerVideos.add(
+                                                    Video(
+                                                        videoUrl = streamUrl,
+                                                        videoTitle = qualityLabel,
+                                                        headers = videoHeaders,
+                                                        subtitleTracks = subtitleTracks,
+                                                    ),
+                                                )
+                                            }
+                                        } else if (streamUrl.contains(".mpd", ignoreCase = true)) {
+                                            try {
+                                                val playlistUtils = PlaylistUtils(client, headers)
+                                                val playlistVideos = playlistUtils.extractFromDash(
+                                                    mpdUrl = streamUrl,
+                                                    videoNameGen = { dashQuality ->
+                                                        val parsedQuality = if (dashQuality == "Video") quality else dashQuality
+                                                        "$providerName: $parsedQuality ($categoryLabel)$subStyle"
+                                                    },
+                                                    mpdHeaders = videoHeaders,
+                                                    videoHeaders = videoHeaders,
                                                     subtitleList = subtitleTracks,
                                                 )
                                                 providerVideos.addAll(playlistVideos)
