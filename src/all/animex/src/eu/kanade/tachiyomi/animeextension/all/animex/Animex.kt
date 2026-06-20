@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.all.animex
 import android.app.Application
 import android.content.SharedPreferences
 import androidx.preference.ListPreference
+import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
@@ -403,7 +404,9 @@ class Animex : Source() {
         }
 
         val serversData = json.decodeFromString<ServersResponse>(serversResponse.body.string())
-        val tasks = serversData.subProviders.map { it to "sub" } + serversData.dubProviders.map { it to "dub" }
+        val disabledServers = preferences.getStringSet("pref_disabled_servers", emptySet()) ?: emptySet()
+        val tasks = (serversData.subProviders.map { it to "sub" } + serversData.dubProviders.map { it to "dub" })
+            .filter { (provider, _) -> provider.id.lowercase() !in disabledServers }
 
         val videos = coroutineScope {
             tasks.map { (provider, apiType) ->
@@ -665,6 +668,14 @@ class Animex : Source() {
             entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
             setDefaultValue("beep")
             summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        MultiSelectListPreference(screen.context).apply {
+            key = "pref_disabled_servers"
+            title = "Disable Servers"
+            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
+            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
+            setDefaultValue(emptySet<String>())
         }.also { screen.addPreference(it) }
     }
 }
