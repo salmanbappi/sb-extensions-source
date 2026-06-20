@@ -1,7 +1,7 @@
 ext {
     extName = 'Movix'
     extClass = '.Movix'
-    extVersionCode = 1008
+    extVersionCode = 1011
     isNsfw = false
 }
 
