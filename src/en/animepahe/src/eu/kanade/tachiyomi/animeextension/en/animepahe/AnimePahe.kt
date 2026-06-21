@@ -20,6 +20,8 @@ import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
+import java.text.SimpleDateFormat
+import java.util.Locale
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
@@ -327,13 +329,17 @@ class AnimePahe : Source() {
         val cfUA = cfBypassUserAgent // Get the custom UA once
 
         return if (!useHLS) {
-            links.parallelCatchingFlatMapBlocking { (_, paheWinLink, quality) ->
+            links.parallelCatchingFlatMapBlocking { linkData ->
+                val paheWinLink = linkData.second
+                val quality = linkData.third
                 if (paheWinLink.isNullOrBlank()) return@parallelCatchingFlatMapBlocking emptyList()
                 KwikExtractor(client, headers, cfUA).getStreamVideo(paheWinLink, quality)
                     .let(::listOf)
             }
         } else {
-            links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
+            links.parallelCatchingFlatMapBlocking { linkData ->
+                val kwikLink = linkData.first
+                val quality = linkData.third
                 KwikExtractor(client, headers, cfUA).getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
                     .let(::listOf)
             }
