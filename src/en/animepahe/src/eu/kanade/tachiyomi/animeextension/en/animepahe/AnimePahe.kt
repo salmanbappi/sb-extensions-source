@@ -318,7 +318,7 @@ class AnimePahe : Source() {
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
         val downloadLinks = document.select("div#pickDownload > a")
-        val links = document.select("div#resolutionMenu > button").withIndex().map { (index, btn) ->
+        val links = document.select("div#resolutionMenu > button").mapIndexed { index, btn ->
             val kwikLink = btn.attr("data-src")
             val quality = btn.text()
             val paheWinLink = downloadLinks.getOrNull(index)?.attr("href")
