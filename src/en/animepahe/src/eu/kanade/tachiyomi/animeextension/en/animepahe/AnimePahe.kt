@@ -34,6 +34,7 @@ import kotlin.math.floor
 class AnimePahe : Source() {
 
     override fun headersBuilder() = super.headersBuilder()
+        .set("User-Agent", UA)
         .set("Referer", "$baseUrl/")
 
     private val interceptor = DdosGuardInterceptor(network.client) { cfBypassUserAgent }
