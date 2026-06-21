@@ -352,13 +352,13 @@ class PlaylistUtils(private val client: OkHttpClient, private val headers: Heade
                 .let(toStandardQuality)
                 .let { "$it (${videoSrc.attr("width")}x${videoSrc.attr("height")})" }
             val videoUrl = videoSrc.text()
-Video(
-    videoUrl = videoUrl,
-    videoTitle = videoNameGen(res, bandwidth),
-    audioTracks = audioTracks,
-    subtitleTracks = subtitleList,
-    headers = videoHeadersGen(headers, referer, videoUrl),
-)
+            Video(
+                videoUrl = videoUrl,
+                videoTitle = videoNameGen(res, bandwidth),
+                audioTracks = audioTracks,
+                subtitleTracks = subtitleList,
+                headers = videoHeadersGen(headers, referer, videoUrl),
+            )
         }
     }
 

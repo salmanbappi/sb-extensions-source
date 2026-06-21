@@ -1,4 +1,5 @@
 @file:UseSerializers(BoxItemSerializer::class)
+
 package eu.kanade.tachiyomi.lib.bangumiscraper
 
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -51,13 +52,9 @@ internal data class Subject(
     @SerialName("infobox")
     val infoBox: List<BoxItem>,
 ) {
-    fun findAuthor(): String? {
-        return findInfo("导演", "原作")
-    }
+    fun findAuthor(): String? = findInfo("导演", "原作")
 
-    fun findArtist(): String? {
-        return findInfo("美术监督", "总作画监督", "动画制作")
-    }
+    fun findArtist(): String? = findInfo("美术监督", "总作画监督", "动画制作")
 
     fun findInfo(vararg keys: String): String? {
         keys.forEach { key ->

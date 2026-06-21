@@ -28,7 +28,7 @@ class JsHunter(private val hunterJS: String) {
             val p: Pattern =
                 Pattern.compile(
                     """\}\("([^"]+)",[^,]+,\s*"([^"]+)",\s*(\d+),\s*(\d+)""",
-                    Pattern.DOTALL
+                    Pattern.DOTALL,
                 )
             val searchResults: Matcher = p.matcher(hunterJS)
             if (searchResults.find() && searchResults.groupCount() == 4) {

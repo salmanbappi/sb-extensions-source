@@ -47,9 +47,11 @@ class DailymotionExtractor(private val client: OkHttpClient, private val headers
 
         return when {
             parsed.qualities != null && parsed.error == null -> videosFromDailyResponse(parsed, prefix)
+
             parsed.error?.type == "password_protected" && parsed.id != null -> {
                 videosFromProtectedUrl(url, prefix, parsed.id, htmlString, ts, v1st, baseUrl, password)
             }
+
             else -> emptyList()
         }
     }

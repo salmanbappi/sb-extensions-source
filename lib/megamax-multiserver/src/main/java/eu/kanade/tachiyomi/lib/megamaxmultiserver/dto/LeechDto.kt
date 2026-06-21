@@ -9,7 +9,7 @@ data class LeechResponse(
 
 @Serializable
 data class LeechProps(
-    val streams: LeechStreams
+    val streams: LeechStreams,
 )
 
 @Serializable
@@ -24,5 +24,5 @@ data class LeechData(
     val file: String,
     val label: String,
     val size: Long,
-    val type: String
+    val type: String,
 )

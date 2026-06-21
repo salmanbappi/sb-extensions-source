@@ -32,8 +32,8 @@ class MinoChinosExtractor(private val client: OkHttpClient) {
         Log.d("MinoChinosExtractor", "Links JSON: $linksJson")
         if (linksJson.isEmpty()) return emptyList()
 
-        val videoEntries = linkRegex.findAll(linksJson).map { 
-            it.groupValues[1] to it.groupValues[2] 
+        val videoEntries = linkRegex.findAll(linksJson).map {
+            it.groupValues[1] to it.groupValues[2]
         }.filter { (key, _) -> key == "hls3" }.toList()
 
         return videoEntries.parallelCatchingFlatMap { (key, videoUrl) ->

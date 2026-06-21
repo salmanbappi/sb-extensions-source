@@ -9,10 +9,10 @@ import java.util.regex.Pattern
 
 class LuluExtractor(private val client: OkHttpClient, private val baseHeaders: Headers) {
 
-    //Credit: https://github.com/skoruppa/docchi-stremio-addon/blob/main/app/players/lulustream.py
+    // Credit: https://github.com/skoruppa/docchi-stremio-addon/blob/main/app/players/lulustream.py
     fun videosFromUrl(url: String, prefix: String): List<Video> {
         val videos = mutableListOf<Video>()
-        
+
         // Dynamically build headers based on the URL host
         val uri = url.toHttpUrl()
         val referer = "${uri.scheme}://${uri.host}/"
@@ -63,6 +63,7 @@ class LuluExtractor(private val client: OkHttpClient, private val baseHeaders: H
                     .takeIf { it.find() }
                     ?.group(1)
             }
+
             else -> {
                 Pattern.compile("sources: \\[\\{file:\"(https?://[^\"]+)\"")
                     .matcher(html)
@@ -81,7 +82,7 @@ class LuluExtractor(private val client: OkHttpClient, private val baseHeaders: H
         val paramDict = mutableMapOf<String, String>()
         val extraParams = mutableMapOf<String, String>()
 
-        params.forEachIndexed { index, (key , value) ->
+        params.forEachIndexed { index, (key, value) ->
             if (key.isNullOrEmpty()) {
                 if (index < paramOrder.size) {
                     if (value != null) {
@@ -111,27 +112,27 @@ class LuluExtractor(private val client: OkHttpClient, private val baseHeaders: H
         return fixedLink.build().toString()
     }
 
-    private fun getResolution(m3u8Url: String, headers: Headers): String {
-        return try {
-            val content = client.newCall(GET(m3u8Url, headers)).execute()
-                .use { it.body.string() }
+    private fun getResolution(m3u8Url: String, headers: Headers): String = try {
+        val content = client.newCall(GET(m3u8Url, headers)).execute()
+            .use { it.body.string() }
 
-            Pattern.compile("RESOLUTION=\\d+x(\\d+)")
-                .matcher(content)
-                .takeIf { it.find() }
-                ?.group(1)
-                ?.let { "${it}p" }
-                ?: "Unknown"
-        } catch (e: Exception) {
-            "Unknown"
-        }
+        Pattern.compile("RESOLUTION=\\d+x(\\d+)")
+            .matcher(content)
+            .takeIf { it.find() }
+            ?.group(1)
+            ?.let { "${it}p" }
+            ?: "Unknown"
+    } catch (e: Exception) {
+        "Unknown"
     }
 }
 
 object JavaScriptUnpacker {
     private val UNPACK_REGEX by lazy {
-        Regex("""\}\('(.*)', *(\d+), *(\d+), *'(.*?)'\.split\('\|'\)""",
-            RegexOption.DOT_MATCHES_ALL)
+        Regex(
+            """\}\('(.*)', *(\d+), *(\d+), *'(.*?)'\.split\('\|'\)""",
+            RegexOption.DOT_MATCHES_ALL,
+        )
     }
     fun unpack(encodedJs: String): String? {
         val match = UNPACK_REGEX.find(encodedJs) ?: return null
@@ -151,7 +152,6 @@ object JavaScriptUnpacker {
         return Regex("""\b\w+\b""").replace(payload) { mr ->
             symtab.getOrNull(unbase(mr.value, radix, baseDict)) ?: mr.value
         }.replace("\\", "")
-
     }
     private fun unbase(value: String, radix: Int, dict: Map<Char, Int>): Int {
         var result = 0

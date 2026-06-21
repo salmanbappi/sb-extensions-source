@@ -23,7 +23,7 @@ class VidaraExtractor(private val client: OkHttpClient) {
     fun videosFromUrl(url: String, prefix: String = ""): List<Video> {
         val host = url.toHttpUrl().host
         val filecode = if (url.contains("#")) url.substringAfter("#") else url.substringAfter("/e/").substringBefore("?")
-        
+
         return try {
             if (url.contains("upns.pro")) {
                 extractUpns(host, filecode, url, prefix)
@@ -45,12 +45,12 @@ class VidaraExtractor(private val client: OkHttpClient) {
 
         val response = client.newCall(POST("https://$host/api/stream", headers, body)).execute()
         val data = json.decodeFromString<VidaraResponse>(response.body.string())
-        
+
         return if (data.streaming_url != null) {
             playlistUtils.extractFromHls(
                 data.streaming_url,
                 url,
-                videoNameGen = { quality -> "${prefix}Vidara:$quality" }
+                videoNameGen = { quality -> "${prefix}Vidara:$quality" },
             )
         } else {
             emptyList()
@@ -68,32 +68,30 @@ class VidaraExtractor(private val client: OkHttpClient) {
             Log.e("VidaraExtractor", "API error: $hex")
             return emptyList()
         }
-        
+
         val decrypted = decryptHex(hex)
         Log.d("VidaraExtractor", "Decrypted: ${decrypted.take(100)}...")
-        
+
         val m3u8 = decrypted.substringAfter("\"file\":\"").substringBefore("\"")
         if (m3u8 == decrypted) {
             Log.e("VidaraExtractor", "Failed to extract m3u8 from decrypted data")
             return emptyList()
         }
-        
+
         return playlistUtils.extractFromHls(
             m3u8,
             url,
-            videoNameGen = { quality -> "${prefix}Upns:$quality" }
+            videoNameGen = { quality -> "${prefix}Upns:$quality" },
         )
     }
 
-    private fun decryptHex(hex: String): String {
-        return hex.chunked(2)
-            .map { it.toInt(16).toChar() }
-            .joinToString("")
-            .reversed()
-    }
+    private fun decryptHex(hex: String): String = hex.chunked(2)
+        .map { it.toInt(16).toChar() }
+        .joinToString("")
+        .reversed()
 
     @Serializable
     data class VidaraResponse(
-        val streaming_url: String? = null
+        val streaming_url: String? = null,
     )
 }

@@ -20,8 +20,8 @@ class GoodStreamExtractor(private val client: OkHttpClient, private val headers:
                         Video(
                             videoUrl = link,
                             videoTitle = name,
-                            headers = headers
-                        )
+                            headers = headers,
+                        ),
                     )
                 }
             }

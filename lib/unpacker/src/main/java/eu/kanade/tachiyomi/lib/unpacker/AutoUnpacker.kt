@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.lib.unpacker
 
 import android.util.Log
-import eu.kanade.tachiyomi.lib.unpacker.jsunpacker.JsUnpacker
 import eu.kanade.tachiyomi.lib.unpacker.Unpacker
+import eu.kanade.tachiyomi.lib.unpacker.jsunpacker.JsUnpacker
 
 fun autoUnpacker(packedScript: String): String? = runCatching {
     val jsUnpacker = try {

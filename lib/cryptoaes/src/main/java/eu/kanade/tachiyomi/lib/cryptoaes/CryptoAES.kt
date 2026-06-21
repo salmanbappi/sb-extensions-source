@@ -42,43 +42,39 @@ object CryptoAES {
      * @param cipherText base64 encoded ciphertext
      * @param password passphrase
      */
-    fun decrypt(cipherText: String, password: String): String {
-        return try {
-            val ctBytes = Base64.decode(cipherText, Base64.DEFAULT)
-            val saltBytes = Arrays.copyOfRange(ctBytes, SALT_SIZE, IV_SIZE)
-            val cipherTextBytes = Arrays.copyOfRange(ctBytes, IV_SIZE, ctBytes.size)
-            val md5 = MessageDigest.getInstance("MD5")
-            val keyAndIV = generateKeyAndIV(KEY_SIZE, IV_SIZE, 1, saltBytes, password.toByteArray(java.nio.charset.StandardCharsets.UTF_8), md5)
-            decryptAES(
-                cipherTextBytes,
-                keyAndIV?.get(0) ?: ByteArray(KEY_SIZE),
-                keyAndIV?.get(1) ?: ByteArray(IV_SIZE),
-            )
-        } catch (e: Exception) {
-            ""
-        }
+    fun decrypt(cipherText: String, password: String): String = try {
+        val ctBytes = Base64.decode(cipherText, Base64.DEFAULT)
+        val saltBytes = Arrays.copyOfRange(ctBytes, SALT_SIZE, IV_SIZE)
+        val cipherTextBytes = Arrays.copyOfRange(ctBytes, IV_SIZE, ctBytes.size)
+        val md5 = MessageDigest.getInstance("MD5")
+        val keyAndIV = generateKeyAndIV(KEY_SIZE, IV_SIZE, 1, saltBytes, password.toByteArray(java.nio.charset.StandardCharsets.UTF_8), md5)
+        decryptAES(
+            cipherTextBytes,
+            keyAndIV?.get(0) ?: ByteArray(KEY_SIZE),
+            keyAndIV?.get(1) ?: ByteArray(IV_SIZE),
+        )
+    } catch (e: Exception) {
+        ""
     }
 
-    fun decryptWithSalt(cipherText: String, salt: String, password: String): String {
-        return try {
-            val ctBytes = Base64.decode(cipherText, Base64.DEFAULT)
-            val md5: MessageDigest = MessageDigest.getInstance("MD5")
-            val keyAndIV = generateKeyAndIV(
-                KEY_SIZE,
-                IV_SIZE,
-                1,
-                salt.decodeHex(),
-                password.toByteArray(java.nio.charset.StandardCharsets.UTF_8),
-                md5,
-            )
-            decryptAES(
-                ctBytes,
-                keyAndIV?.get(0) ?: ByteArray(KEY_SIZE),
-                keyAndIV?.get(1) ?: ByteArray(IV_SIZE),
-            )
-        } catch (e: Exception) {
-            ""
-        }
+    fun decryptWithSalt(cipherText: String, salt: String, password: String): String = try {
+        val ctBytes = Base64.decode(cipherText, Base64.DEFAULT)
+        val md5: MessageDigest = MessageDigest.getInstance("MD5")
+        val keyAndIV = generateKeyAndIV(
+            KEY_SIZE,
+            IV_SIZE,
+            1,
+            salt.decodeHex(),
+            password.toByteArray(java.nio.charset.StandardCharsets.UTF_8),
+            md5,
+        )
+        decryptAES(
+            ctBytes,
+            keyAndIV?.get(0) ?: ByteArray(KEY_SIZE),
+            keyAndIV?.get(1) ?: ByteArray(IV_SIZE),
+        )
+    } catch (e: Exception) {
+        ""
     }
 
     /**
@@ -88,13 +84,11 @@ object CryptoAES {
      * @param keyBytes key as a bytearray
      * @param ivBytes iv as a bytearray
      */
-    fun decrypt(cipherText: String, keyBytes: ByteArray, ivBytes: ByteArray): String {
-        return try {
-            val cipherTextBytes = Base64.decode(cipherText, Base64.DEFAULT)
-            decryptAES(cipherTextBytes, keyBytes, ivBytes)
-        } catch (e: Exception) {
-            ""
-        }
+    fun decrypt(cipherText: String, keyBytes: ByteArray, ivBytes: ByteArray): String = try {
+        val cipherTextBytes = Base64.decode(cipherText, Base64.DEFAULT)
+        decryptAES(cipherTextBytes, keyBytes, ivBytes)
+    } catch (e: Exception) {
+        ""
     }
 
     /**
@@ -104,13 +98,11 @@ object CryptoAES {
      * @param keyBytes key as a bytearray
      * @param ivBytes iv as a bytearray
      */
-    fun encrypt(plainText: String, keyBytes: ByteArray, ivBytes: ByteArray): String {
-        return try {
-            val cipherTextBytes = plainText.toByteArray()
-            encryptAES(cipherTextBytes, keyBytes, ivBytes)
-        } catch (e: Exception) {
-            ""
-        }
+    fun encrypt(plainText: String, keyBytes: ByteArray, ivBytes: ByteArray): String = try {
+        val cipherTextBytes = plainText.toByteArray()
+        encryptAES(cipherTextBytes, keyBytes, ivBytes)
+    } catch (e: Exception) {
+        ""
     }
 
     /**
@@ -120,17 +112,17 @@ object CryptoAES {
      * @param keyBytes key as a bytearray
      * @param ivBytes iv as a bytearray
      */
-    private fun decryptAES(cipherTextBytes: ByteArray, keyBytes: ByteArray, ivBytes: ByteArray): String {
-        return try {
-            val cipher = try {
-                Cipher.getInstance(HASH_CIPHER)
-            } catch (e: Throwable) { Cipher.getInstance(HASH_CIPHER_FALLBACK) }
-            val keyS = SecretKeySpec(keyBytes, AES)
-            cipher.init(Cipher.DECRYPT_MODE, keyS, IvParameterSpec(ivBytes))
-            cipher.doFinal(cipherTextBytes).toString(java.nio.charset.StandardCharsets.UTF_8)
-        } catch (e: Exception) {
-            ""
+    private fun decryptAES(cipherTextBytes: ByteArray, keyBytes: ByteArray, ivBytes: ByteArray): String = try {
+        val cipher = try {
+            Cipher.getInstance(HASH_CIPHER)
+        } catch (e: Throwable) {
+            Cipher.getInstance(HASH_CIPHER_FALLBACK)
         }
+        val keyS = SecretKeySpec(keyBytes, AES)
+        cipher.init(Cipher.DECRYPT_MODE, keyS, IvParameterSpec(ivBytes))
+        cipher.doFinal(cipherTextBytes).toString(java.nio.charset.StandardCharsets.UTF_8)
+    } catch (e: Exception) {
+        ""
     }
 
     /**
@@ -140,17 +132,17 @@ object CryptoAES {
      * @param keyBytes key as a bytearray
      * @param ivBytes iv as a bytearray
      */
-    private fun encryptAES(plainTextBytes: ByteArray, keyBytes: ByteArray, ivBytes: ByteArray): String {
-        return try {
-            val cipher = try {
-                Cipher.getInstance(HASH_CIPHER)
-            } catch (e: Throwable) { Cipher.getInstance(HASH_CIPHER_FALLBACK) }
-            val keyS = SecretKeySpec(keyBytes, AES)
-            cipher.init(Cipher.ENCRYPT_MODE, keyS, IvParameterSpec(ivBytes))
-            Base64.encodeToString(cipher.doFinal(plainTextBytes), Base64.DEFAULT)
-        } catch (e: Exception) {
-            ""
+    private fun encryptAES(plainTextBytes: ByteArray, keyBytes: ByteArray, ivBytes: ByteArray): String = try {
+        val cipher = try {
+            Cipher.getInstance(HASH_CIPHER)
+        } catch (e: Throwable) {
+            Cipher.getInstance(HASH_CIPHER_FALLBACK)
         }
+        val keyS = SecretKeySpec(keyBytes, AES)
+        cipher.init(Cipher.ENCRYPT_MODE, keyS, IvParameterSpec(ivBytes))
+        Base64.encodeToString(cipher.doFinal(plainTextBytes), Base64.DEFAULT)
+    } catch (e: Exception) {
+        ""
     }
 
     /**
@@ -238,22 +230,20 @@ object CryptoAES {
     }
 
     @SuppressLint("GetInstance")
-    private fun decryptUtf8(encryptedBase64: String, secretKey: String): String? {
-        return try {
-            val keyBytes = secretKey.toByteArray(java.nio.charset.StandardCharsets.UTF_8)
-            val encryptedBytes = Base64.decode(encryptedBase64, Base64.DEFAULT)
+    private fun decryptUtf8(encryptedBase64: String, secretKey: String): String? = try {
+        val keyBytes = secretKey.toByteArray(java.nio.charset.StandardCharsets.UTF_8)
+        val encryptedBytes = Base64.decode(encryptedBase64, Base64.DEFAULT)
 
-            val secretKeySpec = SecretKeySpec(keyBytes, AES)
+        val secretKeySpec = SecretKeySpec(keyBytes, AES)
 
-            val cipher = Cipher.getInstance(HASH_CIPHER_ECB)
-            cipher.init(Cipher.DECRYPT_MODE, secretKeySpec)
+        val cipher = Cipher.getInstance(HASH_CIPHER_ECB)
+        cipher.init(Cipher.DECRYPT_MODE, secretKeySpec)
 
-            val decryptedBytes = cipher.doFinal(encryptedBytes)
-            String(decryptedBytes, java.nio.charset.StandardCharsets.UTF_8)
-        } catch (ex: Exception) {
-            Log.e("CryptoAES", "Decryption error: ${ex.message}")
-            null
-        }
+        val decryptedBytes = cipher.doFinal(encryptedBytes)
+        String(decryptedBytes, java.nio.charset.StandardCharsets.UTF_8)
+    } catch (ex: Exception) {
+        Log.e("CryptoAES", "Decryption error: ${ex.message}")
+        null
     }
 
     // Stolen from AnimixPlay(EN) / GogoCdnExtractor

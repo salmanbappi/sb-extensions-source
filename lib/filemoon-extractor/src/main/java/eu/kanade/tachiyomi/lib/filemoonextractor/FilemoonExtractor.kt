@@ -52,7 +52,8 @@ class FilemoonExtractor(
                     .substringBefore("').")
                     .takeIf(String::isNotBlank)
             if (subUrl != null) {
-                runCatching { // to prevent failures on serialization errors
+                runCatching {
+                    // to prevent failures on serialization errors
                     client.newCall(GET(subUrl, videoHeaders)).execute()
                         .body.string()
                         .let { json.decodeFromString<List<SubtitleDto>>(it) }
@@ -74,7 +75,7 @@ class FilemoonExtractor(
                 videoUrl = it.videoUrl,
                 videoTitle = it.videoTitle,
                 audioTracks = it.audioTracks,
-                subtitleTracks = it.subtitleTracks.filter { tracks -> tracks.lang.contains(subPref, true) }
+                subtitleTracks = it.subtitleTracks.filter { tracks -> tracks.lang.contains(subPref, true) },
             )
         }
     }

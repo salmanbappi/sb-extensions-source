@@ -127,9 +127,7 @@ object JavCoverFetcher {
         return cover
     }
 
-    private fun checkCover(cover: String): Boolean {
-        return getContentLength(cover) > 100
-    }
+    private fun checkCover(cover: String): Boolean = getContentLength(cover) > 100
 
     private fun getContentLength(url: String): Long {
         val request = Request.Builder()

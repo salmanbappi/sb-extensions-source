@@ -2,8 +2,8 @@ package eu.kanade.tachiyomi.lib.voeextractor
 
 import android.util.Base64
 import android.util.Log
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import kotlinx.serialization.json.Json
@@ -30,7 +30,7 @@ class VoeExtractor(private val client: OkHttpClient, private val headers: Header
             .add("Origin", "https://$host")
             .add("Referer", url)
             .build()
-            
+
         val videoList = mutableListOf<Video>()
         var document = clientDdos.newCall(GET(url, headers)).execute().asJsoup()
         val scriptData = document.selectFirst("script")?.data()
@@ -56,10 +56,10 @@ class VoeExtractor(private val client: OkHttpClient, private val headers: Header
             Log.e("VoeExtractor", "Decryption failed for $url")
             return emptyList()
         }
-        
+
         val m3u8 = decryptedJson["source"]?.jsonPrimitive?.content
         val mp4 = decryptedJson["direct_access_url"]?.jsonPrimitive?.content
-        
+
         Log.d("VoeExtractor", "Found m3u8: $m3u8, mp4: $mp4")
 
         if (m3u8 != null) {

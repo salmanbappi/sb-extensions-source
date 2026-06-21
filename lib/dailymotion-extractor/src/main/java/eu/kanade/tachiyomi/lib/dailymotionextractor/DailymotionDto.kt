@@ -35,11 +35,10 @@ data class SubtitleDto(val label: String, val urls: List<String>)
 
 object SubtitleListSerializer :
     JsonTransformingSerializer<List<SubtitleDto>>(ListSerializer(SubtitleDto.serializer())) {
-    override fun transformDeserialize(element: JsonElement): JsonElement =
-        when (element) {
-            is JsonObject -> JsonArray(element.values.toList())
-            else -> JsonArray(emptyList())
-        }
+    override fun transformDeserialize(element: JsonElement): JsonElement = when (element) {
+        is JsonObject -> JsonArray(element.values.toList())
+        else -> JsonArray(emptyList())
+    }
 }
 
 @Serializable

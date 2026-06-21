@@ -32,8 +32,7 @@ class VidGuardExtractor(private val client: OkHttpClient) {
             val playlistUrl = sigDecode(jsonStr2.stream)
 
             return playlistUtils.extractFromHls(playlistUrl, videoNameGen = videoNameGen)
-        }
-        catch (e: Exception) {
+        } catch (e: Exception) {
             Log.e("VidGuardExtractor", "Error extracting videos: ${e.message}", e)
             return emptyList()
         }

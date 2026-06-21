@@ -9,7 +9,7 @@ data class IframeResponse(
 
 @Serializable
 data class Props(
-    val streams: Streams
+    val streams: Streams,
 )
 
 @Serializable
@@ -23,7 +23,7 @@ data class Streams(
 data class Data(
     val mirrors: List<Mirror>,
     val resolution: String,
-    val size: Long
+    val size: Long,
 )
 
 @Serializable
