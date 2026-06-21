@@ -40,6 +40,7 @@ import java.net.Socket
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.runBlocking
 
 class Nepu : ParsedAnimeHttpSource() {
 
@@ -500,9 +501,9 @@ class Nepu : ParsedAnimeHttpSource() {
 
                         rawUrl.contains("filemoon") || rawUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(rawUrl, "Filemoon", videoHeaders))
 
-                        rawUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(rawUrl, "VidMoly"))
+                        rawUrl.contains("vidmoly") -> videoList.addAll(runBlocking { VidMolyExtractor(client, videoHeaders).videosFromUrl(rawUrl, "VidMoly") })
 
-                        rawUrl.contains("vidhide") || rawUrl.contains("guccihide") || rawUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(rawUrl, { "VidHide - $it" }))
+                        rawUrl.contains("vidhide") || rawUrl.contains("guccihide") || rawUrl.contains("streamhide") -> videoList.addAll(runBlocking { VidHideExtractor(client, videoHeaders).videosFromUrl(rawUrl, { "VidHide - $it" }) })
 
                         rawUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(rawUrl, "Voe"))
 
@@ -533,9 +534,9 @@ class Nepu : ParsedAnimeHttpSource() {
 
                                 src.contains("filemoon") || src.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(src, "Filemoon", videoHeaders))
 
-                                src.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(src, "VidMoly"))
+                                src.contains("vidmoly") -> videoList.addAll(runBlocking { VidMolyExtractor(client, videoHeaders).videosFromUrl(src, "VidMoly") })
 
-                                src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(src, { "VidHide - $it" }))
+                                src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(runBlocking { VidHideExtractor(client, videoHeaders).videosFromUrl(src, { "VidHide - $it" }) })
 
                                 src.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(src, "Voe"))
 
