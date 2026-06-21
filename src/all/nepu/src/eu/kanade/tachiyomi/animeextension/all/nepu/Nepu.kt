@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.all.nepu
 import android.annotation.SuppressLint
 import android.app.Application
 import android.util.Base64
+import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -29,6 +30,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.Injekt
@@ -696,7 +698,7 @@ class Nepu : ParsedAnimeHttpSource() {
         fun getProxyUrl(source: Nepu, targetUrl: String, headers: okhttp3.Headers?): String {
             if (proxy == null) {
                 proxy = LocalProxy(source.client, source.baseUrl) {
-                    source.getSavedUserAgent() ?: source.headers.get("User-Agent")
+                    source.headers.get("User-Agent")
                 }
             }
             return proxy!!.getProxyUrl(targetUrl, headers)
