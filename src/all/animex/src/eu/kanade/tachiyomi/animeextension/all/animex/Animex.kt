@@ -574,11 +574,17 @@ class Animex : Source() {
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val separator = if (episode.url.contains("?")) "&" else "?"
-        return listOf(
-            Hoster(hosterName = "Soft Sub", hosterUrl = "${episode.url}${separator}type=soft"),
-            Hoster(hosterName = "Hard Sub", hosterUrl = "${episode.url}${separator}type=hard"),
-            Hoster(hosterName = "Dub", hosterUrl = "${episode.url}${separator}type=dub"),
-        )
+        val preferredType = preferences.getString("pref_preferred_type", "soft") ?: "soft"
+
+        val softHoster = Hoster(hosterName = "Soft Sub", hosterUrl = "${episode.url}${separator}type=soft")
+        val hardHoster = Hoster(hosterName = "Hard Sub", hosterUrl = "${episode.url}${separator}type=hard")
+        val dubHoster = Hoster(hosterName = "Dub", hosterUrl = "${episode.url}${separator}type=dub")
+
+        return when (preferredType) {
+            "hard" -> listOf(hardHoster, softHoster, dubHoster)
+            "dub" -> listOf(dubHoster, softHoster, hardHoster)
+            else -> listOf(softHoster, hardHoster, dubHoster)
+        }
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
