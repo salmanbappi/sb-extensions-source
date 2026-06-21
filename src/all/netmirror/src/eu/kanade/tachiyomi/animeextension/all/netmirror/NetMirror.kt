@@ -65,6 +65,7 @@ class CNCVerseSource(
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
