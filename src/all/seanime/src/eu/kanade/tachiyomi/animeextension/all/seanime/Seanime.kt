@@ -643,9 +643,19 @@ class Seanime :
                 throw Exception("No online streaming extensions installed in Seanime. Please install one in your Seanime server.")
             }
 
-            // 2. Concurrently fetch episode lists from all providers
-            val episodesLists = withContext(Dispatchers.IO) {
-                providers.map { provider ->
+            val preferredProvider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)!!
+            val selectedProviders = if (preferredProvider.isNotBlank()) {
+                providers.filter { provider ->
+                    provider.id.contains(preferredProvider, ignoreCase = true) ||
+                        (provider.name?.contains(preferredProvider, ignoreCase = true) == true)
+                }.ifEmpty { providers }
+            } else {
+                providers
+            }
+
+            // 2. Concurrently fetch episode lists from selected providers
+            var episodesLists = withContext(Dispatchers.IO) {
+                selectedProviders.map { provider ->
                     async {
                         try {
                             val body = buildJsonObject {
@@ -667,6 +677,36 @@ class Seanime :
                         }
                     }
                 }.awaitAll().filterNotNull()
+            }
+
+            // Fallback to remaining providers if preferred provider returned no episodes
+            if (episodesLists.isEmpty() && selectedProviders.size < providers.size) {
+                val remainingProviders = providers - selectedProviders.toSet()
+                val fallbackLists = withContext(Dispatchers.IO) {
+                    remainingProviders.map { provider ->
+                        async {
+                            try {
+                                val body = buildJsonObject {
+                                    put("mediaId", mediaId)
+                                    put("dubbed", dubbed)
+                                    put("provider", provider.id)
+                                }.toRequestBody(json)
+
+                                val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-list", headers, body)).await()
+                                if (response.isSuccessful) {
+                                    val epListResponse = response.parseAs<OnlineEpisodeListResponseDto>(json)
+                                    provider to epListResponse.data.episodes
+                                } else {
+                                    response.close()
+                                    null
+                                }
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+                episodesLists = fallbackLists
             }
 
             if (episodesLists.isEmpty()) {
@@ -844,9 +884,19 @@ class Seanime :
                     throw Exception("No online streaming extensions installed in Seanime.")
                 }
 
-                // 2. Concurrently fetch video sources from all providers
-                val videoList = withContext(Dispatchers.IO) {
-                    providers.map { provider ->
+                val preferredProvider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)!!
+                val selectedProviders = if (preferredProvider.isNotBlank()) {
+                    providers.filter { provider ->
+                        provider.id.contains(preferredProvider, ignoreCase = true) ||
+                            (provider.name?.contains(preferredProvider, ignoreCase = true) == true)
+                    }.ifEmpty { providers }
+                } else {
+                    providers
+                }
+
+                // 2. Concurrently fetch video sources from selected providers
+                var videoList = withContext(Dispatchers.IO) {
+                    selectedProviders.map { provider ->
                         async {
                             try {
                                 val body = buildJsonObject {
@@ -869,6 +919,37 @@ class Seanime :
                             }
                         }
                     }.awaitAll().filterNotNull()
+                }
+
+                // Fallback to remaining providers if preferred provider returned no video sources
+                if (videoList.isEmpty() && selectedProviders.size < providers.size) {
+                    val remainingProviders = providers - selectedProviders.toSet()
+                    val fallbackList = withContext(Dispatchers.IO) {
+                        remainingProviders.map { provider ->
+                            async {
+                                try {
+                                    val body = buildJsonObject {
+                                        put("episodeNumber", episodeNumber)
+                                        put("mediaId", mediaId)
+                                        put("provider", provider.id)
+                                        put("dubbed", dubbed)
+                                    }.toRequestBody(json)
+
+                                    val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-source", headers, body)).await()
+                                    if (response.isSuccessful) {
+                                        val sourceDto = response.parseAs<OnlineEpisodeSourceDto>(json)
+                                        provider to sourceDto.data.videoSources
+                                    } else {
+                                        response.close()
+                                        null
+                                    }
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                        }.awaitAll().filterNotNull()
+                    }
+                    videoList = fallbackList
                 }
 
                 val allVideos = videoList.flatMap { (provider, videoSources) ->
@@ -1007,6 +1088,22 @@ class Seanime :
             }
         }.also(screen::addPreference)
 
+        EditTextPreference(screen.context).apply {
+            key = PREF_PREFERRED_PROVIDER
+            title = "[Online] Preferred Provider Keyword"
+            summary = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER).let {
+                if (it.isNullOrBlank()) "Not set (queries all and picks the one with most episodes)" else "Current: $it"
+            }
+            setDefaultValue(DEFAULT_PREFERRED_PROVIDER)
+            dialogTitle = "Preferred Provider"
+            dialogMessage = "Keyword/ID matching your preferred online provider (e.g., gogoanime, zoro)."
+            setOnPreferenceChangeListener { pref, newValue ->
+                val value = (newValue as String).trim()
+                pref.summary = if (value.isBlank()) "Not set (queries all and picks the one with most episodes)" else "Current: $value"
+                true
+            }
+        }.also(screen::addPreference)
+
         SwitchPreferenceCompat(screen.context).apply {
             key = PREF_DUBBED
             title = "[Online] Dubbed Audio"
@@ -1040,6 +1137,9 @@ class Seanime :
 
         private const val PREF_PREFERRED_SERVER = "pref_preferred_server"
         private const val DEFAULT_PREFERRED_SERVER = ""
+
+        private const val PREF_PREFERRED_PROVIDER = "pref_preferred_provider"
+        private const val DEFAULT_PREFERRED_PROVIDER = ""
 
         private const val PREF_DUBBED = "pref_dubbed"
         private const val DEFAULT_DUBBED = false
