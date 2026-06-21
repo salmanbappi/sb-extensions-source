@@ -65,6 +65,11 @@ class KwikExtractor(
         headers.newBuilder()
             .set("Origin", "https://kwik.cx")
             .set("Referer", "https://kwik.cx/")
+            .apply {
+                if (!cfBypassUserAgent.isNullOrBlank()) {
+                    set("User-Agent", cfBypassUserAgent)
+                }
+            }
             .build()
     }
 
