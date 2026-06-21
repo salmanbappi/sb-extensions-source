@@ -318,18 +318,18 @@ class AnimePahe : Source() {
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
         val downloadLinks = document.select("div#pickDownload > a")
-        val links = document.select("div#resolutionMenu > button").mapIndexed { index, btn ->
+        val links = document.select("div#resolutionMenu > button").mapIndexed { index: Int, btn: Element ->
             val kwikLink = btn.attr("data-src")
             val quality = btn.text()
             val paheWinLink = downloadLinks.getOrNull(index)?.attr("href")
-            Triple(kwikLink, paheWinLink, quality)
+            Triple<String, String?, String>(kwikLink, paheWinLink, quality)
         }
 
         val useHLS = preferences.getBoolean(PREF_LINK_TYPE_KEY, PREF_LINK_TYPE_DEFAULT)
         val cfUA = cfBypassUserAgent // Get the custom UA once
 
         return if (!useHLS) {
-            links.parallelCatchingFlatMapBlocking { linkData ->
+            links.parallelCatchingFlatMapBlocking { linkData: Triple<String, String?, String> ->
                 val paheWinLink = linkData.second
                 val quality = linkData.third
                 if (paheWinLink.isNullOrBlank()) return@parallelCatchingFlatMapBlocking emptyList()
@@ -337,7 +337,7 @@ class AnimePahe : Source() {
                     .let(::listOf)
             }
         } else {
-            links.parallelCatchingFlatMapBlocking { linkData ->
+            links.parallelCatchingFlatMapBlocking { linkData: Triple<String, String?, String> ->
                 val kwikLink = linkData.first
                 val quality = linkData.third
                 KwikExtractor(client, headers, cfUA).getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
