@@ -20,6 +20,8 @@ import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
+import keiyoushi.utils.useAsJsoup
+import kotlin.math.ceil
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
