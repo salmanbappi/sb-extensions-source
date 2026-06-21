@@ -211,6 +211,51 @@ data class AniListMedia(
     val averageScore: Int? = null,
 )
 
+@Serializable
+data class AniListRelationsResponse(
+    val data: AniListRelationsData,
+)
+
+@Serializable
+data class AniListRelationsData(
+    val media: AniListRelationsMedia? = null,
+)
+
+@Serializable
+data class AniListRelationsMedia(
+    val relations: AniListRelationsConnection? = null,
+    val recommendations: AniListRecommendationsConnection? = null,
+)
+
+@Serializable
+data class AniListRelationsConnection(
+    val edges: List<AniListRelationsEdge> = emptyList(),
+)
+
+@Serializable
+data class AniListRelationsEdge(
+    val relationType: String? = null,
+    val node: AniListRelationsNode? = null,
+)
+
+@Serializable
+data class AniListRelationsNode(
+    val id: Int,
+    val type: String? = null,
+    val title: MediaTitleDto? = null,
+    val coverImage: MediaCoverImageDto? = null,
+)
+
+@Serializable
+data class AniListRecommendationsConnection(
+    val nodes: List<AniListRecommendationsNode> = emptyList(),
+)
+
+@Serializable
+data class AniListRecommendationsNode(
+    val mediaRecommendation: AniListRelationsNode? = null,
+)
+
 // ============================== FILTERS ==============================
 
 class StatusFilter :
@@ -994,6 +1039,129 @@ class Seanime :
             .replace("\r", "\\r")
             .replace("\t", "\\t")
         return "\"$escaped\""
+    }
+
+    fun relatedAnimeListRequest(anime: SAnime): okhttp3.Request {
+        val url = anime.url
+        val mediaId = when {
+            url.startsWith("library:") -> url.removePrefix("library:").toIntOrNull()
+            url.startsWith("anilist:") -> url.removePrefix("anilist:").toIntOrNull()
+            else -> url.toIntOrNull()
+        } ?: throw Exception("Invalid anime URL: $url")
+
+        val graphQLQuery = """
+            query (${'$'}id: Int) {
+              media: Media(id: ${'$'}id, type: ANIME) {
+                relations {
+                  edges {
+                    relationType
+                    node {
+                      id
+                      type
+                      title {
+                        userPreferred
+                        english
+                        romaji
+                      }
+                      coverImage {
+                        large
+                      }
+                    }
+                  }
+                }
+                recommendations(page: 1, perPage: 15, sort: [RATING_DESC]) {
+                  nodes {
+                    mediaRecommendation {
+                      id
+                      type
+                      title {
+                        userPreferred
+                        english
+                        romaji
+                      }
+                      coverImage {
+                        large
+                      }
+                    }
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+
+        val variablesJson = "{\"id\":$mediaId}"
+        val escapedQuery = graphQLQuery
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+
+        val bodyRaw = "{\"query\":\"$escapedQuery\",\"variables\":$variablesJson}"
+        val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+        val requestBody = bodyRaw.toRequestBody(mediaType)
+
+        return okhttp3.Request.Builder()
+            .url("https://graphql.anilist.co")
+            .post(requestBody)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .build()
+    }
+
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
+        if (!response.isSuccessful) {
+            response.close()
+            return emptyList()
+        }
+
+        val result = response.parseAs<AniListRelationsResponse>(json)
+        val media = result.data.media ?: return emptyList()
+
+        // 1. Extract and convert relations (prequels and sequels)
+        val prequelsAndSequels = media.relations?.edges
+            ?.filter { it.node?.type == "ANIME" && (it.relationType == "PREQUEL" || it.relationType == "SEQUEL") }
+            ?.mapNotNull { edge ->
+                val node = edge.node ?: return@mapNotNull null
+                val prefix = if (edge.relationType == "PREQUEL") "Prequel: " else "Sequel: "
+                val animeTitle = prefix + (node.title?.userPreferred
+                    ?: node.title?.english
+                    ?: node.title?.romaji
+                    ?: "Anime ${node.id}")
+                
+                SAnime.create().apply {
+                    title = animeTitle
+                    thumbnail_url = node.coverImage?.large
+                    this.url = "anilist:${node.id}"
+                    initialized = true
+                }
+            } ?: emptyList()
+
+        // 2. Extract and convert recommendations (making sure to avoid duplicating any prequel/sequel IDs)
+        val prequelSequelIds = media.relations?.edges
+            ?.filter { it.node?.type == "ANIME" && (it.relationType == "PREQUEL" || it.relationType == "SEQUEL") }
+            ?.mapNotNull { it.node?.id }?.toSet() ?: emptySet()
+
+        val recommendations = media.recommendations?.nodes
+            ?.mapNotNull { node ->
+                val rec = node.mediaRecommendation ?: return@mapNotNull null
+                if (rec.type != "ANIME" || prequelSequelIds.contains(rec.id)) return@mapNotNull null
+                
+                val animeTitle = rec.title?.userPreferred
+                    ?: rec.title?.english
+                    ?: rec.title?.romaji
+                    ?: "Anime ${rec.id}"
+
+                SAnime.create().apply {
+                    title = animeTitle
+                    thumbnail_url = rec.coverImage?.large
+                    this.url = "anilist:${rec.id}"
+                    initialized = true
+                }
+            } ?: emptyList()
+
+        // 3. Combine prequels/sequels first, then recommendations
+        return prequelsAndSequels + recommendations
     }
 
     // ============================== PREFERENCES SETUP ==============================
