@@ -115,9 +115,6 @@ class JsUnpacker(packedJS: String?) {
         }
     }
 
-    /**
-     * @param  packedJS javascript P.A.C.K.E.R. coded.
-     */
     init {
         this.packedJS = packedJS
     }
