@@ -1074,13 +1074,13 @@ class Seanime :
 
         EditTextPreference(screen.context).apply {
             key = PREF_PREFERRED_SERVER
-            title = "[Online] Preferred Server Keyword"
+            title = "[Online] Preferred Video Server"
             summary = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER).let {
                 if (it.isNullOrBlank()) "Not set" else "Current: $it"
             }
             setDefaultValue(DEFAULT_PREFERRED_SERVER)
-            dialogTitle = "Preferred Server"
-            dialogMessage = "Keyword matching your preferred server name."
+            dialogTitle = "Preferred Video Server"
+            dialogMessage = "Keyword matching the host or mirror server to prioritize for playback."
             setOnPreferenceChangeListener { pref, newValue ->
                 val value = (newValue as String).trim()
                 pref.summary = if (value.isBlank()) "Not set" else "Current: $value"
@@ -1090,16 +1090,16 @@ class Seanime :
 
         EditTextPreference(screen.context).apply {
             key = PREF_PREFERRED_PROVIDER
-            title = "[Online] Preferred Provider Keyword"
+            title = "[Online] Preferred Streaming Provider"
             summary = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER).let {
-                if (it.isNullOrBlank()) "Not set (queries all and picks the one with most episodes)" else "Current: $it"
+                if (it.isNullOrBlank()) "Not set (queries all installed extensions)" else "Current: $it"
             }
             setDefaultValue(DEFAULT_PREFERRED_PROVIDER)
-            dialogTitle = "Preferred Provider"
-            dialogMessage = "Keyword/ID matching your preferred online provider (e.g., gogoanime, zoro)."
+            dialogTitle = "Preferred Streaming Provider"
+            dialogMessage = "Keyword or ID of the online extension/scraper to query for episodes and streams."
             setOnPreferenceChangeListener { pref, newValue ->
                 val value = (newValue as String).trim()
-                pref.summary = if (value.isBlank()) "Not set (queries all and picks the one with most episodes)" else "Current: $value"
+                pref.summary = if (value.isBlank()) "Not set (queries all installed extensions)" else "Current: $value"
                 true
             }
         }.also(screen::addPreference)
