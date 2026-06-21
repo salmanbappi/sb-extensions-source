@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import eu.kanade.tachiyomi.util.parseAs
+import java.io.IOException
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
@@ -11,7 +12,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import java.io.IOException
 
 class BuzzheavierExtractor(
     private val client: OkHttpClient,
@@ -59,7 +59,7 @@ class BuzzheavierExtractor(
             return emptyList()
         }
 
-        return listOf(Video(videoUrl, "${prefix}$size", videoUrl, videoHeaders))
+        return listOf(Video(videoUrl = videoUrl, videoTitle = "${prefix}${size}", headers = videoHeaders))
     }
 
     private fun OkHttpClient.executeWithRetry(request: Request, maxRetries: Int, validCode: Int): Response {

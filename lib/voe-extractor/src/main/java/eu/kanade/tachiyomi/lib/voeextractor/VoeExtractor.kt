@@ -2,14 +2,15 @@ package eu.kanade.tachiyomi.lib.voeextractor
 
 import android.util.Base64
 import android.util.Log
-import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
+import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import uy.kohesive.injekt.injectLazy
 
@@ -21,9 +22,15 @@ class VoeExtractor(private val client: OkHttpClient, private val headers: Header
 
     private val playlistUtils by lazy { PlaylistUtils(clientDdos, headers) }
 
-    private val redirectRegex = Regex("""window.location.href\s*=\s*'([^']+)';""")
+    private val redirectRegex = Regex("""window\.location\.href\s*=\s*['"]([^']+)['"]""")
 
     fun videosFromUrl(url: String, prefix: String = ""): List<Video> {
+        val host = url.toHttpUrl().host
+        val headers = headers.newBuilder()
+            .add("Origin", "https://$host")
+            .add("Referer", url)
+            .build()
+            
         val videoList = mutableListOf<Video>()
         var document = clientDdos.newCall(GET(url, headers)).execute().asJsoup()
         val scriptData = document.selectFirst("script")?.data()
@@ -31,15 +38,29 @@ class VoeExtractor(private val client: OkHttpClient, private val headers: Header
 
         if (redirectMatch != null) {
             val originalUrl = redirectMatch.groupValues[1]
+            Log.d("VoeExtractor", "Redirecting to: $originalUrl")
             document = clientDdos.newCall(GET(originalUrl, headers)).execute().asJsoup()
         }
 
-        val encodedString = document.selectFirst("script[type=application/json]")?.data()
+        val jsonScript = document.selectFirst("script[type=application/json]")
+        if (jsonScript == null) {
+            Log.e("VoeExtractor", "JSON script not found at $url")
+            return emptyList()
+        }
+
+        val encodedString = jsonScript.data()
             ?.trim()?.substringAfter("[\"")?.substringBeforeLast("\"]") ?: return emptyList()
 
-        val decryptedJson = decryptF7(encodedString) ?: return emptyList()
+        val decryptedJson = decryptF7(encodedString)
+        if (decryptedJson == null) {
+            Log.e("VoeExtractor", "Decryption failed for $url")
+            return emptyList()
+        }
+        
         val m3u8 = decryptedJson["source"]?.jsonPrimitive?.content
         val mp4 = decryptedJson["direct_access_url"]?.jsonPrimitive?.content
+        
+        Log.d("VoeExtractor", "Found m3u8: $m3u8, mp4: $mp4")
 
         if (m3u8 != null) {
             playlistUtils.extractFromHls(
@@ -88,5 +109,8 @@ class VoeExtractor(private val client: OkHttpClient, private val headers: Header
 
     private fun reverse(input: String): String = input.reversed()
 
-    private fun base64Decode(input: String): String = String(Base64.decode(input, Base64.DEFAULT), Charsets.ISO_8859_1)
+    private fun base64Decode(input: String): String {
+        val decodedBytes = Base64.decode(input, Base64.DEFAULT)
+        return String(decodedBytes, Charsets.ISO_8859_1)
+    }
 }

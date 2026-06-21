@@ -151,8 +151,6 @@ class RapidCloudExtractor(
     private fun getVideoDto(url: String): List<VideoDto> {
         val type = if (url.contains("rapid-cloud")) 0 else 1
 
-        val keyType = SOURCES_KEY[type]
-
         val id = url.substringAfter(SOURCES_SPLITTER[type], "")
             .substringBefore("?", "")
             .ifEmpty { throw Exception("Failed to extract ID from URL") }
@@ -189,17 +187,18 @@ class RapidCloudExtractor(
         }
     }
 
-    private fun requestNewKey(): String = client.newCall(GET("https://raw.githubusercontent.com/yogesh-hacker/MegacloudKeys/refs/heads/main/keys.json"))
-        .execute()
-        .use { response ->
-            if (!response.isSuccessful) throw IllegalStateException("Failed to fetch keys.json")
-            val jsonStr = response.body.string()
-            if (jsonStr.isEmpty()) throw IllegalStateException("keys.json is empty")
-            val key = json.decodeFromString<Map<String, String>>(jsonStr)["mega"]
-                ?: throw IllegalStateException("Rapid key not found in keys.json")
-            Log.i("RapidCloudExtractor", "Using Rapid Key: $key")
-            key
-        }
+    private fun requestNewKey(): String =
+        client.newCall(GET("https://raw.githubusercontent.com/yogesh-hacker/MegacloudKeys/refs/heads/main/keys.json"))
+            .execute()
+            .use { response ->
+                if (!response.isSuccessful) throw IllegalStateException("Failed to fetch keys.json")
+                val jsonStr = response.body.string()
+                if (jsonStr.isEmpty()) throw IllegalStateException("keys.json is empty")
+                val key = json.decodeFromString<Map<String, String>>(jsonStr)["mega"]
+                    ?: throw IllegalStateException("Rapid key not found in keys.json")
+                Log.i("RapidCloudExtractor", "Using Rapid Key: $key")
+                key
+            }
 
     private fun decryptOpenSSL(encBase64: String, password: String): String {
         try {
@@ -223,11 +222,11 @@ class RapidCloudExtractor(
 
     private fun opensslKeyIv(password: ByteArray, salt: ByteArray, keyLen: Int = 32, ivLen: Int = 16): Pair<ByteArray, ByteArray> {
         var d = ByteArray(0)
-        var di = ByteArray(0)
+        var d_i = ByteArray(0)
         while (d.size < keyLen + ivLen) {
             val md = MessageDigest.getInstance("MD5")
-            di = md.digest(di + password + salt)
-            d += di
+            d_i = md.digest(d_i + password + salt)
+            d += d_i
         }
         return Pair(d.copyOfRange(0, keyLen), d.copyOfRange(keyLen, keyLen + ivLen))
     }
@@ -248,7 +247,7 @@ class RapidCloudExtractor(
     @Serializable
     data class SourceDto(
         val file: String,
-        val type: String, // 'hls'
+        val type: String,   // 'hls'
     )
 
     @Serializable

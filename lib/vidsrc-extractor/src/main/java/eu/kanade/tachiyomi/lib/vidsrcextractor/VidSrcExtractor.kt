@@ -80,21 +80,23 @@ class VidsrcExtractor(private val client: OkHttpClient, private val headers: Hea
         val cipher = Cipher.getInstance("RC4")
         cipher.init(Cipher.DECRYPT_MODE, rc4Key, cipher.parameters)
         return Base64.encode(cipher.doFinal(videoID.toByteArray()), Base64.DEFAULT)
-            .toString(Charsets.UTF_8)
+            .toString(java.nio.charset.StandardCharsets.UTF_8)
             .replace("+", "-")
             .replace("/", "_")
             .trim()
     }
 
-    private fun List<Result.SubTrack>.toTracks(): List<Track> = filter {
-        it.kind == "captions"
-    }.mapNotNull {
-        runCatching {
-            Track(
-                it.file,
-                it.label,
-            )
-        }.getOrNull()
+    private fun List<Result.SubTrack>.toTracks(): List<Track> {
+        return filter {
+            it.kind == "captions"
+        }.mapNotNull {
+            runCatching {
+                Track(
+                    it.file,
+                    it.label,
+                )
+            }.getOrNull()
+        }
     }
 
     private fun vrfDecrypt(input: String): String {
@@ -103,7 +105,7 @@ class VidsrcExtractor(private val client: OkHttpClient, private val headers: Hea
         val cipher = Cipher.getInstance("RC4")
         cipher.init(Cipher.DECRYPT_MODE, rc4Key, cipher.parameters)
         vrf = cipher.doFinal(vrf)
-        return URLDecoder.decode(vrf.toString(Charsets.UTF_8), "utf-8")
+        return URLDecoder.decode(vrf.toString(java.nio.charset.StandardCharsets.UTF_8), "utf-8")
     }
 
     companion object {

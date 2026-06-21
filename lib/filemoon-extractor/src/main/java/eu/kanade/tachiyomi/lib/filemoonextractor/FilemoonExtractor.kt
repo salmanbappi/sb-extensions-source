@@ -52,8 +52,7 @@ class FilemoonExtractor(
                     .substringBefore("').")
                     .takeIf(String::isNotBlank)
             if (subUrl != null) {
-                runCatching {
-                    // to prevent failures on serialization errors
+                runCatching { // to prevent failures on serialization errors
                     client.newCall(GET(subUrl, videoHeaders)).execute()
                         .body.string()
                         .let { json.decodeFromString<List<SubtitleDto>>(it) }
@@ -62,8 +61,7 @@ class FilemoonExtractor(
             }
         }
 
-        val localPlaylistUtils = PlaylistUtils(client, videoHeaders)
-        val videoList = localPlaylistUtils.extractFromHls(
+        val videoList = playlistUtils.extractFromHls(
             masterUrl,
             subtitleList = subtitleTracks,
             referer = "https://${httpUrl.host}/",
@@ -73,11 +71,10 @@ class FilemoonExtractor(
         val subPref = preferences?.getString(PREF_SUBTITLE_KEY, PREF_SUBTITLE_DEFAULT).orEmpty()
         return videoList.map {
             Video(
-                videoUrl = it.videoUrl ?: "",
+                videoUrl = it.videoUrl,
                 videoTitle = it.videoTitle,
-                headers = it.headers,
                 audioTracks = it.audioTracks,
-                subtitleTracks = it.subtitleTracks.filter { tracks -> tracks.lang.contains(subPref, true) },
+                subtitleTracks = it.subtitleTracks.filter { tracks -> tracks.lang.contains(subPref, true) }
             )
         }
     }

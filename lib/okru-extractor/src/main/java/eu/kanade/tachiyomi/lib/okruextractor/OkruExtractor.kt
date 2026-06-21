@@ -34,23 +34,23 @@ class OkruExtractor(private val client: OkHttpClient) {
                 val playlistUrl = videoString.extractLink("ondemandHls")
                 playlistUtils.extractFromHls(playlistUrl, videoNameGen = { "Okru:$it".addPrefix(prefix) })
             }
-
             "ondemandDash" in videoString -> {
                 val playlistUrl = videoString.extractLink("ondemandDash")
                 playlistUtils.extractFromDash(playlistUrl, videoNameGen = { it -> "Okru:$it".addPrefix(prefix) })
             }
-
             else -> videosFromJson(videoString, prefix, fixQualities)
         }
     }
 
-    private fun String.addPrefix(prefix: String) = prefix.takeIf(String::isNotBlank)
-        ?.let { "$prefix $this" }
-        ?: this
+    private fun String.addPrefix(prefix: String) =
+        prefix.takeIf(String::isNotBlank)
+            ?.let { "$prefix $this" }
+            ?: this
 
-    private fun String.extractLink(attr: String) = substringAfter("$attr\\\":\\\"")
-        .substringBefore("\\\"")
-        .replace("\\\\u0026", "&")
+    private fun String.extractLink(attr: String) =
+        substringAfter("$attr\\\":\\\"")
+            .substringBefore("\\\"")
+            .replace("\\\\u0026", "&")
 
     private fun videosFromJson(videoString: String, prefix: String = "", fixQualities: Boolean = true): List<Video> {
         val arrayData = videoString.substringAfter("\\\"videos\\\":[{\\\"name\\\":\\\"")

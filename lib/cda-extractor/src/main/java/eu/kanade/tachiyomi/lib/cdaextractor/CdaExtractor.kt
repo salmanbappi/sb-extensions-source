@@ -29,8 +29,8 @@ class CdaPlExtractor(private val client: OkHttpClient) {
             GET(url, headers = embedHeaders),
         ).execute().asJsoup()
 
-        // Nic lepszego nie wymyśliłem jak ktoś kto przegląda ten kod znajdzie sposób lepszy to chetnie przyjme radę <3
-        // Do you have any idea how to write it differently? I will accept advice!
+        //Nic lepszego nie wymyśliłem jak ktoś kto przegląda ten kod znajdzie sposób lepszy to chetnie przyjme radę <3
+        //Do you have any idea how to write it differently? I will accept advice!
 
         val deletedMessage = "Materiał na który wskazywał ten link został usunięty przez jego właściciela lub Administratora!"
 
@@ -42,7 +42,7 @@ class CdaPlExtractor(private val client: OkHttpClient) {
         return data.video.qualities.map { quality ->
             if (quality.value == data.video.quality && quality.value != "lq") {
                 val videoUrl = decryptFile(data.video.file)
-                Video(videoUrl, "${prefix}cda.pl - ${quality.key}", videoUrl)
+                Video(videoUrl = videoUrl, videoTitle = "${prefix}cda.pl - ${quality.key}")
             } else {
                 val jsonBody = """
                     {
@@ -70,7 +70,7 @@ class CdaPlExtractor(private val client: OkHttpClient) {
                 val parsed = json.decodeFromString<PostResponse>(
                     response.body.string(),
                 )
-                Video(parsed.result.resp, "${prefix}cda.pl - ${quality.key}", parsed.result.resp)
+                Video(videoUrl = parsed.result.resp, videoTitle = "${prefix}cda.pl - ${quality.key}")
             }
         }
     }

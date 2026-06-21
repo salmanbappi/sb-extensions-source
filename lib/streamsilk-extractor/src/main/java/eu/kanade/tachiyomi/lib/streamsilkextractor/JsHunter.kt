@@ -28,15 +28,15 @@ class JsHunter(private val hunterJS: String) {
             val p: Pattern =
                 Pattern.compile(
                     """\}\("([^"]+)",[^,]+,\s*"([^"]+)",\s*(\d+),\s*(\d+)""",
-                    Pattern.DOTALL,
+                    Pattern.DOTALL
                 )
             val searchResults: Matcher = p.matcher(hunterJS)
             if (searchResults.find() && searchResults.groupCount() == 4) {
-                val h = searchResults.group(1)!!.toString()
-                val n = searchResults.group(2)!!.toString()
+                val h = searchResults.group(1)
+                val n = searchResults.group(2)
                 val t = searchResults.group(3)!!.toInt()
                 val e = searchResults.group(4)!!.toInt()
-                return hunter(h, n, t, e)
+                return hunter(h!!, n!!, t, e)
             }
         } catch (e: Exception) {
             return null

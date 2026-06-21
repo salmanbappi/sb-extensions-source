@@ -7,9 +7,9 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
-import extensions.utils.addSwitchPreference
-import extensions.utils.commonEmptyHeaders
+import keiyoushi.utils.addSwitchPreference
 import okhttp3.FormBody
+import okhttp3.Headers
 import okhttp3.Request
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -60,18 +60,18 @@ object JavCoverFetcher {
     private fun getJPTitleFromID(javId: String): String? {
         val url = "https://www.javlibrary.com/ja/vl_searchbyid.php?keyword=$javId"
 
-        val request = GET(url, commonEmptyHeaders)
+        val request = GET(url, Headers.EMPTY)
 
         val response = CLIENT.newCall(request).execute()
 
         var document = response.asJsoup()
 
         // possibly multiple results or none
-        if (response.request.url.pathSegments.contains("vl_searchbyid.php")) {
+        if (document.baseUri().contains("vl_searchbyid.php")) {
             val targetUrl = document.selectFirst(".videos a[href*=\"?v=\"]")?.attr("abs:href")
                 ?: return null
 
-            document = CLIENT.newCall(GET(targetUrl, commonEmptyHeaders)).execute().asJsoup()
+            document = CLIENT.newCall(GET(targetUrl, Headers.EMPTY)).execute().asJsoup()
         }
 
         val dirtyTitle = document.selectFirst(".post-title")?.text()
@@ -88,7 +88,7 @@ object JavCoverFetcher {
             .add("q", "site:amazon.co.jp inurl:/dp/$jpTitle")
             .build()
 
-        val headers = commonEmptyHeaders.newBuilder().apply {
+        val headers = Headers.EMPTY.newBuilder().apply {
             add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
             add("Host", "lite.duckduckgo.com")
             add("Referer", "https://lite.duckduckgo.com/")
@@ -127,7 +127,9 @@ object JavCoverFetcher {
         return cover
     }
 
-    private fun checkCover(cover: String): Boolean = getContentLength(cover) > 100
+    private fun checkCover(cover: String): Boolean {
+        return getContentLength(cover) > 100
+    }
 
     private fun getContentLength(url: String): Long {
         val request = Request.Builder()

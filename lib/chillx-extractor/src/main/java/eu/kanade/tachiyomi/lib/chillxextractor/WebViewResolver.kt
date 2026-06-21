@@ -59,7 +59,7 @@ class WebViewResolver(
             webview.webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView?,
-                    request: WebResourceRequest?,
+                    request: WebResourceRequest?
                 ): WebResourceResponse? {
                     if (request?.url.toString().equals(embedUrl, true)) {
                         return patchBody(request!!.url.toString(), interfaceName)
@@ -107,7 +107,7 @@ class WebViewResolver(
                       }
                       return $oldFunc(...args);
                     };
-                """.trimIndent(),
+                """.trimIndent()
             )
         }
 

@@ -34,7 +34,9 @@ class WebViewResolver(private val globalHeaders: Headers) {
         }
     }
 
-    fun getJsContent(file: String): String = javaClass.getResource(file)!!.readText()
+    fun getJsContent(file: String): String {
+        return javaClass.getResource(file)!!.readText()
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     fun getSources(xrax: String): VideoDto? {

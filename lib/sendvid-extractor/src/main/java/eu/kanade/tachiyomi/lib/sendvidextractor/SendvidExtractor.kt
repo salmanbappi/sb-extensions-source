@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.lib.sendvidextractor
 
-import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
+import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
@@ -23,7 +23,7 @@ class SendvidExtractor(private val client: OkHttpClient, private val headers: He
                 .set("Origin", httpUrl)
                 .set("Referer", "$httpUrl/")
                 .build()
-            listOf(Video(masterUrl, prefix + "Sendvid:default", masterUrl, newHeaders))
+            listOf(Video(videoUrl = masterUrl, videoTitle = prefix + "Sendvid:default", headers = newHeaders))
         }
     }
 }

@@ -1,0 +1,15 @@
+package eu.kanade.tachiyomi.lib.unpacker
+
+import android.util.Log
+import eu.kanade.tachiyomi.lib.unpacker.jsunpacker.JsUnpacker
+import eu.kanade.tachiyomi.lib.unpacker.Unpacker
+
+fun autoUnpacker(packedScript: String): String? = runCatching {
+    val jsUnpacker = try {
+        JsUnpacker.unpackAndCombine(packedScript)
+    } catch (e: Exception) {
+        Log.w("JsUnpacker", "autoUnpacker: ${e.message}", e)
+        null
+    }
+    jsUnpacker ?: Unpacker.unpack(packedScript).takeIf(String::isNotBlank)
+}.getOrNull()

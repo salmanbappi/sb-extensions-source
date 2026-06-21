@@ -8,9 +8,10 @@ import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.OkHttpClient
 
 class UpstreamExtractor(private val client: OkHttpClient) {
-    fun videosFromUrl(url: String, prefix: String = ""): List<Video> = runCatching {
-        val jsE = client.newCall(GET(url)).execute().asJsoup().selectFirst("script:containsData(eval)")!!.data()
-        val masterUrl = JsUnpacker.unpackAndCombine(jsE)!!.substringAfter("{file:\"").substringBefore("\"}")
-        PlaylistUtils(client).extractFromHls(masterUrl, videoNameGen = { "${prefix}Upstream - $it" })
-    }.getOrDefault(emptyList())
+    fun videosFromUrl(url: String, prefix: String = ""): List<Video> =
+        runCatching {
+            val jsE = client.newCall(GET(url)).execute().asJsoup().selectFirst("script:containsData(eval)")!!.data()
+            val masterUrl = JsUnpacker.unpackAndCombine(jsE)!!.substringAfter("{file:\"").substringBefore("\"}")
+            PlaylistUtils(client).extractFromHls(masterUrl, videoNameGen = { "${prefix}Upstream - $it" })
+        }.getOrDefault(emptyList())
 }

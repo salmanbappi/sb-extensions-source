@@ -24,16 +24,16 @@ class JsUnpacker(packedJS: String?) {
      * @return the javascript unpacked or null.
      */
     fun unpack(): String? {
-        val js = packedJS
+        val js = packedJS ?: return null
         try {
             var p =
                 Pattern.compile("""\}\s*\('(.*)',\s*(.*?),\s*(\d+),\s*'(.*?)'\.split\('\|'\)""", Pattern.DOTALL)
             var m = p.matcher(js)
             if (m.find() && m.groupCount() == 4) {
-                val payload = m.group(1).replace("\\'", "'")
-                val radixStr = m.group(2)
-                val countStr = m.group(3)
-                val symtab = m.group(4).split("\\|".toRegex()).toTypedArray()
+                val payload = m.group(1)!!.replace("\\'", "'")
+                val radixStr = m.group(2)!!
+                val countStr = m.group(3)!!
+                val symtab = m.group(4)!!.split("\\|".toRegex()).toTypedArray()
                 var radix = 36
                 var count = 0
                 try {
@@ -53,7 +53,7 @@ class JsUnpacker(packedJS: String?) {
                 val decoded = StringBuilder(payload)
                 var replaceOffset = 0
                 while (m.find()) {
-                    val word = m.group(0)
+                    val word = m.group(0)!!
                     val x = unbase.unbase(word)
                     var value: String? = null
                     if (x < symtab.size && x >= 0) {
@@ -73,8 +73,8 @@ class JsUnpacker(packedJS: String?) {
     }
 
     private inner class Unbase(private val radix: Int) {
-        private val alphabet62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        private val alphabet95 =
+        private val ALPHABET_62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        private val ALPHABET_95 =
             " !\"#$%&\\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
         private var alphabet: String? = null
         private var dictionary: HashMap<String, Int>? = null
@@ -95,19 +95,16 @@ class JsUnpacker(packedJS: String?) {
             if (radix > 36) {
                 when {
                     radix < 62 -> {
-                        alphabet = alphabet62.substring(0, radix)
+                        alphabet = ALPHABET_62.substring(0, radix)
                     }
-
                     radix in 63..94 -> {
-                        alphabet = alphabet95.substring(0, radix)
+                        alphabet = ALPHABET_95.substring(0, radix)
                     }
-
                     radix == 62 -> {
-                        alphabet = alphabet62
+                        alphabet = ALPHABET_62
                     }
-
                     radix == 95 -> {
-                        alphabet = alphabet95
+                        alphabet = ALPHABET_95
                     }
                 }
                 dictionary = HashMap(95)
@@ -118,9 +115,13 @@ class JsUnpacker(packedJS: String?) {
         }
     }
 
+    /**
+     * @param  packedJS javascript P.A.C.K.E.R. coded.
+     */
     init {
         this.packedJS = packedJS
     }
+
 
     companion object {
         val c =
@@ -160,7 +161,7 @@ class JsUnpacker(packedJS: String?) {
                 0x65,
                 0x41,
                 0x64,
-                0x73,
+                0x73
             )
         val z =
             listOf(
@@ -182,7 +183,7 @@ class JsUnpacker(packedJS: String?) {
                 0x73,
                 0x2e,
                 0x41,
-                0x64,
+                0x64
             )
 
         fun String.load(): String? {

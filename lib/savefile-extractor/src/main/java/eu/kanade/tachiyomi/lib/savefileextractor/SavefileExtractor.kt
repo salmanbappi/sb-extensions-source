@@ -33,8 +33,7 @@ class SavefileExtractor(
             ?.takeIf(String::isNotBlank)
             ?: return emptyList()
 
-        val localPlaylistUtils = PlaylistUtils(client, videoHeaders)
-        val videoList = localPlaylistUtils.extractFromHls(
+        val videoList = playlistUtils.extractFromHls(
             masterUrl,
             referer = "https://${httpUrl.host}/",
             videoNameGen = { "$prefix$it" },
@@ -43,12 +42,10 @@ class SavefileExtractor(
         val subPref = preferences.getString(PREF_SUBTITLE_KEY, PREF_SUBTITLE_DEFAULT).orEmpty()
         return videoList.map {
             Video(
-                url = it.url,
-                quality = it.quality,
                 videoUrl = it.videoUrl,
-                headers = it.headers,
+                videoTitle = it.videoTitle,
                 audioTracks = it.audioTracks,
-                subtitleTracks = it.subtitleTracks.filter { tracks -> tracks.lang.contains(subPref, true) },
+                subtitleTracks = it.subtitleTracks.filter { tracks -> tracks.lang.contains(subPref, true) }
             )
         }
     }

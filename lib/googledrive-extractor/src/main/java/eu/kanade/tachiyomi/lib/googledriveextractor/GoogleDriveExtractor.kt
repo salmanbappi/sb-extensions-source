@@ -17,38 +17,40 @@ class GoogleDriveExtractor(private val client: OkHttpClient, private val headers
     private val cookieList = client.cookieJar.loadForRequest("https://drive.google.com".toHttpUrl())
 
     fun videosFromUrl(itemId: String, videoName: String = "Video"): List<Video> {
-        val url = "https://drive.usercontent.google.com/download?id=$itemId"
+        val initialVideoUrl = "https://drive.usercontent.google.com/download?id=$itemId"
         val docHeaders = headers.newBuilder().apply {
             add("Accept", ACCEPT)
             add("Cookie", cookieList.toStr())
         }.build()
 
         val docResp = client.newCall(
-            GET(url, docHeaders),
+            GET(initialVideoUrl, docHeaders)
         ).execute()
 
         if (!docResp.peekBody(15).string().equals("<!DOCTYPE html>", true)) {
             return listOf(
-                Video(url, videoName, url, docHeaders),
+                Video(videoUrl = initialVideoUrl, videoTitle = videoName, headers = docHeaders)
             )
         }
 
         val document = docResp.asJsoup()
 
-        val itemSize = document.selectFirst("span.uc-name-size")
+        val itemSize: String = document.selectFirst("span.uc-name-size")
             ?.let { " ${it.ownText().trim()} " }
             ?: ""
 
-        val videoUrl = url.toHttpUrl().newBuilder().apply {
+        val finalVideoUrl = initialVideoUrl.toHttpUrl().newBuilder().apply {
             document.select("input[type=hidden]").forEach {
                 setQueryParameter(it.attr("name"), it.attr("value"))
             }
         }.build().toString()
 
         return listOf(
-            Video(videoUrl, videoName + itemSize, videoUrl, docHeaders),
+            Video(videoUrl = finalVideoUrl, videoTitle = videoName + itemSize, headers = docHeaders)
         )
     }
 
-    private fun List<Cookie>.toStr(): String = this.joinToString("; ") { "${it.name}=${it.value}" }
+    private fun List<Cookie>.toStr(): String {
+        return this.joinToString("; ") { "${it.name}=${it.value}" }
+    }
 }
