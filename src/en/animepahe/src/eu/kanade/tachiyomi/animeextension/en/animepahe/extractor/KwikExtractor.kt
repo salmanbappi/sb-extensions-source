@@ -68,37 +68,50 @@ class KwikExtractor(
     }
 
     suspend fun getHlsVideo(kwikUrl: String, referer: String, quality: String = ""): Video {
-        val videoUrl = getHlsStreamUrl(kwikUrl, referer)
+        val (videoUrl, videoHeaders) = getHlsStreamUrlAndHeaders(kwikUrl, referer)
 
         return Video(
             videoUrl = videoUrl,
             videoTitle = quality,
-            headers = kwikHeaders,
+            headers = videoHeaders,
         )
     }
 
-    suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String {
-        val eContent = client.newCall(GET(kwikUrl, headers.newBuilder().set("Referer", referer).build()))
-            .awaitSuccess().useAsJsoup()
-        val script = eContent.selectFirst("script:containsData(eval\\(function)")?.data()
+    suspend fun getHlsStreamUrlAndHeaders(kwikUrl: String, referer: String): Pair<String, Headers> {
+        val kwikContent = fetchKwikHtml(kwikUrl, referer)
+        val document = org.jsoup.Jsoup.parse(kwikContent.html, kwikContent.finalUrl)
+        val script = document.selectFirst("script:containsData(eval\\(function)")?.data()
             ?.substringAfterLast("eval(function(")
             ?: throw KwikException.ExtractionException("JsUnpacker not found.")
         val unpacked = JsUnpacker.unpackAndCombine("eval(function($script")
             ?: throw KwikException.ExtractionException("JsUnpacker failed to unpack Kwik script.")
-        return unpacked.substringAfter("const source=\\'").substringBefore("\\';")
+        val videoUrl = unpacked.substringAfter("const source=\\'").substringBefore("\\';")
+
+        val headersBuilder = kwikHeaders.newBuilder()
+        if (kwikContent.cookies.isNotEmpty()) {
+            headersBuilder.set("Cookie", kwikContent.cookies)
+        }
+        if (cfBypassUserAgent != null) {
+            headersBuilder.set("User-Agent", cfBypassUserAgent)
+        }
+        return Pair(videoUrl, headersBuilder.build())
+    }
+
+    suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String {
+        return getHlsStreamUrlAndHeaders(kwikUrl, referer).first
     }
 
     suspend fun getStreamVideo(paheUrl: String, quality: String = ""): Video {
-        val videoUrl = getStreamUrlFromKwik(paheUrl)
+        val (videoUrl, videoHeaders) = getStreamUrlAndHeadersFromKwik(paheUrl)
 
         return Video(
             videoUrl = videoUrl,
             videoTitle = quality,
-            headers = kwikHeaders,
+            headers = videoHeaders,
         )
     }
 
-    suspend fun getStreamUrlFromKwik(paheUrl: String): String {
+    suspend fun getStreamUrlAndHeadersFromKwik(paheUrl: String): Pair<String, Headers> {
         val kwikUrl = noRedirectClient.newCall(GET("$paheUrl/i", headers)).await().use { response ->
             val location = response.header("location")
                 ?: throw KwikException.ExtractionException("Pahe redirect failed: No location header found.")
@@ -156,16 +169,31 @@ class KwikExtractor(
             }
         }
 
-        return kwikLocation ?: throw KwikException.ExtractionException("Failed to extract stream URI after $tries attempts.")
+        val videoUrl = kwikLocation ?: throw KwikException.ExtractionException("Failed to extract stream URI after $tries attempts.")
+
+        val videoHeaders = kwikHeaders.newBuilder().apply {
+            if (fContentCookies.isNotEmpty()) {
+                set("Cookie", fContentCookies)
+            }
+            if (cfBypassUserAgent != null) {
+                set("User-Agent", cfBypassUserAgent)
+            }
+        }.build()
+
+        return Pair(videoUrl, videoHeaders)
     }
 
-    private suspend fun fetchKwikHtml(kwikUrl: String): KwikContent {
+    suspend fun getStreamUrlFromKwik(paheUrl: String): String {
+        return getStreamUrlAndHeadersFromKwik(paheUrl).first
+    }
+
+    private suspend fun fetchKwikHtml(kwikUrl: String, referer: String = "https://kwik.cx/"): KwikContent {
         suspend fun attemptKwikFetch(cfResult: CloudFlareBypassResult?): KwikContent? {
             // Use `Headers.Builder()` because we want to use the default User-Agent from the app,
             // since that would be the one used when open webview manually
             val headers = Headers.Builder()
                 .set("Origin", "https://kwik.cx")
-                .set("Referer", "https://kwik.cx/")
+                .set("Referer", referer)
                 .apply {
                     if (cfResult != null) {
                         set("Cookie", cfResult.cookies)
