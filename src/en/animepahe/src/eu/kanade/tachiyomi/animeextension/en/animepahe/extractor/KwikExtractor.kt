@@ -35,6 +35,7 @@ import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.useAsJsoup
+import org.jsoup.Jsoup
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
@@ -78,8 +79,8 @@ class KwikExtractor(
     }
 
     suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String {
-        val eContent = client.newCall(GET(kwikUrl, headers.newBuilder().set("Referer", referer).build()))
-            .awaitSuccess().useAsJsoup()
+        val kwikContent = fetchKwikHtml(kwikUrl, referer)
+        val eContent = Jsoup.parse(kwikContent.html)
         val script = eContent.selectFirst("script:containsData(eval\\(function)")?.data()
             ?.substringAfterLast("eval(function(")
             ?: throw KwikException.ExtractionException("JsUnpacker not found.")
@@ -159,17 +160,19 @@ class KwikExtractor(
         return kwikLocation ?: throw KwikException.ExtractionException("Failed to extract stream URI after $tries attempts.")
     }
 
-    private suspend fun fetchKwikHtml(kwikUrl: String): KwikContent {
+    private suspend fun fetchKwikHtml(kwikUrl: String, referer: String = "https://kwik.cx/"): KwikContent {
         suspend fun attemptKwikFetch(cfResult: CloudFlareBypassResult?): KwikContent? {
             // Use `Headers.Builder()` because we want to use the default User-Agent from the app,
             // since that would be the one used when open webview manually
             val headers = Headers.Builder()
                 .set("Origin", "https://kwik.cx")
-                .set("Referer", "https://kwik.cx/")
+                .set("Referer", referer)
                 .apply {
                     if (cfResult != null) {
                         set("Cookie", cfResult.cookies)
                         set("User-Agent", cfResult.userAgent)
+                    } else if (cfBypassUserAgent != null) {
+                        set("User-Agent", cfBypassUserAgent)
                     }
                 }
                 .build()
