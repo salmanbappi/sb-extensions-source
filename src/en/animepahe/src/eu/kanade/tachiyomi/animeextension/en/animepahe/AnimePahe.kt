@@ -34,7 +34,6 @@ import kotlin.math.floor
 class AnimePahe : Source() {
 
     override fun headersBuilder() = super.headersBuilder()
-        .set("User-Agent", UA)
         .set("Referer", "$baseUrl/")
 
     private val interceptor = DdosGuardInterceptor(network.client) { cfBypassUserAgent }
@@ -448,7 +447,6 @@ class AnimePahe : Source() {
     private val cfBypassUserAgent: String
         get() = preferences.getString(PREF_CF_UA_KEY, PREF_CF_UA_DEFAULT)
             ?.trim()
-            .takeIf { !it.isNullOrBlank() }
             ?: PREF_CF_UA_DEFAULT
 
     companion object {
@@ -494,7 +492,7 @@ class AnimePahe : Source() {
         const val UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
         private const val PREF_CF_UA_KEY = "cf_bypass_ua"
         private const val PREF_CF_UA_TITLE = "Custom User-Agent"
-        private const val PREF_CF_UA_DEFAULT = UA
+        private const val PREF_CF_UA_DEFAULT = ""
         private val PREF_CF_UA_SUMMARY = """Custom User-Agent string for the Cloudflare WebView bypass.
             |Leave blank to use the default.
         """.trimMargin()

@@ -171,7 +171,7 @@ class KwikExtractor(
                     if (cfResult != null) {
                         set("Cookie", cfResult.cookies)
                         set("User-Agent", cfResult.userAgent)
-                    } else if (cfBypassUserAgent != null) {
+                    } else if (!cfBypassUserAgent.isNullOrBlank()) {
                         set("User-Agent", cfBypassUserAgent)
                     }
                 }

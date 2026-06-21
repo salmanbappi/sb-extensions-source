@@ -31,7 +31,12 @@ class CloudflareBypass {
         var webView: WebView? = null
         val cancelled = AtomicBoolean(false)
 
-        val userAgentToUse = customUserAgent ?: UA
+        val defaultUA = try {
+            android.webkit.WebSettings.getDefaultUserAgent(applicationContext)
+        } catch (_: Exception) {
+            UA
+        }
+        val userAgentToUse = customUserAgent?.takeIf { it.isNotBlank() } ?: defaultUA
 
         // We MUST jump to the Main Thread because WebView is UI-bound
         Handler(Looper.getMainLooper()).post {
