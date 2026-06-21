@@ -313,6 +313,8 @@ class AnimePahe : Source() {
 
     // ============================ Video Links =============================
 
+    override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, headers)
+
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
         val downloadLinks = document.select("div#pickDownload > a")
