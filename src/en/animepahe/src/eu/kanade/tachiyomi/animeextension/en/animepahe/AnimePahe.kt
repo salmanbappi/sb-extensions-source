@@ -327,17 +327,13 @@ class AnimePahe : Source() {
         val useHLS = preferences.getBoolean(PREF_LINK_TYPE_KEY, PREF_LINK_TYPE_DEFAULT)
         val cfUA = cfBypassUserAgent // Get the custom UA once
 
-        val videos = if (!useHLS) {
+        return if (!useHLS) {
             links.parallelCatchingFlatMapBlocking { (_, paheWinLink, quality) ->
                 if (paheWinLink.isNullOrBlank()) return@parallelCatchingFlatMapBlocking emptyList()
                 KwikExtractor(client, headers, cfUA).getStreamVideo(paheWinLink, quality)
                     .let(::listOf)
             }
         } else {
-            emptyList()
-        }
-
-        return videos.ifEmpty {
             links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
                 KwikExtractor(client, headers, cfUA).getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
                     .let(::listOf)

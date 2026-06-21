@@ -100,11 +100,40 @@ class KwikExtractor(
     }
 
     suspend fun getStreamUrlFromKwik(paheUrl: String): String {
-        val kwikUrl = noRedirectClient.newCall(GET("$paheUrl/i", headers)).await().use { response ->
-            val location = response.header("location")
-                ?: throw KwikException.ExtractionException("Pahe redirect failed: No location header found.")
-            "https://" + location.substringAfterLast("https://")
+        var location: String? = null
+        var cfResult: CloudFlareBypassResult? = null
+        var redirectTries = 0
+        val redirectLimit = 3
+
+        while (location == null && redirectTries < redirectLimit) {
+            redirectTries++
+            val reqHeaders = headers.newBuilder().apply {
+                cfResult?.let {
+                    set("Cookie", it.cookies)
+                    set("User-Agent", it.userAgent)
+                } ?: run {
+                    if (!cfBypassUserAgent.isNullOrBlank()) {
+                        set("User-Agent", cfBypassUserAgent)
+                    }
+                }
+            }.build()
+
+            try {
+                noRedirectClient.newCall(GET("$paheUrl/i", reqHeaders)).await().use { response ->
+                    if (response.code in listOf(403, 503, 419)) {
+                        cfResult = CloudflareBypass().getCookies(paheUrl, cfBypassUserAgent)
+                            ?: throw KwikException.CloudflareBlockedException("Cloudflare bypass failed for Pahe redirect.")
+                    } else {
+                        location = response.header("location")
+                    }
+                }
+            } catch (e: Exception) {
+                if (redirectTries >= redirectLimit) throw e
+            }
         }
+
+        val kwikUrl = location?.let { "https://" + it.substringAfterLast("https://") }
+            ?: throw KwikException.ExtractionException("Pahe redirect failed: No location header found after $redirectTries attempts.")
 
         var (fContentCookies, fContentString, fContentUrl) = fetchKwikHtml(kwikUrl)
 
