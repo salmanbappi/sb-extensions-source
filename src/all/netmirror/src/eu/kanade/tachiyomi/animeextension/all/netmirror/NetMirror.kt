@@ -506,7 +506,7 @@ class CNCVerseSource(
                 "aHR0cHM6Ly9tb2JpZGV0ZWN0cy54eXo=",
             )
 
-            val directClient = network.client.newBuilder()
+            val directClient = OkHttpClient.Builder()
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
                 .build()
@@ -523,7 +523,7 @@ class CNCVerseSource(
 
                     directClient.newCall(request).execute().use { response ->
                         if (response.isSuccessful) {
-                            val json = response.body.string()
+                            val json = response.body?.string() ?: ""
                             val tokenHash = JSONObject(json).optString("token_hash")
                             if (tokenHash.isNotEmpty()) {
                                 resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
@@ -558,7 +558,7 @@ class CNCVerseSource(
                     .add("g-recaptcha-response", UUID.randomUUID().toString())
                     .build()
 
-                val directClient = network.client.newBuilder()
+                val directClient = OkHttpClient.Builder()
                     .followRedirects(false)
                     .followSslRedirects(false)
                     .connectTimeout(15, TimeUnit.SECONDS)
