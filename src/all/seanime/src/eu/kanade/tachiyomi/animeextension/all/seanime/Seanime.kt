@@ -614,6 +614,7 @@ class Seanime :
         val url = anime.url
         val mode = preferences.getString(PREF_STREAMING_MODE, DEFAULT_STREAMING_MODE)!!
         val headers = getSeanimeHeaders()
+        val showEpisodeMetadata = preferences.getBoolean(PREF_SHOW_EPISODE_METADATA, DEFAULT_SHOW_EPISODE_METADATA)
 
         // Resolve mediaId - for anilist entries, try library first, then online
         val mediaId: Int = when {
@@ -699,8 +700,10 @@ class Seanime :
                     }
 
                     episode_number = ep.number.toFloat()
-                    summary = ep.description
-                    preview_url = ep.image
+                    if (showEpisodeMetadata) {
+                        summary = ep.description
+                        preview_url = ep.image
+                    }
                 }
             }.sortedByDescending { it.episode_number }
         } else if (mode == MODE_LOCAL) {
@@ -721,8 +724,10 @@ class Seanime :
                         val epSubTitle = ep.episodeTitle
                         name = if (!epSubTitle.isNullOrBlank()) "$epName - $epSubTitle" else epName
                         episode_number = ep.episodeNumber.toFloat()
-                        summary = ep.episodeMetadata?.summary
-                        preview_url = ep.episodeMetadata?.image
+                        if (showEpisodeMetadata) {
+                            summary = ep.episodeMetadata?.summary
+                            preview_url = ep.episodeMetadata?.image
+                        }
                     }
                 }.sortedByDescending { it.episode_number }
             } else {
@@ -745,8 +750,10 @@ class Seanime :
                             val epSubTitle = ep.episodeTitle
                             name = if (!epSubTitle.isNullOrBlank()) "$epName - $epSubTitle" else epName
                             episode_number = ep.episodeNumber.toFloat()
-                            summary = ep.episodeMetadata?.summary
-                            preview_url = ep.episodeMetadata?.image
+                            if (showEpisodeMetadata) {
+                                summary = ep.episodeMetadata?.summary
+                                preview_url = ep.episodeMetadata?.image
+                            }
                         }
                     }.sortedByDescending { it.episode_number }
                 }
@@ -764,8 +771,10 @@ class Seanime :
                         val epSubTitle = ep.episodeTitle
                         name = if (!epSubTitle.isNullOrBlank()) "$epName - $epSubTitle" else epName
                         episode_number = ep.episodeNumber.toFloat()
-                        summary = ep.episodeMetadata?.summary
-                        preview_url = ep.episodeMetadata?.image
+                        if (showEpisodeMetadata) {
+                            summary = ep.episodeMetadata?.summary
+                            preview_url = ep.episodeMetadata?.image
+                        }
                     }
                 }.sortedByDescending { it.episode_number }
             } else {
@@ -870,7 +879,8 @@ class Seanime :
                             vs.headers.forEach { (k, v) -> set(k, v) }
                         }.build()
 
-                        val formattedTitle = "[$providerName] ${vs.server} (${vs.quality})"
+                        val audioType = if (dubbed) "Dub" else "Sub"
+                        val formattedTitle = "[$providerName] ${vs.server} (${vs.quality} - $audioType)"
                         listOf(Video(videoUrl = vs.url, videoTitle = formattedTitle, headers = videoHeaders))
                     }
                 }
@@ -1003,6 +1013,13 @@ class Seanime :
             summary = "Request dubbed versions of episodes when available"
             setDefaultValue(DEFAULT_DUBBED)
         }.also(screen::addPreference)
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_SHOW_EPISODE_METADATA
+            title = "[Episode] Show thumbnail and summary"
+            summary = "Show episode thumbnails and descriptions if available"
+            setDefaultValue(DEFAULT_SHOW_EPISODE_METADATA)
+        }.also(screen::addPreference)
     }
 
     companion object {
@@ -1026,6 +1043,9 @@ class Seanime :
 
         private const val PREF_DUBBED = "pref_dubbed"
         private const val DEFAULT_DUBBED = false
+
+        private const val PREF_SHOW_EPISODE_METADATA = "pref_show_episode_metadata"
+        private const val DEFAULT_SHOW_EPISODE_METADATA = true
 
         private const val PREF_SHOW_LIBRARY_IN_BROWSE = "pref_show_library_in_browse"
         private const val DEFAULT_SHOW_LIBRARY_IN_BROWSE = false
