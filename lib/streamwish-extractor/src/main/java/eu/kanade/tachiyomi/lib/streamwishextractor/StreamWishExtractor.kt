@@ -65,7 +65,7 @@ class StreamWishExtractor(private val client: OkHttpClient, private val headers:
                 }
             }
         val masterUrl = scriptBody?.let {
-            M3U8_REGEX.find(it)?.value
+            m3u8Regex.find(it)?.value
         }
             ?: return emptyList()
 
@@ -102,7 +102,7 @@ class StreamWishExtractor(private val client: OkHttpClient, private val headers:
                 .substringAfter("tracks")
                 .substringAfter("[")
                 .substringBefore("]")
-            val fixedSubtitleStr = FIX_TRACKS_REGEX.replace(subtitleStr) { match ->
+            val fixedSubtitleStr = fixTracksRegex.replace(subtitleStr) { match ->
                 "\"${match.value}\""
             }
 
@@ -117,6 +117,6 @@ class StreamWishExtractor(private val client: OkHttpClient, private val headers:
     @Serializable
     private data class TrackDto(val file: String, val kind: String, val label: String? = null)
 
-    private val M3U8_REGEX = Regex("""https[^"]*m3u8[^"]*""")
-    private val FIX_TRACKS_REGEX = Regex("""(?<!["])(file|kind|label)(?!["])""")
+    private val m3u8Regex = Regex("""https[^"]*m3u8[^"]*""")
+    private val fixTracksRegex = Regex("""(?<!["])(file|kind|label)(?!["])""")
 }
