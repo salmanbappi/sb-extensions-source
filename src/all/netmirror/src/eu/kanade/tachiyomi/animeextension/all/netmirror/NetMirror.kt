@@ -385,7 +385,7 @@ class CNCVerseSource(
         }
 
         val videoHeadersGen = { baseHeaders: Headers, ref: String, videoUrl: String ->
-            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref, videoUrl)
+            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
             headers.newBuilder().apply {
                 if (cookieVal.isNotEmpty()) {
                     set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
