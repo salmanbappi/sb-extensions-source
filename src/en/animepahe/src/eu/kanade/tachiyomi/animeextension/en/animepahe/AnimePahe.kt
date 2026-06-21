@@ -323,24 +323,46 @@ class AnimePahe : Source() {
         }
 
         val useHLS = preferences.getBoolean(PREF_LINK_TYPE_KEY, PREF_LINK_TYPE_DEFAULT)
-        val cfUA = cfBypassUserAgent // Get the custom UA once
+        val showBoth = preferences.getBoolean(PREF_SHOW_BOTH_KEY, PREF_SHOW_BOTH_DEFAULT)
+        val cfUA = cfBypassUserAgent
 
-        val videos = if (!useHLS) {
-            links.parallelCatchingFlatMapBlocking { (_, paheWinLink, quality) ->
+        val videos = mutableListOf<Video>()
+
+        if (showBoth) {
+            val directVideos = links.parallelCatchingFlatMapBlocking { (_, paheWinLink, quality) ->
                 if (paheWinLink.isNullOrBlank()) return@parallelCatchingFlatMapBlocking emptyList()
                 KwikExtractor(client, headers, cfUA).getStreamVideo(paheWinLink, quality)
                     .let(::listOf)
             }
-        } else {
-            emptyList()
-        }
-
-        return videos.ifEmpty {
-            links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
+            val hlsVideos = links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
                 KwikExtractor(client, headers, cfUA).getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
                     .let(::listOf)
             }
+            videos.addAll(directVideos)
+            videos.addAll(hlsVideos)
+        } else if (!useHLS) {
+            val directVideos = links.parallelCatchingFlatMapBlocking { (_, paheWinLink, quality) ->
+                if (paheWinLink.isNullOrBlank()) return@parallelCatchingFlatMapBlocking emptyList()
+                KwikExtractor(client, headers, cfUA).getStreamVideo(paheWinLink, quality)
+                    .let(::listOf)
+            }
+            videos.addAll(directVideos)
+            if (videos.isEmpty()) {
+                val hlsVideos = links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
+                    KwikExtractor(client, headers, cfUA).getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
+                        .let(::listOf)
+                }
+                videos.addAll(hlsVideos)
+            }
+        } else {
+            val hlsVideos = links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
+                KwikExtractor(client, headers, cfUA).getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
+                    .let(::listOf)
+            }
+            videos.addAll(hlsVideos)
         }
+
+        return videos
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
@@ -402,6 +424,12 @@ class AnimePahe : Source() {
             title = PREF_LINK_TYPE_TITLE,
             summary = PREF_LINK_TYPE_SUMMARY,
             default = PREF_LINK_TYPE_DEFAULT,
+        )
+        screen.addSwitchPreference(
+            key = PREF_SHOW_BOTH_KEY,
+            title = PREF_SHOW_BOTH_TITLE,
+            summary = PREF_SHOW_BOTH_SUMMARY,
+            default = PREF_SHOW_BOTH_DEFAULT,
         )
         screen.addSwitchPreference(
             key = PREF_AV1_KEY,
@@ -479,6 +507,12 @@ class AnimePahe : Source() {
         private const val PREF_LINK_TYPE_DEFAULT = true
         private val PREF_LINK_TYPE_SUMMARY = """Enable this if you are having Cloudflare issues.
             |Note that this will break the ability to seek inside of the video unless the episode is downloaded in advance.
+        """.trimMargin()
+
+        private const val PREF_SHOW_BOTH_KEY = "show_both_links"
+        private const val PREF_SHOW_BOTH_TITLE = "Extract both HLS and Direct links"
+        private const val PREF_SHOW_BOTH_DEFAULT = false
+        private val PREF_SHOW_BOTH_SUMMARY = """Enable this to display both HLS player links and direct MP4 download links in the player quality list.
         """.trimMargin()
 
         // Big slap to whoever misspelled `preferred`
