@@ -269,7 +269,7 @@ class CNCVerseSource(
 
             val seasonsArray = data.optJSONArray("season")
             if (seasonsArray != null) {
-                for (i in 0 until seasonsArray.length()) {
+                for (i in 0 until seasonsArray.length() - 1) {
                     val seasonObj = seasonsArray.getJSONObject(i)
                     val seasonId = seasonObj.optString("id")
                     episodes.addAll(getEpisodes(id, seasonId, 1))
