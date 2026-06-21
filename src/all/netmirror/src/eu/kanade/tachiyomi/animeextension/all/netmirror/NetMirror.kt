@@ -65,7 +65,6 @@ class CNCVerseSource(
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor(eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor(network.client))
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
@@ -507,9 +506,9 @@ class CNCVerseSource(
                 "aHR0cHM6Ly9tb2JpZGV0ZWN0cy54eXo=",
             )
 
-            val directClient = OkHttpClient.Builder()
-                .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(5, TimeUnit.SECONDS)
+            val directClient = network.client.newBuilder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
                 .build()
 
             for (encoded in newTvDomains) {
@@ -559,20 +558,32 @@ class CNCVerseSource(
                     .add("g-recaptcha-response", UUID.randomUUID().toString())
                     .build()
 
-                val directClient = OkHttpClient.Builder()
+                val directClient = network.client.newBuilder()
                     .followRedirects(false)
                     .followSslRedirects(false)
-                    .connectTimeout(5, TimeUnit.SECONDS)
-                    .readTimeout(5, TimeUnit.SECONDS)
+                    .connectTimeout(15, TimeUnit.SECONDS)
+                    .readTimeout(15, TimeUnit.SECONDS)
                     .build()
 
                 val request = Request.Builder()
                     .url("https://net52.cc/verify.php")
                     .post(formBody)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+                    .header("Accept-Encoding", "gzip, deflate, br, zstd")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .header("Cache-Control", "max-age=0")
+                    .header("Connection", "keep-alive")
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .header("Origin", "https://net22.cc")
                     .header("Referer", "https://net22.cc/verify2")
+                    .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
+                    .header("sec-ch-ua-mobile", "?0")
+                    .header("sec-ch-ua-platform", "\"Windows\"")
+                    .header("Sec-Fetch-Dest", "document")
+                    .header("Sec-Fetch-Mode", "navigate")
+                    .header("Sec-Fetch-Site", "same-origin")
+                    .header("Sec-Fetch-User", "?1")
+                    .header("Upgrade-Insecure-Requests", "1")
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
                     .build()
 
