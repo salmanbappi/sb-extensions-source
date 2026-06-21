@@ -97,9 +97,7 @@ class KwikExtractor(
         return Pair(videoUrl, headersBuilder.build())
     }
 
-    suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String {
-        return getHlsStreamUrlAndHeaders(kwikUrl, referer).first
-    }
+    suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String = getHlsStreamUrlAndHeaders(kwikUrl, referer).first
 
     suspend fun getStreamVideo(paheUrl: String, quality: String = ""): Video {
         val (videoUrl, videoHeaders) = getStreamUrlAndHeadersFromKwik(paheUrl)
@@ -183,9 +181,7 @@ class KwikExtractor(
         return Pair(videoUrl, videoHeaders)
     }
 
-    suspend fun getStreamUrlFromKwik(paheUrl: String): String {
-        return getStreamUrlAndHeadersFromKwik(paheUrl).first
-    }
+    suspend fun getStreamUrlFromKwik(paheUrl: String): String = getStreamUrlAndHeadersFromKwik(paheUrl).first
 
     private suspend fun fetchKwikHtml(kwikUrl: String, referer: String = "https://kwik.cx/"): KwikContent {
         suspend fun attemptKwikFetch(cfResult: CloudFlareBypassResult?): KwikContent? {
