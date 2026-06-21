@@ -97,12 +97,15 @@ class JsUnpacker(packedJS: String?) {
                     radix < 62 -> {
                         alphabet = alphabet62.substring(0, radix)
                     }
+
                     radix in 63..94 -> {
                         alphabet = alphabet95.substring(0, radix)
                     }
+
                     radix == 62 -> {
                         alphabet = alphabet62
                     }
+
                     radix == 95 -> {
                         alphabet = alphabet95
                     }
@@ -118,7 +121,6 @@ class JsUnpacker(packedJS: String?) {
     init {
         this.packedJS = packedJS
     }
-
 
     companion object {
         val c =
@@ -158,7 +160,7 @@ class JsUnpacker(packedJS: String?) {
                 0x65,
                 0x41,
                 0x64,
-                0x73
+                0x73,
             )
         val z =
             listOf(
@@ -180,7 +182,7 @@ class JsUnpacker(packedJS: String?) {
                 0x73,
                 0x2e,
                 0x41,
-                0x64
+                0x64,
             )
 
         fun String.load(): String? {
