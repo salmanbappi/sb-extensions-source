@@ -588,7 +588,7 @@ class CNCVerseSource(
                     .build()
 
                 directClient.newCall(request).execute().use { response ->
-                    val setCookieHeaders = response.headers("Set-Cookie")
+                    val setCookieHeaders = response.headers.values("Set-Cookie")
                     for (header in setCookieHeaders) {
                         if (header.startsWith("t_hash_t=")) {
                             val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
