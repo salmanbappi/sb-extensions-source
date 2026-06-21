@@ -20,14 +20,13 @@ import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
-import keiyoushi.utils.useAsJsoup
+import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.text.SimpleDateFormat
-import java.util.Locale
-import kotlin.math.ceil
+import uy.kohesive.injekt.injectLazy
 import kotlin.math.floor
 
 /* API: https://gist.github.com/Ellivers/f7716b6b6895802058c367963f3a2c51 */
@@ -327,17 +326,13 @@ class AnimePahe : Source() {
         val useHLS = preferences.getBoolean(PREF_LINK_TYPE_KEY, PREF_LINK_TYPE_DEFAULT)
         val cfUA = cfBypassUserAgent // Get the custom UA once
 
-        val videos = if (!useHLS) {
+        return if (!useHLS) {
             links.parallelCatchingFlatMapBlocking { (_, paheWinLink, quality) ->
                 if (paheWinLink.isNullOrBlank()) return@parallelCatchingFlatMapBlocking emptyList()
                 KwikExtractor(client, headers, cfUA).getStreamVideo(paheWinLink, quality)
                     .let(::listOf)
             }
         } else {
-            emptyList()
-        }
-
-        return videos.ifEmpty {
             links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
                 KwikExtractor(client, headers, cfUA).getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
                     .let(::listOf)
@@ -447,6 +442,7 @@ class AnimePahe : Source() {
     private val cfBypassUserAgent: String
         get() = preferences.getString(PREF_CF_UA_KEY, PREF_CF_UA_DEFAULT)
             ?.trim()
+            .takeIf { !it.isNullOrBlank() }
             ?: PREF_CF_UA_DEFAULT
 
     companion object {
@@ -492,7 +488,7 @@ class AnimePahe : Source() {
         const val UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
         private const val PREF_CF_UA_KEY = "cf_bypass_ua"
         private const val PREF_CF_UA_TITLE = "Custom User-Agent"
-        private const val PREF_CF_UA_DEFAULT = ""
+        private const val PREF_CF_UA_DEFAULT = UA
         private val PREF_CF_UA_SUMMARY = """Custom User-Agent string for the Cloudflare WebView bypass.
             |Leave blank to use the default.
         """.trimMargin()

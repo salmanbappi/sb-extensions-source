@@ -39,7 +39,6 @@ import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Response
-import org.jsoup.Jsoup
 
 data class KwikContent(val cookies: String, val html: String, val finalUrl: String)
 
@@ -65,11 +64,6 @@ class KwikExtractor(
         headers.newBuilder()
             .set("Origin", "https://kwik.cx")
             .set("Referer", "https://kwik.cx/")
-            .apply {
-                if (!cfBypassUserAgent.isNullOrBlank()) {
-                    set("User-Agent", cfBypassUserAgent)
-                }
-            }
             .build()
     }
 
@@ -84,8 +78,8 @@ class KwikExtractor(
     }
 
     suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String {
-        val kwikContent = fetchKwikHtml(kwikUrl, referer)
-        val eContent = Jsoup.parse(kwikContent.html)
+        val eContent = client.newCall(GET(kwikUrl, headers.newBuilder().set("Referer", referer).build()))
+            .awaitSuccess().useAsJsoup()
         val script = eContent.selectFirst("script:containsData(eval\\(function)")?.data()
             ?.substringAfterLast("eval(function(")
             ?: throw KwikException.ExtractionException("JsUnpacker not found.")
@@ -105,40 +99,11 @@ class KwikExtractor(
     }
 
     suspend fun getStreamUrlFromKwik(paheUrl: String): String {
-        var location: String? = null
-        var cfResult: CloudFlareBypassResult? = null
-        var redirectTries = 0
-        val redirectLimit = 3
-
-        while (location == null && redirectTries < redirectLimit) {
-            redirectTries++
-            val reqHeaders = headers.newBuilder().apply {
-                cfResult?.let {
-                    set("Cookie", it.cookies)
-                    set("User-Agent", it.userAgent)
-                } ?: run {
-                    if (!cfBypassUserAgent.isNullOrBlank()) {
-                        set("User-Agent", cfBypassUserAgent)
-                    }
-                }
-            }.build()
-
-            try {
-                noRedirectClient.newCall(GET("$paheUrl/i", reqHeaders)).await().use { response ->
-                    if (response.code in listOf(403, 503, 419)) {
-                        cfResult = CloudflareBypass().getCookies(paheUrl, cfBypassUserAgent)
-                            ?: throw KwikException.CloudflareBlockedException("Cloudflare bypass failed for Pahe redirect.")
-                    } else {
-                        location = response.header("location")
-                    }
-                }
-            } catch (e: Exception) {
-                if (redirectTries >= redirectLimit) throw e
-            }
+        val kwikUrl = noRedirectClient.newCall(GET("$paheUrl/i", headers)).await().use { response ->
+            val location = response.header("location")
+                ?: throw KwikException.ExtractionException("Pahe redirect failed: No location header found.")
+            "https://" + location.substringAfterLast("https://")
         }
-
-        val kwikUrl = location?.let { "https://" + it.substringAfterLast("https://") }
-            ?: throw KwikException.ExtractionException("Pahe redirect failed: No location header found after $redirectTries attempts.")
 
         var (fContentCookies, fContentString, fContentUrl) = fetchKwikHtml(kwikUrl)
 
@@ -194,19 +159,17 @@ class KwikExtractor(
         return kwikLocation ?: throw KwikException.ExtractionException("Failed to extract stream URI after $tries attempts.")
     }
 
-    private suspend fun fetchKwikHtml(kwikUrl: String, referer: String = "https://kwik.cx/"): KwikContent {
+    private suspend fun fetchKwikHtml(kwikUrl: String): KwikContent {
         suspend fun attemptKwikFetch(cfResult: CloudFlareBypassResult?): KwikContent? {
             // Use `Headers.Builder()` because we want to use the default User-Agent from the app,
             // since that would be the one used when open webview manually
             val headers = Headers.Builder()
                 .set("Origin", "https://kwik.cx")
-                .set("Referer", referer)
+                .set("Referer", "https://kwik.cx/")
                 .apply {
                     if (cfResult != null) {
                         set("Cookie", cfResult.cookies)
                         set("User-Agent", cfResult.userAgent)
-                    } else if (!cfBypassUserAgent.isNullOrBlank()) {
-                        set("User-Agent", cfBypassUserAgent)
                     }
                 }
                 .build()
