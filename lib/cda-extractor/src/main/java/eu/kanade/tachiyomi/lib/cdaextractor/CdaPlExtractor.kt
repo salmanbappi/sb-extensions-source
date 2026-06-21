@@ -29,8 +29,8 @@ class CdaPlExtractor(private val client: OkHttpClient) {
             GET(url, headers = embedHeaders),
         ).execute().asJsoup()
 
-        //Nic lepszego nie wymyśliłem jak ktoś kto przegląda ten kod znajdzie sposób lepszy to chetnie przyjme radę <3
-        //Do you have any idea how to write it differently? I will accept advice!
+        // Nic lepszego nie wymyśliłem jak ktoś kto przegląda ten kod znajdzie sposób lepszy to chetnie przyjme radę <3
+        // Do you have any idea how to write it differently? I will accept advice!
 
         val deletedMessage = "Materiał na który wskazywał ten link został usunięty przez jego właściciela lub Administratora!"
 
