@@ -69,9 +69,9 @@ class CNCVerseSource(
             val request = chain.request()
             val url = request.url.toString()
             if (url.contains("net52.cc") || url.contains("net11.cc")) {
-                val cookieVal = getBypassCookie()
+                var cookieVal = getBypassCookie()
                 if (cookieVal.isNotEmpty()) {
-                    val cookieHeader = buildString {
+                    var cookieHeader = buildString {
                         append("t_hash_t=$cookieVal")
                         append("; ott=$ott")
                         append("; hd=on")
@@ -79,10 +79,34 @@ class CNCVerseSource(
                             append("; studio=$studio")
                         }
                     }
-                    val newRequest = request.newBuilder()
+                    val refererUrl = if (url.contains("/home")) "$baseUrl/mobile/home?app=1" else "$baseUrl/home"
+                    var newRequest = request.newBuilder()
                         .header("Cookie", cookieHeader)
+                        .header("Referer", refererUrl)
                         .build()
-                    return@addInterceptor chain.proceed(newRequest)
+                    var response = chain.proceed(newRequest)
+
+                    if (response.code == 302 || response.request.url.toString().contains("verify")) {
+                        response.close()
+                        clearBypassCookie()
+                        cookieVal = getBypassCookie(force = true)
+                        if (cookieVal.isNotEmpty()) {
+                            cookieHeader = buildString {
+                                append("t_hash_t=$cookieVal")
+                                append("; ott=$ott")
+                                append("; hd=on")
+                                if (studio.isNotEmpty()) {
+                                    append("; studio=$studio")
+                                }
+                            }
+                            newRequest = request.newBuilder()
+                                .header("Cookie", cookieHeader)
+                                .header("Referer", refererUrl)
+                                .build()
+                            response = chain.proceed(newRequest)
+                        }
+                    }
+                    return@addInterceptor response
                 }
             }
             chain.proceed(request)
@@ -542,10 +566,10 @@ class CNCVerseSource(
         private var cookieTimestamp = 0L
 
         @Synchronized
-        private fun getBypassCookie(): String {
+        private fun getBypassCookie(force: Boolean = false): String {
             val now = System.currentTimeMillis()
-            val savedCookie = sharedPreferences.getString("nf_cookie", null)
-            val savedTimestamp = sharedPreferences.getLong("nf_cookie_timestamp", 0L)
+            val savedCookie = if (force) null else sharedPreferences.getString("nf_cookie", null)
+            val savedTimestamp = if (force) 0L else sharedPreferences.getLong("nf_cookie_timestamp", 0L)
 
             if (!savedCookie.isNullOrEmpty() && now - savedTimestamp < 54_000_000) {
                 cookieValue = savedCookie
@@ -608,6 +632,16 @@ class CNCVerseSource(
                 e.printStackTrace()
             }
             return cookieValue
+        }
+
+        @Synchronized
+        private fun clearBypassCookie() {
+            cookieValue = ""
+            cookieTimestamp = 0L
+            sharedPreferences.edit()
+                .remove("nf_cookie")
+                .remove("nf_cookie_timestamp")
+                .apply()
         }
 
         private fun decodeBase64(value: String): String = String(android.util.Base64.decode(value, android.util.Base64.DEFAULT))
