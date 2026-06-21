@@ -35,11 +35,11 @@ import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.useAsJsoup
-import org.jsoup.Jsoup
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Response
+import org.jsoup.Jsoup
 
 data class KwikContent(val cookies: String, val html: String, val finalUrl: String)
 
