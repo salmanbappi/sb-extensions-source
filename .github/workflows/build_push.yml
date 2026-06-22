@@ -227,3 +227,14 @@ jobs:
         run: |
           curl https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.min.json
 
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ls repo/apk/*.apk 1> /dev/null 2>&1; then
+            gh release create "r-${{ github.run_number }}" repo/apk/*.apk --title "Release r-${{ github.run_number }}" --notes "Release for run ${{ github.run_number }}"
+          else
+            echo "No APKs found to release"
+          fi
+
+
