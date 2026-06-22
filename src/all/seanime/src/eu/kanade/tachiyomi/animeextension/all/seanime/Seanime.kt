@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -156,11 +157,18 @@ data class OnlineEpisodeSourceDataDto(
 )
 
 @Serializable
+data class OnlineSubtitleDto(
+    val url: String,
+    val language: String,
+)
+
+@Serializable
 data class OnlineVideoSourceDto(
     val url: String,
     val server: String,
     val quality: String,
     val headers: Map<String, String> = emptyMap(),
+    val subtitles: List<OnlineSubtitleDto> = emptyList(),
 )
 
 @Serializable
@@ -929,19 +937,9 @@ class Seanime :
                     throw Exception("No online streaming extensions installed in Seanime.")
                 }
 
-                val preferredProvider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)!!
-                val selectedProviders = if (preferredProvider.isNotBlank()) {
-                    providers.filter { provider ->
-                        provider.id.contains(preferredProvider, ignoreCase = true) ||
-                            (provider.name?.contains(preferredProvider, ignoreCase = true) == true)
-                    }.ifEmpty { providers }
-                } else {
-                    providers
-                }
-
-                // 2. Concurrently fetch video sources from selected providers
-                var videoList = withContext(Dispatchers.IO) {
-                    selectedProviders.map { provider ->
+                // 2. Concurrently fetch video sources from all providers
+                val videoList = withContext(Dispatchers.IO) {
+                    providers.map { provider ->
                         async {
                             try {
                                 val body = buildJsonObject {
@@ -966,48 +964,33 @@ class Seanime :
                     }.awaitAll().filterNotNull()
                 }
 
-                // Fallback to remaining providers if preferred provider returned no video sources
-                if (videoList.isEmpty() && selectedProviders.size < providers.size) {
-                    val remainingProviders = providers - selectedProviders.toSet()
-                    val fallbackList = withContext(Dispatchers.IO) {
-                        remainingProviders.map { provider ->
-                            async {
-                                try {
-                                    val body = buildJsonObject {
-                                        put("episodeNumber", episodeNumber)
-                                        put("mediaId", mediaId)
-                                        put("provider", provider.id)
-                                        put("dubbed", dubbed)
-                                    }.toRequestBody(json)
-
-                                    val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-source", headers, body)).await()
-                                    if (response.isSuccessful) {
-                                        val sourceDto = response.parseAs<OnlineEpisodeSourceDto>(json)
-                                        provider to sourceDto.data.videoSources
-                                    } else {
-                                        response.close()
-                                        null
-                                    }
-                                } catch (e: Exception) {
-                                    null
-                                }
-                            }
-                        }.awaitAll().filterNotNull()
-                    }
-                    videoList = fallbackList
-                }
-
                 val allVideos = videoList.flatMap { (provider, videoSources) ->
                     val providerName = provider.name ?: provider.id.replaceFirstChar { it.uppercase() }
                     videoSources.flatMap { vs ->
-                        val videoHeaders = okhttp3.Headers.Builder().apply {
-                            headers.forEach { (name, value) -> add(name, value) }
-                            vs.headers.forEach { (k, v) -> set(k, v) }
-                        }.build()
+                        val useProxy = vs.headers.isNotEmpty()
+                        val videoUrl = if (useProxy) {
+                            val headersJson = buildJsonObject {
+                                vs.headers.forEach { (k, v) -> put(k, v) }
+                            }.toString()
+                            val encodedHeaders = URLEncoder.encode(headersJson, "UTF-8")
+                            val encodedUrl = URLEncoder.encode(vs.url, "UTF-8")
+                            "$baseUrl/api/v1/proxy?headers=$encodedHeaders&url=$encodedUrl"
+                        } else {
+                            vs.url
+                        }
+
+                        val videoHeaders = if (useProxy) {
+                            headers
+                        } else {
+                            okhttp3.Headers.Builder().build()
+                        }
 
                         val audioType = if (dubbed) "Dub" else "Sub"
                         val formattedTitle = "[$providerName] ${vs.server} (${vs.quality} - $audioType)"
-                        listOf(Video(videoUrl = vs.url, videoTitle = formattedTitle, headers = videoHeaders))
+                        val subtitleTracks = vs.subtitles.map { sub ->
+                            Track(sub.url, sub.language)
+                        }
+                        listOf(Video(videoUrl = videoUrl, videoTitle = formattedTitle, headers = videoHeaders, subtitleTracks = subtitleTracks))
                     }
                 }
 
@@ -1260,13 +1243,13 @@ class Seanime :
 
         EditTextPreference(screen.context).apply {
             key = PREF_PREFERRED_PROVIDER
-            title = "[Online] Preferred Streaming Provider"
+            title = "[Online] Preferred Episode Provider"
             summary = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER).let {
                 if (it.isNullOrBlank()) "Not set (queries all installed extensions)" else "Current: $it"
             }
             setDefaultValue(DEFAULT_PREFERRED_PROVIDER)
-            dialogTitle = "Preferred Streaming Provider"
-            dialogMessage = "Keyword or ID of the online extension/scraper to query for episodes and streams."
+            dialogTitle = "Preferred Episode Provider"
+            dialogMessage = "Keyword or ID of the online extension/scraper to query for the episode list. Video streams will be queried from all installed providers."
             setOnPreferenceChangeListener { pref, newValue ->
                 val value = (newValue as String).trim()
                 pref.summary = if (value.isBlank()) "Not set (queries all installed extensions)" else "Current: $value"
