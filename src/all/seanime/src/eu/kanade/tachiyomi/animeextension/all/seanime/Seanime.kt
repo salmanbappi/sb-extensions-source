@@ -11,7 +11,6 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
-import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -157,18 +156,11 @@ data class OnlineEpisodeSourceDataDto(
 )
 
 @Serializable
-data class OnlineSubtitleDto(
-    val url: String,
-    val language: String,
-)
-
-@Serializable
 data class OnlineVideoSourceDto(
     val url: String,
     val server: String,
     val quality: String,
     val headers: Map<String, String> = emptyMap(),
-    val subtitles: List<OnlineSubtitleDto> = emptyList(),
 )
 
 @Serializable
@@ -967,30 +959,14 @@ class Seanime :
                 val allVideos = videoList.flatMap { (provider, videoSources) ->
                     val providerName = provider.name ?: provider.id.replaceFirstChar { it.uppercase() }
                     videoSources.flatMap { vs ->
-                        val useProxy = vs.headers.isNotEmpty()
-                        val videoUrl = if (useProxy) {
-                            val headersJson = buildJsonObject {
-                                vs.headers.forEach { (k, v) -> put(k, v) }
-                            }.toString()
-                            val encodedHeaders = URLEncoder.encode(headersJson, "UTF-8")
-                            val encodedUrl = URLEncoder.encode(vs.url, "UTF-8")
-                            "$baseUrl/api/v1/proxy?headers=$encodedHeaders&url=$encodedUrl"
-                        } else {
-                            vs.url
-                        }
-
-                        val videoHeaders = if (useProxy) {
-                            headers
-                        } else {
-                            okhttp3.Headers.Builder().build()
-                        }
+                        val videoHeaders = okhttp3.Headers.Builder().apply {
+                            headers.forEach { (name, value) -> add(name, value) }
+                            vs.headers.forEach { (k, v) -> set(k, v) }
+                        }.build()
 
                         val audioType = if (dubbed) "Dub" else "Sub"
                         val formattedTitle = "[$providerName] ${vs.server} (${vs.quality} - $audioType)"
-                        val subtitleTracks = vs.subtitles.map { sub ->
-                            Track(sub.url, sub.language)
-                        }
-                        listOf(Video(videoUrl = videoUrl, videoTitle = formattedTitle, headers = videoHeaders, subtitleTracks = subtitleTracks))
+                        listOf(Video(videoUrl = vs.url, videoTitle = formattedTitle, headers = videoHeaders))
                     }
                 }
 
@@ -1107,13 +1083,11 @@ class Seanime :
             ?.mapNotNull { edge ->
                 val node = edge.node ?: return@mapNotNull null
                 val prefix = if (edge.relationType == "PREQUEL") "Prequel: " else "Sequel: "
-                val animeTitle = prefix + (
-                    node.title?.userPreferred
-                        ?: node.title?.english
-                        ?: node.title?.romaji
-                        ?: "Anime ${node.id}"
-                    )
-
+                val animeTitle = prefix + (node.title?.userPreferred
+                    ?: node.title?.english
+                    ?: node.title?.romaji
+                    ?: "Anime ${node.id}")
+                
                 SAnime.create().apply {
                     title = animeTitle
                     thumbnail_url = node.coverImage?.large
@@ -1131,7 +1105,7 @@ class Seanime :
             ?.mapNotNull { node ->
                 val rec = node.mediaRecommendation ?: return@mapNotNull null
                 if (rec.type != "ANIME" || prequelSequelIds.contains(rec.id)) return@mapNotNull null
-
+                
                 val animeTitle = rec.title?.userPreferred
                     ?: rec.title?.english
                     ?: rec.title?.romaji
