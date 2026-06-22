@@ -1083,11 +1083,13 @@ class Seanime :
             ?.mapNotNull { edge ->
                 val node = edge.node ?: return@mapNotNull null
                 val prefix = if (edge.relationType == "PREQUEL") "Prequel: " else "Sequel: "
-                val animeTitle = prefix + (node.title?.userPreferred
-                    ?: node.title?.english
-                    ?: node.title?.romaji
-                    ?: "Anime ${node.id}")
-                
+                val animeTitle = prefix + (
+                    node.title?.userPreferred
+                        ?: node.title?.english
+                        ?: node.title?.romaji
+                        ?: "Anime ${node.id}"
+                    )
+
                 SAnime.create().apply {
                     title = animeTitle
                     thumbnail_url = node.coverImage?.large
@@ -1105,7 +1107,7 @@ class Seanime :
             ?.mapNotNull { node ->
                 val rec = node.mediaRecommendation ?: return@mapNotNull null
                 if (rec.type != "ANIME" || prequelSequelIds.contains(rec.id)) return@mapNotNull null
-                
+
                 val animeTitle = rec.title?.userPreferred
                     ?: rec.title?.english
                     ?: rec.title?.romaji
