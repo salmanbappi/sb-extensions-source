@@ -228,6 +228,7 @@ jobs:
           curl https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.min.json
 
       - name: Create GitHub Release
+        working-directory: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
