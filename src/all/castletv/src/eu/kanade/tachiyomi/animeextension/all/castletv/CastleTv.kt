@@ -70,7 +70,7 @@ class CastleTv : Source() {
         null
     }
 
-    private suspend fun fetchPage(page: Int): List<SAnime> {
+    private suspend fun fetchPage(page: Int, categoryFilter: String = ""): List<SAnime> {
         val securityKey = getSecurityKey() ?: return emptyList()
         val url = "$baseUrl/film-api/v0.1/category/home?channel=IndiaA&clientType=1&clientType=1&lang=en-US&locationId=1001&mode=1&packageName=com.external.castle&page=$page&size=17"
         val response = client.newCall(GET(url)).execute()
@@ -85,6 +85,9 @@ class CastleTv : Source() {
         val decryptedResponse = json.decodeFromString<DecryptedResponse>(decryptedJson)
         val list = mutableListOf<SAnime>()
         decryptedResponse.data.rows?.forEach { row ->
+            if (categoryFilter.isNotBlank() && row.name?.contains(categoryFilter, ignoreCase = true) != true) {
+                return@forEach
+            }
             row.contents?.forEach { content ->
                 val title = content.title ?: return@forEach
                 val id = content.redirectId?.toString() ?: return@forEach
@@ -109,7 +112,20 @@ class CastleTv : Source() {
     override suspend fun getLatestUpdates(page: Int): AnimesPage = getPopularAnime(page)
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        if (query.isBlank()) return AnimesPage(emptyList(), false)
+        var categoryFilter = ""
+        for (filter in filters) {
+            if (filter is CategoryFilter && filter.state > 0) {
+                categoryFilter = filter.values[filter.state]
+            }
+        }
+
+        // Category-only browse (no query)
+        if (query.isBlank()) {
+            val list = fetchPage(page, categoryFilter)
+            return AnimesPage(list, list.isNotEmpty())
+        }
+
+        // Keyword search
         val securityKey = getSecurityKey() ?: return AnimesPage(emptyList(), false)
         val searchUrl = "$baseUrl/film-api/v1.1.0/movie/searchByKeyword?channel=IndiaA&clientType=1&clientType=1&keyword=${URLEncoder.encode(query, "UTF-8")}&lang=en-US&mode=1&packageName=com.external.castle&page=$page&size=30"
 
@@ -121,25 +137,10 @@ class CastleTv : Source() {
         val searchResponse = json.decodeFromString<SearchApiResponse>(decryptedJson)
         val searchData = searchResponse.data
 
-        var typeFilterValue = 0
-        for (filter in filters) {
-            if (filter is TypeFilter) {
-                typeFilterValue = filter.state
-            }
-        }
-
         val list = searchData.rows?.mapNotNull { item ->
             val title = item.title ?: return@mapNotNull null
             val id = item.id?.toString() ?: return@mapNotNull null
             val posterUrl = item.coverVerticalImage ?: item.coverHorizontalImage ?: ""
-            val movieType = item.movieType ?: 2
-
-            if (typeFilterValue == 1 && movieType != 2) {
-                return@mapNotNull null
-            }
-            if (typeFilterValue == 2 && movieType == 2) {
-                return@mapNotNull null
-            }
 
             SAnime.create().apply {
                 this.title = title
