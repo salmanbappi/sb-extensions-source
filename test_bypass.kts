@@ -19,4 +19,3 @@ conn.outputStream.write(formBody.toByteArray())
 val cookies = conn.headerFields["Set-Cookie"]
 println("Response Code: ${conn.responseCode}")
 println("Cookies: $cookies")
-
