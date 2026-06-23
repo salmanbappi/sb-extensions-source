@@ -174,18 +174,22 @@ class AniDB : Source() {
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val data = response.parseAs<EpisodeListDto>()
+        val minEpNumber = data.episodes.minOfOrNull { it.number } ?: 0f
+        val offset = if (minEpNumber > 1f) minEpNumber - 1f else 0f
         return data.episodes.map { ep ->
             SEpisode.create().apply {
-                val label = if (ep.number2 != null && ep.number2 != 0f && ep.number2 != ep.number) {
-                    "${ep.number.toInt()}–${ep.number2.toInt()}"
+                val adjustedNumber = ep.number - offset
+                val adjustedNumber2 = ep.number2?.let { it - offset }
+                val label = if (adjustedNumber2 != null && adjustedNumber2 != 0f && adjustedNumber2 != adjustedNumber) {
+                    "${adjustedNumber.toInt()}–${adjustedNumber2.toInt()}"
                 } else {
-                    ep.number.toInt().toString()
+                    adjustedNumber.toInt().toString()
                 }
                 name = "Episode $label"
                 if (ep.filler) {
                     name += " (Filler)"
                 }
-                episode_number = ep.number
+                episode_number = adjustedNumber
                 url = ep.id.toString()
             }
         }.reversed()
