@@ -70,9 +70,9 @@ class CastleTv : Source() {
         null
     }
 
-    private suspend fun fetchPage(page: Int, categoryFilter: String = ""): List<SAnime> {
+    private suspend fun fetchPage(page: Int, categoryFilter: String = "", locationId: String = "1001"): List<SAnime> {
         val securityKey = getSecurityKey() ?: return emptyList()
-        val url = "$baseUrl/film-api/v0.1/category/home?channel=IndiaA&clientType=1&clientType=1&lang=en-US&locationId=1001&mode=1&packageName=com.external.castle&page=$page&size=17"
+        val url = "$baseUrl/film-api/v0.1/category/home?channel=IndiaA&clientType=1&clientType=1&lang=en-US&locationId=$locationId&mode=1&packageName=com.external.castle&page=$page&size=17"
         val response = client.newCall(GET(url)).execute()
         val text = response.body.string()
         val apiResponse = try {
@@ -113,15 +113,37 @@ class CastleTv : Source() {
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         var categoryFilter = ""
+        var locationId = "1001"
         for (filter in filters) {
+            if (filter is SectionFilter && filter.state > 0) {
+                locationId = when (filter.values[filter.state]) {
+                    "Home" -> "1001"
+                    "TV Shows" -> "1002"
+                    "Movies" -> "1003"
+                    "Anime" -> "1069"
+                    else -> "1001"
+                }
+            }
             if (filter is CategoryFilter && filter.state > 0) {
-                categoryFilter = filter.values[filter.state]
+                val selectedCategory = filter.values[filter.state]
+                if (selectedCategory != "All") {
+                    categoryFilter = when (selectedCategory) {
+                        "Anime (Home)" -> "Anime"
+                        "Anime (TV Shows)" -> "Anime"
+                        "Hottest International Film" -> "Hottest International Film 🔥"
+                        "Korean Drama Hindi dubbed" -> "Korean  Drama Hindi dubbed"
+                        "International Movies" -> "International Movies  "
+                        "Bollywood" -> "Bollywood "
+                        else -> selectedCategory
+                    }
+                    locationId = getCategoryLocation(selectedCategory)
+                }
             }
         }
 
         // Category-only browse (no query)
         if (query.isBlank()) {
-            val list = fetchPage(page, categoryFilter)
+            val list = fetchPage(page, categoryFilter, locationId)
             return AnimesPage(list, list.isNotEmpty())
         }
 
