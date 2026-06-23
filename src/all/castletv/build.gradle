@@ -1,0 +1,13 @@
+ext {
+    extName = 'Castle TV'
+    extClass = '.CastleTv'
+    extVersionCode = 1
+}
+
+apply from: "$rootDir/common.gradle"
+
+android {
+    defaultConfig {
+        manifestPlaceholders.appName = "Castle TV"
+    }
+}
