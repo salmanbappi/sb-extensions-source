@@ -91,7 +91,7 @@ class CastleTv : Source() {
                 val coverImg = content.coverImage ?: return@forEach
                 list.add(
                     SAnime.create().apply {
-                        this.name = title
+                        this.title = title
                         this.url = id
                         thumbnail_url = coverImg
                     },
@@ -142,7 +142,7 @@ class CastleTv : Source() {
             }
 
             SAnime.create().apply {
-                this.name = title
+                this.title = title
                 this.url = id
                 thumbnail_url = posterUrl
             }
@@ -166,10 +166,10 @@ class CastleTv : Source() {
         val detailsResponse = json.decodeFromString<MovieDetailsResponse>(decryptedJson)
         val details = detailsResponse.data
 
-        val animeName = anime.name
+        val animeTitle = anime.title
         val animeThumbnail = anime.thumbnail_url
         return SAnime.create().apply {
-            this.name = details.title ?: animeName
+            title = details.title ?: animeTitle
             thumbnail_url = details.coverVerticalImage ?: details.coverHorizontalImage ?: animeThumbnail
             description = details.briefIntroduction
             genre = details.tags?.joinToString(", ")
@@ -215,9 +215,10 @@ class CastleTv : Source() {
                             if (seasonDecrypted != null) {
                                 val seasonDetails = json.decodeFromString<MovieDetailsResponse>(seasonDecrypted).data
                                 seasonDetails.episodes?.forEach { ep ->
+                                    val epName = "S$seasonNumber E${ep.number ?: 0} - ${ep.title ?: ""}"
                                     episodes.add(
                                         SEpisode.create().apply {
-                                            this.name = "S$seasonNumber E${ep.number ?: 0} - ${ep.title ?: ""}"
+                                            name = epName
                                             url = "${seasonId}_${ep.id}"
                                             episode_number = ep.number?.toFloat() ?: 0f
                                             date_upload = ep.onlineTime ?: 0L
@@ -232,9 +233,10 @@ class CastleTv : Source() {
                 }
             } else {
                 details.episodes?.forEachIndexed { index, ep ->
+                    val epName = "Episode ${ep.number ?: (index + 1)} - ${ep.title ?: ""}"
                     episodes.add(
                         SEpisode.create().apply {
-                            this.name = "Episode ${ep.number ?: (index + 1)} - ${ep.title ?: ""}"
+                            name = epName
                             url = "${details.id}_${ep.id}"
                             episode_number = ep.number?.toFloat() ?: (index + 1).toFloat()
                             date_upload = ep.onlineTime ?: 0L
@@ -244,9 +246,10 @@ class CastleTv : Source() {
             }
         } else {
             val ep = details.episodes?.firstOrNull()
+            val movieName = details.title ?: "Movie"
             episodes.add(
                 SEpisode.create().apply {
-                    this.name = details.title ?: "Movie"
+                    name = movieName
                     url = "${details.id}_${ep?.id}"
                     episode_number = 1f
                     date_upload = details.publishTime ?: 0L
