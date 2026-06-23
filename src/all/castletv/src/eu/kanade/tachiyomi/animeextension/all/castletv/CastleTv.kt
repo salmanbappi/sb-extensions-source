@@ -29,7 +29,7 @@ class CastleTv : Source() {
     override val supportsLatest = true
 
     private val suffix: String
-        get() = preferences.getString(PREF_SUFFIX, "w4rQ=n") ?: "w4rQ=n"
+        get() = preferences.getString(PREF_SUFFIX, "T!BgJB") ?: "T!BgJB"
 
     private fun deriveKey(apiKeyB64: String): ByteArray {
         val apiKeyBytes = android.util.Base64.decode(apiKeyB64, android.util.Base64.DEFAULT)
@@ -427,9 +427,9 @@ class CastleTv : Source() {
         )
         screen.addEditTextPreference(
             key = PREF_SUFFIX,
-            default = "w4rQ=n",
+            default = "T!BgJB",
             title = "Decryption Key Suffix",
-            summary = "Suffix appended to decoded security key before AES decryption (default: w4rQ=n)",
+            summary = "Suffix appended to decoded security key before AES decryption (default: T!BgJB)",
         )
     }
 
