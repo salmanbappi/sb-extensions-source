@@ -10,7 +10,6 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.addEditTextPreference
-import kotlinx.serialization.decodeFromString
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
