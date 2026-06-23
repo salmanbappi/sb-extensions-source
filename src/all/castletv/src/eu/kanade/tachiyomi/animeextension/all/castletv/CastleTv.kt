@@ -182,9 +182,9 @@ class CastleTv : Source() {
 
         return finalItems.map { content ->
             SAnime.create().apply {
-                title = content.title ?: ""
-                url = content.redirectId?.toString() ?: ""
-                thumbnail_url = content.coverImage ?: ""
+                this.title = content.title ?: ""
+                this.url = content.redirectId?.toString() ?: ""
+                this.thumbnail_url = content.coverImage ?: ""
             }
         }
     }
@@ -410,7 +410,7 @@ class CastleTv : Source() {
                                             url = "${seasonId}_${ep.id}"
                                             episode_number = ep.number?.toFloat() ?: 0f
                                             date_upload = ep.onlineTime ?: 0L
-                                            thumbnail_url = ep.coverImage
+                                            preview_url = ep.coverImage
                                         },
                                     )
                                 }
@@ -429,7 +429,7 @@ class CastleTv : Source() {
                             url = "${details.id}_${ep.id}"
                             episode_number = ep.number?.toFloat() ?: (index + 1).toFloat()
                             date_upload = ep.onlineTime ?: 0L
-                            thumbnail_url = ep.coverImage
+                            preview_url = ep.coverImage
                         },
                     )
                 }
@@ -443,7 +443,7 @@ class CastleTv : Source() {
                     url = "${details.id}_${ep?.id}"
                     episode_number = 1f
                     date_upload = details.publishTime ?: 0L
-                    thumbnail_url = ep?.coverImage ?: details.coverVerticalImage ?: details.coverHorizontalImage
+                    preview_url = ep?.coverImage ?: details.coverVerticalImage ?: details.coverHorizontalImage
                 },
             )
         }
