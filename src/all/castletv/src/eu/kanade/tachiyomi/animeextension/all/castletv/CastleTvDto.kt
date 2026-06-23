@@ -58,7 +58,7 @@ data class ContentItem(
     val order: Int? = null,
     val unlockPlayback: Boolean? = null,
     val languages: List<String>? = null,
-    val excludeChannelIds: List<String>? = null,
+    val excludeChannelIds: List<Int>? = null,
     val memberLevel: Int? = null,
     val standardExpireTime: Long? = null,
     val indiaResolutionLabel: String? = null,

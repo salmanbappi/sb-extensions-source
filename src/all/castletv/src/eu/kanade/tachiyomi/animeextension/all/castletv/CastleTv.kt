@@ -70,9 +70,19 @@ class CastleTv : Source() {
         null
     }
 
-    private suspend fun fetchPage(page: Int, categoryFilter: String = "", locationId: String = "1001"): List<SAnime> {
+    private suspend fun fetchPage(
+        page: Int,
+        categoryFilter: String = "",
+        locationId: String = "1001",
+        genre: String = "All",
+        platform: String = "All",
+        language: String = "All",
+        region: String = "All",
+        year: String = "All",
+        sort: String = "Default",
+    ): List<SAnime> {
         val securityKey = getSecurityKey() ?: return emptyList()
-        val url = "$baseUrl/film-api/v0.1/category/home?channel=IndiaA&clientType=1&clientType=1&lang=en-US&locationId=$locationId&mode=1&packageName=com.external.castle&page=$page&size=17"
+        val url = "$baseUrl/film-api/v0.1/category/home?channel=IndiaA&clientType=1&clientType=1&lang=en-US&locationId=$locationId&mode=1&packageName=com.external.castle&page=$page&size=50"
         val response = client.newCall(GET(url)).execute()
         val text = response.body.string()
         val apiResponse = try {
@@ -83,25 +93,100 @@ class CastleTv : Source() {
         val encryptedData = apiResponse.data ?: return emptyList()
         val decryptedJson = decryptData(encryptedData, securityKey) ?: return emptyList()
         val decryptedResponse = json.decodeFromString<DecryptedResponse>(decryptedJson)
-        val list = mutableListOf<SAnime>()
+        val filteredItems = mutableListOf<ContentItem>()
+        val sdf = java.text.SimpleDateFormat("yyyy", java.util.Locale.US)
+
         decryptedResponse.data.rows?.forEach { row ->
+            // 1. Filter rows by category filter if specified
             if (categoryFilter.isNotBlank() && row.name?.contains(categoryFilter, ignoreCase = true) != true) {
                 return@forEach
             }
+
+            // 2. Filter rows by Genre if selected
+            if (genre != "All") {
+                val rowName = row.name ?: ""
+                val matchesGenre = when (genre) {
+                    "Action" -> rowName.contains("Action", true) || rowName.contains("Adventure", true) || rowName.contains("Superheroes", true) || rowName.contains("Marvel", true) || rowName.contains("X-Men", true)
+                    "Drama" -> rowName.contains("Drama", true) || rowName.contains("Reality", true)
+                    "Comedy" -> rowName.contains("Comedy", true) || rowName.contains("Hilarious", true)
+                    "Romance" -> rowName.contains("Romance", true) || rowName.contains("Romantic", true) || rowName.contains("Sweet love", true)
+                    "Thriller/Crime" -> rowName.contains("Thriller", true) || rowName.contains("Crime", true) || rowName.contains("Mystery", true) || rowName.contains("Supernatural", true)
+                    "Sci-Fi/Adventure" -> rowName.contains("Sci-Fi", true) || rowName.contains("Adventure", true) || rowName.contains("Superheroes", true) || rowName.contains("Marvel", true) || rowName.contains("X-Men", true)
+                    "Fantasy/Mystery" -> rowName.contains("Fantasy", true) || rowName.contains("Mystery", true) || rowName.contains("Supernatural", true)
+                    "Cartoon/Animation" -> rowName.contains("Cartoon", true) || rowName.contains("Anime", true) || rowName.contains("Kids", true)
+                    else -> true
+                }
+                if (!matchesGenre) return@forEach
+            }
+
+            // 3. Filter rows by Platform if selected
+            if (platform != "All") {
+                val rowName = row.name ?: ""
+                val matchesPlatform = when (platform) {
+                    "Netflix" -> rowName.contains("Netflix", true)
+                    "Disney+ Hotstar" -> rowName.contains("Disney", true) || rowName.contains("Hotstar", true) || rowName.contains("Marvel", true)
+                    "Zee5" -> rowName.contains("Zee", true) || rowName.contains("Z5", true)
+                    "Prime Video" -> rowName.contains("Prime", true) || rowName.contains("Amazon", true)
+                    "MX Player" -> rowName.contains("MX", true)
+                    "Crunchyroll" -> rowName.contains("Anime", true)
+                    else -> true
+                }
+                if (!matchesPlatform) return@forEach
+            }
+
             row.contents?.forEach { content ->
-                val title = content.title ?: return@forEach
-                val id = content.redirectId?.toString() ?: return@forEach
-                val coverImg = content.coverImage ?: return@forEach
-                list.add(
-                    SAnime.create().apply {
-                        this.title = title
-                        this.url = id
-                        thumbnail_url = coverImg
-                    },
-                )
+                // 4. Filter items by Language
+                if (language != "All") {
+                    val hasLanguage = content.languages?.any { it.contains(language, true) } == true
+                    if (!hasLanguage) return@forEach
+                }
+
+                // 5. Filter items by Region (approximate)
+                if (region != "All") {
+                    val title = content.title ?: ""
+                    val langs = content.languages ?: emptyList()
+                    val matchesRegion = when (region) {
+                        "India" -> title.contains("Bollywood", true) || title.contains("Tollywood", true) || langs.any { it.equals("Hindi", true) || it.equals("Tamil", true) || it.equals("Telugu", true) || it.equals("Malayalam", true) || it.equals("Kannada", true) || it.equals("Bengali", true) }
+                        "United States" -> langs.any { it.equals("English", true) } && !title.contains("Bollywood", true) && !title.contains("Tollywood", true)
+                        "South Korea" -> title.contains("Korean", true) || langs.any { it.equals("Korean", true) }
+                        "Japan" -> title.contains("Anime", true) || langs.any { it.equals("Japanese", true) }
+                        else -> true
+                    }
+                    if (!matchesRegion) return@forEach
+                }
+
+                // 6. Filter items by Year
+                if (year != "All") {
+                    val pTime = content.publishTime ?: 0L
+                    val itemYear = if (pTime > 0) sdf.format(java.util.Date(pTime)) else ""
+                    if (year == "Older") {
+                        val numericYear = itemYear.toIntOrNull()
+                        if (numericYear != null && numericYear >= 2015) return@forEach
+                    } else {
+                        if (itemYear != year) return@forEach
+                    }
+                }
+
+                filteredItems.add(content)
             }
         }
-        return list.distinctBy { it.url }
+
+        // 7. Sort the items
+        var finalItems: List<ContentItem> = filteredItems.distinctBy { it.redirectId }
+        finalItems = when (sort) {
+            "Latest" -> finalItems.sortedByDescending { it.publishTime ?: 0L }
+            "Most Viewed (Heat)" -> finalItems.sortedByDescending { it.heat ?: 0 }
+            "Rating" -> finalItems.sortedByDescending { it.score ?: 0.0 }
+            else -> finalItems
+        }
+
+        return finalItems.map { content ->
+            SAnime.create().apply {
+                title = content.title ?: ""
+                url = content.redirectId?.toString() ?: ""
+                thumbnail_url = content.coverImage ?: ""
+            }
+        }
     }
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -114,6 +199,13 @@ class CastleTv : Source() {
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         var categoryFilter = ""
         var locationId = "1001"
+        var genre = "All"
+        var platform = "All"
+        var language = "All"
+        var region = "All"
+        var year = "All"
+        var sort = "Default"
+
         for (filter in filters) {
             if (filter is SectionFilter && filter.state > 0) {
                 locationId = when (filter.values[filter.state]) {
@@ -139,17 +231,49 @@ class CastleTv : Source() {
                     locationId = getCategoryLocation(selectedCategory)
                 }
             }
+            if (filter is GenreFilter && filter.state > 0) {
+                genre = filter.values[filter.state]
+            }
+            if (filter is PlatformFilter && filter.state > 0) {
+                platform = filter.values[filter.state]
+            }
+            if (filter is LanguageFilter && filter.state > 0) {
+                language = filter.values[filter.state]
+            }
+            if (filter is RegionFilter && filter.state > 0) {
+                region = filter.values[filter.state]
+            }
+            if (filter is YearFilter && filter.state > 0) {
+                year = filter.values[filter.state]
+            }
+            if (filter is SortFilter && filter.state > 0) {
+                sort = filter.values[filter.state]
+            }
         }
 
         // Category-only browse (no query)
         if (query.isBlank()) {
-            val list = fetchPage(page, categoryFilter, locationId)
+            val list = fetchPage(page, categoryFilter, locationId, genre, platform, language, region, year, sort)
             return AnimesPage(list, list.isNotEmpty())
         }
 
         // Keyword search
         val securityKey = getSecurityKey() ?: return AnimesPage(emptyList(), false)
-        val searchUrl = "$baseUrl/film-api/v1.1.0/movie/searchByKeyword?channel=IndiaA&clientType=1&clientType=1&keyword=${URLEncoder.encode(query, "UTF-8")}&lang=en-US&mode=1&packageName=com.external.castle&page=$page&size=30"
+
+        val genreTagId = when (genre) {
+            "Action" -> "1003"
+            "Drama" -> "1004"
+            "Comedy" -> "1006"
+            "Romance" -> "1007"
+            "Cartoon/Animation" -> "1008"
+            "Thriller/Crime" -> "1005"
+            "Sci-Fi/Adventure" -> "1001"
+            "Fantasy/Mystery" -> "1002"
+            else -> null
+        }
+        val tagParam = if (genreTagId != null) "&tagId=$genreTagId" else ""
+
+        val searchUrl = "$baseUrl/film-api/v1.1.0/movie/searchByKeyword?channel=IndiaA&clientType=1&clientType=1&keyword=${URLEncoder.encode(query, "UTF-8")}&lang=en-US&mode=1&packageName=com.external.castle&page=$page&size=30$tagParam"
 
         val response = client.newCall(GET(searchUrl)).execute()
         val encryptedData = response.body.string()
@@ -159,7 +283,48 @@ class CastleTv : Source() {
         val searchResponse = json.decodeFromString<SearchApiResponse>(decryptedJson)
         val searchData = searchResponse.data
 
-        val list = searchData.rows?.mapNotNull { item ->
+        val sdf = java.text.SimpleDateFormat("yyyy", java.util.Locale.US)
+        var searchRows = searchData.rows ?: emptyList()
+
+        if (language != "All") {
+            searchRows = searchRows.filter { item ->
+                item.languages?.any { it.contains(language, true) } == true
+            }
+        }
+        if (region != "All") {
+            searchRows = searchRows.filter { item ->
+                val countries = item.countries ?: emptyList()
+                val langs = item.languages ?: emptyList()
+                when (region) {
+                    "India" -> countries.any { it.contains("India", true) } || langs.any { it.equals("Hindi", true) || it.equals("Tamil", true) || it.equals("Telugu", true) }
+                    "United States" -> countries.any { it.contains("United States", true) || it.contains("US", true) }
+                    "South Korea" -> countries.any { it.contains("Korea", true) } || langs.any { it.equals("Korean", true) }
+                    "Japan" -> countries.any { it.contains("Japan", true) } || langs.any { it.equals("Japanese", true) }
+                    "United Kingdom" -> countries.any { it.contains("United Kingdom", true) || it.contains("UK", true) }
+                    else -> true
+                }
+            }
+        }
+        if (year != "All") {
+            searchRows = searchRows.filter { item ->
+                val pTime = item.publishTime ?: 0L
+                val itemYear = if (pTime > 0) sdf.format(java.util.Date(pTime)) else ""
+                if (year == "Older") {
+                    val numericYear = itemYear.toIntOrNull()
+                    numericYear != null && numericYear < 2015
+                } else {
+                    itemYear == year
+                }
+            }
+        }
+
+        searchRows = when (sort) {
+            "Latest" -> searchRows.sortedByDescending { it.publishTime ?: 0L }
+            "Rating" -> searchRows.sortedByDescending { it.score ?: 0.0 }
+            else -> searchRows
+        }
+
+        val list = searchRows.mapNotNull { item ->
             val title = item.title ?: return@mapNotNull null
             val id = item.id?.toString() ?: return@mapNotNull null
             val posterUrl = item.coverVerticalImage ?: item.coverHorizontalImage ?: ""
@@ -169,7 +334,7 @@ class CastleTv : Source() {
                 this.url = id
                 thumbnail_url = posterUrl
             }
-        } ?: emptyList()
+        }
 
         return AnimesPage(list, list.isNotEmpty())
     }
@@ -245,6 +410,7 @@ class CastleTv : Source() {
                                             url = "${seasonId}_${ep.id}"
                                             episode_number = ep.number?.toFloat() ?: 0f
                                             date_upload = ep.onlineTime ?: 0L
+                                            thumbnail_url = ep.coverImage
                                         },
                                     )
                                 }
@@ -263,6 +429,7 @@ class CastleTv : Source() {
                             url = "${details.id}_${ep.id}"
                             episode_number = ep.number?.toFloat() ?: (index + 1).toFloat()
                             date_upload = ep.onlineTime ?: 0L
+                            thumbnail_url = ep.coverImage
                         },
                     )
                 }
@@ -276,6 +443,7 @@ class CastleTv : Source() {
                     url = "${details.id}_${ep?.id}"
                     episode_number = 1f
                     date_upload = details.publishTime ?: 0L
+                    thumbnail_url = ep?.coverImage ?: details.coverVerticalImage ?: details.coverHorizontalImage
                 },
             )
         }
