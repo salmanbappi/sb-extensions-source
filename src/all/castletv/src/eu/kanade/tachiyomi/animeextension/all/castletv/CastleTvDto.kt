@@ -6,21 +6,21 @@ import kotlinx.serialization.Serializable
 data class CastleApiResponse(
     val code: Int,
     val msg: String,
-    val data: String? = null
+    val data: String? = null,
 )
 
 @Serializable
 data class SecurityKeyResponse(
     val code: Int,
     val msg: String,
-    val data: String
+    val data: String,
 )
 
 @Serializable
 data class DecryptedResponse(
     val code: Int,
     val msg: String,
-    val data: HomePageData
+    val data: HomePageData,
 )
 
 @Serializable
@@ -29,7 +29,7 @@ data class HomePageData(
     val pages: Int? = null,
     val size: Int? = null,
     val total: Int? = null,
-    val rows: List<HomePageRow>? = null
+    val rows: List<HomePageRow>? = null,
 )
 
 @Serializable
@@ -42,7 +42,7 @@ data class HomePageRow(
     val type: Int? = null,
     val redirectType: Int? = null,
     val briefIntroduction: String? = null,
-    val contents: List<ContentItem>? = null
+    val contents: List<ContentItem>? = null,
 )
 
 @Serializable
@@ -65,14 +65,14 @@ data class ContentItem(
     val standardNewExpireTime: Long? = null,
     val countdownHourNew: Int? = null,
     val countdownHour: Int? = null,
-    val serverTime: Long? = null
+    val serverTime: Long? = null,
 )
 
 @Serializable
 data class MovieDetailsResponse(
     val code: Int,
     val msg: String,
-    val data: MovieDetails
+    val data: MovieDetails,
 )
 
 @Serializable
@@ -111,14 +111,14 @@ data class MovieDetails(
     val tagIds: List<Long>? = null,
     val resolution: Int? = null,
     val indiaResolutionLabel: String? = null,
-    val titbits: List<Titbit>? = null
+    val titbits: List<Titbit>? = null,
 )
 
 @Serializable
 data class Person(
     val id: Long? = null,
     val name: String? = null,
-    val avatar: String? = null
+    val avatar: String? = null,
 )
 
 @Serializable
@@ -132,7 +132,7 @@ data class ApiEpisode(
     val playResolution: Int? = null,
     val mobileTrafficPlayResolution: Int? = null,
     val tracks: List<Track>? = null,
-    val onlineTime: Long? = null
+    val onlineTime: Long? = null,
 )
 
 @Serializable
@@ -140,7 +140,7 @@ data class VideoQuality(
     val resolution: Int? = null,
     val resolutionDescription: String? = null,
     val size: Long? = null,
-    val premiumProPermission: Boolean? = null
+    val premiumProPermission: Boolean? = null,
 )
 
 @Serializable
@@ -151,7 +151,7 @@ data class Track(
     val isDefault: Boolean? = null,
     val existIndividualVideo: Boolean? = null,
     val order: Int? = null,
-    val index: Int? = null
+    val index: Int? = null,
 )
 
 @Serializable
@@ -159,7 +159,7 @@ data class Season(
     val movieId: Long? = null,
     val number: Int? = null,
     val description: String? = null,
-    val isCurrent: Boolean? = null
+    val isCurrent: Boolean? = null,
 )
 
 @Serializable
@@ -167,14 +167,14 @@ data class Titbit(
     val id: String? = null,
     val name: String? = null,
     val videoCategory: Int? = null,
-    val coverImage: String? = null
+    val coverImage: String? = null,
 )
 
 @Serializable
 data class SearchApiResponse(
     val code: Int,
     val msg: String,
-    val data: SearchData
+    val data: SearchData,
 )
 
 @Serializable
@@ -183,7 +183,7 @@ data class SearchData(
     val pages: Int? = null,
     val size: Int? = null,
     val total: Int? = null,
-    val rows: List<SearchResultItem>? = null
+    val rows: List<SearchResultItem>? = null,
 )
 
 @Serializable
@@ -204,14 +204,14 @@ data class SearchResultItem(
     val briefIntroduction: String? = null,
     val publishTime: Long? = null,
     val tags: List<String>? = null,
-    val countries: List<String>? = null
+    val countries: List<String>? = null,
 )
 
 @Serializable
 data class VideoResponse(
     val code: Int,
     val msg: String,
-    val data: VideoData
+    val data: VideoData,
 )
 
 @Serializable
@@ -222,7 +222,7 @@ data class VideoData(
     val videos: List<VideoQuality>? = null,
     val subtitles: List<SubtitleData>? = null,
     val inBlacklist: Boolean? = null,
-    val permissionDenied: Boolean? = null
+    val permissionDenied: Boolean? = null,
 )
 
 @Serializable
@@ -232,5 +232,5 @@ data class SubtitleData(
     val title: String? = null,
     val url: String? = null,
     val isDefault: Boolean? = null,
-    val isAI: Int? = null
+    val isAI: Int? = null,
 )
