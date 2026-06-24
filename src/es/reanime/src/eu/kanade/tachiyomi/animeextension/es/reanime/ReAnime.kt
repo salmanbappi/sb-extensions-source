@@ -484,6 +484,6 @@ class ReAnime : Source() {
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_TITLE = "Calidad preferida"
         private const val PREF_QUALITY_DEFAULT = "1080p"
-        private val PREF_QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
+        private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "480p", "360p")
     }
 }
