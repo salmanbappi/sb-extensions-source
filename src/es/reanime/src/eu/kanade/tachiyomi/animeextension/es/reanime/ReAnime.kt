@@ -560,8 +560,7 @@ class ReAnime : Source() {
             key = PREF_SHOW_THUMBNAILS_KEY,
             title = PREF_SHOW_THUMBNAILS_TITLE,
             summary = PREF_SHOW_THUMBNAILS_SUMMARY,
-            defaultValue = true,
-            preferences = preferences,
+            default = true,
         )
     }
 
