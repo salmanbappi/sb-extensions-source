@@ -323,7 +323,7 @@ class ReAnime : Source() {
         val watchPageResponse = client.newCall(watchPageRequest).execute()
         val watchPageHtml = watchPageResponse.body.string()
 
-        val anilistId = Regex("""anilist_id:(\d+)""").find(watchPageHtml)?.groupValues?.get(1)
+        val anilistId = Regex("""anilist_id\s*:\s*(\d+)""").find(watchPageHtml)?.groupValues?.get(1)
             ?: throw Exception("Could not find anilist_id")
 
         // Fetch Flix API
@@ -337,9 +337,9 @@ class ReAnime : Source() {
             val embedResponse = client.newCall(embedRequest).execute()
             val embedHtml = embedResponse.body.string()
 
-            val seed = Regex("""obfuscation_seed\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
+            val seed = Regex(""""?obfuscation_seed"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
                 ?: return@parallelCatchingFlatMapBlocking emptyList()
-            val wPayload = Regex("""w_payload\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
+            val wPayload = Regex(""""?w_payload"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
                 ?: return@parallelCatchingFlatMapBlocking emptyList()
 
             val mappings = resolveMappings(seed)
@@ -357,7 +357,7 @@ class ReAnime : Source() {
             val tokenHeaders = Headers.Builder()
                 .add("Referer", server.dataLink)
                 .add("Origin", "https://flixcloud.cc")
-                .add("User-Agent", headers["User-Agent"]!!)
+                .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .build()
             val tokenResponse = client.newCall(GET(m3u8ApiUrl, tokenHeaders)).execute()
             val tokenBody = tokenResponse.body.string()
@@ -403,11 +403,15 @@ class ReAnime : Source() {
 
             val decryptedUrl = decryptAes(ciphertext, aesKey, iv)
 
+            val playHeaders = headersBuilder()
+                .set("Referer", "https://flixcloud.cc/")
+                .build()
+
             playlistUtils.extractFromHls(
                 playlistUrl = decryptedUrl,
                 referer = "https://flixcloud.cc/",
-                masterHeaders = headers,
-                videoHeaders = headers,
+                masterHeaders = playHeaders,
+                videoHeaders = playHeaders,
                 videoNameGen = { quality -> "${server.serverName} (${server.dataType}) - $quality" }
             )
         }
