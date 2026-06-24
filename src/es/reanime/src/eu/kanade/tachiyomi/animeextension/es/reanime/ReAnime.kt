@@ -12,6 +12,7 @@ import androidx.preference.PreferenceScreen
 import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlin.getValue
 import kotlinx.serialization.Serializable
@@ -97,7 +98,7 @@ class ReAnime : Source() {
         val animes = data.results.map {
             SAnime.create().apply {
                 url = it.anime_id
-                title = it.title.user_preferred ?: it.title.english ?: it.title.romaji ?: ""
+                title = it.title.english ?: it.title.user_preferred ?: it.title.romaji ?: ""
                 thumbnail_url = it.cover_image.large
             }
         }
@@ -121,12 +122,12 @@ class ReAnime : Source() {
             val cleanItem = if (item.startsWith("{")) item else "{$item"
             val finalItem = if (cleanItem.endsWith("}")) cleanItem else "$cleanItem}"
 
-            val id = Regex("""anime_id:"([^"]+)"""").find(finalItem)?.groupValues?.get(1) ?: return@mapNotNull null
-            val titleStr = Regex("""user_preferred:"([^"]+)"""").find(finalItem)?.groupValues?.get(1)
-                ?: Regex("""english:"([^"]+)"""").find(finalItem)?.groupValues?.get(1)
-                ?: Regex("""romaji:"([^"]+)"""").find(finalItem)?.groupValues?.get(1)
+            val id = Regex("""anime_id\s*:\s*"([^"]+)"""").find(finalItem)?.groupValues?.get(1) ?: return@mapNotNull null
+            val titleStr = Regex("""english\s*:\s*"([^"]+)"""").find(finalItem)?.groupValues?.get(1)
+                ?: Regex("""user_preferred\s*:\s*"([^"]+)"""").find(finalItem)?.groupValues?.get(1)
+                ?: Regex("""romaji\s*:\s*"([^"]+)"""").find(finalItem)?.groupValues?.get(1)
                 ?: return@mapNotNull null
-            val coverUrl = Regex("""large:"([^"]+)"""").find(finalItem)?.groupValues?.get(1)
+            val coverUrl = Regex("""large\s*:\s*"([^"]+)"""").find(finalItem)?.groupValues?.get(1)
 
             SAnime.create().apply {
                 url = id
@@ -153,22 +154,63 @@ class ReAnime : Source() {
 
     override fun animeDetailsParse(response: Response): SAnime {
         val html = response.body.string()
-        val animeObjStr = extractObject(html, "anime:")
+        val match = Regex("""anime\s*:\s*\{""").find(html) ?: return SAnime.create()
+        val objStartIndex = html.indexOf("{", match.range.first)
+        if (objStartIndex == -1) return SAnime.create()
 
-        val desc = Regex("""description:"([^"]+)"""").find(animeObjStr)?.groupValues?.get(1)
-            ?.replace("\\n", "\n")
-            ?.replace(Regex("<[^>]*>"), "")
+        var braceCount = 0
+        var currentIndex = objStartIndex
+        var animeObjStr = ""
+        while (currentIndex < html.length) {
+            val char = html[currentIndex]
+            if (char == '{') {
+                braceCount++
+            } else if (char == '}') {
+                braceCount--
+                if (braceCount == 0) {
+                    animeObjStr = html.substring(objStartIndex, currentIndex + 1)
+                    break
+                }
+            }
+            currentIndex++
+        }
 
-        val statusStr = Regex("""status:"([^"]+)"""").find(animeObjStr)?.groupValues?.get(1)
-        val coverUrl = Regex("""large:"([^"]+)"""").find(animeObjStr)?.groupValues?.get(1)
+        val rawDesc = Regex("""description\s*:\s*"([^"]+)"""").find(animeObjStr)?.groupValues?.get(1) ?: ""
+        val desc = unescapeUnicode(rawDesc)
+            .replace("\\n", "\n")
+            .replace(Regex("<[^>]*>"), "")
+
+        val statusStr = Regex("""status\s*:\s*"([^"]+)"""").find(animeObjStr)?.groupValues?.get(1)
+        val coverUrl = Regex("""large\s*:\s*"([^"]+)"""").find(animeObjStr)?.groupValues?.get(1)
 
         val genresList = mutableListOf<String>()
-        val genresStr = extractArray(animeObjStr, "genres:")
-        if (genresStr.length > 2) {
-            val inner = genresStr.substring(1, genresStr.length - 1)
-            inner.split(",").forEach {
-                val g = it.replace("\"", "").trim()
-                if (g.isNotEmpty()) genresList.add(g)
+        val genresMatch = Regex("""genres\s*:\s*\[""").find(animeObjStr)
+        if (genresMatch != null) {
+            val arrayStartIndex = animeObjStr.indexOf("[", genresMatch.range.first)
+            if (arrayStartIndex != -1) {
+                var bracketCount = 0
+                var currIdx = arrayStartIndex
+                var genresStr = ""
+                while (currIdx < animeObjStr.length) {
+                    val char = animeObjStr[currIdx]
+                    if (char == '[') {
+                        bracketCount++
+                    } else if (char == ']') {
+                        bracketCount--
+                        if (bracketCount == 0) {
+                            genresStr = animeObjStr.substring(arrayStartIndex, currIdx + 1)
+                            break
+                        }
+                    }
+                    currIdx++
+                }
+                if (genresStr.length > 2) {
+                    val inner = genresStr.substring(1, genresStr.length - 1)
+                    inner.split(",").forEach {
+                        val g = it.replace("\"", "").trim()
+                        if (g.isNotEmpty()) genresList.add(g)
+                    }
+                }
             }
         }
 
@@ -190,25 +232,61 @@ class ReAnime : Source() {
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val html = response.body.string()
-        val episodesStr = extractArray(html, "episodes:")
+        val match = Regex("""episodes\s*:\s*\[\s*\{""").find(html) ?: return emptyList()
+        val arrayStartIndex = html.indexOf("[", match.range.first)
+        if (arrayStartIndex == -1) return emptyList()
+
+        var bracketCount = 0
+        var currentIndex = arrayStartIndex
+        var episodesStr = ""
+        while (currentIndex < html.length) {
+            val char = html[currentIndex]
+            if (char == '[') {
+                bracketCount++
+            } else if (char == ']') {
+                bracketCount--
+                if (bracketCount == 0) {
+                    episodesStr = html.substring(arrayStartIndex, currentIndex + 1)
+                    break
+                }
+            }
+            currentIndex++
+        }
+
         if (episodesStr.length <= 2) {
             return emptyList()
         }
 
+        val slug = response.request.url.pathSegments.lastOrNull { it.isNotEmpty() && it != "watch" } ?: ""
+
         val inner = episodesStr.substring(1, episodesStr.length - 1)
         val items = inner.split(Regex("""\}\s*,\s*\{"""))
+        val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
+
         return items.mapNotNull { item ->
             val cleanItem = if (item.startsWith("{")) item else "{$item"
             val finalItem = if (cleanItem.endsWith("}")) cleanItem else "$cleanItem}"
 
-            val epNumStr = Regex("""episode_number:(\d+(\.\d+)?)""").find(finalItem)?.groupValues?.get(1) ?: return@mapNotNull null
+            val epNumStr = Regex("""episode_number\s*:\s*(\d+(\.\d+)?)""").find(finalItem)?.groupValues?.get(1) ?: return@mapNotNull null
             val epNum = epNumStr.toFloat()
-            val epTitle = Regex("""title:"([^"]+)"""").find(finalItem)?.groupValues?.get(1) ?: "Episodio $epNumStr"
+            val epTitle = Regex("""title\s*:\s*"([^"]+)"""").find(finalItem)?.groupValues?.get(1) ?: "Episodio $epNumStr"
+
+            val epDesc = Regex("""description\s*:\s*"([^"]*)"""").find(finalItem)?.groupValues?.get(1)
+                ?.let { unescapeUnicode(it) }
+                ?.replace("\\n", "\n")
+                ?.takeIf { it.isNotEmpty() }
+
+            val epThumbnail = if (showThumbnails) {
+                Regex("""thumbnail\s*:\s*"([^"]*)"""").find(finalItem)?.groupValues?.get(1)
+                    ?.takeIf { it.isNotEmpty() }
+            } else null
 
             SEpisode.create().apply {
-                url = epNumStr
+                url = "$slug?ep=$epNumStr"
                 name = epTitle
                 episode_number = epNum
+                summary = epDesc
+                preview_url = epThumbnail
             }
         }.reversed() // Ascending order
     }
@@ -259,18 +337,18 @@ class ReAnime : Source() {
             val embedResponse = client.newCall(embedRequest).execute()
             val embedHtml = embedResponse.body.string()
 
-            val seed = Regex("""obfuscation_seed:"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
+            val seed = Regex("""obfuscation_seed\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
                 ?: return@parallelCatchingFlatMapBlocking emptyList()
-            val wPayload = Regex("""w_payload:"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
+            val wPayload = Regex("""w_payload\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
                 ?: return@parallelCatchingFlatMapBlocking emptyList()
 
             val mappings = resolveMappings(seed)
 
-            val tokenRegex = Regex(""""${mappings.tokenField}"\s*:\s*"([^"]+)"""")
+            val tokenRegex = Regex(""""?${mappings.tokenField}"?\s*:\s*"([^"]+)"""")
             val w = tokenRegex.find(embedHtml)?.groupValues?.get(1)
                 ?: return@parallelCatchingFlatMapBlocking emptyList()
 
-            val frag2Regex = Regex(""""${mappings.keyFrag2Field}"\s*:\s*"([^"]+)"""")
+            val frag2Regex = Regex(""""?${mappings.keyFrag2Field}"?\s*:\s*"([^"]+)"""")
             val frag2B64 = frag2Regex.find(embedHtml)?.groupValues?.get(1)
                 ?: return@parallelCatchingFlatMapBlocking emptyList()
 
@@ -294,7 +372,7 @@ class ReAnime : Source() {
                 ?: return@parallelCatchingFlatMapBlocking emptyList()
 
             // Dynamic keys resolution via container parsing
-            val pattern = """"${mappings.containerName}"\s*:\s*\{\s*"${mappings.arrayName}"\s*:\s*\[\s*\{\s*"${mappings.objectName}"\s*:\s*\{\s*"${mappings.keyField}"\s*:\s*"([^"]+)"\s*,\s*"${mappings.ivField}"\s*:\s*"([^"]+)""""
+            val pattern = """"?${mappings.containerName}"?\s*:\s*\{\s*"?${mappings.arrayName}"?\s*:\s*\[\s*\{\s*"?${mappings.objectName}"?\s*:\s*\{\s*"?${mappings.keyField}"?\s*:\s*"([^"]+)"\s*,\s*"?${mappings.ivField}"?\s*:\s*"([^"]+)""""
             val match = Regex(pattern).find(embedHtml)
                 ?: return@parallelCatchingFlatMapBlocking emptyList()
             val frag1B64 = match.groupValues[1]
@@ -478,6 +556,21 @@ class ReAnime : Source() {
             default = PREF_QUALITY_DEFAULT,
             summary = "%s",
         )
+        screen.addSwitchPreference(
+            key = PREF_SHOW_THUMBNAILS_KEY,
+            title = PREF_SHOW_THUMBNAILS_TITLE,
+            summary = PREF_SHOW_THUMBNAILS_SUMMARY,
+            defaultValue = true,
+            preferences = preferences,
+        )
+    }
+
+    private fun unescapeUnicode(str: String): String {
+        val regex = Regex("""\\u([0-9a-fA-F]{4})""")
+        return regex.replace(str) { match ->
+            val charCode = match.groupValues[1].toInt(16)
+            charCode.toChar().toString()
+        }.replace("\\\"", "\"")
     }
 
     companion object {
@@ -485,5 +578,9 @@ class ReAnime : Source() {
         private const val PREF_QUALITY_TITLE = "Calidad preferida"
         private const val PREF_QUALITY_DEFAULT = "1080p"
         private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "480p", "360p")
+
+        private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
+        private const val PREF_SHOW_THUMBNAILS_TITLE = "Show episode thumbnails"
+        private const val PREF_SHOW_THUMBNAILS_SUMMARY = "Fetch and display images in the episode list."
     }
 }
