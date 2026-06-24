@@ -25,6 +25,7 @@ import okhttp3.Request
 import okhttp3.Response
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.IvParameterSpec
@@ -80,6 +81,10 @@ class ReAnime : Source() {
 
     private val playlistUtils by lazy {
         PlaylistUtils(client, headers)
+    }
+
+    private val cloudflareBypass by lazy {
+        ReanimeCloudflareBypass()
     }
 
     override fun headersBuilder() = super.headersBuilder()
@@ -401,15 +406,25 @@ class ReAnime : Source() {
 
             val decryptedUrl = decryptAes(ciphertext, aesKey, iv)
 
-            val playHeaders = headersBuilder()
-                .set("Referer", "https://flixcloud.cc/")
-                .build()
+            val playHeaders = buildPlaybackHeaders(decryptedUrl, server.dataLink)
+
+            val masterHeadersGen = { baseHeaders: Headers, ref: String ->
+                playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
+                    .applyPlaybackHeaders(playHeaders)
+                    .build()
+            }
+
+            val videoHeadersGen = { baseHeaders: Headers, ref: String, _: String ->
+                playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
+                    .applyPlaybackHeaders(playHeaders)
+                    .build()
+            }
 
             playlistUtils.extractFromHls(
                 playlistUrl = decryptedUrl,
-                referer = "https://flixcloud.cc/",
-                masterHeaders = playHeaders,
-                videoHeaders = playHeaders,
+                referer = server.dataLink,
+                masterHeadersGen = masterHeadersGen,
+                videoHeadersGen = videoHeadersGen,
                 videoNameGen = { quality -> "${server.serverName} (${server.dataType}) - $quality" }
             )
         }
@@ -533,6 +548,37 @@ class ReAnime : Source() {
         cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec)
         val decrypted = cipher.doFinal(ciphertext)
         return String(decrypted, Charsets.UTF_8)
+    }
+
+    private fun buildPlaybackHeaders(videoUrl: String, embedUrl: String): Headers {
+        val videoHttpUrl = runCatching { videoUrl.toHttpUrl() }.getOrNull()
+        val origin = videoHttpUrl?.let { "${it.scheme}://${it.host}" } ?: "https://fetch.flixcloud.cc"
+        val bypassResult = runCatching { cloudflareBypass.getCookies(videoUrl) }.getOrNull()
+
+        return headersBuilder()
+            .set("Accept", "*/*")
+            .set("Origin", origin)
+            .set("Referer", embedUrl)
+            .apply {
+                if (bypassResult?.userAgent?.isNotBlank() == true) {
+                    set("User-Agent", bypassResult.userAgent)
+                }
+                if (bypassResult?.cookies?.isNotBlank() == true) {
+                    set("Cookie", bypassResult.cookies)
+                }
+            }
+            .build()
+    }
+
+    private fun Headers.Builder.applyPlaybackHeaders(playHeaders: Headers): Headers.Builder {
+        for (index in 0 until playHeaders.size) {
+            val name = playHeaders.name(index)
+            if (name.lowercase(Locale.US) != "referer") {
+                set(name, playHeaders.value(index))
+            }
+        }
+        set("Referer", playHeaders["Referer"]!!)
+        return this
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
