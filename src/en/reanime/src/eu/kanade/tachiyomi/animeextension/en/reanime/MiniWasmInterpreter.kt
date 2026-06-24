@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.es.reanime
+package eu.kanade.tachiyomi.animeextension.en.reanime
 
 class MiniWasmInterpreter(private val wasmBytes: ByteArray) {
     private val memory = ByteArray(65536)

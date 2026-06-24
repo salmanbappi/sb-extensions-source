@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.es.reanime
+package eu.kanade.tachiyomi.animeextension.en.reanime
 
 import android.util.Base64
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -74,7 +74,7 @@ class ReAnime : Source() {
 
     override val baseUrl = "https://reanime.to"
 
-    override val lang = "es"
+    override val lang = "en"
 
     override val supportsLatest = true
 
@@ -293,7 +293,6 @@ class ReAnime : Source() {
     // ============================ Video Links =============================
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val ua = headers["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         // url of episode is "episode_number", we need the anime_id to fetch the watch page
         // Wait, the episode list request url is "watch/{anime_id}?ep=1", but Tachiyomi
         // passes episode.url directly. In AniDB.kt or other extensions, the url of episode
@@ -357,7 +356,6 @@ class ReAnime : Source() {
             val tokenHeaders = Headers.Builder()
                 .add("Referer", server.dataLink)
                 .add("Origin", "https://flixcloud.cc")
-                .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .build()
             val tokenResponse = client.newCall(GET(m3u8ApiUrl, tokenHeaders)).execute()
             val tokenBody = tokenResponse.body.string()
@@ -405,7 +403,6 @@ class ReAnime : Source() {
 
             val playHeaders = headersBuilder()
                 .set("Referer", "https://flixcloud.cc/")
-                .set("User-Agent", ua)
                 .build()
 
             playlistUtils.extractFromHls(
