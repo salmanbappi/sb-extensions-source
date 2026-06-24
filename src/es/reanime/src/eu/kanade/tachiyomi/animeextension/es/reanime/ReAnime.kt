@@ -84,7 +84,6 @@ class ReAnime : Source() {
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
     // ============================== Popular ===============================
 
@@ -294,6 +293,7 @@ class ReAnime : Source() {
     // ============================ Video Links =============================
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val ua = headers["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         // url of episode is "episode_number", we need the anime_id to fetch the watch page
         // Wait, the episode list request url is "watch/{anime_id}?ep=1", but Tachiyomi
         // passes episode.url directly. In AniDB.kt or other extensions, the url of episode
@@ -405,6 +405,7 @@ class ReAnime : Source() {
 
             val playHeaders = headersBuilder()
                 .set("Referer", "https://flixcloud.cc/")
+                .set("User-Agent", ua)
                 .build()
 
             playlistUtils.extractFromHls(
