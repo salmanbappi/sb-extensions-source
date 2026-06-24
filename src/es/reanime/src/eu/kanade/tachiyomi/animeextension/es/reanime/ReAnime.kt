@@ -8,10 +8,12 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import androidx.preference.PreferenceScreen
 import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import kotlin.getValue
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -454,12 +456,34 @@ class ReAnime : Source() {
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
+        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
         val order = listOf("1080p", "720p", "480p", "360p")
         return this.sortedWith(
-            compareBy { video ->
-                val index = order.indexOfFirst { video.quality.contains(it) }
-                if (index == -1) order.size else index
-            }
+            compareBy(
+                { !it.videoTitle.contains(quality) },
+                { video ->
+                    val index = order.indexOfFirst { video.videoTitle.contains(it) }
+                    if (index == -1) order.size else index
+                }
+            )
         )
+    }
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        screen.addListPreference(
+            key = PREF_QUALITY_KEY,
+            title = PREF_QUALITY_TITLE,
+            entries = PREF_QUALITY_ENTRIES,
+            entryValues = PREF_QUALITY_ENTRIES,
+            default = PREF_QUALITY_DEFAULT,
+            summary = "%s",
+        )
+    }
+
+    companion object {
+        private const val PREF_QUALITY_KEY = "preferred_quality"
+        private const val PREF_QUALITY_TITLE = "Calidad preferida"
+        private const val PREF_QUALITY_DEFAULT = "1080p"
+        private val PREF_QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
     }
 }
