@@ -553,7 +553,8 @@ class ReAnime : Source() {
     private fun buildPlaybackHeaders(videoUrl: String, embedUrl: String): Headers {
         val videoHttpUrl = runCatching { videoUrl.toHttpUrl() }.getOrNull()
         val origin = videoHttpUrl?.let { "${it.scheme}://${it.host}" } ?: "https://fetch.flixcloud.cc"
-        val bypassResult = runCatching { cloudflareBypass.getCookies(videoUrl) }.getOrNull()
+        val challengeUrl = "$origin/"
+        val bypassResult = runCatching { cloudflareBypass.getCookies(challengeUrl) }.getOrNull()
 
         return headersBuilder()
             .set("Accept", "*/*")

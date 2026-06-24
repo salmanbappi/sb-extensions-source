@@ -8,6 +8,7 @@ import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import keiyoushi.utils.applicationContext
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -24,9 +25,25 @@ class ReanimeCloudflareBypass {
             "Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/137.0.0.0 Mobile Safari/537.36"
     }
 
+    private val cookieCache = ConcurrentHashMap<String, ReanimeCloudflareResult>()
+
     @SuppressLint("SetJavaScriptEnabled")
     @Synchronized
     fun getCookies(pageUrl: String, userAgent: String = DEFAULT_UA): ReanimeCloudflareResult? {
+        val host = Uri.parse(pageUrl).host ?: return null
+        val existingCookies = CookieManager.getInstance().getCookie(pageUrl)
+        if (existingCookies?.contains("cf_clearance=") == true) {
+            return ReanimeCloudflareResult(existingCookies, userAgent).also {
+                cookieCache[host] = it
+            }
+        }
+
+        cookieCache[host]?.let { cached ->
+            if (cached.cookies.contains("cf_clearance=")) {
+                return cached
+            }
+        }
+
         clearCookiesForUrl(pageUrl)
 
         val latch = CountDownLatch(1)
@@ -48,6 +65,7 @@ class ReanimeCloudflareBypass {
                         }
                     }
                 }
+                CookieManager.getInstance().setCookie(pageUrl, "")
                 loadUrl(pageUrl)
             }
         }
@@ -62,6 +80,7 @@ class ReanimeCloudflareBypass {
             }
         }
 
+        result?.let { cookieCache[host] = it }
         return result
     }
 
