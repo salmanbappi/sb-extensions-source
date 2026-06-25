@@ -228,7 +228,7 @@ class Anikoto : Source() {
                         summary = episodeMeta.description
                     }
                     if (loadTitles && !episodeMeta.title.isNullOrBlank()) {
-                        name = episodeMeta.title
+                        name = "Episode $epNum - ${episodeMeta.title}"
                     }
                 }
             }
@@ -236,6 +236,29 @@ class Anikoto : Source() {
             loge("enrichEpisodesWithMetadata: FAILED", e)
             episodes
         }
+    }
+
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val meta = runCatching { EpisodeMeta.decode(episode.url) }.getOrNull() ?: return super.getHosterList(episode)
+        val tasks = buildHosterTasks(meta)
+        if (tasks.isEmpty()) return super.getHosterList(episode)
+
+        val hosters = tasks
+            .groupBy { it.serverName() }
+            .map { (serverName, serverTasks) ->
+            Hoster(
+                hosterName = serverName,
+                hosterUrl = HosterTask.encodeSelection(episode.url, serverTasks),
+            )
+        }
+        return sortHostersByPriority(hosters, preferredServer)
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val selection = HosterTask.decodeSelection(hoster.hosterUrl) ?: return super.getVideoList(hoster)
+        val (episodeUrl, tasks) = selection
+        val meta = runCatching { EpisodeMeta.decode(episodeUrl) }.getOrNull() ?: return emptyList()
+        return videosFromTasks(meta, tasks)
     }
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
@@ -246,123 +269,7 @@ class Anikoto : Source() {
             loge("EpisodeMeta.decode FAILED", e)
             return emptyList()
         }
-
-        val tasks = mutableListOf<HosterTask>()
-
-        // 1. Mapper API
-        if (meta.malId.isNotEmpty() && meta.epNum.isNotEmpty() && meta.timestamp.isNotEmpty()) {
-            val mapperUrl = "https://mapper.nekostream.site/api/mal/${meta.malId}/${meta.epNum}/${meta.timestamp}"
-            logi("mapper API: GET $mapperUrl")
-            try {
-                val mapperResponse = client.newCall(GET(mapperUrl, ajaxHeaders(meta.slug))).execute()
-                val bodyStr = mapperResponse.body.string()
-                val jsonObject = json.parseToJsonElement(bodyStr) as? JsonObject
-                if (jsonObject != null) {
-                    val mapperTokens = parseMapperResponse(jsonObject)
-                    logi("mapper parsed ${mapperTokens.size} tokens")
-                    for (token in mapperTokens) {
-                        val label = when (token.audio) {
-                            "sub" -> "H-SUB - ${token.serverName}"
-                            "dub" -> "A-DUB - ${token.serverName}"
-                            else -> "${token.audio} - ${token.serverName}"
-                        }
-                        tasks.add(HosterTask(label, token.token, token.audio, "mapper"))
-                    }
-                }
-            } catch (e: Exception) {
-                loge("mapper API FAILED", e)
-            }
-        }
-
-        // 2. Primary API
-        if (meta.dataIds.isNotEmpty()) {
-            val primaryUrl = "$baseUrl/ajax/server/list?servers=${meta.dataIds}"
-            try {
-                val primaryResponse = client.newCall(GET(primaryUrl, ajaxHeaders(meta.slug))).execute()
-                val pJson = json.decodeFromString<ServerListResponse>(primaryResponse.body.string())
-                if (pJson.status == 200 && pJson.result.isNotEmpty()) {
-                    val pDoc = Jsoup.parse(pJson.result)
-                    for (element in pDoc.select("div.servers > div.type")) {
-                        val dataType = element.attr("data-type")
-                        val audioLabel = when (dataType) {
-                            "dub" -> "DUB"
-                            "sub" -> "SUB"
-                            "hsub" -> "HSUB"
-                            else -> dataType.uppercase(Locale.ROOT)
-                        }
-                        for (serverElement in element.select("li")) {
-                            val linkId = serverElement.attr("data-link-id")
-                            val text = serverElement.text()
-                            if (linkId.isNotEmpty()) {
-                                tasks.add(HosterTask("$audioLabel - $text", linkId, dataType, "primary"))
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                loge("primary API FAILED", e)
-            }
-        }
-
-        logi("Total tasks: ${tasks.size}")
-        if (tasks.isEmpty()) return emptyList()
-
-        val resolvedStreams = coroutineScope {
-            tasks.map { task ->
-                async(Dispatchers.IO) {
-                    resolveStreamForTask(task, meta.slug)
-                }
-            }.awaitAll().filterNotNull()
-        }
-
-        logi("Total resolved streams: ${resolvedStreams.size}")
-        if (resolvedStreams.isEmpty()) {
-            displayToast("Anikoto: No playable streams found", Toast.LENGTH_LONG)
-            return emptyList()
-        }
-
-        val segHeaders = Headers.Builder()
-            .add("Referer", "https://vidtube.site/")
-            .add("User-Agent", USER_AGENT)
-            .build()
-
-        val server = LocalProxyServer(noCloudflareClient, segHeaders)
-        server.playlist = LocalProxyServer.Playlist(resolvedStreams)
-        server.prefetchCount = prefetchBuffer.toIntOrNull() ?: 10
-        server.start()
-        swapProxyServer(server)
-
-        val allVideos = mutableListOf<Video>()
-        for (stream in resolvedStreams) {
-            val streamKey = "${stream.audioType}-${stream.hosterName}"
-                .lowercase(Locale.ROOT)
-                .replace(Regex("[^a-z0-9]+"), "-")
-                .trim('-')
-            val subtitleTracks = server.getSubtitleTracks(stream)
-            for (variant in stream.variants) {
-                val videoUrl = "${server.baseUrl}/variant/$streamKey/${variant.quality}.m3u8"
-                val audioLabel = when (stream.audioType) {
-                    "dub" -> "DUB"
-                    "sub" -> "SUB"
-                    "hsub" -> "HSUB"
-                    else -> stream.audioType.uppercase(Locale.ROOT)
-                }
-                val title = "$audioLabel - ${stream.hosterName} - ${variant.quality}"
-                allVideos.add(
-                    Video(
-                        videoUrl = videoUrl,
-                        videoTitle = title,
-                        subtitleTracks = subtitleTracks,
-                    ),
-                )
-            }
-        }
-
-        return try {
-            allVideos.sortVideos()
-        } catch (t: Throwable) {
-            allVideos
-        }
+        return videosFromTasks(meta, buildHosterTasks(meta))
     }
 
     override suspend fun resolveVideo(video: Video): Video {
@@ -427,17 +334,142 @@ class Anikoto : Source() {
     private fun sortHostersByPriority(hosters: List<Hoster>, prefServer: String): List<Hoster> {
         val priority = HOSTER_PRIORITY
         return if (prefServer == PREF_SERVER_DEFAULT) {
-            hosters.sortedBy { h -> priority.indexOf(h.hosterName).let { if (it < 0) Int.MAX_VALUE else it } }
+            hosters.sortedBy { h ->
+                priority.indexOfFirst { h.hosterName.contains(it, ignoreCase = true) }
+                    .let { if (it < 0) Int.MAX_VALUE else it }
+            }
         } else {
             hosters.sortedWith(
                 compareBy { h ->
                     if (h.hosterName.contains(prefServer, ignoreCase = true)) {
                         0
                     } else {
-                        priority.indexOf(h.hosterName).let { if (it < 0) Int.MAX_VALUE else it + 1 }
+                        priority.indexOfFirst { h.hosterName.contains(it, ignoreCase = true) }
+                            .let { if (it < 0) Int.MAX_VALUE else it + 1 }
                     }
                 },
             )
+        }
+    }
+
+    private suspend fun buildHosterTasks(meta: EpisodeMeta): List<HosterTask> {
+        val tasks = mutableListOf<HosterTask>()
+
+        if (meta.malId.isNotEmpty() && meta.epNum.isNotEmpty() && meta.timestamp.isNotEmpty()) {
+            val mapperUrl = "https://mapper.nekostream.site/api/mal/${meta.malId}/${meta.epNum}/${meta.timestamp}"
+            logi("mapper API: GET $mapperUrl")
+            try {
+                val mapperResponse = client.newCall(GET(mapperUrl, ajaxHeaders(meta.slug))).execute()
+                val bodyStr = mapperResponse.body.string()
+                val jsonObject = json.parseToJsonElement(bodyStr) as? JsonObject
+                if (jsonObject != null) {
+                    val mapperTokens = parseMapperResponse(jsonObject)
+                    logi("mapper parsed ${mapperTokens.size} tokens")
+                    for (token in mapperTokens) {
+                        val label = when (token.audio) {
+                            "sub" -> "H-SUB - ${token.serverName}"
+                            "dub" -> "A-DUB - ${token.serverName}"
+                            else -> "${token.audio.uppercase(Locale.ROOT)} - ${token.serverName}"
+                        }
+                        tasks.add(HosterTask(label, token.token, token.audio, "mapper"))
+                    }
+                }
+            } catch (e: Exception) {
+                loge("mapper API FAILED", e)
+            }
+        }
+
+        if (meta.dataIds.isNotEmpty()) {
+            val primaryUrl = "$baseUrl/ajax/server/list?servers=${meta.dataIds}"
+            try {
+                val primaryResponse = client.newCall(GET(primaryUrl, ajaxHeaders(meta.slug))).execute()
+                val pJson = json.decodeFromString<ServerListResponse>(primaryResponse.body.string())
+                if (pJson.status == 200 && pJson.result.isNotEmpty()) {
+                    val pDoc = Jsoup.parse(pJson.result)
+                    for (element in pDoc.select("div.servers > div.type")) {
+                        val dataType = element.attr("data-type")
+                        val audioLabel = when (dataType) {
+                            "dub" -> "DUB"
+                            "sub" -> "SUB"
+                            "hsub" -> "HSUB"
+                            else -> dataType.uppercase(Locale.ROOT)
+                        }
+                        for (serverElement in element.select("li")) {
+                            val linkId = serverElement.attr("data-link-id")
+                            val text = serverElement.text()
+                            if (linkId.isNotEmpty()) {
+                                tasks.add(HosterTask("$audioLabel - $text", linkId, dataType, "primary"))
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                loge("primary API FAILED", e)
+            }
+        }
+
+        return tasks.distinctBy { "${it.audioType}|${it.label}|${it.token}" }
+    }
+
+    private suspend fun videosFromTasks(meta: EpisodeMeta, tasks: List<HosterTask>): List<Video> {
+        logi("Total tasks: ${tasks.size}")
+        if (tasks.isEmpty()) return emptyList()
+
+        val resolvedStreams = coroutineScope {
+            tasks.map { task ->
+                async(Dispatchers.IO) {
+                    resolveStreamForTask(task, meta.slug)
+                }
+            }.awaitAll().filterNotNull()
+        }
+
+        logi("Total resolved streams: ${resolvedStreams.size}")
+        if (resolvedStreams.isEmpty()) {
+            displayToast("Anikoto: No playable streams found", Toast.LENGTH_LONG)
+            return emptyList()
+        }
+
+        val segHeaders = Headers.Builder()
+            .add("Referer", "https://vidtube.site/")
+            .add("User-Agent", USER_AGENT)
+            .build()
+
+        val server = LocalProxyServer(noCloudflareClient, segHeaders)
+        server.playlist = LocalProxyServer.Playlist(resolvedStreams)
+        server.prefetchCount = prefetchBuffer.toIntOrNull() ?: 10
+        server.start()
+        swapProxyServer(server)
+
+        val allVideos = mutableListOf<Video>()
+        for (stream in resolvedStreams) {
+            val streamKey = "${stream.audioType}-${stream.hosterName}"
+                .lowercase(Locale.ROOT)
+                .replace(Regex("[^a-z0-9]+"), "-")
+                .trim('-')
+            val subtitleTracks = server.getSubtitleTracks(stream)
+            for (variant in stream.variants) {
+                val videoUrl = "${server.baseUrl}/variant/$streamKey/${variant.quality}.m3u8"
+                val audioLabel = when (stream.audioType) {
+                    "dub" -> "DUB"
+                    "sub" -> "SUB"
+                    "hsub" -> "HSUB"
+                    else -> stream.audioType.uppercase(Locale.ROOT)
+                }
+                val title = "$audioLabel - ${variant.quality}"
+                allVideos.add(
+                    Video(
+                        videoUrl = videoUrl,
+                        videoTitle = title,
+                        subtitleTracks = subtitleTracks,
+                    ),
+                )
+            }
+        }
+
+        return try {
+            allVideos.sortVideos()
+        } catch (_: Throwable) {
+            allVideos
         }
     }
 
@@ -640,11 +672,4 @@ data class VariantInfo(
     val bandwidth: Int,
     val quality: String,
     val resolution: Int,
-)
-
-data class HosterTask(
-    val label: String,
-    val token: String,
-    val audioType: String,
-    val source: String,
 )
