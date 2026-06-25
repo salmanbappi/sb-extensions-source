@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import androidx.preference.PreferenceScreen
 import extensions.utils.Source
 import extensions.utils.parseAs
@@ -79,13 +80,14 @@ class ReAnime : Source() {
 
     override val supportsLatest = true
 
+    override val client = network.client.newBuilder()
+        .addInterceptor(CloudflareInterceptor(network.client))
+        .build()
+
     private val playlistUtils by lazy {
         PlaylistUtils(client, headers)
     }
 
-    private val cloudflareBypass by lazy {
-        ReanimeCloudflareBypass()
-    }
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
@@ -553,21 +555,11 @@ class ReAnime : Source() {
     private fun buildPlaybackHeaders(videoUrl: String, embedUrl: String): Headers {
         val videoHttpUrl = runCatching { videoUrl.toHttpUrl() }.getOrNull()
         val origin = videoHttpUrl?.let { "${it.scheme}://${it.host}" } ?: "https://fetch.flixcloud.cc"
-        val challengeUrl = "$origin/"
-        val bypassResult = runCatching { cloudflareBypass.getCookies(challengeUrl) }.getOrNull()
 
         return headersBuilder()
             .set("Accept", "*/*")
             .set("Origin", origin)
             .set("Referer", embedUrl)
-            .apply {
-                if (bypassResult?.userAgent?.isNotBlank() == true) {
-                    set("User-Agent", bypassResult.userAgent)
-                }
-                if (bypassResult?.cookies?.isNotBlank() == true) {
-                    set("Cookie", bypassResult.cookies)
-                }
-            }
             .build()
     }
 
