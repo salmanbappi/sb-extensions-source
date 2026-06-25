@@ -7,8 +7,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.net.URLDecoder
-import java.net.URLEncoder
 
 @Serializable
 data class EpisodeListResponse(
@@ -132,45 +130,3 @@ fun parseMapperResponse(obj: JsonObject): List<MapperStreamToken> {
 private fun extractUrl(el: JsonElement): String? = runCatching {
     el.jsonObject["url"]?.jsonPrimitive?.contentOrNull
 }.getOrNull()
-
-data class HosterTask(
-    val label: String,
-    val token: String,
-    val audioType: String,
-    val source: String,
-) {
-    fun serverName(): String = label.substringAfter(" - ", label)
-
-    companion object {
-        private const val HOSTER_SELECTION_SEPARATOR = "|||"
-        private const val HOSTER_TASK_SEPARATOR = "###"
-
-        fun encodeSelection(metaUrl: String, tasks: List<HosterTask>): String {
-            val taskBlob = tasks.joinToString(HOSTER_TASK_SEPARATOR) { task ->
-                listOf(task.label, task.token, task.audioType, task.source)
-                    .joinToString(HOSTER_SELECTION_SEPARATOR) { URLEncoder.encode(it, "UTF-8") }
-            }
-            return listOf(metaUrl, taskBlob)
-                .joinToString(HOSTER_SELECTION_SEPARATOR) { URLEncoder.encode(it, "UTF-8") }
-        }
-
-        fun decodeSelection(encoded: String): Pair<String, List<HosterTask>>? = runCatching {
-            val parts = encoded.split(HOSTER_SELECTION_SEPARATOR, limit = 2)
-            if (parts.size != 2) return null
-            val metaUrl = URLDecoder.decode(parts[0], "UTF-8")
-            val taskBlob = URLDecoder.decode(parts[1], "UTF-8")
-            val tasks = taskBlob.split(HOSTER_TASK_SEPARATOR).mapNotNull { taskPart ->
-                val taskFields = taskPart.split(HOSTER_SELECTION_SEPARATOR)
-                if (taskFields.size != 4) return@mapNotNull null
-                val decoded = taskFields.map { URLDecoder.decode(it, "UTF-8") }
-                HosterTask(
-                    label = decoded[0],
-                    token = decoded[1],
-                    audioType = decoded[2],
-                    source = decoded[3],
-                )
-            }
-            metaUrl to tasks
-        }.getOrNull()
-    }
-}
