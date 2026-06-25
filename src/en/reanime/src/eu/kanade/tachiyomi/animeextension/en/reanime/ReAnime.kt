@@ -84,6 +84,8 @@ class ReAnime : Source() {
     override val supportsLatest = true
 
     override val client = network.client.newBuilder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
         .addInterceptor(CloudflareInterceptor(network.client))
         .build()
 
@@ -97,6 +99,7 @@ class ReAnime : Source() {
 
 
     override fun headersBuilder() = super.headersBuilder()
+        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .set("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
