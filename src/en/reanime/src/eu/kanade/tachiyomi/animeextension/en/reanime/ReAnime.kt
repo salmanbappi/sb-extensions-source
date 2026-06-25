@@ -14,7 +14,10 @@ import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSwitchPreference
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withContext
 import kotlin.getValue
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -341,103 +344,118 @@ class ReAnime : Source() {
         val flixResponse = client.newCall(flixRequest).execute()
         val flixData = flixResponse.parseAs<FlixResponseDto>()
 
-        return flixData.servers.parallelCatchingFlatMapBlocking { server ->
-            val embedReferer = "$baseUrl/watch/$slug?ep=$epNumStr"
-            val embedRequest = GET(server.dataLink, headersBuilder().set("Referer", embedReferer).build())
-            val embedResponse = client.newCall(embedRequest).execute()
-            val embedHtml = embedResponse.body.string()
+        val exceptions = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val videos = withContext(Dispatchers.IO) {
+            flixData.servers.map { server ->
+                async {
+                    try {
+                        val embedReferer = "$baseUrl/watch/$slug?ep=$epNumStr"
+                        val embedRequest = GET(server.dataLink, headersBuilder().set("Referer", embedReferer).build())
+                        val embedResponse = client.newCall(embedRequest).execute()
+                        val embedHtml = embedResponse.body.string()
 
-            val seed = Regex(""""?obfuscation_seed"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
-            val wPayload = Regex(""""?w_payload"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
+                        val seed = Regex(""""?obfuscation_seed"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
+                            ?: return@async emptyList()
+                        val wPayload = Regex(""""?w_payload"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
+                            ?: return@async emptyList()
 
-            val mappings = resolveMappings(seed)
+                        val mappings = resolveMappings(seed)
 
-            val tokenRegex = Regex(""""?${mappings.tokenField}"?\s*:\s*"([^"]+)"""")
-            val w = tokenRegex.find(embedHtml)?.groupValues?.get(1)
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
+                        val tokenRegex = Regex(""""?${mappings.tokenField}"?\s*:\s*"([^"]+)"""")
+                        val w = tokenRegex.find(embedHtml)?.groupValues?.get(1)
+                            ?: return@async emptyList()
 
-            val frag2Regex = Regex(""""?${mappings.keyFrag2Field}"?\s*:\s*"([^"]+)"""")
-            val frag2B64 = frag2Regex.find(embedHtml)?.groupValues?.get(1)
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
+                        val frag2Regex = Regex(""""?${mappings.keyFrag2Field}"?\s*:\s*"([^"]+)"""")
+                        val frag2B64 = frag2Regex.find(embedHtml)?.groupValues?.get(1)
+                            ?: return@async emptyList()
 
-            // Fetch session token
-            val m3u8ApiUrl = "https://flixcloud.cc/api/m3u8/$w"
-            val tokenHeaders = Headers.Builder()
-                .add("Referer", server.dataLink)
-                .add("Origin", "https://flixcloud.cc")
-                .build()
-            val tokenResponse = client.newCall(GET(m3u8ApiUrl, tokenHeaders)).execute()
-            val tokenBody = tokenResponse.body.string()
+                        // Fetch session token
+                        val m3u8ApiUrl = "https://flixcloud.cc/api/m3u8/$w"
+                        val tokenHeaders = Headers.Builder()
+                            .add("Referer", server.dataLink)
+                            .add("Origin", "https://flixcloud.cc")
+                            .build()
+                        val tokenResponse = client.newCall(GET(m3u8ApiUrl, tokenHeaders)).execute()
+                        val tokenBody = tokenResponse.body.string()
 
-            val kField = getSha256(w + "vid").substring(0, 10)
-            val pField = getSha256(w + "key").substring(0, 10)
+                        val kField = getSha256(w + "vid").substring(0, 10)
+                        val pField = getSha256(w + "key").substring(0, 10)
 
-            val jsonObject = json.parseToJsonElement(tokenBody).jsonObject
-            val v = jsonObject[kField]?.jsonPrimitive?.content
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
-            val T = jsonObject[pField]?.jsonPrimitive?.content
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
+                        val jsonObject = json.parseToJsonElement(tokenBody).jsonObject
+                        val v = jsonObject[kField]?.jsonPrimitive?.content
+                            ?: return@async emptyList()
+                        val T = jsonObject[pField]?.jsonPrimitive?.content
+                            ?: return@async emptyList()
 
-            // Dynamic keys resolution via container parsing
-            val pattern = """"?${mappings.containerName}"?\s*:\s*\{\s*"?${mappings.arrayName}"?\s*:\s*\[\s*\{\s*"?${mappings.objectName}"?\s*:\s*\{\s*"?${mappings.keyField}"?\s*:\s*"([^"]+)"\s*,\s*"?${mappings.ivField}"?\s*:\s*"([^"]+)""""
-            val match = Regex(pattern).find(embedHtml)
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
-            val frag1B64 = match.groupValues[1]
-            val ivB64 = match.groupValues[2]
+                        // Dynamic keys resolution via container parsing
+                        val pattern = """"?${mappings.containerName}"?\s*:\s*\{\s*"?${mappings.arrayName}"?\s*:\s*\[\s*\{\s*"?${mappings.objectName}"?\s*:\s*\{\s*"?${mappings.keyField}"?\s*:\s*"([^"]+)"\s*,\s*"?${mappings.ivField}"?\s*:\s*"([^"]+)""""
+                        val match = Regex(pattern).find(embedHtml)
+                            ?: return@async emptyList()
+                        val frag1B64 = match.groupValues[1]
+                        val ivB64 = match.groupValues[2]
 
-            // Decryption
-            val frag1 = Base64.decode(frag1B64, Base64.DEFAULT)
-            val frag2 = Base64.decode(frag2B64, Base64.DEFAULT)
-            val keyPart = Base64.decode(T, Base64.DEFAULT)
-            val seedInt = seed.substring(0, 8).toLong(16).toInt()
+                        // Decryption
+                        val frag1 = Base64.decode(frag1B64, Base64.DEFAULT)
+                        val frag2 = Base64.decode(frag2B64, Base64.DEFAULT)
+                        val keyPart = Base64.decode(T, Base64.DEFAULT)
+                        val seedInt = seed.substring(0, 8).toLong(16).toInt()
 
-            val wasmBytes = Base64.decode(wPayload, Base64.DEFAULT)
-            val interpreter = MiniWasmInterpreter(wasmBytes)
-            val funcs = interpreter.parseWasm()
-            val derivedBaseKey = interpreter.executeWasm(funcs, frag1, frag2, keyPart, seedInt)
+                        val wasmBytes = Base64.decode(wPayload, Base64.DEFAULT)
+                        val interpreter = MiniWasmInterpreter(wasmBytes)
+                        val funcs = interpreter.parseWasm()
+                        val derivedBaseKey = interpreter.executeWasm(funcs, frag1, frag2, keyPart, seedInt)
 
-            val salt = seed.toByteArray(Charsets.UTF_8)
-            val pbkdf2Key = pbkdf2(derivedBaseKey, salt, 1000)
+                        val salt = seed.toByteArray(Charsets.UTF_8)
+                        val pbkdf2Key = pbkdf2(derivedBaseKey, salt, 1000)
 
-            val finalKey = ByteArray(32)
-            for (idx in 0 until 32) {
-                finalKey[idx] = (pbkdf2Key[idx].toInt() xor seed[idx % seed.length].code).toByte()
-            }
+                        val finalKey = ByteArray(32)
+                        for (idx in 0 until 32) {
+                            finalKey[idx] = (pbkdf2Key[idx].toInt() xor seed[idx % seed.length].code).toByte()
+                        }
 
-            val aesKey = getSha256Bytes(finalKey)
-            val iv = Base64.decode(ivB64, Base64.DEFAULT)
-            val ciphertext = Base64.decode(v, Base64.DEFAULT)
+                        val aesKey = getSha256Bytes(finalKey)
+                        val iv = Base64.decode(ivB64, Base64.DEFAULT)
+                        val ciphertext = Base64.decode(v, Base64.DEFAULT)
 
-            val decryptedUrl = decryptAes(ciphertext, aesKey, iv)
+                        val decryptedUrl = decryptAes(ciphertext, aesKey, iv)
 
-            val pkBytes = interpreter.getPkBytes(funcs)
-            val pkB64 = Base64.encodeToString(pkBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+                        val pkBytes = interpreter.getPkBytes(funcs)
+                        val pkB64 = Base64.encodeToString(pkBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 
-            val playHeaders = buildPlaybackHeaders(decryptedUrl, server.dataLink)
-            val proxiedUrl = localProxy.getProxyUrl(decryptedUrl, playHeaders, pkB64)
+                        val playHeaders = buildPlaybackHeaders(decryptedUrl, server.dataLink)
+                        val proxiedUrl = localProxy.getProxyUrl(decryptedUrl, playHeaders, pkB64)
 
-            val masterHeadersGen = { baseHeaders: Headers, ref: String ->
-                playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
-                    .applyPlaybackHeaders(playHeaders)
-                    .build()
-            }
+                        val masterHeadersGen = { baseHeaders: Headers, ref: String ->
+                            playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
+                                .applyPlaybackHeaders(playHeaders)
+                                .build()
+                        }
 
-            val videoHeadersGen = { baseHeaders: Headers, ref: String, _: String ->
-                playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
-                    .applyPlaybackHeaders(playHeaders)
-                    .build()
-            }
+                        val videoHeadersGen = { baseHeaders: Headers, ref: String, _: String ->
+                            playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
+                                .applyPlaybackHeaders(playHeaders)
+                                .build()
+                        }
 
-            playlistUtils.extractFromHls(
-                playlistUrl = proxiedUrl,
-                referer = server.dataLink,
-                masterHeadersGen = masterHeadersGen,
-                videoHeadersGen = videoHeadersGen,
-                videoNameGen = { quality -> "${server.serverName} (${server.dataType}) - $quality" }
-            )
+                        playlistUtils.extractFromHls(
+                            playlistUrl = proxiedUrl,
+                            referer = server.dataLink,
+                            masterHeadersGen = masterHeadersGen,
+                            videoHeadersGen = videoHeadersGen,
+                            videoNameGen = { quality -> "${server.serverName} (${server.dataType}) - $quality" }
+                        )
+                    } catch (e: Throwable) {
+                        exceptions.add(e)
+                        emptyList()
+                    }
+                }
+            }.awaitAll().flatten()
         }
+
+        if (videos.isEmpty() && exceptions.isNotEmpty()) {
+            throw exceptions.first()
+        }
+        return videos
     }
 
     // ============================ Utilities ===============================
