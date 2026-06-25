@@ -234,7 +234,6 @@ class LocalProxy(private val client: OkHttpClient) {
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders$pkParam"
     }
 
-
     private fun resolveUrl(baseUrl: String, relativeUrl: String): String = try {
         baseUrl.toHttpUrl().resolve(relativeUrl)?.toString() ?: relativeUrl
     } catch (_: Exception) {
