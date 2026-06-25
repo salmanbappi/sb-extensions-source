@@ -246,11 +246,11 @@ class Anikoto : Source() {
         val hosters = tasks
             .groupBy { it.serverName() }
             .map { (serverName, serverTasks) ->
-            Hoster(
-                hosterName = serverName,
-                hosterUrl = HosterTask.encodeSelection(episode.url, serverTasks),
-            )
-        }
+                Hoster(
+                    hosterName = serverName,
+                    hosterUrl = HosterTask.encodeSelection(episode.url, serverTasks),
+                )
+            }
         return sortHostersByPriority(hosters, preferredServer)
     }
 
