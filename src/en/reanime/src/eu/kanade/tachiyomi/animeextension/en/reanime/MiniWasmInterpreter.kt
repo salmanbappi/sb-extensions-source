@@ -76,9 +76,14 @@ class MiniWasmInterpreter(private val wasmBytes: ByteArray) {
         return memory.copyOfRange(i, i + k)
     }
 
+    fun getPkBytes(funcs: List<ByteArray>): ByteArray {
+        val offset = runFunc(funcs[2], intArrayOf())
+        return memory.copyOfRange(offset, offset + 32)
+    }
+
     private class Block(val op: Int, val pc: Int, val end: Int)
 
-    private fun runFunc(body: ByteArray, args: IntArray) {
+    private fun runFunc(body: ByteArray, args: IntArray): Int {
         val offsetRef = intArrayOf(0)
         val localDeclCount = readVarUint(body, offsetRef)
         val locals = mutableListOf<Int>()
@@ -213,7 +218,7 @@ class MiniWasmInterpreter(private val wasmBytes: ByteArray) {
                 pc += 3
                 val addr = stack.removeAt(stack.size - 1)
                 stack.add(memory[addr].toInt() and 0xff)
-            } else if (op == 0x3a) { // i32.store8
+            } else if (op == 0x3b || op == 0x3a) { // store8
                 pc += 3
                 val valStore = stack.removeAt(stack.size - 1)
                 val addr = stack.removeAt(stack.size - 1)
@@ -269,5 +274,6 @@ class MiniWasmInterpreter(private val wasmBytes: ByteArray) {
                 throw Exception("Unsupported opcode: " + op.toString(16))
             }
         }
+        return stack.lastOrNull() ?: 0
     }
 }

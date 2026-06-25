@@ -412,8 +412,11 @@ class ReAnime : Source() {
 
             val decryptedUrl = decryptAes(ciphertext, aesKey, iv)
 
+            val pkBytes = interpreter.getPkBytes(funcs)
+            val pkB64 = Base64.encodeToString(pkBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+
             val playHeaders = buildPlaybackHeaders(decryptedUrl, server.dataLink)
-            val proxiedUrl = localProxy.getProxyUrl(decryptedUrl, playHeaders)
+            val proxiedUrl = localProxy.getProxyUrl(decryptedUrl, playHeaders, pkB64)
 
             val masterHeadersGen = { baseHeaders: Headers, ref: String ->
                 playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()

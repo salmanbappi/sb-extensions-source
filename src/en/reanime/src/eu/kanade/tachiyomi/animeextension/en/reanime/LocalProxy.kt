@@ -31,7 +31,7 @@ class LocalProxy(private val client: OkHttpClient) {
         } catch (e: Exception) {}
     }
 
-    fun getProxyUrl(targetUrl: String, headers: Headers?): String {
+    fun getProxyUrl(targetUrl: String, headers: Headers?, pk: String? = null): String {
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val headersStr = headers?.let { h ->
             val sb = StringBuilder()
@@ -44,7 +44,8 @@ class LocalProxy(private val client: OkHttpClient) {
         val cleanUrl = targetUrl.substringBefore("?")
         val isM3u8 = cleanUrl.endsWith(".m3u8") || cleanUrl.contains("mpegurl")
         val ext = if (isM3u8) "playlist.m3u8" else "segment.ts"
-        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
+        val pkParam = if (pk != null) "&pk=$pk" else ""
+        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders$pkParam"
     }
 
     private fun handleSocket(socket: Socket) {
@@ -64,6 +65,7 @@ class LocalProxy(private val client: OkHttpClient) {
             val httpUrl = ("http://127.0.0.1$path").toHttpUrl()
             val encodedUrl = httpUrl.queryParameter("url")
             val encodedHeaders = httpUrl.queryParameter("headers") ?: ""
+            val pk = httpUrl.queryParameter("pk")
 
             if (encodedUrl.isNullOrEmpty()) {
                 sendError(socket, 400, "Missing url parameter")
@@ -104,7 +106,7 @@ class LocalProxy(private val client: OkHttpClient) {
                 .build()
 
             client.newCall(request).execute().use { response ->
-                sendResponse(socket, response, targetUrl, encodedHeaders)
+                sendResponse(socket, response, targetUrl, encodedHeaders, pk)
             }
         } catch (e: Exception) {
             try {
@@ -117,7 +119,7 @@ class LocalProxy(private val client: OkHttpClient) {
         }
     }
 
-    private fun sendResponse(socket: Socket, response: Response, targetUrl: String, encodedHeaders: String) {
+    private fun sendResponse(socket: Socket, response: Response, targetUrl: String, encodedHeaders: String, pk: String?) {
         val out = socket.getOutputStream()
         val contentType = response.header("Content-Type")?.lowercase() ?: ""
         val cleanTargetUrl = targetUrl.substringBefore("?")
@@ -126,8 +128,26 @@ class LocalProxy(private val client: OkHttpClient) {
         var modifiedContentBytes: ByteArray? = null
         if (isM3u8) {
             try {
-                val bodyString = response.body.string()
-                val modifiedContent = processM3u8(bodyString, targetUrl, encodedHeaders)
+                val rawBytes = response.body.bytes()
+                val decryptedBodyString = if (pk != null && rawBytes.isNotEmpty()) {
+                    val checkLen = minOf(rawBytes.size, 16)
+                    val firstBytesStr = String(rawBytes, 0, checkLen, Charsets.UTF_8)
+                    if (!firstBytesStr.startsWith("#EXTM3U")) {
+                        val pkBytes = Base64.decode(pk, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+                        val encryptedBytes = Base64.decode(rawBytes, Base64.DEFAULT)
+                        val decryptedBytes = ByteArray(encryptedBytes.size)
+                        for (i in encryptedBytes.indices) {
+                            decryptedBytes[i] = (encryptedBytes[i].toInt() xor pkBytes[i % pkBytes.size].toInt()).toByte()
+                        }
+                        String(decryptedBytes, Charsets.UTF_8)
+                    } else {
+                        String(rawBytes, Charsets.UTF_8)
+                    }
+                } else {
+                    String(rawBytes, Charsets.UTF_8)
+                }
+
+                val modifiedContent = processM3u8(decryptedBodyString, targetUrl, encodedHeaders, pk)
                 modifiedContentBytes = modifiedContent.toByteArray()
             } catch (e: Exception) {}
         }
@@ -173,7 +193,7 @@ class LocalProxy(private val client: OkHttpClient) {
 
     private val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
 
-    private fun processM3u8(content: String, playlistUrl: String, encodedHeaders: String): String {
+    private fun processM3u8(content: String, playlistUrl: String, encodedHeaders: String, pk: String?): String {
         val lines = content.split(Regex("""\r?\n"""))
         val builder = StringBuilder(content.length * 2)
 
@@ -189,7 +209,7 @@ class LocalProxy(private val client: OkHttpClient) {
                     uriRegex.find(trimmed)?.let { match ->
                         val uriValue = match.groupValues[1]
                         val resolvedUri = resolveUrl(playlistUrl, uriValue)
-                        val proxiedUri = getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders)
+                        val proxiedUri = getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders, pk)
                         builder.append(trimmed.replace(uriValue, proxiedUri))
                     } ?: builder.append(trimmed)
                 } else {
@@ -197,7 +217,7 @@ class LocalProxy(private val client: OkHttpClient) {
                 }
             } else {
                 val resolvedUri = resolveUrl(playlistUrl, trimmed)
-                builder.append(getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders))
+                builder.append(getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders, pk))
             }
             builder.append("\n")
         }
@@ -205,13 +225,15 @@ class LocalProxy(private val client: OkHttpClient) {
         return builder.toString()
     }
 
-    private fun getProxyUrlWithEncodedHeaders(targetUrl: String, encodedHeaders: String): String {
+    private fun getProxyUrlWithEncodedHeaders(targetUrl: String, encodedHeaders: String, pk: String?): String {
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val cleanUrl = targetUrl.substringBefore("?")
         val isM3u8 = cleanUrl.endsWith(".m3u8") || cleanUrl.contains("mpegurl")
         val ext = if (isM3u8) "playlist.m3u8" else "segment.ts"
-        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
+        val pkParam = if (pk != null) "&pk=$pk" else ""
+        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders$pkParam"
     }
+
 
     private fun resolveUrl(baseUrl: String, relativeUrl: String): String = try {
         baseUrl.toHttpUrl().resolve(relativeUrl)?.toString() ?: relativeUrl
