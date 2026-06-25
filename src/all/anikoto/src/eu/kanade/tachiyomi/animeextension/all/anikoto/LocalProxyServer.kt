@@ -100,6 +100,11 @@ class LocalProxyServer(
         val streams: List<AudioStream>,
     )
 
+    private fun streamKey(stream: AudioStream): String = "${stream.audioType}-${stream.hosterName}"
+        .lowercase()
+        .replace(Regex("[^a-z0-9]+"), "-")
+        .trim('-')
+
     fun start() {
         if (running.get()) return
         val ss = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
@@ -201,23 +206,23 @@ class LocalProxyServer(
         logi("REQUEST: $path")
         val parts = path.trim('/').split('/')
         if (parts.size >= 3 && parts[0] == "variant") {
-            val audioType = parts[1]
+            val streamKey = parts[1]
             val quality = parts[2].removeSuffix(".m3u8")
-            serveVariantPlaylist(audioType, quality, output)
+            serveVariantPlaylist(streamKey, quality, output)
         } else if (parts.size >= 4 && parts[0] == "seg") {
-            val audioType = parts[1]
+            val streamKey = parts[1]
             val quality = parts[2]
             val index = parts[3].toIntOrNull()
             if (index != null) {
-                serveSegment(audioType, quality, index, output)
+                serveSegment(streamKey, quality, index, output)
             } else {
                 sendError(output, 400, "Bad segment index")
             }
         } else if (parts.size >= 3 && parts[0] == "sub") {
-            val audioType = parts[1]
+            val streamKey = parts[1]
             val subIndex = parts[2].toIntOrNull()
             if (subIndex != null) {
-                serveSubtitle(audioType, subIndex, output)
+                serveSubtitle(streamKey, subIndex, output)
             } else {
                 sendError(output, 400, "Bad subtitle index")
             }
@@ -226,10 +231,10 @@ class LocalProxyServer(
         }
     }
 
-    private fun serveVariantPlaylist(audioType: String, quality: String, output: OutputStream) {
+    private fun serveVariantPlaylist(streamKey: String, quality: String, output: OutputStream) {
         val pl = playlist ?: return sendError(output, 500, "No playlist")
-        val stream = pl.streams.firstOrNull { it.audioType == audioType }
-            ?: return sendError(output, 404, "Audio type not found: $audioType")
+        val stream = pl.streams.firstOrNull { streamKey(it) == streamKey }
+            ?: return sendError(output, 404, "Stream not found: $streamKey")
         val variant = stream.variants.firstOrNull { it.quality == quality }
             ?: return sendError(output, 404, "Quality not found: $quality")
 
@@ -243,28 +248,28 @@ class LocalProxyServer(
         sb.append("#EXT-X-MEDIA-SEQUENCE:0\n")
         variant.segments.forEachIndexed { i, seg ->
             sb.append("#EXTINF:${seg.duration},\n")
-            sb.append("$baseUrl/seg/$audioType/$quality/$i\n")
+            sb.append("$baseUrl/seg/$streamKey/$quality/$i\n")
         }
         sb.append("#EXT-X-ENDLIST\n")
         sendText(output, "application/vnd.apple.mpegurl", sb.toString())
     }
 
-    private fun serveSegment(audioType: String, quality: String, index: Int, output: OutputStream) {
+    private fun serveSegment(streamKey: String, quality: String, index: Int, output: OutputStream) {
         val pl = playlist ?: return sendError(output, 500, "No playlist")
-        val stream = pl.streams.firstOrNull { it.audioType == audioType }
-            ?: return sendError(output, 404, "Audio type not found: $audioType")
+        val stream = pl.streams.firstOrNull { streamKey(it) == streamKey }
+            ?: return sendError(output, 404, "Stream not found: $streamKey")
         val variant = stream.variants.firstOrNull { it.quality == quality }
             ?: return sendError(output, 404, "Quality not found: $quality")
         val seg = variant.segments.getOrNull(index)
             ?: return sendError(output, 404, "Segment $index not found")
 
-        val cacheKey = "$audioType/$quality/$index"
+        val cacheKey = "$streamKey/$quality/$index"
         touchActivity()
         val cached = segmentCache[cacheKey]
         if (cached != null) {
             logi("CACHE HIT: $cacheKey (${cached.size} bytes)")
             sendBytes(output, "video/MP2T", cached)
-            triggerPrefetch(stream, variant, audioType, quality, index)
+            triggerPrefetch(stream, variant, streamKey, quality, index)
             return
         }
 
@@ -279,7 +284,7 @@ class LocalProxyServer(
             if (waitedBytes != null) {
                 logi("FETCH WAIT SUCCEEDED: $cacheKey (${waitedBytes.size} bytes)")
                 sendBytes(output, "video/MP2T", waitedBytes)
-                triggerPrefetch(stream, variant, audioType, quality, index)
+                triggerPrefetch(stream, variant, streamKey, quality, index)
                 return
             }
             logw("FETCH WAIT FAILED, fetching synchronously: $cacheKey")
@@ -299,7 +304,7 @@ class LocalProxyServer(
             }
             cacheSegment(cacheKey, stripped)
             sendBytes(output, "video/MP2T", stripped)
-            triggerPrefetch(stream, variant, audioType, quality, index)
+            triggerPrefetch(stream, variant, streamKey, quality, index)
         } catch (e: Exception) {
             loge("Segment fetch failed ($cacheKey): ${e.message}")
             sendError(output, 502, "Fetch error: ${e.message}")
@@ -334,7 +339,7 @@ class LocalProxyServer(
     private fun triggerPrefetch(
         stream: AudioStream,
         variant: VariantData,
-        audioType: String,
+        streamKey: String,
         quality: String,
         currentIndex: Int,
     ) {
@@ -346,7 +351,7 @@ class LocalProxyServer(
         var submitted = 0
 
         for (i in (currentIndex + 1)..maxIndex) {
-            val key = "$audioType/$quality/$i"
+            val key = "$streamKey/$quality/$i"
             if (!segmentCache.containsKey(key) && fetching[key] != true) {
                 submitted++
                 if (submitted <= 5) {
@@ -382,10 +387,10 @@ class LocalProxyServer(
         }
     }
 
-    private fun serveSubtitle(audioType: String, subIndex: Int, output: OutputStream) {
+    private fun serveSubtitle(streamKey: String, subIndex: Int, output: OutputStream) {
         val pl = playlist ?: return sendError(output, 500, "No playlist")
-        val stream = pl.streams.firstOrNull { it.audioType == audioType }
-            ?: return sendError(output, 404, "Audio type not found: $audioType")
+        val stream = pl.streams.firstOrNull { streamKey(it) == streamKey }
+            ?: return sendError(output, 404, "Stream not found: $streamKey")
         val sub = stream.subtitles.getOrNull(subIndex)
             ?: return sendError(output, 404, "Subtitle $subIndex not found")
 
@@ -399,7 +404,7 @@ class LocalProxyServer(
                 }
                 val body = response.body ?: throw RuntimeException("Empty body")
                 val text = body.string()
-                logi("SUBTITLE served: $audioType/$subIndex (${text.length} chars)")
+                logi("SUBTITLE served: $streamKey/$subIndex (${text.length} chars)")
                 sendText(output, "text/vtt", text)
             }
         } catch (e: Exception) {
@@ -408,13 +413,14 @@ class LocalProxyServer(
         }
     }
 
-    fun getSubtitleTracks(audioType: String): List<Track> {
+    fun getSubtitleTracks(stream: AudioStream): List<Track> {
         val pl = playlist ?: return emptyList()
-        val stream = pl.streams.firstOrNull { it.audioType == audioType } ?: return emptyList()
-        val tracks = stream.subtitles.mapIndexed { i, sub ->
-            Track("$baseUrl/sub/$audioType/$i", sub.label)
+        val playlistStream = pl.streams.firstOrNull { streamKey(it) == streamKey(stream) } ?: return emptyList()
+        val key = streamKey(playlistStream)
+        val tracks = playlistStream.subtitles.mapIndexed { i, sub ->
+            Track("$baseUrl/sub/$key/$i", sub.label)
         }
-        logi("getSubtitleTracks($audioType): ${tracks.size} tracks")
+        logi("getSubtitleTracks($key): ${tracks.size} tracks")
         return tracks
     }
 

@@ -334,9 +334,13 @@ class Anikoto : Source() {
 
         val allVideos = mutableListOf<Video>()
         for (stream in resolvedStreams) {
-            val subtitleTracks = server.getSubtitleTracks(stream.audioType)
+            val streamKey = "${stream.audioType}-${stream.hosterName}"
+                .lowercase(Locale.ROOT)
+                .replace(Regex("[^a-z0-9]+"), "-")
+                .trim('-')
+            val subtitleTracks = server.getSubtitleTracks(stream)
             for (variant in stream.variants) {
-                val videoUrl = "${server.baseUrl}/variant/${stream.audioType}/${variant.quality}.m3u8"
+                val videoUrl = "${server.baseUrl}/variant/$streamKey/${variant.quality}.m3u8"
                 val audioLabel = when (stream.audioType) {
                     "dub" -> "DUB"
                     "sub" -> "SUB"
