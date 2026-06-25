@@ -348,7 +348,11 @@ class Anikoto : Source() {
             }
         }
 
-        return try { allVideos.sortVideos() } catch (t: Throwable) { allVideos }
+        return try {
+            allVideos.sortVideos()
+        } catch (t: Throwable) {
+            allVideos
+        }
     }
 
     override suspend fun resolveVideo(video: Video): Video {
@@ -380,10 +384,12 @@ class Anikoto : Source() {
                     logi("  [${task.label}] → Flow A (VidTube), host=$host")
                     extractors.resolveVidTube(url, task.audioType, hosterName)
                 }
+
                 host.contains("mewcdn.online") -> {
                     logi("  [${task.label}] → Flow B (Kiwi), host=$host")
                     extractors.resolveKiwi(url, task.audioType, hosterName)
                 }
+
                 else -> {
                     Log.w(TAG, "  [${task.label}] UNKNOWN host=$host, skipping")
                     null
@@ -452,7 +458,9 @@ class Anikoto : Source() {
                 val activePage = doc.selectFirst("ul.pagination li.active")?.text()?.toIntOrNull() ?: 0
                 val pages = doc.select("ul.pagination li.page-item a.page-link").mapNotNull { it.text().toIntOrNull() }
                 pages.any { it > activePage }
-            } catch (e: Exception) { false }
+            } catch (e: Exception) {
+                false
+            }
         }
         return AnimesPage(animes, hasNext)
     }

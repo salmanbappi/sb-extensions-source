@@ -65,8 +65,7 @@ class EpisodeMetadataFetcher(
         null
     }
 
-    private fun stripHtml(text: String): String =
-        text.replace(Regex("<[^>]+>"), "").trim()
+    private fun stripHtml(text: String): String = text.replace(Regex("<[^>]+>"), "").trim()
 
     /** Fetches metadata for all episodes of an anime identified by MAL ID.
      *  Returns map of episode number → EpisodeMetadata.
