@@ -408,8 +408,10 @@ class Anikoto : Source() {
             "H-SUB" -> "HSUB"
             else -> PREF_AUDIO_DEFAULT
         }
+        val prefServer = preferredServer
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.startsWith(prefAudioLabel, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefServer, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
