@@ -1,9 +1,9 @@
 package eu.kanade.tachiyomi.animeextension.all.anikoto
 
-import android.content.SharedPreferences
 import android.util.Log
 import android.widget.Toast
 import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
@@ -60,7 +60,7 @@ class Anikoto : Source() {
             .addInterceptor { chain ->
                 val request = chain.request()
                 val builder = request.newBuilder()
-                    .header("User-Agent", "Mozilla/5.0")
+                    .header("User-Agent", USER_AGENT)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .header("Accept-Language", "en-US,en;q=0.9")
                 if (request.header("Referer") == null) {
@@ -70,6 +70,11 @@ class Anikoto : Source() {
             }
             .build()
     }
+
+    private val extractors by lazy { AnikotoExtractors(noCloudflareClient, json) }
+    private val metadataFetcher by lazy { EpisodeMetadataFetcher(client, json) }
+
+    // ---- Preferences ----
 
     private val preferredQuality: String
         get() = preferences.getString(PREF_QUALITY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
@@ -83,84 +88,50 @@ class Anikoto : Source() {
     private val prefetchBuffer: String
         get() = preferences.getString(PREF_BUFFER, PREF_BUFFER_DEFAULT) ?: PREF_BUFFER_DEFAULT
 
+    private val preferredServer: String
+        get() = preferences.getString(PREF_SERVER, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+
+    private val loadThumbnails: Boolean
+        get() = preferences.getBoolean(PREF_LOAD_THUMBNAILS, true)
+
+    private val loadTitles: Boolean
+        get() = preferences.getBoolean(PREF_LOAD_TITLES, true)
+
+    private val loadDescriptions: Boolean
+        get() = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS, true)
+
+    // ---- Headers ----
+
     private fun ajaxHeaders(slug: String): Headers {
-        val referer = if (slug.isEmpty()) {
-            "$baseUrl/"
-        } else {
-            "$baseUrl/watch/$slug/ep-1"
-        }
+        val referer = if (slug.isEmpty()) "$baseUrl/" else "$baseUrl/watch/$slug/ep-1"
         return headers.newBuilder()
             .set("X-Requested-With", "XMLHttpRequest")
             .set("Referer", referer)
             .build()
     }
 
-    private fun vidtubePageHeaders(): Headers = Headers.Builder()
-        .add("User-Agent", USER_AGENT)
-        .add("Referer", "https://vidtube.site/")
-        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .add("Accept-Language", "en-US,en;q=0.9")
-        .build()
-
-    private fun vidtubeApiHeaders(): Headers = Headers.Builder()
-        .add("User-Agent", USER_AGENT)
-        .add("Referer", "https://vidtube.site/")
-        .add("X-Requested-With", "XMLHttpRequest")
-        .add("Accept", "*/*")
-        .add("Accept-Language", "en-US,en;q=0.9")
-        .build()
+    // ---- Browse ----
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        logi("getPopularAnime(page=$page)")
         val response = client.newCall(GET("$baseUrl/most-viewed?page=$page")).execute()
         return parseAnimeList(response.asJsoup())
     }
 
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        logi("getLatestUpdates(page=$page)")
         val response = client.newCall(GET("$baseUrl/latest-updated?page=$page")).execute()
         return parseAnimeList(response.asJsoup())
     }
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        logi("getSearchAnime(page=$page, query='$query')")
         val urlBuilder = "$baseUrl/filter".toHttpUrl().newBuilder()
-        if (query.isNotBlank()) {
-            urlBuilder.addQueryParameter("keyword", query)
-        }
+        if (query.isNotBlank()) urlBuilder.addQueryParameter("keyword", query)
         for (filter in filters) {
             when (filter) {
-                is SortFilter -> {
-                    val q = filter.toQuery()
-                    if (q != null) {
-                        urlBuilder.addQueryParameter("sort", q)
-                    }
-                }
-
-                is GenreFilter -> {
-                    filter.toQueries().forEach {
-                        urlBuilder.addQueryParameter("genre[]", it)
-                    }
-                }
-
-                is TypeFilter -> {
-                    filter.toQueries().forEach {
-                        urlBuilder.addQueryParameter("term_type[]", it)
-                    }
-                }
-
-                is StatusFilter -> {
-                    filter.toQueries().forEach {
-                        urlBuilder.addQueryParameter("status[]", it)
-                    }
-                }
-
-                is LanguageFilter -> {
-                    filter.toQueries().forEach {
-                        urlBuilder.addQueryParameter("language[]", it)
-                    }
-                }
-
+                is SortFilter -> filter.toQuery()?.let { urlBuilder.addQueryParameter("sort", it) }
+                is GenreFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("genre[]", it) }
+                is TypeFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("term_type[]", it) }
+                is StatusFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("status[]", it) }
+                is LanguageFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("language[]", it) }
                 else -> {}
             }
         }
@@ -172,7 +143,6 @@ class Anikoto : Source() {
     override fun getFilterList(): AnimeFilterList = getAnikotoFilters()
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        logi("getAnimeDetails(url=${anime.url})")
         val response = client.newCall(GET("$baseUrl/watch/${anime.url}/ep-1")).execute()
         return parseAnimeDetails(response.asJsoup(), anime.url)
     }
@@ -180,27 +150,27 @@ class Anikoto : Source() {
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         logi("getEpisodeList(url=${anime.url})")
         val slug = anime.url
-        val response = client.newCall(GET("$baseUrl/watch/$slug/ep-1")).execute()
-        val watchDoc = response.asJsoup()
-        val watchMain = watchDoc.selectFirst("#watch-main")
-        if (watchMain == null) {
+        val detailResponse = client.newCall(GET("$baseUrl/watch/$slug/ep-1")).execute()
+        val detailDoc = detailResponse.asJsoup()
+        val watchMain = detailDoc.selectFirst("#watch-main")
+        val animeId = watchMain?.attr("data-id") ?: run {
             loge("getEpisodeList: no #watch-main data-id found")
             return emptyList()
         }
-        val animeId = watchMain.attr("data-id")
         if (animeId.isEmpty()) {
-            loge("getEpisodeList: no #watch-main data-id found")
+            loge("getEpisodeList: data-id is empty")
             return emptyList()
         }
-        logi("animeId=$animeId")
+
         val vrf = AnikotoRC4.encodeVrf(animeId)
         val ajaxUrl = "$baseUrl/ajax/episode/list/$animeId?vrf=${URLEncoder.encode(vrf, "UTF-8")}&style=default"
         val ajaxResponse = client.newCall(GET(ajaxUrl, ajaxHeaders(slug))).execute()
         val ajaxJson = json.decodeFromString<EpisodeListResponse>(ajaxResponse.body.string())
         if (ajaxJson.status != 200 || ajaxJson.result.isEmpty()) {
-            loge("getEpisodeList: ajax returned status=${ajaxJson.status}, resultLen=${ajaxJson.result.length}")
+            loge("getEpisodeList: ajax status=${ajaxJson.status}")
             return emptyList()
         }
+
         val epDoc = Jsoup.parse(ajaxJson.result)
         val elements = epDoc.select("ul.ep-range a, .ep-range a")
         val episodes = elements.mapNotNull { element ->
@@ -212,9 +182,7 @@ class Anikoto : Source() {
             val hasSub = element.attr("data-sub") == "1"
             val hasDub = element.attr("data-dub") == "1"
             var title = element.attr("title")
-            if (title.isBlank()) {
-                title = "Episode $num"
-            }
+            if (title.isBlank()) title = "Episode $num"
             val meta = EpisodeMeta(slug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
                 url = meta.encode()
@@ -226,8 +194,48 @@ class Anikoto : Source() {
                 if (hasDub) scanlatorList.add("Dub")
                 scanlator = if (scanlatorList.isEmpty()) "Raw" else scanlatorList.joinToString(" / ")
             }
+        }.reversed()
+
+        return enrichEpisodesWithMetadata(episodes, detailDoc)
+    }
+
+    private suspend fun enrichEpisodesWithMetadata(
+        episodes: List<SEpisode>,
+        detailDoc: Document,
+    ): List<SEpisode> {
+        if (!loadThumbnails && !loadTitles && !loadDescriptions) return episodes
+
+        val firstMeta = episodes.firstOrNull()?.let {
+            runCatching { EpisodeMeta.decode(it.url) }.getOrNull()
         }
-        return episodes.reversed()
+        val malId = firstMeta?.malId?.takeIf { it.isNotBlank() } ?: return episodes
+
+        val animeCoverUrl = detailDoc.selectFirst("#w-info .poster img")?.absUrl("src")
+
+        return try {
+            logi("enrichEpisodesWithMetadata: malId=$malId, thumbs=$loadThumbnails, titles=$loadTitles, descs=$loadDescriptions")
+            val metadataMap = metadataFetcher.fetch(malId, animeCoverUrl)
+            if (metadataMap.isEmpty()) return episodes
+
+            episodes.map { episode ->
+                val epNum = episode.episode_number.toInt()
+                val episodeMeta = metadataMap[epNum] ?: return@map episode
+                episode.apply {
+                    if (loadThumbnails && !episodeMeta.thumbnailUrl.isNullOrEmpty()) {
+                        preview_url = episodeMeta.thumbnailUrl
+                    }
+                    if (loadDescriptions && !episodeMeta.description.isNullOrEmpty()) {
+                        summary = episodeMeta.description
+                    }
+                    if (loadTitles && !episodeMeta.title.isNullOrBlank()) {
+                        name = episodeMeta.title
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            loge("enrichEpisodesWithMetadata: FAILED", e)
+            episodes
+        }
     }
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
@@ -238,7 +246,6 @@ class Anikoto : Source() {
             loge("EpisodeMeta.decode FAILED", e)
             return emptyList()
         }
-        logi("meta: slug=${meta.slug}, ep=${meta.epNum}, mal=${meta.malId}, ts=${meta.timestamp}, dataIds=${meta.dataIds.take(30)}..., sub=${meta.hasSub}, dub=${meta.hasDub}")
 
         val tasks = mutableListOf<HosterTask>()
 
@@ -248,23 +255,19 @@ class Anikoto : Source() {
             logi("mapper API: GET $mapperUrl")
             try {
                 val mapperResponse = client.newCall(GET(mapperUrl, ajaxHeaders(meta.slug))).execute()
-                logi("mapper response code=${mapperResponse.code}")
                 val bodyStr = mapperResponse.body.string()
                 val jsonObject = json.parseToJsonElement(bodyStr) as? JsonObject
-                if (jsonObject == null) {
-                    throw IllegalStateException("mapper response is not a JSON object")
-                }
-                val mapperTokens = parseMapperResponse(jsonObject)
-                logi("mapper parsed ${mapperTokens.size} tokens")
-                for (mapperStreamToken in mapperTokens) {
-                    val audio = mapperStreamToken.audio
-                    val label = when (audio) {
-                        "sub" -> "H-SUB - ${mapperStreamToken.serverName}"
-                        "dub" -> "A-DUB - ${mapperStreamToken.serverName}"
-                        else -> "$audio - ${mapperStreamToken.serverName}"
+                if (jsonObject != null) {
+                    val mapperTokens = parseMapperResponse(jsonObject)
+                    logi("mapper parsed ${mapperTokens.size} tokens")
+                    for (token in mapperTokens) {
+                        val label = when (token.audio) {
+                            "sub" -> "H-SUB - ${token.serverName}"
+                            "dub" -> "A-DUB - ${token.serverName}"
+                            else -> "${token.audio} - ${token.serverName}"
+                        }
+                        tasks.add(HosterTask(label, token.token, token.audio, "mapper"))
                     }
-                    tasks.add(HosterTask(label, mapperStreamToken.token, mapperStreamToken.audio, "mapper"))
-                    logi("  + task: $label")
                 }
             } catch (e: Exception) {
                 loge("mapper API FAILED", e)
@@ -274,17 +277,12 @@ class Anikoto : Source() {
         // 2. Primary API
         if (meta.dataIds.isNotEmpty()) {
             val primaryUrl = "$baseUrl/ajax/server/list?servers=${meta.dataIds}"
-            logi("primary API: GET $primaryUrl")
             try {
                 val primaryResponse = client.newCall(GET(primaryUrl, ajaxHeaders(meta.slug))).execute()
-                logi("primary response code=${primaryResponse.code}")
                 val pJson = json.decodeFromString<ServerListResponse>(primaryResponse.body.string())
-                logi("primary status=${pJson.status}, resultLen=${pJson.result.length}")
                 if (pJson.status == 200 && pJson.result.isNotEmpty()) {
                     val pDoc = Jsoup.parse(pJson.result)
-                    val typeDivs = pDoc.select("div.servers > div.type")
-                    logi("primary found ${typeDivs.size} type-groups")
-                    for (element in typeDivs) {
+                    for (element in pDoc.select("div.servers > div.type")) {
                         val dataType = element.attr("data-type")
                         val audioLabel = when (dataType) {
                             "dub" -> "DUB"
@@ -292,14 +290,11 @@ class Anikoto : Source() {
                             "hsub" -> "HSUB"
                             else -> dataType.uppercase(Locale.ROOT)
                         }
-                        val servers = element.select("li")
-                        logi("  type=$dataType ($audioLabel): ${servers.size} servers")
-                        for (serverElement in servers) {
+                        for (serverElement in element.select("li")) {
                             val linkId = serverElement.attr("data-link-id")
                             val text = serverElement.text()
                             if (linkId.isNotEmpty()) {
                                 tasks.add(HosterTask("$audioLabel - $text", linkId, dataType, "primary"))
-                                logi("    + task: $audioLabel - $text")
                             }
                         }
                     }
@@ -307,16 +302,15 @@ class Anikoto : Source() {
             } catch (e: Exception) {
                 loge("primary API FAILED", e)
             }
-        } else {
-            logi("SKIP primary: dataIds is empty")
         }
 
-        logi("Total tasks to resolve: ${tasks.size}")
+        logi("Total tasks: ${tasks.size}")
+        if (tasks.isEmpty()) return emptyList()
 
         val resolvedStreams = coroutineScope {
             tasks.map { task ->
                 async(Dispatchers.IO) {
-                    resolveStreamForTask(task.label, task.token, task.audioType, meta.slug)
+                    resolveStreamForTask(task, meta.slug)
                 }
             }.awaitAll().filterNotNull()
         }
@@ -336,14 +330,11 @@ class Anikoto : Source() {
         server.playlist = LocalProxyServer.Playlist(resolvedStreams)
         server.prefetchCount = prefetchBuffer.toIntOrNull() ?: 10
         server.start()
-
         swapProxyServer(server)
-        logi("Proxy server started at ${server.baseUrl} (prefetch=${server.prefetchCount}%)")
 
         val allVideos = mutableListOf<Video>()
         for (stream in resolvedStreams) {
             val subtitleTracks = server.getSubtitleTracks(stream.audioType)
-            logi("Stream ${stream.audioLabel}: ${stream.variants.size} variants, ${subtitleTracks.size} subtitles")
             for (variant in stream.variants) {
                 val videoUrl = "${server.baseUrl}/variant/${stream.audioType}/${variant.quality}.m3u8"
                 val title = "${stream.hosterName} - ${variant.quality}"
@@ -354,243 +345,58 @@ class Anikoto : Source() {
                         subtitleTracks = subtitleTracks,
                     ),
                 )
-                logi("  + Video: $title -> $videoUrl")
             }
         }
 
-        val sortedVideos = try {
-            allVideos.sortVideos()
-        } catch (t: Throwable) {
-            allVideos
-        }
-
-        logi("=== getVideoList END: ${sortedVideos.size} videos ===")
-
-        return sortedVideos
+        return try { allVideos.sortVideos() } catch (t: Throwable) { allVideos }
     }
 
     override suspend fun resolveVideo(video: Video): Video {
-        logi("resolveVideo: switching to ${video.videoTitle}")
         activeProxyServer?.onQualitySwitch()
         return video
     }
 
-    private suspend fun resolveStreamForTask(
-        label: String,
-        token: String,
-        audioType: String,
-        slug: String,
-    ): LocalProxyServer.AudioStream? {
-        logi("--- resolving: $label ---")
-        val encodedToken = URLEncoder.encode(token, "UTF-8")
-        val ajaxUrl = "$baseUrl/ajax/server?get=$encodedToken"
-        logi("  [$label] GET $ajaxUrl")
+    private suspend fun resolveStreamForTask(task: HosterTask, slug: String): LocalProxyServer.AudioStream? {
+        logi("--- resolving: ${task.label} ---")
         return try {
+            val encodedToken = URLEncoder.encode(task.token, "UTF-8")
+            val ajaxUrl = "$baseUrl/ajax/server?get=$encodedToken"
             val response = client.newCall(GET(ajaxUrl, ajaxHeaders(slug))).execute()
-            logi("  [$label] response code=${response.code}")
             val jsonResponse = json.decodeFromString<ServerResponse>(response.body.string())
-            val status = jsonResponse.status
-            val result = jsonResponse.result
-            val url = result?.url
-            val strTake = url?.take(80)
-            logi("  [$label] json status=$status, url=$strTake")
-            if (status == 200 && url != null && url.isNotEmpty()) {
-                val iframeUrl = url
-                logi("  [$label] iframe = $iframeUrl")
-                if (!iframeUrl.contains("vidtube.site")) {
-                    loge("  [$label] UNKNOWN iframe host: $iframeUrl")
-                    return null
+            val url = jsonResponse.result?.url
+            if (jsonResponse.status != 200 || url.isNullOrEmpty()) {
+                loge("  [${task.label}] resolve FAILED: status=${jsonResponse.status}")
+                return null
+            }
+
+            val host = url.substringAfter("://").substringBefore("/")
+            val hosterName = task.label.substringAfter(" - ")
+            logi("  [${task.label}] iframe=$url host=$host")
+
+            when {
+                host.contains("vidtube.site") ||
+                    host.contains("megaplay.buzz") ||
+                    host.contains("vidwish.live") -> {
+                    logi("  [${task.label}] → Flow A (VidTube), host=$host")
+                    extractors.resolveVidTube(url, task.audioType, hosterName)
                 }
-                logi("  [$label] Path B: vidtube (VidPlay)")
-                resolveVidTubeStream(iframeUrl, audioType, label)
-            } else {
-                loge("  [$label] resolve token FAILED: status=$status")
-                null
+                host.contains("mewcdn.online") -> {
+                    logi("  [${task.label}] → Flow B (Kiwi), host=$host")
+                    extractors.resolveKiwi(url, task.audioType, hosterName)
+                }
+                else -> {
+                    Log.w(TAG, "  [${task.label}] UNKNOWN host=$host, skipping")
+                    null
+                }
             }
         } catch (e: Exception) {
-            loge("  [$label] EXCEPTION", e)
+            loge("  [${task.label}] CRASHED", e)
             null
         }
     }
 
-    private suspend fun resolveVidTubeStream(
-        iframeUrl: String,
-        audioType: String,
-        hosterName: String,
-    ): LocalProxyServer.AudioStream? {
-        logi("resolveVidTubeStream: iframeUrl=$iframeUrl, type=$audioType")
-        try {
-            logi("VidTube Step1: GET $iframeUrl")
-            val noCfClient = noCloudflareClient
-            val response = noCfClient.newCall(GET(iframeUrl, vidtubePageHeaders())).execute()
-            val strString3 = response.body.string()
-            logi("VidTube Step1: page len=${strString3.length}")
-            val dataIdRegex = Regex("""data-id="(\d+)"""")
-            val match = dataIdRegex.find(strString3)
-            val dataId = match?.groupValues?.get(1)
-            logi("VidTube Step1: extracted data-id=$dataId")
-            if (dataId.isNullOrEmpty()) {
-                loge("VidTube Step1: no data-id found")
-                return null
-            }
-            val step2Url = "https://vidtube.site/stream/getSourcesNew?id=$dataId&type=$audioType"
-            logi("VidTube Step2: GET $step2Url")
-            val step2Response = noCfClient.newCall(
-                Request.Builder()
-                    .url(step2Url)
-                    .headers(vidtubeApiHeaders())
-                    .build(),
-            ).execute()
-            logi("VidTube Step2: response code=${step2Response.code}")
-            if (step2Response.isSuccessful) {
-                val bodyText = step2Response.body.string()
-                val apiJson = json.decodeFromString<VidTubeSourcesResponse>(bodyText)
-                val masterM3u8Url = apiJson.sources?.file
-                if (masterM3u8Url.isNullOrEmpty() || !masterM3u8Url.startsWith("http")) {
-                    loge("VidTube Step2: no valid m3u8 returned")
-                    return null
-                }
-                logi("VidTube Step2: master m3u8=$masterM3u8Url, ${apiJson.tracks.size} subtitle tracks")
-
-                val validSubtitles = apiJson.tracks.filter {
-                    it.file.startsWith("http") && it.label.isNotEmpty()
-                }.map { track ->
-                    val lang = when {
-                        track.label.contains("English", ignoreCase = true) -> "eng"
-                        track.label.contains("Spanish", ignoreCase = true) -> "spa"
-                        track.label.contains("French", ignoreCase = true) -> "fra"
-                        track.label.contains("German", ignoreCase = true) -> "deu"
-                        track.label.contains("Portuguese", ignoreCase = true) -> "por"
-                        track.label.contains("Japanese", ignoreCase = true) -> "jpn"
-                        else -> "und"
-                    }
-                    LocalProxyServer.SubtitleData(track.file, track.label, lang)
-                }
-
-                if (validSubtitles.isEmpty()) {
-                    logw("VidTube Step2: no valid subtitle tracks (apiJson.tracks=${apiJson.tracks.size})")
-                } else {
-                    logi("VidTube Step2: ${validSubtitles.size} valid subtitles: ${validSubtitles.joinToString { it.label }}")
-                }
-
-                val segHeaders = Headers.Builder()
-                    .add("Referer", "https://vidtube.site/")
-                    .add("User-Agent", USER_AGENT)
-                    .build()
-
-                logi("VidTube Step3: fetching master m3u8")
-                val masterResponse = noCfClient.newCall(GET(masterM3u8Url, segHeaders)).execute()
-                val masterText = masterResponse.body.string()
-                if (!masterText.startsWith("#EXTM3U")) {
-                    loge("VidTube Step3: master is not m3u8: ${masterText.take(80)}")
-                    return null
-                }
-
-                val masterBase = masterM3u8Url.substringBeforeLast("/") + "/"
-                val variantInfos = mutableListOf<VariantInfo>()
-                val masterLines = masterText.lines()
-                var i = 0
-                while (i < masterLines.size) {
-                    val line = masterLines[i]
-                    if (line.startsWith("#EXT-X-STREAM-INF:")) {
-                        val next = masterLines.getOrNull(i + 1) ?: ""
-                        if (next.isNotEmpty() && !next.startsWith("#")) {
-                            val bandwidthMatch = Regex("""BANDWIDTH=(\d+)""").find(line)
-                            val bandwidth = bandwidthMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                            val nameMatch = Regex("""NAME="([^"]+)"""").find(line)
-                            val name = nameMatch?.groupValues?.get(1) ?: "Unknown"
-                            val resMatch = Regex("""(\d{3,4})""").find(name)
-                            val resolution = resMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                            val fullUrl = if (next.startsWith("http")) next else masterBase + next.trim()
-                            variantInfos.add(VariantInfo(fullUrl, bandwidth, name, resolution))
-                            i += 2
-                        } else {
-                            i++
-                        }
-                    } else {
-                        i++
-                    }
-                }
-
-                if (variantInfos.isEmpty()) {
-                    loge("VidTube Step3: no variants in master m3u8")
-                    return null
-                }
-                logi("VidTube Step3: ${variantInfos.size} variants: ${variantInfos.joinToString { "${it.quality}(${it.bandwidth})" }}")
-
-                val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
-                for (vi in variantInfos) {
-                    logi("VidTube Step3: fetching variant ${vi.quality} -> ${vi.url}")
-                    try {
-                        val varResponse = noCfClient.newCall(GET(vi.url, segHeaders)).execute()
-                        val variantSegments = parseVariantSegments(varResponse.body.string(), vi.url)
-                        if (variantSegments.isNotEmpty()) {
-                            variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, variantSegments))
-                            val duration = variantSegments.sumOf { it.duration }
-                            logi("VidTube Step3: variant ${vi.quality}: ${variantSegments.size} segments, ${String.format(Locale.ROOT, "%.1f", duration)}s")
-                        } else {
-                            logw("VidTube Step3: variant ${vi.quality} has no segments, skipping")
-                        }
-                    } catch (e: Exception) {
-                        loge("VidTube Step3: variant ${vi.quality} fetch FAILED: ${e.message}")
-                    }
-                }
-
-                if (variantDataList.isEmpty()) {
-                    loge("VidTube Step3: no variants could be loaded")
-                    return null
-                }
-
-                val upperCase = when (audioType) {
-                    "sub" -> "SUB"
-                    "dub" -> "DUB"
-                    "hsub" -> "HSUB"
-                    else -> audioType.uppercase(Locale.ROOT)
-                }
-
-                logi("VidTube Step3: resolved stream: $hosterName - ${variantDataList.size} variants, ${validSubtitles.size} subs")
-                return LocalProxyServer.AudioStream(audioType, upperCase, hosterName, variantDataList, validSubtitles)
-            } else {
-                val responseBody = step2Response.body
-                val errorMsg = responseBody?.string()?.take(200) ?: "no body"
-                loge("VidTube Step2: HTTP ${step2Response.code} - $errorMsg")
-                step2Response.close()
-                return null
-            }
-        } catch (e: Exception) {
-            loge("VidTube Step1/2 FAILED", e)
-            return null
-        }
-    }
-
-    private fun parseVariantSegments(varText: String, variantUrl: String): List<LocalProxyServer.SegmentInfo> {
-        val segments = mutableListOf<LocalProxyServer.SegmentInfo>()
-        val varBase = variantUrl.substringBeforeLast("/") + "/"
-        val lines = varText.lines()
-        var i = 0
-        while (i < lines.size) {
-            val line = lines[i]
-            if (line.startsWith("#EXTINF:")) {
-                val durationStr = line.substringAfter("#EXTINF:").substringBefore(",")
-                val duration = durationStr.toDoubleOrNull() ?: 0.0
-                val next = lines.getOrNull(i + 1) ?: ""
-                if (next.isNotEmpty() && !next.startsWith("#")) {
-                    val fullUrl = if (next.startsWith("http")) next else varBase + next.trim()
-                    segments.add(LocalProxyServer.SegmentInfo(fullUrl, duration))
-                    i += 2
-                } else {
-                    i++
-                }
-            } else {
-                i++
-            }
-        }
-        return segments
-    }
-
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferredQuality
-        val preferredAudio = preferredAudio
         val prefAudioLabel = when (preferredAudio) {
             "A-DUB" -> "DUB"
             "H-SUB" -> "HSUB"
@@ -602,15 +408,24 @@ class Anikoto : Source() {
         )
     }
 
-    private fun logi(msg: String) = Log.i(TAG, msg)
-    private fun logw(msg: String) = Log.w(TAG, msg)
-    private fun loge(msg: String, e: Throwable? = null) {
-        if (e != null) {
-            Log.e(TAG, msg, e)
+    private fun sortHostersByPriority(hosters: List<Hoster>, prefServer: String): List<Hoster> {
+        val priority = HOSTER_PRIORITY
+        return if (prefServer == PREF_SERVER_DEFAULT) {
+            hosters.sortedBy { h -> priority.indexOf(h.hosterName).let { if (it < 0) Int.MAX_VALUE else it } }
         } else {
-            Log.e(TAG, msg)
+            hosters.sortedWith(
+                compareBy { h ->
+                    if (h.hosterName.contains(prefServer, ignoreCase = true)) {
+                        0
+                    } else {
+                        priority.indexOf(h.hosterName).let { if (it < 0) Int.MAX_VALUE else it + 1 }
+                    }
+                },
+            )
         }
     }
+
+    // ---- Parsers ----
 
     private fun parseAnimeList(doc: Document): AnimesPage {
         val elements = doc.select("div#list-items > div.item")
@@ -621,40 +436,30 @@ class Anikoto : Source() {
             val href = nameLink.attr("href")
             val slug = href.substringAfter("/watch/", "").substringBefore("/ep-", "")
             if (slug.isEmpty()) return@mapNotNull null
-
             SAnime.create().apply {
                 url = slug
                 var titleText = nameLink.text().trim()
-                if (titleText.isEmpty()) {
-                    titleText = nameLink.attr("data-jp")
-                }
+                if (titleText.isEmpty()) titleText = nameLink.attr("data-jp")
                 title = titleText
-
                 val posterImg = element.selectFirst("div.ani.poster.tip img")
                 thumbnail_url = posterImg?.absUrl("src") ?: element.selectFirst("img")?.absUrl("src")
             }
         }
-
         val hasNext = if (doc.selectFirst("ul.pagination li:has(a[rel=next])") != null) {
             true
         } else {
             try {
-                val activeElement = doc.selectFirst("ul.pagination li.active")
-                val activePage = activeElement?.text()?.toIntOrNull() ?: 0
-                val paginationLinks = doc.select("ul.pagination li.page-item a.page-link")
-                val pages = paginationLinks.mapNotNull { it.text().toIntOrNull() }
+                val activePage = doc.selectFirst("ul.pagination li.active")?.text()?.toIntOrNull() ?: 0
+                val pages = doc.select("ul.pagination li.page-item a.page-link").mapNotNull { it.text().toIntOrNull() }
                 pages.any { it > activePage }
-            } catch (e: Exception) {
-                false
-            }
+            } catch (e: Exception) { false }
         }
-
         return AnimesPage(animes, hasNext)
     }
 
     private fun parseAnimeDetails(doc: Document, slug: String): SAnime {
         val useJp = titleLang == "jp"
-        val anime = SAnime.create().apply {
+        return SAnime.create().apply {
             url = slug
             val titleHeader = doc.selectFirst("#w-info h1.title.d-title")
             title = if (useJp) {
@@ -663,48 +468,32 @@ class Anikoto : Source() {
             } else {
                 titleHeader?.text() ?: slug
             }
-
             val posterImg = doc.selectFirst("#w-info .poster img")
             thumbnail_url = posterImg?.absUrl("src")
             description = buildDescription(doc)
-
             val genres = doc.select("#w-info .bmeta a[href*=\"/genre/\"]")
             genre = genres.joinToString(", ") { it.text() }
-
             val statusElement = doc.selectFirst("#w-info .bmeta a[href*=\"/status/\"]")
             status = parseStatus(statusElement?.text())
-
             val studiosMeta = doc.select("#w-info .bmeta .meta > div").firstOrNull {
                 it.text().contains("Studios", ignoreCase = true)
             }
             author = studiosMeta?.select("a")?.joinToString(", ") { it.text() }
             artist = author
         }
-        return anime
     }
 
     private fun buildDescription(doc: Document): String {
-        val contentElement = doc.selectFirst("#w-info .synopsis .content")
-        val synopsis = contentElement?.text() ?: doc.selectFirst("#w-info .synopsis")?.text() ?: ""
+        val synopsis = doc.selectFirst("#w-info .synopsis .content")?.text()
+            ?: doc.selectFirst("#w-info .synopsis")?.text() ?: ""
         val bmeta = doc.selectFirst("#w-info .bmeta") ?: return synopsis
-
         val metaList = mutableListOf<String>()
-        val metaElements = bmeta.select(".meta > div")
-        for (element in metaElements) {
-            val labelElement = element.selectFirst("label, strong, b")
-            val label = labelElement?.text()?.removeSuffix(":")
-            val valueElements = element.select("span, a")
-            val value = valueElements.joinToString(", ") { it.text() }
-            if (label != null && value.isNotEmpty()) {
-                metaList.add("$label: $value")
-            }
+        for (element in bmeta.select(".meta > div")) {
+            val label = element.selectFirst("label, strong, b")?.text()?.removeSuffix(":")
+            val value = element.select("span, a").joinToString(", ") { it.text() }
+            if (label != null && value.isNotEmpty()) metaList.add("$label: $value")
         }
-
-        return if (metaList.isEmpty()) {
-            synopsis
-        } else {
-            metaList.joinToString("\n") + "\n\n" + synopsis
-        }
+        return if (metaList.isEmpty()) synopsis else metaList.joinToString("\n") + "\n\n" + synopsis
     }
 
     private fun parseStatus(text: String?): Int {
@@ -716,9 +505,10 @@ class Anikoto : Source() {
         }
     }
 
+    // ---- Preferences ----
+
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         try {
-            logi("setupPreferenceScreen: adding preferences")
             screen.addListPreference(
                 key = PREF_QUALITY,
                 default = PREF_QUALITY_DEFAULT,
@@ -751,10 +541,48 @@ class Anikoto : Source() {
                 entries = listOf("10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"),
                 entryValues = listOf(PREF_BUFFER_DEFAULT, "20", "30", "40", "50", "60", "70", "80", "90", "100"),
             )
-            logi("setupPreferenceScreen: done")
+            screen.addListPreference(
+                key = PREF_SERVER,
+                default = PREF_SERVER_DEFAULT,
+                title = "Preferred video server",
+                summary = "Which video server to try first. Auto picks the best available.",
+                entries = listOf("Auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream"),
+                entryValues = listOf(PREF_SERVER_DEFAULT, "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream"),
+            )
+
+            SwitchPreferenceCompat(screen.context).apply {
+                key = PREF_LOAD_THUMBNAILS
+                title = "Load episode thumbnails"
+                summaryOn = "Fetching preview images from external sources"
+                summaryOff = "Episode thumbnails disabled (faster episode list loading)"
+                setDefaultValue(true)
+            }.also { screen.addPreference(it) }
+
+            SwitchPreferenceCompat(screen.context).apply {
+                key = PREF_LOAD_TITLES
+                title = "Load episode titles"
+                summaryOn = "Fetching episode titles from external sources"
+                summaryOff = "Using default episode numbers only"
+                setDefaultValue(true)
+            }.also { screen.addPreference(it) }
+
+            SwitchPreferenceCompat(screen.context).apply {
+                key = PREF_LOAD_DESCRIPTIONS
+                title = "Load episode descriptions"
+                summaryOn = "Fetching episode descriptions from external sources"
+                summaryOff = "Episode descriptions disabled"
+                setDefaultValue(true)
+            }.also { screen.addPreference(it) }
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
         }
+    }
+
+    // ---- Logging ----
+
+    private fun logi(msg: String) = Log.i(TAG, msg)
+    private fun loge(msg: String, e: Throwable? = null) {
+        if (e != null) Log.e(TAG, msg, e) else Log.e(TAG, msg)
     }
 
     companion object {
@@ -766,18 +594,23 @@ class Anikoto : Source() {
         private const val PREF_TITLE_LANG_DEFAULT = "en"
         private const val PREF_BUFFER = "pref_buffer"
         private const val PREF_BUFFER_DEFAULT = "10"
+        private const val PREF_SERVER = "pref_server"
+        private const val PREF_SERVER_DEFAULT = "auto"
+        private const val PREF_LOAD_THUMBNAILS = "pref_load_thumbnails"
+        private const val PREF_LOAD_TITLES = "pref_load_titles"
+        private const val PREF_LOAD_DESCRIPTIONS = "pref_load_descriptions"
 
         private const val TAG = "Anikoto"
-        private const val USER_AGENT = "Mozilla/5.0"
+        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        private val HOSTER_PRIORITY = listOf("VidCloud-1", "VidPlay-1", "Vidstream-2", "HD-1", "Kiwi-Stream")
 
         @Volatile
         private var activeProxyServer: LocalProxyServer? = null
 
         @Synchronized
         private fun swapProxyServer(newServer: LocalProxyServer): LocalProxyServer {
-            activeProxyServer?.let {
-                runCatching { it.stop() }
-            }
+            activeProxyServer?.let { runCatching { it.stop() } }
             activeProxyServer = newServer
             return newServer
         }
