@@ -228,7 +228,8 @@ class Anikoto : Source() {
                         summary = episodeMeta.description
                     }
                     if (loadTitles && !episodeMeta.title.isNullOrBlank()) {
-                        name = episodeMeta.title
+                        val epNumStr = if (episode_number % 1 == 0f) episode_number.toInt().toString() else episode_number.toString()
+                        name = "Episode $epNumStr: ${episodeMeta.title}"
                     }
                 }
             }
