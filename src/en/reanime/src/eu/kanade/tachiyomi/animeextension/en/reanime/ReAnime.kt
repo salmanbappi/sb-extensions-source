@@ -88,6 +88,10 @@ class ReAnime : Source() {
         PlaylistUtils(client, headers)
     }
 
+    private val localProxy by lazy {
+        LocalProxy(client)
+    }
+
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
@@ -409,6 +413,7 @@ class ReAnime : Source() {
             val decryptedUrl = decryptAes(ciphertext, aesKey, iv)
 
             val playHeaders = buildPlaybackHeaders(decryptedUrl, server.dataLink)
+            val proxiedUrl = localProxy.getProxyUrl(decryptedUrl, playHeaders)
 
             val masterHeadersGen = { baseHeaders: Headers, ref: String ->
                 playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
@@ -423,7 +428,7 @@ class ReAnime : Source() {
             }
 
             playlistUtils.extractFromHls(
-                playlistUrl = decryptedUrl,
+                playlistUrl = proxiedUrl,
                 referer = server.dataLink,
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
