@@ -126,10 +126,6 @@ class ReAnime : Source() {
         PlaylistUtils(client, headers)
     }
 
-    private val localProxy by lazy {
-        LocalProxy(client)
-    }
-
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
 
@@ -355,29 +351,13 @@ class ReAnime : Source() {
 
                         val decryptedUrl = decryptAes(ciphertext, aesKey, iv)
 
-                        val pkBytes = interpreter.getPkBytes(funcs)
-                        val pkB64 = Base64.encodeToString(pkBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-
                         val playHeaders = buildPlaybackHeaders(decryptedUrl, server.dataLink)
-                        val proxiedUrl = localProxy.getProxyUrl(decryptedUrl, playHeaders, pkB64)
-
-                        val masterHeadersGen = { baseHeaders: Headers, ref: String ->
-                            playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
-                                .applyPlaybackHeaders(playHeaders)
-                                .build()
-                        }
-
-                        val videoHeadersGen = { baseHeaders: Headers, ref: String, _: String ->
-                            playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
-                                .applyPlaybackHeaders(playHeaders)
-                                .build()
-                        }
 
                         playlistUtils.extractFromHls(
-                            playlistUrl = proxiedUrl,
+                            playlistUrl = decryptedUrl,
                             referer = server.dataLink,
-                            masterHeadersGen = masterHeadersGen,
-                            videoHeadersGen = videoHeadersGen,
+                            masterHeaders = playHeaders,
+                            videoHeaders = playHeaders,
                             videoNameGen = { quality -> "${server.serverName} (${server.dataType}) - $quality" }
                         )
                     } catch (e: Throwable) {
@@ -472,10 +452,10 @@ class ReAnime : Source() {
         val videoHttpUrl = runCatching { videoUrl.toHttpUrl() }.getOrNull()
         val origin = videoHttpUrl?.let { "${it.scheme}://${it.host}" } ?: "https://fetch.flixcloud.cc"
 
-        return headersBuilder()
-            .set("Accept", "*/*")
-            .set("Origin", origin)
-            .set("Referer", embedUrl)
+        return Headers.Builder()
+            .add("Accept", "*/*")
+            .add("Origin", origin)
+            .add("Referer", embedUrl)
             .build()
     }
 
