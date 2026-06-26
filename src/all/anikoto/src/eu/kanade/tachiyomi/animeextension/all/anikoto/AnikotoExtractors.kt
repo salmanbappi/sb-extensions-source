@@ -224,14 +224,35 @@ class AnikotoExtractors(
                 loge("resolveKiwi: no #fragment in iframe URL")
                 return null
             }
-            val decoded = try {
+            var decoded = try {
                 String(Base64.decode(fragment, Base64.DEFAULT), Charsets.ISO_8859_1)
             } catch (e: Exception) {
-                loge("resolveKiwi: base64 decode failed", e)
-                return null
+                String(android.util.Base64.decode(fragment, android.util.Base64.DEFAULT), Charsets.ISO_8859_1)
             }
+            
+            try {
+                val pageHeaders = kiwiHeaders()
+                val pageBody = fetchString(iframeUrl, pageHeaders)
+                val mapMatch = Regex("""var HOST_MAP\s*=\s*\{([^}]+)\}""").find(pageBody)
+                if (mapMatch != null) {
+                    val mapString = mapMatch.groupValues[1]
+                    val hostMap = Regex("""'([^']+)'\s*:\s*'([^']+)'""").findAll(mapString).associate {
+                        it.groupValues[1] to it.groupValues[2]
+                    }
+                    for ((origin, proxy) in hostMap) {
+                        if (decoded.contains(origin)) {
+                            decoded = decoded.replace(origin, proxy)
+                            logi("resolveKiwi: HOST_MAP replaced $origin with $proxy")
+                            break
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                loge("resolveKiwi: failed to parse HOST_MAP", e)
+            }
+
             if (!decoded.startsWith("http")) {
-                loge("resolveKiwi: decoded fragment is not a URL: ${decoded.take(60)}")
+                loge("resolveKiwi: decoded m3u8 is not http ($decoded)")
                 return null
             }
             logi("resolveKiwi: decoded m3u8=${decoded.take(80)}")
