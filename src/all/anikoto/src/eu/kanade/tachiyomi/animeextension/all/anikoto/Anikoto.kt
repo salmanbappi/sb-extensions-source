@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.interceptor.rateLimitHost
 import extensions.utils.Source
 import extensions.utils.addListPreference
 import extensions.utils.asJsoup
@@ -64,8 +65,23 @@ class Anikoto : Source() {
         builder.build()
     }
 
+    private val metadataClient by lazy {
+        val builder = network.client.newBuilder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+
+        builder.interceptors().removeAll { it.javaClass.simpleName.contains("Cloudflare", true) }
+
+        builder
+            .rateLimitHost("https://api.jikan.moe".toHttpUrl(), 2, 1, TimeUnit.SECONDS)
+            .rateLimitHost("https://graphql.anilist.co".toHttpUrl(), 2, 1, TimeUnit.SECONDS)
+            .rateLimitHost("https://kitsu.app".toHttpUrl(), 2, 1, TimeUnit.SECONDS)
+            .rateLimitHost("https://anikage.cc".toHttpUrl(), 2, 1, TimeUnit.SECONDS)
+            .build()
+    }
+
     private val extractors by lazy { AnikotoExtractors(client, json) }
-    private val metadataFetcher by lazy { EpisodeMetadataFetcher(client, json) }
+    private val metadataFetcher by lazy { EpisodeMetadataFetcher(metadataClient, json) }
 
     // ---- Preferences ----
 
