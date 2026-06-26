@@ -52,26 +52,19 @@ class Anikoto : Source() {
         .build()
 
     private val noCloudflareClient by lazy {
-        OkHttpClient.Builder()
+        val builder = client.newBuilder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .callTimeout(60, TimeUnit.SECONDS)
-            .addInterceptor { chain ->
-                val request = chain.request()
-                val builder = request.newBuilder()
-                    .header("User-Agent", USER_AGENT)
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                    .header("Accept-Language", "en-US,en;q=0.9")
-                if (request.header("Referer") == null) {
-                    builder.header("Referer", "https://vidtube.site/")
-                }
-                chain.proceed(builder.build())
-            }
-            .build()
+        
+        // Remove Cloudflare interceptor to prevent WebView popups in background thread
+        builder.interceptors().removeAll { it.javaClass.simpleName.contains("Cloudflare", true) }
+        
+        builder.build()
     }
 
-    private val extractors by lazy { AnikotoExtractors(noCloudflareClient, json) }
+    private val extractors by lazy { AnikotoExtractors(client, json) }
     private val metadataFetcher by lazy { EpisodeMetadataFetcher(client, json) }
 
     // ---- Preferences ----
