@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.all.anikoto
 import android.util.Base64
 import android.util.Log
 import kotlinx.serialization.decodeFromString
+import java.net.URI
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.OkHttpClient
@@ -75,7 +76,6 @@ class AnikotoExtractors(
     }
 
     private fun parseMasterPlaylist(text: String, masterUrl: String): List<VariantInfo> {
-        val base = masterUrl.substringBeforeLast("/") + "/"
         val result = mutableListOf<VariantInfo>()
         val lines = text.lines()
         var i = 0
@@ -91,7 +91,7 @@ class AnikotoExtractors(
                     if (quality.isBlank() || quality == "Unknown") {
                         quality = if (resolution > 0) "${resolution}p" else "Unknown"
                     }
-                    val fullUrl = if (next.startsWith("http")) next else base + next
+                    val fullUrl = URI(masterUrl).resolve(next).toString()
                     result.add(VariantInfo(fullUrl, bandwidth, quality, resolution))
                     i += 2
                 } else {
@@ -105,7 +105,6 @@ class AnikotoExtractors(
     }
 
     private fun parseVariantSegments(text: String, variantUrl: String): List<LocalProxyServer.SegmentInfo> {
-        val base = variantUrl.substringBeforeLast("/") + "/"
         val result = mutableListOf<LocalProxyServer.SegmentInfo>()
         val lines = text.lines()
         var i = 0
@@ -114,7 +113,7 @@ class AnikotoExtractors(
                 val duration = lines[i].substringAfter("#EXTINF:").substringBefore(",").toDoubleOrNull() ?: 0.0
                 val next = lines.getOrNull(i + 1)?.trim() ?: ""
                 if (next.isNotEmpty() && !next.startsWith("#")) {
-                    val fullUrl = if (next.startsWith("http")) next else base + next
+                    val fullUrl = URI(variantUrl).resolve(next).toString()
                     result.add(LocalProxyServer.SegmentInfo(fullUrl, duration))
                     i += 2
                 } else {
