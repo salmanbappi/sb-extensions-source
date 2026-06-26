@@ -39,13 +39,18 @@ class EpisodeMetadataFetcher(
         .set("Accept", "application/json")
         .build()
 
+    private val kitsuHeaders: Headers = Headers.Builder()
+        .set("User-Agent", BROWSER_UA)
+        .set("Accept", "application/vnd.api+json")
+        .build()
+
     private fun logi(msg: String) = Log.i(TAG, msg)
     private fun loge(msg: String, e: Throwable? = null) {
         if (e != null) Log.e(TAG, msg, e) else Log.e(TAG, msg)
     }
 
-    private fun fetchString(url: String): String? = try {
-        val response = client.newCall(Request.Builder().url(url).headers(apiHeaders).build()).execute()
+    private fun fetchString(url: String, headers: Headers = apiHeaders): String? = try {
+        val response = client.newCall(Request.Builder().url(url).headers(headers).build()).execute()
         if (response.isSuccessful) response.body.string() else null
     } catch (e: Exception) {
         loge("fetchString FAILED: $url", e)
@@ -174,6 +179,7 @@ class EpisodeMetadataFetcher(
     private fun fetchKitsuId(malId: String): String? = try {
         val body = fetchString(
             "https://kitsu.app/api/edge/mappings?filter[externalSite]=myanimelist/anime&filter[externalId]=$malId&include=item",
+            kitsuHeaders,
         ) ?: return null
         val resp = json.decodeFromString<KitsuMappingResponse>(body)
         resp.included.firstOrNull()?.id
@@ -186,7 +192,7 @@ class EpisodeMetadataFetcher(
         val result = mutableMapOf<Int, EpisodeMetadata>()
         var url: String? = "https://kitsu.app/api/edge/anime/$kitsuId/episodes?page[limit]=20&sort=number"
         while (url != null) {
-            val body = fetchString(url) ?: break
+            val body = fetchString(url, kitsuHeaders) ?: break
             val resp = json.decodeFromString<KitsuEpisodesResponse>(body)
             for (ep in resp.data) {
                 val num = ep.attributes.number ?: continue
