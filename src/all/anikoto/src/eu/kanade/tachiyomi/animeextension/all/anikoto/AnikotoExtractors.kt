@@ -229,7 +229,7 @@ class AnikotoExtractors(
             } catch (e: Exception) {
                 String(android.util.Base64.decode(fragment, android.util.Base64.DEFAULT), Charsets.ISO_8859_1)
             }
-            
+
             try {
                 val pageHeaders = kiwiHeaders()
                 val pageBody = fetchString(iframeUrl, pageHeaders)
