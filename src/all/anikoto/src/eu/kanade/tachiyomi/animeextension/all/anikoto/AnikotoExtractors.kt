@@ -205,7 +205,7 @@ class AnikotoExtractors(
                 else -> audioType.uppercase()
             }
             logi("resolveVidTube: [5/5] resolved $hosterName — ${variantDataList.size} variants, ${subtitles.size} subs")
-            LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, subtitles)
+            LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, subtitles, seg)
         } catch (e: Exception) {
             loge("resolveVidTube: FAILED hoster=$hosterName audio=$audioType", e)
             null
@@ -276,7 +276,7 @@ class AnikotoExtractors(
                 else -> audioType.uppercase()
             }
             logi("resolveKiwi: resolved $hosterName — ${variantDataList.size} variants")
-            LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, emptyList())
+            LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, emptyList(), headers)
         } catch (e: Exception) {
             loge("resolveKiwi: FAILED hoster=$hosterName audio=$audioType", e)
             null

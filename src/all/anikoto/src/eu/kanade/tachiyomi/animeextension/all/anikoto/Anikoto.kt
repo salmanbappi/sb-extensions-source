@@ -322,12 +322,7 @@ class Anikoto : Source() {
             return emptyList()
         }
 
-        val segHeaders = Headers.Builder()
-            .add("Referer", "https://vidtube.site/")
-            .add("User-Agent", USER_AGENT)
-            .build()
-
-        val server = LocalProxyServer(noCloudflareClient, segHeaders)
+        val server = LocalProxyServer(noCloudflareClient)
         server.playlist = LocalProxyServer.Playlist(resolvedStreams)
         server.prefetchCount = prefetchBuffer.toIntOrNull() ?: 10
         server.start()
@@ -412,7 +407,14 @@ class Anikoto : Source() {
         val prefServer = preferredServer
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.startsWith(prefAudioLabel, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefServer, ignoreCase = true) }
+                .thenByDescending { video ->
+                    if (prefServer.equals(PREF_SERVER_DEFAULT, ignoreCase = true)) {
+                        val priority = HOSTER_PRIORITY.indexOfFirst { video.videoTitle.contains(it, ignoreCase = true) }
+                        if (priority != -1) -priority else -100
+                    } else {
+                        if (video.videoTitle.contains(prefServer, ignoreCase = true)) 1 else 0
+                    }
+                }
                 .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
@@ -614,7 +616,7 @@ class Anikoto : Source() {
         private const val TAG = "Anikoto"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-        private val HOSTER_PRIORITY = listOf("VidCloud-1", "VidPlay-1", "Vidstream-2", "HD-1", "Kiwi-Stream")
+        private val HOSTER_PRIORITY = listOf("Kiwi-Stream", "VidCloud-1", "VidPlay-1", "Vidstream-2", "HD-1")
 
         @Volatile
         private var activeProxyServer: LocalProxyServer? = null

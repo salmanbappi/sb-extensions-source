@@ -22,7 +22,6 @@ import kotlin.math.min
 
 class LocalProxyServer(
     client: OkHttpClient,
-    private val segmentHeaders: Headers,
 ) {
     companion object {
         private const val IDLE_TIMEOUT_MS = 600000L
@@ -94,6 +93,7 @@ class LocalProxyServer(
         val hosterName: String,
         val variants: List<VariantData>,
         val subtitles: List<SubtitleData>,
+        val headers: Headers,
     )
 
     data class Playlist(
@@ -288,7 +288,7 @@ class LocalProxyServer(
         logi("FETCH: $cacheKey → ${seg.url.take(80)}...")
         fetching[cacheKey] = true
         try {
-            val segBytes = fetchSegmentWithRetry(seg.url)
+            val segBytes = fetchSegmentWithRetry(seg.url, stream.headers)
             val stripped = stripPngHeader(segBytes)
             val firstByte = if (stripped.isNotEmpty()) stripped[0] else 0.toByte()
             val isTsSync = firstByte == 0x47.toByte()
@@ -308,11 +308,11 @@ class LocalProxyServer(
         }
     }
 
-    private fun fetchSegmentWithRetry(url: String): ByteArray {
+    private fun fetchSegmentWithRetry(url: String, headers: Headers): ByteArray {
         var lastError: Exception? = null
         for (i in 0 until 2) {
             try {
-                val request = Request.Builder().url(url).headers(segmentHeaders).build()
+                val request = Request.Builder().url(url).headers(headers).build()
                 fetchClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         throw RuntimeException("Upstream ${response.code}")
@@ -369,9 +369,11 @@ class LocalProxyServer(
         fetching[key] = true
         try {
             if (prefetchGeneration.get() != gen) return
+            val stream = playlist?.streams?.firstOrNull { it.audioType == key.substringBefore("/") }
+                ?: return
             val seg = variant.segments[index]
             logi("PREFETCH: $key → ${seg.url.take(60)}...")
-            val bytes = fetchSegmentWithRetry(seg.url)
+            val bytes = fetchSegmentWithRetry(seg.url, stream.headers)
             val stripped = stripPngHeader(bytes)
             cacheSegment(key, stripped)
             logi("PREFETCH DONE: $key (${stripped.size} bytes)")
@@ -390,7 +392,7 @@ class LocalProxyServer(
             ?: return sendError(output, 404, "Subtitle $subIndex not found")
 
         try {
-            val request = Request.Builder().url(sub.url).headers(segmentHeaders).build()
+            val request = Request.Builder().url(sub.url).headers(stream.headers).build()
             fetchClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     loge("Subtitle fetch failed: ${response.code} for ${sub.url}")
