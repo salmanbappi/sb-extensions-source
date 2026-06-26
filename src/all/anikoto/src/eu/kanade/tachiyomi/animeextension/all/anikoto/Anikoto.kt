@@ -57,10 +57,10 @@ class Anikoto : Source() {
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .callTimeout(60, TimeUnit.SECONDS)
-        
+
         // Remove Cloudflare interceptor to prevent WebView popups in background thread
         builder.interceptors().removeAll { it.javaClass.simpleName.contains("Cloudflare", true) }
-        
+
         builder.build()
     }
 
