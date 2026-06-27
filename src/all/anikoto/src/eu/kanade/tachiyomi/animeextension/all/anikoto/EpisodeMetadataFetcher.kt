@@ -17,6 +17,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 class EpisodeMetadataFetcher(
     private val client: OkHttpClient,
     private val json: Json,
+    private val webViewFetcher: WebViewFetcher? = null,
 ) {
     companion object {
         private const val TAG = "EpisodeMetadataFetcher"
@@ -49,26 +50,58 @@ class EpisodeMetadataFetcher(
         if (e != null) Log.e(TAG, msg, e) else Log.e(TAG, msg)
     }
 
+    private fun isCloudflareHost(url: String): Boolean {
+        return url.contains("anikage.com") || url.contains("anilist.co") || url.contains("kitsu.io")
+    }
+
     private fun fetchString(url: String, headers: Headers = apiHeaders): String? = try {
-        val response = client.newCall(Request.Builder().url(url).headers(headers).build()).execute()
-        if (response.isSuccessful) response.body.string() else null
+        if (isCloudflareHost(url) && webViewFetcher != null) {
+            webViewFetcher.fetchText(url)
+        } else {
+            val response = client.newCall(Request.Builder().url(url).headers(headers).build()).execute()
+            if (response.isSuccessful) {
+                response.body.string()
+            } else {
+                if (isCloudflareHost(url) && webViewFetcher != null) {
+                    webViewFetcher.fetchText(url)
+                } else null
+            }
+        }
     } catch (e: Exception) {
-        loge("fetchString FAILED: $url", e)
-        null
+        if (isCloudflareHost(url) && webViewFetcher != null) {
+            try { webViewFetcher.fetchText(url) } catch(e2: Exception) { null }
+        } else {
+            loge("fetchString FAILED: $url", e)
+            null
+        }
     }
 
     private fun postJson(url: String, body: String): String? = try {
-        val reqBody = body.toRequestBody("application/json".toMediaType())
-        val response = client.newCall(
-            Request.Builder().url(url).post(reqBody)
-                .header("Content-Type", "application/json")
-                .header("User-Agent", BROWSER_UA)
-                .build(),
-        ).execute()
-        if (response.isSuccessful) response.body.string() else null
+        if (isCloudflareHost(url) && webViewFetcher != null) {
+            webViewFetcher.postJson(url, body)
+        } else {
+            val reqBody = body.toRequestBody("application/json".toMediaType())
+            val response = client.newCall(
+                Request.Builder().url(url).post(reqBody)
+                    .header("Content-Type", "application/json")
+                    .header("User-Agent", BROWSER_UA)
+                    .build(),
+            ).execute()
+            if (response.isSuccessful) {
+                response.body.string()
+            } else {
+                if (isCloudflareHost(url) && webViewFetcher != null) {
+                    webViewFetcher.postJson(url, body)
+                } else null
+            }
+        }
     } catch (e: Exception) {
-        loge("postJson FAILED: $url", e)
-        null
+        if (isCloudflareHost(url) && webViewFetcher != null) {
+            try { webViewFetcher.postJson(url, body) } catch(e2: Exception) { null }
+        } else {
+            loge("postJson FAILED: $url", e)
+            null
+        }
     }
 
     private fun stripHtml(text: String): String = text.replace(Regex("<[^>]+>"), "").trim()

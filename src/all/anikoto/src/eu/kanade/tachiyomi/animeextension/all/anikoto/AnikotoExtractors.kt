@@ -12,6 +12,7 @@ import java.net.URI
 class AnikotoExtractors(
     private val client: OkHttpClient,
     private val json: Json,
+    private val webViewFetcher: WebViewFetcher? = null,
 ) {
     companion object {
         private const val TAG = "AnikotoExtractors"
@@ -41,6 +42,7 @@ class AnikotoExtractors(
         .set("Accept", "*/*")
         .build()
 
+
     private fun kiwiHeaders(): Headers = Headers.Builder()
         .set("User-Agent", BROWSER_UA)
         .set("Referer", "https://vibeplayer.site/")
@@ -59,7 +61,25 @@ class AnikotoExtractors(
         null
     }
 
-    private fun inferLang(label: String): String = when {
+    private fun isWafBlockedHost(url: String): Boolean {
+        return url.contains("mewstream.buzz", ignoreCase = true) ||
+            url.contains("voltara.click", ignoreCase = true) ||
+            url.contains("zaptrix.buzz", ignoreCase = true)
+    }
+
+    private fun fetchString(url: String, headers: Headers): String {
+        if (isWafBlockedHost(url) && webViewFetcher != null) {
+            return webViewFetcher.fetchText(url)
+        }
+        val response = client.newCall(Request.Builder().url(url).headers(headers).build()).execute()
+        if (!response.isSuccessful) {
+            if (isWafBlockedHost(url) && webViewFetcher != null) {
+                return webViewFetcher.fetchText(url)
+            }
+            throw RuntimeException("HTTP ${response.code}")
+        }
+        return response.body.string()
+    }
         label.contains("English", ignoreCase = true) -> "eng"
         label.contains("Spanish", ignoreCase = true) -> "spa"
         label.contains("French", ignoreCase = true) -> "fra"
@@ -69,11 +89,7 @@ class AnikotoExtractors(
         else -> "und"
     }
 
-    private fun fetchString(url: String, headers: Headers): String {
-        val response = client.newCall(Request.Builder().url(url).headers(headers).build()).execute()
-        if (!response.isSuccessful) throw RuntimeException("HTTP ${response.code}")
-        return response.body.string()
-    }
+
 
     private fun parseMasterPlaylist(text: String, masterUrl: String): List<VariantInfo> {
         val result = mutableListOf<VariantInfo>()
@@ -145,7 +161,7 @@ class AnikotoExtractors(
             }
             logi("resolveVidTube: data-id=$dataId")
 
-            val sourcesUrl = "https://$host/stream/getSources?id=$dataId&type=$audioType"
+            val sourcesUrl = "https://$host/stream/getSourcesNew?id=$dataId&type=$audioType"
             logi("resolveVidTube: [2/5] GET getSources: $sourcesUrl")
             val sourcesBody = fetchString(sourcesUrl, vidtubeApiHeaders())
             val sourcesResp = json.decodeFromString<VidTubeSourcesResponse>(sourcesBody)

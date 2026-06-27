@@ -1,7 +1,9 @@
 package eu.kanade.tachiyomi.animeextension.all.anikoto
 
+import android.util.Base64
 import android.util.Log
 import android.widget.Toast
+import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -20,6 +22,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -80,8 +83,9 @@ class Anikoto : Source() {
             .build()
     }
 
-    private val extractors by lazy { AnikotoExtractors(client, json) }
-    private val metadataFetcher by lazy { EpisodeMetadataFetcher(metadataClient, json) }
+    private val webViewFetcher by lazy { WebViewFetcher() }
+    private val extractors by lazy { AnikotoExtractors(client, json, webViewFetcher) }
+    private val metadataFetcher by lazy { EpisodeMetadataFetcher(client, json, webViewFetcher) }
 
     // ---- Preferences ----
 
@@ -110,6 +114,14 @@ class Anikoto : Source() {
         get() = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS, true)
 
     // ---- Headers ----
+
+    override fun headersBuilder(): Headers.Builder {
+        return super.headersBuilder()
+            .set("User-Agent", "Mozilla/5.0")
+            .set("Referer", "$baseUrl/")
+            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .set("Accept-Language", "en-US,en;q=0.9")
+    }
 
     private fun ajaxHeaders(slug: String): Headers {
         val referer = if (slug.isEmpty()) "$baseUrl/" else "$baseUrl/watch/$slug/ep-1"
@@ -248,8 +260,8 @@ class Anikoto : Source() {
         }
     }
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        logi("=== getVideoList START ===")
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        logi("=== getHosterList START ===")
         val meta = try {
             EpisodeMeta.decode(episode.url)
         } catch (e: Exception) {
@@ -257,34 +269,10 @@ class Anikoto : Source() {
             return emptyList()
         }
 
-        val tasks = mutableListOf<HosterTask>()
+        val tasksByServer = mutableMapOf<String, MutableList<HosterTask>>()
+        val excludedServers = getPreferences().getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+        val excludedAudios = getPreferences().getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
 
-        // 1. Mapper API
-        if (meta.malId.isNotEmpty() && meta.epNum.isNotEmpty() && meta.timestamp.isNotEmpty()) {
-            val mapperUrl = "https://mapper.nekostream.site/api/mal/${meta.malId}/${meta.epNum}/${meta.timestamp}"
-            logi("mapper API: GET $mapperUrl")
-            try {
-                val mapperResponse = client.newCall(GET(mapperUrl, ajaxHeaders(meta.slug))).execute()
-                val bodyStr = mapperResponse.body.string()
-                val jsonObject = json.parseToJsonElement(bodyStr) as? JsonObject
-                if (jsonObject != null) {
-                    val mapperTokens = parseMapperResponse(jsonObject)
-                    logi("mapper parsed ${mapperTokens.size} tokens")
-                    for (token in mapperTokens) {
-                        val label = when (token.audio) {
-                            "sub" -> "H-SUB - ${token.serverName}"
-                            "dub" -> "A-DUB - ${token.serverName}"
-                            else -> "${token.audio} - ${token.serverName}"
-                        }
-                        tasks.add(HosterTask(label, token.token, token.audio, "mapper"))
-                    }
-                }
-            } catch (e: Exception) {
-                loge("mapper API FAILED", e)
-            }
-        }
-
-        // 2. Primary API
         if (meta.dataIds.isNotEmpty()) {
             val primaryUrl = "$baseUrl/ajax/server/list?servers=${meta.dataIds}"
             try {
@@ -298,13 +286,21 @@ class Anikoto : Source() {
                             "dub" -> "DUB"
                             "sub" -> "SUB"
                             "hsub" -> "HSUB"
-                            else -> dataType.uppercase(Locale.ROOT)
+                            else -> dataType.uppercase(java.util.Locale.ROOT)
                         }
+                        if (excludedAudios.any { it.equals(audioLabel, true) }) {
+                            continue
+                        }
+
                         for (serverElement in element.select("li")) {
                             val linkId = serverElement.attr("data-link-id")
-                            val text = serverElement.text()
+                            val serverName = serverElement.text().trim()
+                            if (excludedServers.any { it.equals(serverName, true) }) {
+                                continue
+                            }
                             if (linkId.isNotEmpty()) {
-                                tasks.add(HosterTask("$audioLabel - $text", linkId, dataType, "primary"))
+                                tasksByServer.getOrPut(serverName) { mutableListOf() }
+                                    .add(HosterTask("$audioLabel - $serverName", linkId, dataType, "primary", meta.slug))
                             }
                         }
                     }
@@ -314,20 +310,33 @@ class Anikoto : Source() {
             }
         }
 
-        logi("Total tasks: ${tasks.size}")
+        return tasksByServer.map { (serverName, tasks) ->
+            Hoster(hosterName = serverName, hosterUrl = json.encodeToString(tasks))
+        }
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        logi("=== getVideoList(hoster) START ===")
+        val tasks = try {
+            json.decodeFromString<List<HosterTask>>(hoster.hosterUrl)
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        logi("Total tasks for hoster ${hoster.hosterName}: ${tasks.size}")
         if (tasks.isEmpty()) return emptyList()
 
         val resolvedStreams = coroutineScope {
             tasks.map { task ->
                 async(Dispatchers.IO) {
-                    resolveStreamForTask(task, meta.slug)
+                    resolveStreamForTask(task, task.slug)
                 }
             }.awaitAll().filterNotNull()
         }
 
         logi("Total resolved streams: ${resolvedStreams.size}")
         if (resolvedStreams.isEmpty()) {
-            displayToast("Anikoto: No playable streams found", Toast.LENGTH_LONG)
+            displayToast("Anikoto: No playable streams found for this server", android.widget.Toast.LENGTH_LONG)
             return emptyList()
         }
 
@@ -342,7 +351,8 @@ class Anikoto : Source() {
             val subtitleTracks = server.getSubtitleTracks(stream.audioType)
             for (variant in stream.variants) {
                 val videoUrl = "${server.baseUrl}/variant/${stream.audioType}/${variant.quality}.m3u8"
-                val title = "${stream.audioLabel} - ${stream.hosterName} - ${variant.quality}"
+                val audioPrefix = stream.audioLabel.split(" - ").firstOrNull() ?: stream.audioLabel
+                val title = "$audioPrefix - ${variant.quality}"
                 allVideos.add(
                     Video(
                         videoUrl = videoUrl,
@@ -353,6 +363,19 @@ class Anikoto : Source() {
             }
         }
 
+        return try {
+            allVideos.sortVideos()
+        } catch (t: Throwable) {
+            allVideos
+        }
+    }
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val hosters = getHosterList(episode)
+        val allVideos = mutableListOf<Video>()
+        for (hoster in hosters) {
+            allVideos.addAll(getVideoList(hoster))
+        }
         return try {
             allVideos.sortVideos()
         } catch (t: Throwable) {
@@ -390,9 +413,13 @@ class Anikoto : Source() {
                     extractors.resolveVidTube(url, task.audioType, hosterName)
                 }
 
-                host.contains("mewcdn.online") -> {
-                    logi("  [${task.label}] → Flow B (Kiwi), host=$host")
-                    extractors.resolveKiwi(url, task.audioType, hosterName)
+                host.contains("mewcdn.online") || host.contains("zaptrix.buzz") || host.contains("mewstream.buzz") || host.contains("voltara.click") -> {
+                    if (getPreferences().getBoolean(PREF_ENABLE_KIWI_KEY, PREF_ENABLE_KIWI_DEFAULT)) {
+                        logi("  [${task.label}] → Flow B (Kiwi), host=$host")
+                        extractors.resolveKiwi(url, task.audioType, hosterName)
+                    } else {
+                        null
+                    }
                 }
 
                 else -> {
@@ -413,18 +440,10 @@ class Anikoto : Source() {
             "H-SUB" -> "HSUB"
             else -> PREF_AUDIO_DEFAULT
         }
-        val prefServer = preferredServer
+        
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.startsWith(prefAudioLabel, ignoreCase = true) }
-                .thenByDescending { video ->
-                    if (prefServer.equals(PREF_SERVER_DEFAULT, ignoreCase = true)) {
-                        val priority = HOSTER_PRIORITY.indexOfFirst { video.videoTitle.contains(it, ignoreCase = true) }
-                        if (priority != -1) -priority else -100
-                    } else {
-                        if (video.videoTitle.contains(prefServer, ignoreCase = true)) 1 else 0
-                    }
-                }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
+            compareByDescending<Video> { it.videoTitle.contains(prefAudioLabel, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
         )
     }
 
@@ -508,14 +527,36 @@ class Anikoto : Source() {
     private fun buildDescription(doc: Document): String {
         val synopsis = doc.selectFirst("#w-info .synopsis .content")?.text()
             ?: doc.selectFirst("#w-info .synopsis")?.text() ?: ""
+        
         val bmeta = doc.selectFirst("#w-info .bmeta") ?: return synopsis
-        val metaList = mutableListOf<String>()
+        val metaMap = mutableMapOf<String, String>()
         for (element in bmeta.select(".meta > div")) {
-            val label = element.selectFirst("label, strong, b")?.text()?.removeSuffix(":")
-            val value = element.select("span, a").joinToString(", ") { it.text() }
-            if (label != null && value.isNotEmpty()) metaList.add("$label: $value")
+            val label = element.selectFirst("label, strong, b")?.text()?.removeSuffix(":")?.trim()
+            val value = element.select("span, a").joinToString(", ") { it.text() }.trim()
+            if (label != null && value.isNotEmpty()) metaMap[label] = value
         }
-        return if (metaList.isEmpty()) synopsis else metaList.joinToString("\n") + "\n\n" + synopsis
+
+        val rating = doc.selectFirst("#w-info .binfo i.rating")?.text()
+        val altTitles = doc.selectFirst("#w-info .binfo div.names")?.text()
+
+        val sb = java.lang.StringBuilder()
+        sb.append(synopsis)
+
+        metaMap["MAL"]?.let { sb.append("\n\nMAL Score: $it") }
+        metaMap["Type"]?.let { sb.append("\nType: $it") }
+        metaMap["Premiered"]?.let { sb.append("\nPremiered: $it") }
+        metaMap["Aired"]?.let { sb.append("\nAired: $it") }
+        metaMap["Duration"]?.let { sb.append("\nDuration: $it") }
+        
+        val studios = bmeta.select("div:contains(Studios) span a").joinToString(", ") { it.text() }
+        if (studios.isNotBlank()) {
+            sb.append("\nStudio: $studios")
+        }
+
+        rating?.takeIf { it.isNotBlank() }?.let { sb.append("\nRating: $it") }
+        altTitles?.takeIf { it.isNotBlank() }?.let { sb.append("\n\nAlt titles: $it") }
+
+        return sb.toString()
     }
 
     private fun parseStatus(text: String?): Int {
@@ -581,6 +622,14 @@ class Anikoto : Source() {
             }.also { screen.addPreference(it) }
 
             SwitchPreferenceCompat(screen.context).apply {
+                key = PREF_ENABLE_KIWI_KEY
+                title = "Enable Kiwi-Stream"
+                summaryOn = "Fetching Kiwi-Stream from external sources"
+                summaryOff = "Kiwi-Stream disabled"
+                setDefaultValue(PREF_ENABLE_KIWI_DEFAULT)
+            }.also { screen.addPreference(it) }
+
+            SwitchPreferenceCompat(screen.context).apply {
                 key = PREF_LOAD_TITLES
                 title = "Load episode titles"
                 summaryOn = "Fetching episode titles from external sources"
@@ -595,6 +644,24 @@ class Anikoto : Source() {
                 summaryOff = "Episode descriptions disabled"
                 setDefaultValue(true)
             }.also { screen.addPreference(it) }
+            MultiSelectListPreference(screen.context).apply {
+                key = PREF_EXCLUDE_SERVERS_KEY
+                title = "Exclude Servers"
+                entries = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
+                entryValues = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
+                setDefaultValue(emptySet<String>())
+                summary = "Select servers to exclude from the video list"
+            }.also { screen.addPreference(it) }
+
+            MultiSelectListPreference(screen.context).apply {
+                key = PREF_EXCLUDE_AUDIO_KEY
+                title = "Exclude Audio"
+                entries = arrayOf("Sub", "Dub", "Hsub")
+                entryValues = arrayOf("SUB", "DUB", "HSUB")
+                setDefaultValue(emptySet<String>())
+                summary = "Select audio formats to exclude from the video list"
+            }.also { screen.addPreference(it) }
+
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
         }
@@ -625,6 +692,12 @@ class Anikoto : Source() {
         private const val TAG = "Anikoto"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+        private const val PREF_ENABLE_KIWI_KEY = "pref_enable_kiwi"
+        private const val PREF_ENABLE_KIWI_DEFAULT = true
+
+        private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
+        private const val PREF_EXCLUDE_AUDIO_KEY = "pref_exclude_audio"
+
         private val HOSTER_PRIORITY = listOf("Kiwi-Stream", "VidCloud-1", "VidPlay-1", "Vidstream-2", "HD-1")
 
         @Volatile
@@ -646,9 +719,11 @@ data class VariantInfo(
     val resolution: Int,
 )
 
+@kotlinx.serialization.Serializable
 data class HosterTask(
     val label: String,
     val token: String,
     val audioType: String,
     val source: String,
+    val slug: String,
 )

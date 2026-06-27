@@ -56,12 +56,6 @@ data class VidTubeTrack(
     val kind: String = "",
 )
 
-data class MapperStreamToken(
-    val serverName: String,
-    val audio: String,
-    val token: String,
-)
-
 data class EpisodeMeta(
     val slug: String,
     val epNum: String,
@@ -107,26 +101,3 @@ data class EpisodeMeta(
     }
 }
 
-fun parseMapperResponse(obj: JsonObject): List<MapperStreamToken> {
-    val out = mutableListOf<MapperStreamToken>()
-    for ((key, value) in obj) {
-        if (key == "status" || !key.endsWith("-")) continue
-        val serverName = key.removeSuffix("-")
-        val serverObj = value.jsonObject
-        serverObj["sub"]?.let { subEl ->
-            extractUrl(subEl)?.let { url ->
-                out.add(MapperStreamToken(serverName, "sub", url))
-            }
-        }
-        serverObj["dub"]?.let { dubEl ->
-            extractUrl(dubEl)?.let { url ->
-                out.add(MapperStreamToken(serverName, "dub", url))
-            }
-        }
-    }
-    return out
-}
-
-private fun extractUrl(el: JsonElement): String? = runCatching {
-    el.jsonObject["url"]?.jsonPrimitive?.contentOrNull
-}.getOrNull()
