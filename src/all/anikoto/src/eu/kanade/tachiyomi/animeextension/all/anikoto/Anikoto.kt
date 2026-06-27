@@ -201,7 +201,7 @@ class Anikoto : Source() {
         }
 
         val epDoc = Jsoup.parse(ajaxJson.result)
-        val elements = epDoc.select("ul.ep-range a, .ep-range a")
+        val elements = epDoc.select("ul.ep-range a, .ep-range a, .range a")
         val episodes = elements.mapNotNull { element ->
             val num = element.attr("data-num")
             if (num.isEmpty()) return@mapNotNull null
