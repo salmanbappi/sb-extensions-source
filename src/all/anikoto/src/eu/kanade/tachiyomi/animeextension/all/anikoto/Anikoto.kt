@@ -576,109 +576,92 @@ class Anikoto : Source() {
     // ---- Parsers ----
 
     private fun parseAnimeList(doc: Document): AnimesPage {
-        val elements = doc.select("div#list-items > div.item, div.content-item > div.piece, div.sidebar-set div.piece")
-        val animes = elements.mapNotNull { element ->
-            val nameLink = element.selectFirst("a.name.d-title")
-                ?: element.selectFirst("div.ani.poster.tip > a")
-                ?: element.selectFirst(".ani-name > a")
-                ?: return@mapNotNull null
-            val href = nameLink.attr("href")
-            val slug = href.substringAfter("/watch/").substringBefore("/ep-")
-            if (slug.isEmpty()) return@mapNotNull null
-            SAnime.create().apply {
-                url = slug
-                var titleText = nameLink.text().trim()
-                if (titleText.isEmpty()) titleText = nameLink.attr("data-jp")
-                title = titleText
-                val posterImg = element.selectFirst("div.ani.poster.tip img")
-                thumbnail_url = posterImg?.absUrl("src") ?: element.selectFirst("img")?.absUrl("src")
-            }
-        }
-        val hasNext = if (doc.selectFirst("ul.pagination li:has(a[rel=next])") != null) {
-            true
-        } else {
-            try {
-                val activePage = doc.selectFirst("ul.pagination li.active")?.text()?.toIntOrNull() ?: 0
-                val pages = doc.select("ul.pagination li.page-item a.page-link").mapNotNull { it.text().toIntOrNull() }
-                pages.any { it > activePage }
-            } catch (e: Exception) {
-                false
-            }
-        }
+        val elements = doc.select("div#list-items > div.item")
+        val animes = elements.map { el -> parseSearchItem(el) }
+        val hasNext = doc.select("a.page-link[rel=next]").isNotEmpty()
         return AnimesPage(animes, hasNext)
+    }
+
+    private fun parseSearchItem(el: org.jsoup.nodes.Element): SAnime {
+        val linkEl = when {
+            el.tagName() == "a" && el.hasClass("name") -> el
+            el.selectFirst("a.name.d-title") != null -> el.selectFirst("a.name.d-title")!!
+            el.selectFirst("a[href*=/watch/]") != null -> el.selectFirst("a[href*=/watch/]")!!
+            else -> el
+        }
+        var href = linkEl.attr("href")
+        if (href.startsWith("http")) href = href.substringAfter(baseUrl)
+        val slug = href.removePrefix("/watch/").substringBefore("/ep-")
+        val titleText = linkEl.selectFirst(".name")?.text()?.trim()
+            ?: linkEl.text().trim().ifEmpty { "Unknown" }
+        val thumb = el.selectFirst("img")?.absUrl("src")
+            ?: linkEl.selectFirst("img")?.absUrl("src")
+        return SAnime.create().apply {
+            url = slug
+            title = titleText
+            thumbnail_url = thumb
+        }
     }
 
     private fun parseAnimeDetails(doc: Document, slug: String): SAnime {
         val useJp = titleLang == "jp"
-        return SAnime.create().apply {
-            url = slug
-            val titleHeader = doc.selectFirst("#w-info h1.title.d-title")
-            title = if (useJp) {
-                val jpTitle = titleHeader?.attr("data-jp")
-                if (!jpTitle.isNullOrEmpty()) jpTitle else titleHeader?.text() ?: slug
-            } else {
-                titleHeader?.text() ?: slug
-            }
-            val posterImg = doc.selectFirst("#w-info .poster img")
-            thumbnail_url = posterImg?.absUrl("src")
-            description = buildDescription(doc)
-            val genres = doc.select("#w-info .bmeta a[href*=\"/genre/\"]")
-            genre = genres.joinToString(", ") { it.text() }
-            val statusElement = doc.selectFirst("#w-info .bmeta a[href*=\"/status/\"]")
-            status = parseStatus(statusElement?.text())
-            val studiosMeta = doc.select("#w-info .bmeta .meta > div").firstOrNull {
-                it.text().contains("Studios", ignoreCase = true)
-            }
-            author = studiosMeta?.select("a")?.joinToString(", ") { it.text() }
-            artist = author
-        }
-    }
+        val binfo = doc.selectFirst("#w-info .binfo") ?: doc.selectFirst("div.binfo")
+            ?: return SAnime.create().apply { url = slug }
+        val bmeta = doc.selectFirst("div.bmeta")
 
-    private fun buildDescription(doc: Document): String {
-        val synopsis = doc.selectFirst("#w-info .synopsis .content")?.text()
-            ?: doc.selectFirst("#w-info .synopsis")?.text() ?: ""
-
-        val bmeta = doc.selectFirst("#w-info .bmeta") ?: return synopsis
+        // Build meta map from bmeta
         val metaMap = mutableMapOf<String, String>()
-        for (element in bmeta.select("div.meta > div")) {
-            val label = element.ownText().removeSuffix(":").trim()
-            val value = element.select("span").text().trim()
-            if (label.isNotEmpty() && value.isNotEmpty()) {
-                metaMap[label] = value
-            }
+        bmeta?.select("div.meta > div")?.forEach { el ->
+            val label = el.ownText().removeSuffix(":").trim()
+            val value = el.select("span").text().trim()
+            if (label.isNotEmpty() && value.isNotEmpty()) metaMap[label] = value
         }
 
-        val rating = doc.selectFirst("#w-info .binfo i.rating")?.text()
-        val altTitles = doc.selectFirst("#w-info .binfo div.names")?.text()
+        val genresText = bmeta?.select("div:contains(Genres) span a")?.eachText()?.joinToString(", ") ?: ""
+        val studiosText = bmeta?.select("div:contains(Studios) span a")?.eachText()?.joinToString(", ") ?: ""
+        val statusText = metaMap["Status"] ?: ""
 
-        val sb = java.lang.StringBuilder()
-        sb.append(synopsis)
+        val altTitles = binfo.selectFirst("div.names")?.text()
+        val synopsis = binfo.selectFirst("div.synopsis div.content")?.text()?.trim()
+        val ratingText = binfo.selectFirst("i.rating")?.text() ?: ""
 
-        metaMap["MAL"]?.let { sb.append("\n\nMAL Score: $it") }
-        metaMap["Type"]?.let { sb.append("\nType: $it") }
-        metaMap["Premiered"]?.let { sb.append("\nPremiered: $it") }
-        metaMap["Aired"]?.let { sb.append("\nAired: $it") }
-        metaMap["Duration"]?.let { sb.append("\nDuration: $it") }
-
-        val studios = bmeta.select("div:contains(Studios) span a").joinToString(", ") { it.text() }
-        if (studios.isNotBlank()) {
-            sb.append("\nStudio: $studios")
+        val desc = buildString {
+            if (!synopsis.isNullOrBlank()) append(synopsis)
+            metaMap["MAL"]?.takeIf { it.isNotBlank() }?.let { append("\n\nMAL Score: $it") }
+            metaMap["Type"]?.takeIf { it.isNotBlank() }?.let { append("\nType: $it") }
+            metaMap["Premiered"]?.takeIf { it.isNotBlank() }?.let { append("\nPremiered: $it") }
+            metaMap["Aired"]?.takeIf { it.isNotBlank() }?.let { append("\nAired: $it") }
+            metaMap["Duration"]?.takeIf { it.isNotBlank() }?.let { append("\nDuration: $it") }
+            if (studiosText.isNotBlank()) append("\nStudio: $studiosText")
+            if (ratingText.isNotBlank()) append("\nRating: $ratingText")
+            if (!altTitles.isNullOrBlank()) append("\n\nAlt titles: $altTitles")
         }
 
-        rating?.takeIf { it.isNotBlank() }?.let { sb.append("\nRating: $it") }
-        altTitles?.takeIf { it.isNotBlank() }?.let { sb.append("\n\nAlt titles: $it") }
-
-        return sb.toString()
-    }
-
-    private fun parseStatus(text: String?): Int {
-        val lowerCase = text?.lowercase(Locale.ROOT) ?: return SAnime.UNKNOWN
-        return when (lowerCase) {
-            "finished airing" -> SAnime.COMPLETED
-            "ongoing", "currently airing", "not yet aired", "upcoming" -> SAnime.ONGOING
+        val animeStatus = when {
+            statusText.contains("Currently Airing", ignoreCase = true) -> SAnime.ONGOING
+            statusText.contains("Finished Airing", ignoreCase = true) -> SAnime.COMPLETED
             else -> SAnime.UNKNOWN
         }
+
+        return SAnime.create().apply {
+            url = slug
+            val h1 = binfo.selectFirst("h1.title")
+            title = if (useJp) {
+                val jpTitle = h1?.attr("data-jp")
+                if (!jpTitle.isNullOrEmpty()) jpTitle else h1?.text() ?: slug
+            } else {
+                h1?.text() ?: slug
+            }
+            thumbnail_url = binfo.selectFirst("div.poster img")?.absUrl("src")
+            description = desc
+            genre = genresText
+            status = animeStatus
+            author = if (studiosText.isNotBlank()) studiosText else null
+            artist = author
+            initialized = true
+        }
     }
+
 
     // ---- Preferences ----
 
