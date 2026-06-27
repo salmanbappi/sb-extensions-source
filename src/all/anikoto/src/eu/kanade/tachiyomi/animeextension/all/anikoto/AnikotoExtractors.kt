@@ -138,58 +138,6 @@ class AnikotoExtractors(
         return result
     }
 
-    suspend fun resolveDirectM3u8(
-        m3u8Url: String,
-        audioType: String,
-        hosterName: String,
-    ): LocalProxyServer.AudioStream? {
-        logi("resolveDirectM3u8: START hoster=$hosterName audio=$audioType url=$m3u8Url")
-        return try {
-            val host = extractHost(m3u8Url) ?: "direct"
-            val seg = segHeaders(host)
-            val masterText = fetchString(m3u8Url, seg)
-            if (!masterText.startsWith("#EXTM3U")) {
-                loge("resolveDirectM3u8: master is not m3u8: ${masterText.take(80)}")
-                return null
-            }
-
-            val variants = parseMasterPlaylist(masterText, m3u8Url)
-            if (variants.isEmpty()) {
-                loge("resolveDirectM3u8: no variants in master m3u8")
-                return null
-            }
-
-            val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
-            for (vi in variants) {
-                try {
-                    val varText = fetchString(vi.url, seg)
-                    val segs = parseVariantSegments(varText, vi.url)
-                    if (segs.isNotEmpty()) {
-                        variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
-                    }
-                } catch (e: Exception) {
-                    loge("resolveDirectM3u8: variant ${vi.quality} FAILED: ${e.message}")
-                }
-            }
-
-            if (variantDataList.isEmpty()) {
-                loge("resolveDirectM3u8: no variants could be loaded")
-                return null
-            }
-
-            val audioLabel = when (audioType) {
-                "sub" -> "SUB"
-                "dub" -> "DUB"
-                "hsub" -> "HSUB"
-                else -> audioType.uppercase()
-            }
-            LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, emptyList(), seg)
-        } catch (e: Exception) {
-            loge("resolveDirectM3u8: FAILED hoster=$hosterName audio=$audioType", e)
-            null
-        }
-    }
-
     suspend fun resolveVidTube(
         iframeUrl: String,
         audioType: String,
@@ -217,27 +165,24 @@ class AnikotoExtractors(
                 .set("Origin", "https://$host")
                 .build()
 
-            // Try getSources first (with WAF bypass: duplicated id parameter)
             var sourcesBody: String? = null
             try {
-                val sourcesUrl = "https://$host/stream/getSources?id=$dataId&id=$dataId"
-                logi("resolveVidTube: trying getSources: $sourcesUrl")
+                val sourcesUrl = "https://$host/stream/getSources?id=$dataId&type=$audioType"
+                logi("resolveVidTube: [2/5] GET getSources: $sourcesUrl")
                 sourcesBody = fetchString(sourcesUrl, apiHeaders)
             } catch (e: Exception) {
                 logi("resolveVidTube: getSources failed: ${e.message}")
             }
 
-            // Fallback to getSourcesNew (with WAF bypass: duplicated id and type parameters)
             if (sourcesBody == null) {
-                val sourcesUrl = "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId&type=$audioType&type=$audioType"
-                logi("resolveVidTube: trying getSourcesNew: $sourcesUrl")
-                sourcesBody = fetchString(sourcesUrl, apiHeaders)
+                loge("resolveVidTube: no valid m3u8 in getSources response")
+                return null
             }
 
             val sourcesResp = json.decodeFromString<VidTubeSourcesResponse>(sourcesBody)
             val masterM3u8 = sourcesResp.sources?.file
             if (masterM3u8.isNullOrEmpty() || !masterM3u8.startsWith("http")) {
-                loge("resolveVidTube: no valid m3u8 in getSources response")
+                loge("resolveVidTube: no valid m3u8 in getSources response (sources.file='$masterM3u8')")
                 return null
             }
             logi("resolveVidTube: [3/5] master m3u8=$masterM3u8")

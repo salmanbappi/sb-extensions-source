@@ -505,11 +505,6 @@ class Anikoto : Source() {
             logi("  [${task.label}] iframe=$url host=$host")
 
             when {
-                url.endsWith(".m3u8") || (url.contains(".m3u8") && !url.contains("/stream/")) -> {
-                    logi("  [${task.label}] → Flow Direct M3u8, host=$host")
-                    extractors.resolveDirectM3u8(url, task.audioType, hosterName)
-                }
-
                 host.contains("mewcdn.online") || host.contains("zaptrix.buzz") || host.contains("mewstream.buzz") || host.contains("voltara.click") -> {
                     if (preferences.getBoolean(PREF_ENABLE_KIWI_KEY, PREF_ENABLE_KIWI_DEFAULT)) {
                         logi("  [${task.label}] → Flow B (Kiwi), host=$host")

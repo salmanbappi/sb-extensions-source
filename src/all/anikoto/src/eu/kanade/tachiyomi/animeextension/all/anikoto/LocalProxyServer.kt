@@ -27,7 +27,7 @@ class LocalProxyServer(
 ) {
     companion object {
         private const val IDLE_TIMEOUT_MS = 600000L
-        private const val MAX_CACHE_ENTRIES = 50
+        private const val MAX_CACHE_ENTRIES = 200
         private const val SOCKET_READ_TIMEOUT_MS = 120000
         private const val TAG = "AnikotoProxy"
         private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
