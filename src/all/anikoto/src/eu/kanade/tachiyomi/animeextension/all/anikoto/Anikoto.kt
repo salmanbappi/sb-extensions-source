@@ -115,13 +115,11 @@ class Anikoto : Source() {
 
     // ---- Headers ----
 
-    override fun headersBuilder(): Headers.Builder {
-        return super.headersBuilder()
-            .set("User-Agent", "Mozilla/5.0")
-            .set("Referer", "$baseUrl/")
-            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .set("Accept-Language", "en-US,en;q=0.9")
-    }
+    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+        .set("User-Agent", "Mozilla/5.0")
+        .set("Referer", "$baseUrl/")
+        .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .set("Accept-Language", "en-US,en;q=0.9")
 
     private fun ajaxHeaders(slug: String): Headers {
         val referer = if (slug.isEmpty()) "$baseUrl/" else "$baseUrl/watch/$slug/ep-1"
@@ -440,10 +438,10 @@ class Anikoto : Source() {
             "H-SUB" -> "HSUB"
             else -> PREF_AUDIO_DEFAULT
         }
-        
+
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefAudioLabel, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
 
@@ -527,7 +525,7 @@ class Anikoto : Source() {
     private fun buildDescription(doc: Document): String {
         val synopsis = doc.selectFirst("#w-info .synopsis .content")?.text()
             ?: doc.selectFirst("#w-info .synopsis")?.text() ?: ""
-        
+
         val bmeta = doc.selectFirst("#w-info .bmeta") ?: return synopsis
         val metaMap = mutableMapOf<String, String>()
         for (element in bmeta.select(".meta > div")) {
@@ -547,7 +545,7 @@ class Anikoto : Source() {
         metaMap["Premiered"]?.let { sb.append("\nPremiered: $it") }
         metaMap["Aired"]?.let { sb.append("\nAired: $it") }
         metaMap["Duration"]?.let { sb.append("\nDuration: $it") }
-        
+
         val studios = bmeta.select("div:contains(Studios) span a").joinToString(", ") { it.text() }
         if (studios.isNotBlank()) {
             sb.append("\nStudio: $studios")
@@ -661,7 +659,6 @@ class Anikoto : Source() {
                 setDefaultValue(emptySet<String>())
                 summary = "Select audio formats to exclude from the video list"
             }.also { screen.addPreference(it) }
-
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
         }

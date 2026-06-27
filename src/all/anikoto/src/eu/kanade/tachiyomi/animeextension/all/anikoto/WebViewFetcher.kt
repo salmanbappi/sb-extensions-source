@@ -194,7 +194,7 @@ class WebViewFetcher(
         val id = atomicId.incrementAndGet().toString()
         val state = ByteRequestState()
         pendingRequests[id] = state
-        
+
         synchronized(fetchLock) {
             mainHandler.post {
                 webView?.evaluateJavascript(buildFetchBytesJs(id, url), null)
@@ -205,9 +205,9 @@ class WebViewFetcher(
             }
         }
         pendingRequests.remove(id)
-        
+
         state.error?.let { throw RuntimeException("WebViewFetcher: $it") }
-        
+
         synchronized(state.chunks) {
             if (state.chunks.isEmpty()) throw RuntimeException("WebViewFetcher: no bytes received")
             var total = ByteArray(0)
@@ -223,7 +223,7 @@ class WebViewFetcher(
         val id = atomicId.incrementAndGet().toString()
         val state = TextRequestState()
         pendingRequests[id] = state
-        
+
         synchronized(fetchLock) {
             mainHandler.post {
                 webView?.evaluateJavascript(buildFetchTextJs(id, url), null)
@@ -234,7 +234,7 @@ class WebViewFetcher(
             }
         }
         pendingRequests.remove(id)
-        
+
         state.error?.let { throw RuntimeException("WebViewFetcher: $it") }
         return state.textResult ?: throw RuntimeException("WebViewFetcher: no text result")
     }
@@ -244,7 +244,7 @@ class WebViewFetcher(
         val id = atomicId.incrementAndGet().toString()
         val state = TextRequestState()
         pendingRequests[id] = state
-        
+
         synchronized(fetchLock) {
             mainHandler.post {
                 webView?.evaluateJavascript(buildPostJsonJs(id, url, jsonBody), null)
@@ -255,7 +255,7 @@ class WebViewFetcher(
             }
         }
         pendingRequests.remove(id)
-        
+
         state.error?.let { throw RuntimeException("WebViewFetcher: $it") }
         return state.textResult ?: throw RuntimeException("WebViewFetcher: no postJson result")
     }

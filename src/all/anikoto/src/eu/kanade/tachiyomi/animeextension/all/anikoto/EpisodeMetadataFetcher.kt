@@ -50,9 +50,7 @@ class EpisodeMetadataFetcher(
         if (e != null) Log.e(TAG, msg, e) else Log.e(TAG, msg)
     }
 
-    private fun isCloudflareHost(url: String): Boolean {
-        return url.contains("anikage.com") || url.contains("anilist.co") || url.contains("kitsu.io")
-    }
+    private fun isCloudflareHost(url: String): Boolean = url.contains("anikage.com") || url.contains("anilist.co") || url.contains("kitsu.io")
 
     private fun fetchString(url: String, headers: Headers = apiHeaders): String? = try {
         if (isCloudflareHost(url) && webViewFetcher != null) {
@@ -64,12 +62,18 @@ class EpisodeMetadataFetcher(
             } else {
                 if (isCloudflareHost(url) && webViewFetcher != null) {
                     webViewFetcher.fetchText(url)
-                } else null
+                } else {
+                    null
+                }
             }
         }
     } catch (e: Exception) {
         if (isCloudflareHost(url) && webViewFetcher != null) {
-            try { webViewFetcher.fetchText(url) } catch(e2: Exception) { null }
+            try {
+                webViewFetcher.fetchText(url)
+            } catch (e2: Exception) {
+                null
+            }
         } else {
             loge("fetchString FAILED: $url", e)
             null
@@ -92,12 +96,18 @@ class EpisodeMetadataFetcher(
             } else {
                 if (isCloudflareHost(url) && webViewFetcher != null) {
                     webViewFetcher.postJson(url, body)
-                } else null
+                } else {
+                    null
+                }
             }
         }
     } catch (e: Exception) {
         if (isCloudflareHost(url) && webViewFetcher != null) {
-            try { webViewFetcher.postJson(url, body) } catch(e2: Exception) { null }
+            try {
+                webViewFetcher.postJson(url, body)
+            } catch (e2: Exception) {
+                null
+            }
         } else {
             loge("postJson FAILED: $url", e)
             null
