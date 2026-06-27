@@ -131,10 +131,13 @@ class Anikoto : Source() {
         .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .set("Accept-Language", "en-US,en;q=0.9")
 
+
+
     private fun ajaxHeaders(slug: String): Headers {
         val referer = if (slug.isEmpty()) "$baseUrl/" else "$baseUrl/watch/$slug/ep-1"
         return headers.newBuilder()
             .set("X-Requested-With", "XMLHttpRequest")
+            .set("Accept", "application/json, text/javascript, */*; q=0.01")
             .set("Referer", referer)
             .build()
     }
@@ -266,6 +269,10 @@ class Anikoto : Source() {
             loge("enrichEpisodesWithMetadata: FAILED", e)
             episodes
         }
+    }
+
+    override fun getEpisodeUrl(episode: SEpisode): String {
+        return baseUrl + EpisodeMeta.extractUrlPath(episode.url)
     }
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {

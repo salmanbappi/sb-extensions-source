@@ -67,10 +67,11 @@ data class EpisodeMeta(
     val epTitle: String,
 ) {
     fun encode(): String = buildString {
+        append("/watch/")
         append(slug)
         append("/ep-")
         append(epNum)
-        append("|")
+        append("#")
         append(malId)
         append("|")
         append(timestamp)
@@ -86,17 +87,51 @@ data class EpisodeMeta(
 
     companion object {
         fun decode(encoded: String): EpisodeMeta {
-            val parts = encoded.split("|")
-            val urlPart = parts.getOrElse(0) { "" }
+            if (!encoded.startsWith("/watch/") || !encoded.contains("#")) {
+                val parts = encoded.split("|")
+                val urlPart = parts.getOrElse(0) { "" }
+                val slug = urlPart.substringBefore("/ep-")
+                val epNum = urlPart.substringAfter("/ep-")
+                val malId = parts.getOrElse(1) { "" }
+                val timestamp = parts.getOrElse(2) { "" }
+                val dataIds = parts.getOrElse(3) { "" }
+                val hasSub = parts.getOrElse(4) { "0" } == "1"
+                val hasDub = parts.getOrElse(5) { "0" } == "1"
+                val epTitle = parts.drop(6).joinToString("|").replace("│", "|")
+                return EpisodeMeta(slug, epNum, malId, timestamp, dataIds, hasSub, hasDub, epTitle)
+            }
+
+            val mainParts = encoded.split("#", limit = 2)
+            val urlPart = mainParts[0].removePrefix("/watch/")
             val slug = urlPart.substringBefore("/ep-")
             val epNum = urlPart.substringAfter("/ep-")
-            val malId = parts.getOrElse(1) { "" }
-            val timestamp = parts.getOrElse(2) { "" }
-            val dataIds = parts.getOrElse(3) { "" }
-            val hasSub = parts.getOrElse(4) { "0" } == "1"
-            val hasDub = parts.getOrElse(5) { "0" } == "1"
-            val epTitle = parts.drop(6).joinToString("|").replace("│", "|")
+
+            val parts = mainParts[1].split("|")
+            val malId = parts.getOrElse(0) { "" }
+            val timestamp = parts.getOrElse(1) { "" }
+            val dataIds = parts.getOrElse(2) { "" }
+            val hasSub = parts.getOrElse(3) { "0" } == "1"
+            val hasDub = parts.getOrElse(4) { "0" } == "1"
+            val epTitle = parts.drop(5).joinToString("|").replace("│", "|")
+
             return EpisodeMeta(slug, epNum, malId, timestamp, dataIds, hasSub, hasDub, epTitle)
+        }
+
+        fun extractUrlPath(encoded: String): String {
+            if (encoded.startsWith("/watch/") && encoded.contains("#")) {
+                return encoded.substringBefore("#")
+            }
+            if (encoded.startsWith("/watch/")) {
+                return encoded
+            }
+            if (!encoded.contains("|")) {
+                return "/watch/$encoded/ep-1"
+            }
+            val firstPart = encoded.substringBefore("|")
+            if (firstPart.contains("/ep-")) {
+                return "/watch/$firstPart"
+            }
+            return "/watch/$firstPart/ep-1"
         }
     }
 }
