@@ -812,7 +812,7 @@ class LocalProxy(
                         val sessionId = pathSegments[1]
                         val g = pathSegments[2].toIntOrNull() ?: 0
                         val uB64 = pathSegments.subList(3, pathSegments.size).joinToString("/")
-                        val sessionInfo = Nepu.sessionData[sessionId] ?: Nepu.SessionInfo("", "", "")
+                        val sessionInfo = Nepu.sessionData[sessionId] ?: Nepu.Companion.SessionInfo("", "", "")
 
                         val keyBody = okhttp3.FormBody.Builder()
                             .add("f", sessionInfo.hlsFile)
