@@ -6,7 +6,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 class TriStateCheckBox(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
 
 class SortFilter :
-    AnimeFilter.Sort(
+    AnimeFilter.Select<String>(
         "Sort by",
         arrayOf(
             "Default",
@@ -18,32 +18,25 @@ class SortFilter :
             "Most viewed",
             "Number of episodes",
         ),
-        null,
     ) {
-    fun toQuery(): String? {
-        val values = arrayOf(
-            "default",
-            "latest-updated",
-            "latest-added",
-            "score",
-            "name-az",
-            "release-date",
-            "most-viewed",
-            "number_of_episodes",
-        )
-        val st = state ?: return null
-        return if (st.index >= 0 && st.index < values.size) {
-            values[st.index]
-        } else {
-            null
-        }
-    }
+    private val values = arrayOf(
+        "default",
+        "latest-updated",
+        "latest-added",
+        "score",
+        "name-az",
+        "release-date",
+        "most-viewed",
+        "number_of_episodes",
+    )
+
+    fun toQuery(): String? = if (state > 0 && state < values.size) values[state] else null
 }
 
 class GenreFilter :
     AnimeFilter.Group<AnimeFilter.CheckBox>(
         "Genres",
-        GENRES.map { TriStateCheckBox(it.second, it.first) },
+        GENRES.map { TriStateCheckBox(it.first, it.second) },
     ) {
     fun toQueries(): List<String> = state.filter { it.state }.map {
         (it as TriStateCheckBox).id
@@ -53,7 +46,7 @@ class GenreFilter :
 class TypeFilter :
     AnimeFilter.Group<AnimeFilter.CheckBox>(
         "Type",
-        TYPES.map { TriStateCheckBox(it.second, it.first) },
+        TYPES.map { TriStateCheckBox(it.first, it.second) },
     ) {
     fun toQueries(): List<String> = state.filter { it.state }.map {
         (it as TriStateCheckBox).id
@@ -63,7 +56,7 @@ class TypeFilter :
 class StatusFilter :
     AnimeFilter.Group<AnimeFilter.CheckBox>(
         "Status",
-        STATUSES.map { TriStateCheckBox(it.second, it.first) },
+        STATUSES.map { TriStateCheckBox(it.first, it.second) },
     ) {
     fun toQueries(): List<String> = state.filter { it.state }.map {
         (it as TriStateCheckBox).id
@@ -73,78 +66,150 @@ class StatusFilter :
 class LanguageFilter :
     AnimeFilter.Group<AnimeFilter.CheckBox>(
         "Language",
-        LANGUAGES.map { TriStateCheckBox(it.second, it.first) },
+        LANGUAGES.map { TriStateCheckBox(it.first, it.second) },
     ) {
     fun toQueries(): List<String> = state.filter { it.state }.map {
         (it as TriStateCheckBox).id
     }
 }
 
+class SeasonFilter :
+    AnimeFilter.Group<AnimeFilter.CheckBox>(
+        "Season",
+        SEASONS.map { TriStateCheckBox(it.first, it.second) },
+    ) {
+    fun toQueries(): List<String> = state.filter { it.state }.map {
+        (it as TriStateCheckBox).id
+    }
+}
+
+class YearFilter :
+    AnimeFilter.Group<AnimeFilter.CheckBox>(
+        "Year",
+        (2026 downTo 1980).map { TriStateCheckBox(it.toString(), it.toString()) },
+    ) {
+    fun toQueries(): List<String> = state.filter { it.state }.map {
+        (it as TriStateCheckBox).id
+    }
+}
+
+class RatingFilter :
+    AnimeFilter.Group<AnimeFilter.CheckBox>(
+        "Rating",
+        RATINGS.map { TriStateCheckBox(it, it) },
+    ) {
+    fun toQueries(): List<String> = state.filter { it.state }.map {
+        (it as TriStateCheckBox).id
+    }
+}
+
+class SourceFilter :
+    AnimeFilter.Group<AnimeFilter.CheckBox>(
+        "Source",
+        SOURCES.map { TriStateCheckBox(it.first, it.second) },
+    ) {
+    fun toQueries(): List<String> = state.filter { it.state }.map {
+        (it as TriStateCheckBox).id
+    }
+}
+
+// name → query-value pairs (matching APK order)
 private val GENRES = listOf(
-    Pair("1", "Action"),
-    Pair("2", "Adventure"),
-    Pair("538", "Cars"),
-    Pair("8", "Comedy"),
-    Pair("453", "Dementia"),
-    Pair("119", "Demons"),
-    Pair("62", "Drama"),
-    Pair("214", "Ecchi"),
-    Pair("3", "Fantasy"),
-    Pair("180", "Game"),
-    Pair("215", "Harem"),
-    Pair("70", "Historical"),
-    Pair("222", "Horror"),
-    Pair("74", "Isekai"),
-    Pair("404", "Josei"),
-    Pair("46", "Kids"),
-    Pair("203", "Magic"),
-    Pair("2310", "Mahou Shoujo"),
-    Pair("114", "Martial Arts"),
-    Pair("123", "Mecha"),
-    Pair("125", "Military"),
-    Pair("242", "Music"),
-    Pair("57", "Mystery"),
-    Pair("162", "Parody"),
-    Pair("136", "Police"),
-    Pair("73", "Psychological"),
-    Pair("28", "Romance"),
-    Pair("163", "Samurai"),
-    Pair("14", "School"),
-    Pair("12", "Sci-Fi"),
-    Pair("50", "Seinen"),
-    Pair("252", "Shoujo"),
-    Pair("235", "Shoujo Ai"),
-    Pair("15", "Shounen"),
-    Pair("233", "Shounen Ai"),
-    Pair("35", "Slice of Life"),
-    Pair("124", "Space"),
-    Pair("29", "Sports"),
-    Pair("16", "Super Power"),
-    Pair("9", "Supernatural"),
-    Pair("2316", "Suspense"),
-    Pair("54", "Thriller"),
-    Pair("32", "Unknown"),
-    Pair("58", "Vampire"),
+    Pair("Action", "1"),
+    Pair("Adventure", "2"),
+    Pair("Cars", "538"),
+    Pair("Comedy", "8"),
+    Pair("Dementia", "453"),
+    Pair("Demons", "119"),
+    Pair("Drama", "62"),
+    Pair("Ecchi", "214"),
+    Pair("Fantasy", "3"),
+    Pair("Game", "180"),
+    Pair("Harem", "215"),
+    Pair("Historical", "70"),
+    Pair("Horror", "222"),
+    Pair("Isekai", "74"),
+    Pair("Josei", "404"),
+    Pair("Kids", "46"),
+    Pair("Magic", "203"),
+    Pair("Mahou Shoujo", "2310"),
+    Pair("Martial Arts", "114"),
+    Pair("Mecha", "123"),
+    Pair("Military", "125"),
+    Pair("Music", "242"),
+    Pair("Mystery", "57"),
+    Pair("Parody", "162"),
+    Pair("Police", "136"),
+    Pair("Psychological", "73"),
+    Pair("Romance", "28"),
+    Pair("Samurai", "163"),
+    Pair("School", "14"),
+    Pair("Sci-Fi", "12"),
+    Pair("Seinen", "50"),
+    Pair("Shoujo", "252"),
+    Pair("Shoujo Ai", "235"),
+    Pair("Shounen", "15"),
+    Pair("Shounen Ai", "233"),
+    Pair("Slice of Life", "35"),
+    Pair("Space", "124"),
+    Pair("Sports", "29"),
+    Pair("Super Power", "16"),
+    Pair("Supernatural", "9"),
+    Pair("Suspense", "2316"),
+    Pair("Thriller", "54"),
+    Pair("Unknown", "32"),
+    Pair("Vampire", "58"),
 )
 
 private val TYPES = listOf(
     Pair("TV", "TV"),
+    Pair("TV Short", "TV_SHORT"),
     Pair("Movie", "Movie"),
-    Pair("OVA", "OVA"),
     Pair("ONA", "ONA"),
+    Pair("OVA", "OVA"),
     Pair("Special", "Special"),
     Pair("Music", "Music"),
 )
 
 private val STATUSES = listOf(
-    Pair("finished-airing", "Finished Airing"),
-    Pair("currently-airing", "Currently Airing"),
-    Pair("not-yet-aired", "Not Yet Aired"),
+    Pair("Currently Airing", "currently-airing"),
+    Pair("Finished Airing", "finished-airing"),
+    Pair("Not Yet Aired", "not-yet-aired"),
 )
 
 private val LANGUAGES = listOf(
-    Pair("sub", "Sub"),
-    Pair("dub", "Dub"),
+    Pair("Sub", "sub"),
+    Pair("Dub", "dub"),
+)
+
+private val SEASONS = listOf(
+    Pair("Spring", "spring"),
+    Pair("Summer", "summer"),
+    Pair("Fall", "fall"),
+    Pair("Winter", "winter"),
+)
+
+private val RATINGS = listOf("G", "PG", "PG-13", "R", "R+", "Rx")
+
+private val SOURCES = listOf(
+    Pair("Manga", "manga"),
+    Pair("Original", "original"),
+    Pair("Light Novel", "light_novel"),
+    Pair("Web Novel", "web_novel"),
+    Pair("Novel", "novel"),
+    Pair("Web Manga", "web_manga"),
+    Pair("Visual Novel", "visual_novel"),
+    Pair("Game", "game"),
+    Pair("Video Game", "video_game"),
+    Pair("Card Game", "card_game"),
+    Pair("4-Koma Manga", "4-koma_manga"),
+    Pair("Music", "music"),
+    Pair("Book", "book"),
+    Pair("Picture Book", "picture_book"),
+    Pair("Mixed Media", "mixed_media"),
+    Pair("Radio", "radio"),
+    Pair("Other", "other"),
+    Pair("Unknown", "unknown"),
 )
 
 fun getAnikotoFilters(): AnimeFilterList = AnimeFilterList(
@@ -153,6 +218,10 @@ fun getAnikotoFilters(): AnimeFilterList = AnimeFilterList(
     TypeFilter(),
     StatusFilter(),
     LanguageFilter(),
+    SeasonFilter(),
+    YearFilter(),
+    RatingFilter(),
+    SourceFilter(),
     AnimeFilter.Separator(),
     AnimeFilter.Header("Note: sub/dub filter here filters anime, not episodes."),
 )
