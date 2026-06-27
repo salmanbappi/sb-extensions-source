@@ -38,4 +38,10 @@ android {
 
 dependencies {
     compileOnly(versionCatalogs.named("libs").findBundle("common").get())
+    testImplementation(versionCatalogs.named("libs").findLibrary("junit").get())
+    testImplementation(versionCatalogs.named("libs").findLibrary("injekt-core").get())
+    testImplementation(versionCatalogs.named("libs").findLibrary("kotlin-json").get())
+    testImplementation(versionCatalogs.named("libs").findLibrary("okhttp").get())
+    testImplementation(kotlin("test"))
+    testImplementation(kotlin("test-junit"))
 }
