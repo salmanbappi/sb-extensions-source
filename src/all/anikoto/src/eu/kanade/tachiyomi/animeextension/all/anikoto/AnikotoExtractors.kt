@@ -42,7 +42,6 @@ class AnikotoExtractors(
         .set("Accept", "*/*")
         .build()
 
-
     private fun kiwiHeaders(): Headers = Headers.Builder()
         .set("User-Agent", BROWSER_UA)
         .set("Referer", "https://vibeplayer.site/")
@@ -61,11 +60,9 @@ class AnikotoExtractors(
         null
     }
 
-    private fun isWafBlockedHost(url: String): Boolean {
-        return url.contains("mewstream.buzz", ignoreCase = true) ||
-            url.contains("voltara.click", ignoreCase = true) ||
-            url.contains("zaptrix.buzz", ignoreCase = true)
-    }
+    private fun isWafBlockedHost(url: String): Boolean = url.contains("mewstream.buzz", ignoreCase = true) ||
+        url.contains("voltara.click", ignoreCase = true) ||
+        url.contains("zaptrix.buzz", ignoreCase = true)
 
     private fun fetchString(url: String, headers: Headers): String {
         if (isWafBlockedHost(url) && webViewFetcher != null) {
@@ -89,8 +86,6 @@ class AnikotoExtractors(
         label.contains("Japanese", ignoreCase = true) -> "jpn"
         else -> "und"
     }
-
-
 
     private fun parseMasterPlaylist(text: String, masterUrl: String): List<VariantInfo> {
         val result = mutableListOf<VariantInfo>()
