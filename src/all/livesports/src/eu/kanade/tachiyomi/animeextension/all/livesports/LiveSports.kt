@@ -13,7 +13,6 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import extensions.utils.Source
 import okhttp3.OkHttpClient
-import org.jsoup.nodes.Element
 
 class LiveSports :
     Source(),
