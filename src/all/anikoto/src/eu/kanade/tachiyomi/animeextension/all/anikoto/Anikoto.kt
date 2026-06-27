@@ -3,7 +3,9 @@ package eu.kanade.tachiyomi.animeextension.all.anikoto
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
+import ListPreference
 import androidx.preference.MultiSelectListPreference
+import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -15,7 +17,6 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimitHost
 import extensions.utils.Source
-import extensions.utils.addListPreference
 import extensions.utils.asJsoup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -162,6 +163,10 @@ class Anikoto : Source() {
                 is TypeFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("term_type[]", it) }
                 is StatusFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("status[]", it) }
                 is LanguageFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("language[]", it) }
+                is SeasonFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("season[]", it) }
+                is YearFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("year[]", it) }
+                is RatingFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("rating[]", it) }
+                is SourceFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("source[]", it) }
                 else -> {}
             }
         }
@@ -680,95 +685,135 @@ class Anikoto : Source() {
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         try {
-            screen.addListPreference(
-                key = PREF_QUALITY,
-                default = PREF_QUALITY_DEFAULT,
-                title = "Preferred quality",
-                summary = "Sorts videos so this quality is on top",
-                entries = listOf("1080p", "720p", "480p", "360p"),
-                entryValues = listOf("1080", PREF_QUALITY_DEFAULT, "480", "360"),
-            )
-            screen.addListPreference(
-                key = PREF_AUDIO,
-                default = PREF_AUDIO_DEFAULT,
-                title = "Preferred audio",
-                summary = "Sub, Dub, or Hsub first",
-                entries = listOf("Sub", "Dub", "Hsub"),
-                entryValues = listOf(PREF_AUDIO_DEFAULT, "A-DUB", "H-SUB"),
-            )
-            screen.addListPreference(
-                key = PREF_TITLE_LANG,
-                default = PREF_TITLE_LANG_DEFAULT,
-                title = "Title language",
-                summary = "Show English or Japanese titles",
-                entries = listOf("English", "Japanese"),
-                entryValues = listOf(PREF_TITLE_LANG_DEFAULT, "jp"),
-            )
-            screen.addListPreference(
-                key = PREF_BUFFER,
-                default = PREF_BUFFER_DEFAULT,
-                title = "Pre-fetch buffer",
-                summary = "How much to download ahead of playback. Higher = smoother but more data.",
-                entries = listOf("10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"),
-                entryValues = listOf(PREF_BUFFER_DEFAULT, "20", "30", "40", "50", "60", "70", "80", "90", "100"),
-            )
-            screen.addListPreference(
-                key = PREF_SERVER,
-                default = PREF_SERVER_DEFAULT,
-                title = "Preferred video server",
-                summary = "Which video server to try first. Auto picks the best available.",
-                entries = listOf("Auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream"),
-                entryValues = listOf(PREF_SERVER_DEFAULT, "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream"),
-            )
+            // --- Playback ---
+            PreferenceCategory(screen.context).apply {
+                title = "Playback"
+                screen.addPreference(this)
+                addPreference(
+                    ListPreference(context).apply {
+                        key = PREF_QUALITY
+                        title = "Preferred quality"
+                        entries = arrayOf("1080p", "720p", "480p", "360p")
+                        entryValues = arrayOf("1080", PREF_QUALITY_DEFAULT, "480", "360")
+                        setDefaultValue(PREF_QUALITY_DEFAULT)
+                        summary = "Currently: %s"
+                    },
+                )
+                addPreference(
+                    ListPreference(context).apply {
+                        key = PREF_AUDIO
+                        title = "Preferred audio"
+                        entries = arrayOf("Sub", "Dub", "Hardsub")
+                        entryValues = arrayOf(PREF_AUDIO_DEFAULT, "A-DUB", "H-SUB")
+                        setDefaultValue(PREF_AUDIO_DEFAULT)
+                        summary = "Currently: %s"
+                    },
+                )
+                addPreference(
+                    ListPreference(context).apply {
+                        key = PREF_BUFFER
+                        title = "Pre-fetch buffer"
+                        entries = arrayOf("10%", "20%", "30%", "50%", "100%")
+                        entryValues = arrayOf(PREF_BUFFER_DEFAULT, "20", "30", "50", "100")
+                        setDefaultValue(PREF_BUFFER_DEFAULT)
+                        summary = "Currently: %s"
+                    },
+                )
+                addPreference(
+                    ListPreference(context).apply {
+                        key = PREF_SERVER
+                        title = "Preferred video server"
+                        entries = arrayOf("Auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
+                        entryValues = arrayOf(PREF_SERVER_DEFAULT, "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
+                        setDefaultValue(PREF_SERVER_DEFAULT)
+                        summary = "Currently: %s"
+                    },
+                )
+            }
 
-            SwitchPreferenceCompat(screen.context).apply {
-                key = PREF_LOAD_THUMBNAILS
-                title = "Load episode thumbnails"
-                summaryOn = "Fetching preview images from external sources"
-                summaryOff = "Episode thumbnails disabled (faster episode list loading)"
-                setDefaultValue(true)
-            }.also { screen.addPreference(it) }
+            // --- Servers ---
+            PreferenceCategory(screen.context).apply {
+                title = "Servers"
+                screen.addPreference(this)
+                addPreference(
+                    SwitchPreferenceCompat(context).apply {
+                        key = PREF_ENABLE_KIWI_KEY
+                        title = "Enable Kiwi-Stream"
+                        summaryOn = "Fetching Kiwi-Stream from external sources"
+                        summaryOff = "Kiwi-Stream disabled"
+                        setDefaultValue(PREF_ENABLE_KIWI_DEFAULT)
+                    },
+                )
+                addPreference(
+                    MultiSelectListPreference(context).apply {
+                        key = PREF_EXCLUDE_SERVERS_KEY
+                        title = "Exclude Servers"
+                        entries = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
+                        entryValues = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
+                        setDefaultValue(emptySet<String>())
+                        summary = "Select servers to exclude from the video list"
+                    },
+                )
+                addPreference(
+                    MultiSelectListPreference(context).apply {
+                        key = PREF_EXCLUDE_AUDIO_KEY
+                        title = "Exclude Audio"
+                        entries = arrayOf("Sub", "Dub", "Hsub")
+                        entryValues = arrayOf("SUB", "DUB", "HSUB")
+                        setDefaultValue(emptySet<String>())
+                        summary = "Select audio formats to exclude from the video list"
+                    },
+                )
+            }
 
-            SwitchPreferenceCompat(screen.context).apply {
-                key = PREF_ENABLE_KIWI_KEY
-                title = "Enable Kiwi-Stream"
-                summaryOn = "Fetching Kiwi-Stream from external sources"
-                summaryOff = "Kiwi-Stream disabled"
-                setDefaultValue(PREF_ENABLE_KIWI_DEFAULT)
-            }.also { screen.addPreference(it) }
+            // --- Episode metadata ---
+            PreferenceCategory(screen.context).apply {
+                title = "Episode metadata"
+                screen.addPreference(this)
+                addPreference(
+                    SwitchPreferenceCompat(context).apply {
+                        key = PREF_LOAD_THUMBNAILS
+                        title = "Load episode thumbnails"
+                        summaryOn = "Fetching preview images from external sources"
+                        summaryOff = "Episode thumbnails disabled (faster episode list loading)"
+                        setDefaultValue(true)
+                    },
+                )
+                addPreference(
+                    SwitchPreferenceCompat(context).apply {
+                        key = PREF_LOAD_TITLES
+                        title = "Load episode titles"
+                        summaryOn = "Fetching episode titles from external sources"
+                        summaryOff = "Using default episode numbers only"
+                        setDefaultValue(true)
+                    },
+                )
+                addPreference(
+                    SwitchPreferenceCompat(context).apply {
+                        key = PREF_LOAD_DESCRIPTIONS
+                        title = "Load episode descriptions"
+                        summaryOn = "Fetching episode descriptions from external sources"
+                        summaryOff = "Episode descriptions disabled"
+                        setDefaultValue(true)
+                    },
+                )
+            }
 
-            SwitchPreferenceCompat(screen.context).apply {
-                key = PREF_LOAD_TITLES
-                title = "Load episode titles"
-                summaryOn = "Fetching episode titles from external sources"
-                summaryOff = "Using default episode numbers only"
-                setDefaultValue(true)
-            }.also { screen.addPreference(it) }
-
-            SwitchPreferenceCompat(screen.context).apply {
-                key = PREF_LOAD_DESCRIPTIONS
-                title = "Load episode descriptions"
-                summaryOn = "Fetching episode descriptions from external sources"
-                summaryOff = "Episode descriptions disabled"
-                setDefaultValue(true)
-            }.also { screen.addPreference(it) }
-            MultiSelectListPreference(screen.context).apply {
-                key = PREF_EXCLUDE_SERVERS_KEY
-                title = "Exclude Servers"
-                entries = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
-                entryValues = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
-                setDefaultValue(emptySet<String>())
-                summary = "Select servers to exclude from the video list"
-            }.also { screen.addPreference(it) }
-
-            MultiSelectListPreference(screen.context).apply {
-                key = PREF_EXCLUDE_AUDIO_KEY
-                title = "Exclude Audio"
-                entries = arrayOf("Sub", "Dub", "Hsub")
-                entryValues = arrayOf("SUB", "DUB", "HSUB")
-                setDefaultValue(emptySet<String>())
-                summary = "Select audio formats to exclude from the video list"
-            }.also { screen.addPreference(it) }
+            // --- Display ---
+            PreferenceCategory(screen.context).apply {
+                title = "Display"
+                screen.addPreference(this)
+                addPreference(
+                    ListPreference(context).apply {
+                        key = PREF_TITLE_LANG
+                        title = "Title language"
+                        entries = arrayOf("English", "Japanese")
+                        entryValues = arrayOf(PREF_TITLE_LANG_DEFAULT, "jp")
+                        setDefaultValue(PREF_TITLE_LANG_DEFAULT)
+                        summary = "Currently: %s"
+                    },
+                )
+            }
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
         }

@@ -2,6 +2,8 @@ package eu.kanade.tachiyomi.animeextension.all.anikoto
 
 import android.util.Base64
 import android.util.Log
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
@@ -22,6 +24,8 @@ class AnikotoExtractors(
         private val BANDWIDTH_REGEX = Regex("""BANDWIDTH=(\d+)""")
         private const val BROWSER_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        // Limit concurrent variant playlist fetches to avoid rate limits (matches v4 APK)
+        private val variantSemaphore = Semaphore(2)
     }
 
     private fun logi(msg: String) = Log.i(TAG, msg)
@@ -220,11 +224,13 @@ class AnikotoExtractors(
             val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
             for (vi in variants) {
                 try {
-                    val varText = fetchString(vi.url, seg)
-                    val segs = parseVariantSegments(varText, vi.url)
-                    logi("resolveVidTube:   variant ${vi.quality}(${vi.bandwidth}): ${segs.size} segments")
-                    if (segs.isNotEmpty()) {
-                        variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
+                    variantSemaphore.withPermit {
+                        val varText = fetchString(vi.url, seg)
+                        val segs = parseVariantSegments(varText, vi.url)
+                        logi("resolveVidTube:   variant ${vi.quality}(${vi.bandwidth}): ${segs.size} segments")
+                        if (segs.isNotEmpty()) {
+                            variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
+                        }
                     }
                 } catch (e: Exception) {
                     loge("resolveVidTube:   variant ${vi.quality} fetch FAILED: ${e.message}")
@@ -292,11 +298,13 @@ class AnikotoExtractors(
                 val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
                 for (vi in variants) {
                     try {
-                        val varText = fetchString(vi.url, headers)
-                        val segs = parseVariantSegments(varText, vi.url)
-                        logd("resolveKiwi:   variant ${vi.quality}: ${segs.size} segments (no filter)")
-                        if (segs.isNotEmpty()) {
-                            variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
+                        variantSemaphore.withPermit {
+                            val varText = fetchString(vi.url, headers)
+                            val segs = parseVariantSegments(varText, vi.url)
+                            logd("resolveKiwi:   variant ${vi.quality}: ${segs.size} segments (no filter)")
+                            if (segs.isNotEmpty()) {
+                                variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
+                            }
                         }
                     } catch (e: Exception) {
                         loge("resolveKiwi:   variant ${vi.quality} fetch FAILED: ${e.message}")
