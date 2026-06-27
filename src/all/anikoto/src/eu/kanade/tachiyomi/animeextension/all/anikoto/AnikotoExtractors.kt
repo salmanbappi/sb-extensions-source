@@ -79,15 +79,13 @@ class AnikotoExtractors(
         return response.body.string()
     }
 
-    private fun testSegment(url: String, headers: Headers): Boolean {
-        return try {
-            val request = Request.Builder().url(url).headers(headers).build()
-            client.newCall(request).execute().use { response ->
-                response.isSuccessful
-            }
-        } catch (e: Exception) {
-            false
+    private fun testSegment(url: String, headers: Headers): Boolean = try {
+        val request = Request.Builder().url(url).headers(headers).build()
+        client.newCall(request).execute().use { response ->
+            response.isSuccessful
         }
+    } catch (e: Exception) {
+        false
     }
 
     private fun inferLang(label: String): String = when {
@@ -242,7 +240,7 @@ class AnikotoExtractors(
                 "hsub" -> "HSUB"
                 else -> audioType.uppercase()
             }
-            
+
             // --- VERIFICATION: Test segment fetch to verify route is actually alive ---
             val firstSeg = variantDataList.first().segments.firstOrNull()?.url
             if (firstSeg != null) {
