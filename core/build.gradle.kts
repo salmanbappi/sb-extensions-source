@@ -38,4 +38,7 @@ android {
 
 dependencies {
     compileOnly(versionCatalogs.named("libs").findBundle("common").get())
+    testImplementation(versionCatalogs.named("libs").findLibrary("junit").get())
+    testImplementation(versionCatalogs.named("libs").findBundle("common").get())
+    testImplementation(kotlin("test-junit"))
 }
