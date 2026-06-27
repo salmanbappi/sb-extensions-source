@@ -25,6 +25,7 @@ class AnikotoExtractors(
     }
 
     private fun logi(msg: String) = Log.i(TAG, msg)
+    private fun logd(msg: String) = Log.d(TAG, msg)
     private fun loge(msg: String, e: Throwable? = null) {
         if (e != null) Log.e(TAG, msg, e) else Log.e(TAG, msg)
     }
