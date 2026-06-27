@@ -157,9 +157,31 @@ class AnikotoExtractors(
             }
             logi("resolveVidTube: data-id=$dataId")
 
-            val sourcesUrl = "https://$host/stream/getSourcesNew?id=$dataId&type=$audioType"
-            logi("resolveVidTube: [2/5] GET getSources: $sourcesUrl")
-            val sourcesBody = fetchString(sourcesUrl, vidtubeApiHeaders())
+            val apiHeaders = Headers.Builder()
+                .set("User-Agent", BROWSER_UA)
+                .set("Accept", "*/*")
+                .set("X-Requested-With", "XMLHttpRequest")
+                .set("Referer", iframeUrl)
+                .set("Origin", "https://$host")
+                .build()
+
+            // Try getSources first (with WAF bypass: duplicated id parameter)
+            var sourcesBody: String? = null
+            try {
+                val sourcesUrl = "https://$host/stream/getSources?id=$dataId&id=$dataId"
+                logi("resolveVidTube: trying getSources: $sourcesUrl")
+                sourcesBody = fetchString(sourcesUrl, apiHeaders)
+            } catch (e: Exception) {
+                logi("resolveVidTube: getSources failed: ${e.message}")
+            }
+
+            // Fallback to getSourcesNew (with WAF bypass: duplicated id and type parameters)
+            if (sourcesBody == null) {
+                val sourcesUrl = "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId&type=$audioType&type=$audioType"
+                logi("resolveVidTube: trying getSourcesNew: $sourcesUrl")
+                sourcesBody = fetchString(sourcesUrl, apiHeaders)
+            }
+
             val sourcesResp = json.decodeFromString<VidTubeSourcesResponse>(sourcesBody)
             val masterM3u8 = sourcesResp.sources?.file
             if (masterM3u8.isNullOrEmpty() || !masterM3u8.startsWith("http")) {
