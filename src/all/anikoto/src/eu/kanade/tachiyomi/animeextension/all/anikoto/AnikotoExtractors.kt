@@ -36,9 +36,9 @@ class AnikotoExtractors(
         .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .build()
 
-    private fun vidtubeApiHeaders(): Headers = Headers.Builder()
+    private fun vidtubeApiHeaders(host: String): Headers = Headers.Builder()
         .set("User-Agent", BROWSER_UA)
-        .set("Referer", "https://vidtube.site/")
+        .set("Referer", "https://$host/")
         .set("X-Requested-With", "XMLHttpRequest")
         .set("Accept", "*/*")
         .build()
@@ -63,7 +63,9 @@ class AnikotoExtractors(
 
     private fun isWafBlockedHost(url: String): Boolean = url.contains("mewstream.buzz", ignoreCase = true) ||
         url.contains("voltara.click", ignoreCase = true) ||
-        url.contains("zaptrix.buzz", ignoreCase = true)
+        url.contains("zaptrix.buzz", ignoreCase = true) ||
+        url.contains("vidtube.site", ignoreCase = true) ||
+        url.contains("megaplay.buzz", ignoreCase = true)
 
     private fun fetchString(url: String, headers: Headers): String {
         if (isWafBlockedHost(url) && webViewFetcher != null) {
@@ -167,7 +169,7 @@ class AnikotoExtractors(
             }
             logi("resolveVidTube: data-id=$dataId")
 
-            val apiHeaders = vidtubeApiHeaders()
+            val apiHeaders = vidtubeApiHeaders(host)
 
             var sourcesBody: String? = null
             try {

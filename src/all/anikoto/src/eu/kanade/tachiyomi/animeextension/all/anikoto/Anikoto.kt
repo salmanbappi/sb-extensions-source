@@ -505,6 +505,16 @@ class Anikoto : Source() {
             logi("  [${task.label}] iframe=$url host=$host")
 
             when {
+                host.contains("vidstream") || host.contains("megacloud") || host.contains("vidplay") || host.contains("mycloud") || host.contains("vidtube") || host.contains("megaplay") -> {
+                    if (preferences.getBoolean(PREF_ENABLE_VIDSTREAM_KEY, PREF_ENABLE_VIDSTREAM_DEFAULT)) {
+                        logi("  [${task.label}] → Flow C (VidStream/VidPlay), host=$host")
+                        extractors.resolveVidTube(url, task.audioType, hosterName)
+                    } else {
+                        logi("  [${task.label}] → Flow C disabled in prefs")
+                        null
+                    }
+                }
+
                 host.contains("mewcdn.online") || host.contains("zaptrix.buzz") || host.contains("mewstream.buzz") || host.contains("voltara.click") -> {
                     if (preferences.getBoolean(PREF_ENABLE_KIWI_KEY, PREF_ENABLE_KIWI_DEFAULT)) {
                         logi("  [${task.label}] → Flow B (Kiwi), host=$host")
