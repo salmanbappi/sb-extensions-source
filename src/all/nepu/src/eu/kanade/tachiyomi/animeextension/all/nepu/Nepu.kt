@@ -426,8 +426,7 @@ class Nepu : ParsedAnimeHttpSource() {
                     .headers(postHeaders)
                     .build()
 
-                val embedResponse = client.newCall(postRequest).execute()
-                val responseBody = embedResponse.body.string()
+                val responseBody = client.newCall(postRequest).execute().use { it.body.string() }
 
                 val servedUrlRegex = Regex("""var servedUrl\s*=\s*"([^"]+)"""")
                 val match = servedUrlRegex.find(responseBody)
@@ -439,9 +438,18 @@ class Nepu : ParsedAnimeHttpSource() {
                     val matchFilename = Regex("""var hlsFileName\s*=\s*"([^"]+)"""").find(responseBody)
                     val matchNonce = Regex("""var playerNonce\s*=\s*"([^"]+)"""").find(responseBody)
 
-                    if (matchFilename != null) hlsFile = matchFilename.groupValues[1]
-                    if (matchNonce != null) playerNonce = matchNonce.groupValues[1]
-                    tToken = servedUrl.toHttpUrl().queryParameter("t") ?: ""
+                    val hlsFile = matchFilename?.groupValues?.get(1) ?: ""
+                    val playerNonce = matchNonce?.groupValues?.get(1) ?: ""
+                    val tToken = servedUrl.toHttpUrl().queryParameter("t") ?: ""
+
+                    if (servedUrl.contains("/_nepu_hls/")) {
+                        try {
+                            val sessionId = servedUrl.toHttpUrl().pathSegments.getOrNull(1)
+                            if (sessionId != null) {
+                                sessionData[sessionId] = SessionInfo(hlsFile, playerNonce, tToken)
+                            }
+                        } catch (_: Exception) {}
+                    }
 
                     val videoHeaders = buildVideoHeaders(servedUrl, pageUrl)
                     if (servedUrl.contains(".m3u8") || servedUrl.contains(".mp4")) {
@@ -643,9 +651,8 @@ class Nepu : ParsedAnimeHttpSource() {
 
         val m3u8Cache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-        var hlsFile = ""
-        var playerNonce = ""
-        var tToken = ""
+        data class SessionInfo(val hlsFile: String, val playerNonce: String, val tToken: String)
+        val sessionData = java.util.concurrent.ConcurrentHashMap<String, SessionInfo>()
 
         @Synchronized
         fun getProxyUrl(source: Nepu, targetUrl: String, headers: okhttp3.Headers?): String {
@@ -801,41 +808,46 @@ class LocalProxy(
                 try {
                     val parsedUrl = targetUrl.toHttpUrl()
                     val pathSegments = parsedUrl.pathSegments
-                    val sessionId = pathSegments[1]
-                    val g = pathSegments[2].toIntOrNull() ?: 0
-                    val uB64 = pathSegments.subList(3, pathSegments.size).joinToString("/")
+                    if (pathSegments.size >= 4) {
+                        val sessionId = pathSegments[1]
+                        val g = pathSegments[2].toIntOrNull() ?: 0
+                        val uB64 = pathSegments.subList(3, pathSegments.size).joinToString("/")
+                        val sessionInfo = Nepu.sessionData[sessionId] ?: Nepu.SessionInfo("", "", "")
 
-                    val keyBody = okhttp3.FormBody.Builder()
-                        .add("f", Nepu.hlsFile)
-                        .add("s", sessionId)
-                        .add("t", Nepu.tToken)
-                        .add("n", Nepu.playerNonce)
-                        .add("g", g.toString())
-                        .build()
+                        val keyBody = okhttp3.FormBody.Builder()
+                            .add("f", sessionInfo.hlsFile)
+                            .add("s", sessionId)
+                            .add("t", sessionInfo.tToken)
+                            .add("n", sessionInfo.playerNonce)
+                            .add("g", g.toString())
+                            .build()
 
-                    val keyHeaders = okhttp3.Headers.Builder()
-                        .set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                        .set("X-Requested-With", "XMLHttpRequest")
-                        .set("Referer", "$baseUrl/")
-                        .set("Origin", baseUrl)
-                        .build()
+                        val keyHeaders = okhttp3.Headers.Builder()
+                            .set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                            .set("X-Requested-With", "XMLHttpRequest")
+                            .set("Referer", "$baseUrl/")
+                            .set("Origin", baseUrl)
+                            .build()
 
-                    val keyRequest = Request.Builder()
-                        .url("$baseUrl/ajax/hlskey")
-                        .post(keyBody)
-                        .headers(keyHeaders)
-                        .build()
+                        val keyRequest = Request.Builder()
+                            .url("$baseUrl/ajax/hlskey")
+                            .post(keyBody)
+                            .headers(keyHeaders)
+                            .build()
 
-                    client.newCall(keyRequest).execute().use { keyResp ->
-                        val keyJson = org.json.JSONObject(keyResp.body.string())
-                        if (keyJson.optBoolean("ok") && keyJson.has("k")) {
-                            val k = keyJson.getString("k")
-                            val decryptedUrl = decryptAesGcm(uB64, k)
-                            if (decryptedUrl.isNotEmpty()) {
-                                targetUrl = if (decryptedUrl.startsWith("http")) {
-                                    decryptedUrl
-                                } else {
-                                    "$baseUrl/${decryptedUrl.removePrefix("/")}"
+                        client.newCall(keyRequest).execute().use { keyResp ->
+                            if (keyResp.isSuccessful) {
+                                val keyJson = org.json.JSONObject(keyResp.body.string())
+                                if (keyJson.optBoolean("ok") && keyJson.has("k")) {
+                                    val k = keyJson.getString("k")
+                                    val decryptedUrl = decryptAesGcm(uB64, k)
+                                    if (decryptedUrl.isNotEmpty()) {
+                                        targetUrl = if (decryptedUrl.startsWith("http")) {
+                                            decryptedUrl
+                                        } else {
+                                            "$baseUrl/${decryptedUrl.removePrefix("/")}"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1029,9 +1041,10 @@ class LocalProxy(
     }
 
     private fun decryptAesGcm(uB64: String, keyB64: String): String = try {
-        val keyBytes = Base64.decode(keyB64, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        val keyBytes = Base64.decode(keyB64, Base64.DEFAULT)
         val uBytes = Base64.decode(uB64, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
 
+        if (uBytes.size < 12) return ""
         val iv = uBytes.copyOfRange(0, 12)
         val ciphertext = uBytes.copyOfRange(12, uBytes.size)
 
