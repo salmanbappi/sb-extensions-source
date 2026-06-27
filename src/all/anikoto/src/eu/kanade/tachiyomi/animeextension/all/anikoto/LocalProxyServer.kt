@@ -307,9 +307,7 @@ class LocalProxyServer(
         }
     }
 
-    private fun isWafBlockedHost(url: String): Boolean {
-        return url.contains("mewstream.buzz") || url.contains("voltara.click") || url.contains("zaptrix.buzz")
-    }
+    private fun isWafBlockedHost(url: String): Boolean = url.contains("mewstream.buzz") || url.contains("voltara.click") || url.contains("zaptrix.buzz")
 
     private fun headersForStream(streamIndex: Int): Headers {
         val pl = playlist ?: return segmentHeaders

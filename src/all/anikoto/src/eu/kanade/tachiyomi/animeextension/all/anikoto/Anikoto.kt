@@ -415,7 +415,7 @@ class Anikoto : Source() {
                 .set("Referer", "https://vidtube.site/")
                 .set("Accept", "*/*")
                 .build(),
-            webViewFetcher = webViewFetcher
+            webViewFetcher = webViewFetcher,
         )
         server.playlist = LocalProxyServer.Playlist(resolvedStreams)
         server.prefetchCount = prefetchBuffer.toIntOrNull() ?: 10
@@ -431,13 +431,13 @@ class Anikoto : Source() {
                 val videoUrl = "$proxyUrl/variant/$i/${variant.quality}.m3u8"
                 val audioPrefix = audioStream.audioLabel.split(" - ").firstOrNull() ?: audioStream.audioLabel
                 val title = "$audioPrefix - ${variant.quality}"
-                
+
                 // Using named arguments as required by checklist
                 val video = Video(
                     videoUrl = videoUrl,
                     videoTitle = title,
                     subtitleTracks = subtitleTracks,
-                    headers = null
+                    headers = null,
                 )
                 linkedHashMap.getOrPut(audioStream.hosterName) { mutableListOf() }.add(video)
             }
@@ -455,8 +455,8 @@ class Anikoto : Source() {
                 Hoster(
                     url = null,
                     name = serverName,
-                    videoList = sortedVideos
-                )
+                    videoList = sortedVideos,
+                ),
             )
         }
 
@@ -478,13 +478,9 @@ class Anikoto : Source() {
         return sortedHosters
     }
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        return hoster.videoList ?: emptyList()
-    }
+    override suspend fun getVideoList(hoster: Hoster): List<Video> = hoster.videoList ?: emptyList()
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        return getHosterList(episode).flatMap { it.videoList ?: emptyList() }
-    }
+    override suspend fun getVideoList(episode: SEpisode): List<Video> = getHosterList(episode).flatMap { it.videoList ?: emptyList() }
 
     override suspend fun resolveVideo(video: Video): Video {
         activeProxyServer?.onQualitySwitch()
