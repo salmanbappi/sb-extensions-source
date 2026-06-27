@@ -268,8 +268,8 @@ class Anikoto : Source() {
         }
 
         val tasksByServer = mutableMapOf<String, MutableList<HosterTask>>()
-        val excludedServers = getPreferences().getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
-        val excludedAudios = getPreferences().getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+        val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
 
         if (meta.dataIds.isNotEmpty()) {
             val primaryUrl = "$baseUrl/ajax/server/list?servers=${meta.dataIds}"
@@ -412,7 +412,7 @@ class Anikoto : Source() {
                 }
 
                 host.contains("mewcdn.online") || host.contains("zaptrix.buzz") || host.contains("mewstream.buzz") || host.contains("voltara.click") -> {
-                    if (getPreferences().getBoolean(PREF_ENABLE_KIWI_KEY, PREF_ENABLE_KIWI_DEFAULT)) {
+                    if (preferences.getBoolean(PREF_ENABLE_KIWI_KEY, PREF_ENABLE_KIWI_DEFAULT)) {
                         logi("  [${task.label}] → Flow B (Kiwi), host=$host")
                         extractors.resolveKiwi(url, task.audioType, hosterName)
                     } else {
