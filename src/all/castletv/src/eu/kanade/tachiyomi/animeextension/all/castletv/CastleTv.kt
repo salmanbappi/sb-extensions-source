@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.addEditTextPreference
+import keiyoushi.utils.parallelCatchingMapNotNull
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -475,8 +476,70 @@ class CastleTv : Source() {
             val languageId = firstTrack.languageId ?: return emptyList()
             val allLanguageNames = availableTracks.mapNotNull { it.languageName ?: it.abbreviate }.joinToString(", ")
 
-            for (resolution in resolutions) {
-                try {
+            val videos = resolutions.parallelCatchingMapNotNull { resolution ->
+                val videoUrl = "$baseUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
+                val postBody = """
+                    {
+                      "mode": "1",
+                      "appMarket": "GuanWang",
+                      "clientType": "1",
+                      "woolUser": "false",
+                      "apkSignKey": "ED0955EB04E67A1D9F3305B95454FED485261475",
+                      "androidVersion": "13",
+                      "movieId": "$movieId",
+                      "episodeId": "$episodeId",
+                      "isNewUser": "true",
+                      "resolution": "$resolution",
+                      "packageName": "com.external.castle"
+                    }
+                """.trimIndent()
+
+                val req = Request.Builder()
+                    .url(videoUrl)
+                    .post(postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                    .build()
+
+                val videoResponse = client.newCall(req).execute()
+                val encryptedData = videoResponse.body.string()
+                if (encryptedData.isBlank()) return@parallelCatchingMapNotNull null
+
+                val decryptedJson = decryptData(encryptedData, securityKey) ?: return@parallelCatchingMapNotNull null
+                val videoData = json.decodeFromString<VideoResponse>(decryptedJson).data
+
+                if (videoData.videoUrl != null && videoData.permissionDenied != true) {
+                    val qualityName = when (resolution) {
+                        3 -> "1080p"
+                        2 -> "720p"
+                        1 -> "480p"
+                        else -> "${resolution}p"
+                    }
+
+                    val subtitleTracks = videoData.subtitles?.mapNotNull { subtitle ->
+                        val subUrl = subtitle.url
+                        if (subUrl.isNullOrBlank()) {
+                            null
+                        } else {
+                            Track(subUrl, subtitle.title ?: subtitle.abbreviate ?: "Unknown")
+                        }
+                    } ?: emptyList()
+
+                    Video(
+                        videoUrl = videoData.videoUrl,
+                        videoTitle = "$allLanguageNames - $qualityName",
+                        headers = Headers.Builder().add("Referer", baseUrl).build(),
+                        subtitleTracks = subtitleTracks,
+                    )
+                } else {
+                    null
+                }
+            }
+            videoList.addAll(videos)
+        } else {
+            val videos = availableTracks.flatMap { track ->
+                val languageId = track.languageId ?: return@flatMap emptyList()
+                val languageName = track.languageName ?: track.abbreviate ?: "Unknown"
+
+                resolutions.parallelCatchingMapNotNull { resolution ->
                     val videoUrl = "$baseUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
                     val postBody = """
                         {
@@ -486,6 +549,7 @@ class CastleTv : Source() {
                           "woolUser": "false",
                           "apkSignKey": "ED0955EB04E67A1D9F3305B95454FED485261475",
                           "androidVersion": "13",
+                          "languageId": "$languageId",
                           "movieId": "$movieId",
                           "episodeId": "$episodeId",
                           "isNewUser": "true",
@@ -501,9 +565,9 @@ class CastleTv : Source() {
 
                     val videoResponse = client.newCall(req).execute()
                     val encryptedData = videoResponse.body.string()
-                    if (encryptedData.isBlank()) continue
+                    if (encryptedData.isBlank()) return@parallelCatchingMapNotNull null
 
-                    val decryptedJson = decryptData(encryptedData, securityKey) ?: continue
+                    val decryptedJson = decryptData(encryptedData, securityKey) ?: return@parallelCatchingMapNotNull null
                     val videoData = json.decodeFromString<VideoResponse>(decryptedJson).data
 
                     if (videoData.videoUrl != null && videoData.permissionDenied != true) {
@@ -523,87 +587,18 @@ class CastleTv : Source() {
                             }
                         } ?: emptyList()
 
-                        videoList.add(
-                            Video(
-                                videoUrl = videoData.videoUrl,
-                                videoTitle = "$allLanguageNames - $qualityName",
-                                headers = Headers.Builder().add("Referer", baseUrl).build(),
-                                subtitleTracks = subtitleTracks,
-                            ),
+                        Video(
+                            videoUrl = videoData.videoUrl,
+                            videoTitle = "$languageName - $qualityName",
+                            headers = Headers.Builder().add("Referer", baseUrl).build(),
+                            subtitleTracks = subtitleTracks,
                         )
-                    }
-                } catch (e: Exception) {
-                    // Skip failed resolutions
-                }
-            }
-        } else {
-            for (track in availableTracks) {
-                val languageId = track.languageId ?: continue
-                val languageName = track.languageName ?: track.abbreviate ?: "Unknown"
-
-                for (resolution in resolutions) {
-                    try {
-                        val videoUrl = "$baseUrl/film-api/v2.0.1/movie/getVideo2?clientType=1&packageName=com.external.castle&channel=IndiaA&lang=en-US"
-                        val postBody = """
-                            {
-                              "mode": "1",
-                              "appMarket": "GuanWang",
-                              "clientType": "1",
-                              "woolUser": "false",
-                              "apkSignKey": "ED0955EB04E67A1D9F3305B95454FED485261475",
-                              "androidVersion": "13",
-                              "languageId": "$languageId",
-                              "movieId": "$movieId",
-                              "episodeId": "$episodeId",
-                              "isNewUser": "true",
-                              "resolution": "$resolution",
-                              "packageName": "com.external.castle"
-                            }
-                        """.trimIndent()
-
-                        val req = Request.Builder()
-                            .url(videoUrl)
-                            .post(postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                            .build()
-
-                        val videoResponse = client.newCall(req).execute()
-                        val encryptedData = videoResponse.body.string()
-                        if (encryptedData.isBlank()) continue
-
-                        val decryptedJson = decryptData(encryptedData, securityKey) ?: continue
-                        val videoData = json.decodeFromString<VideoResponse>(decryptedJson).data
-
-                        if (videoData.videoUrl != null && videoData.permissionDenied != true) {
-                            val qualityName = when (resolution) {
-                                3 -> "1080p"
-                                2 -> "720p"
-                                1 -> "480p"
-                                else -> "${resolution}p"
-                            }
-
-                            val subtitleTracks = videoData.subtitles?.mapNotNull { subtitle ->
-                                val subUrl = subtitle.url
-                                if (subUrl.isNullOrBlank()) {
-                                    null
-                                } else {
-                                    Track(subUrl, subtitle.title ?: subtitle.abbreviate ?: "Unknown")
-                                }
-                            } ?: emptyList()
-
-                            videoList.add(
-                                Video(
-                                    videoUrl = videoData.videoUrl,
-                                    videoTitle = "$languageName - $qualityName",
-                                    headers = Headers.Builder().add("Referer", baseUrl).build(),
-                                    subtitleTracks = subtitleTracks,
-                                ),
-                            )
-                        }
-                    } catch (e: Exception) {
-                        // Skip failed resolutions
+                    } else {
+                        null
                     }
                 }
             }
+            videoList.addAll(videos)
         }
 
         return videoList
