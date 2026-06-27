@@ -325,7 +325,7 @@ class ReAnime : Source() {
                         // Decryption
                         val frag1 = Base64.decode(frag1B64, Base64.DEFAULT)
                         val frag2 = Base64.decode(frag2B64, Base64.DEFAULT)
-                        val keyPart = Base64.decode(T, Base64.DEFAULT)
+                        val keyPart = Base64.decode(t, Base64.DEFAULT)
                         val seedInt = seed.substring(0, 8).toLong(16).toInt()
 
                         val wasmBytes = Base64.decode(wPayload, Base64.DEFAULT)
