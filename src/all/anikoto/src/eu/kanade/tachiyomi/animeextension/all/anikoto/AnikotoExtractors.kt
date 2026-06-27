@@ -138,6 +138,58 @@ class AnikotoExtractors(
         return result
     }
 
+    suspend fun resolveDirectM3u8(
+        m3u8Url: String,
+        audioType: String,
+        hosterName: String,
+    ): LocalProxyServer.AudioStream? {
+        logi("resolveDirectM3u8: START hoster=$hosterName audio=$audioType url=$m3u8Url")
+        return try {
+            val host = extractHost(m3u8Url) ?: "direct"
+            val seg = segHeaders(host)
+            val masterText = fetchString(m3u8Url, seg)
+            if (!masterText.startsWith("#EXTM3U")) {
+                loge("resolveDirectM3u8: master is not m3u8: ${masterText.take(80)}")
+                return null
+            }
+
+            val variants = parseMasterPlaylist(masterText, m3u8Url)
+            if (variants.isEmpty()) {
+                loge("resolveDirectM3u8: no variants in master m3u8")
+                return null
+            }
+
+            val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
+            for (vi in variants) {
+                try {
+                    val varText = fetchString(vi.url, seg)
+                    val segs = parseVariantSegments(varText, vi.url)
+                    if (segs.isNotEmpty()) {
+                        variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
+                    }
+                } catch (e: Exception) {
+                    loge("resolveDirectM3u8: variant ${vi.quality} FAILED: ${e.message}")
+                }
+            }
+
+            if (variantDataList.isEmpty()) {
+                loge("resolveDirectM3u8: no variants could be loaded")
+                return null
+            }
+
+            val audioLabel = when (audioType) {
+                "sub" -> "SUB"
+                "dub" -> "DUB"
+                "hsub" -> "HSUB"
+                else -> audioType.uppercase()
+            }
+            LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, emptyList(), seg)
+        } catch (e: Exception) {
+            loge("resolveDirectM3u8: FAILED hoster=$hosterName audio=$audioType", e)
+            null
+        }
+    }
+
     suspend fun resolveVidTube(
         iframeUrl: String,
         audioType: String,

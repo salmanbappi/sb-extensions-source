@@ -505,11 +505,9 @@ class Anikoto : Source() {
             logi("  [${task.label}] iframe=$url host=$host")
 
             when {
-                host.contains("vidtube.site") ||
-                    host.contains("megaplay.buzz") ||
-                    host.contains("vidwish.live") -> {
-                    logi("  [${task.label}] → Flow A (VidTube), host=$host")
-                    extractors.resolveVidTube(url, task.audioType, hosterName)
+                url.endsWith(".m3u8") || (url.contains(".m3u8") && !url.contains("/stream/")) -> {
+                    logi("  [${task.label}] → Flow Direct M3u8, host=$host")
+                    extractors.resolveDirectM3u8(url, task.audioType, hosterName)
                 }
 
                 host.contains("mewcdn.online") || host.contains("zaptrix.buzz") || host.contains("mewstream.buzz") || host.contains("voltara.click") -> {
@@ -522,8 +520,8 @@ class Anikoto : Source() {
                 }
 
                 else -> {
-                    Log.w(TAG, "  [${task.label}] UNKNOWN host=$host, skipping")
-                    null
+                    logi("  [${task.label}] → Flow A (VidTube/Vidstream), host=$host")
+                    extractors.resolveVidTube(url, task.audioType, hosterName)
                 }
             }
         } catch (e: Exception) {
