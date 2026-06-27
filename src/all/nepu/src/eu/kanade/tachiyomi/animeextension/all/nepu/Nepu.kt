@@ -4,10 +4,6 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.util.Base64
 import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -38,9 +34,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.ServerSocket
 import java.net.Socket
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 class Nepu : ParsedAnimeHttpSource() {
 
@@ -54,7 +48,9 @@ class Nepu : ParsedAnimeHttpSource() {
 
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
 
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(Hoster(hosterName = "Default", hosterUrl = episode.url))
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        return listOf(Hoster(hosterName = "Default", hosterUrl = baseUrl + episode.url))
+    }
 
     override val id: Long = 5181466391484419855L
 
@@ -405,150 +401,104 @@ class Nepu : ParsedAnimeHttpSource() {
 
     // ============================ Video Links =============================
 
-    // Patterns that indicate a real video URL (m3u8, mp4, or known hosters)
-    private val videoUrlPatterns = listOf(
-        ".m3u8", ".mp4",
-        "dood", "filemoon", "fmoon", "vidmoly", "vidhide", "guccihide",
-        "streamhide", "voe", "streamtape", "vr-cdn.com",
-    )
-
-    private fun isVideoUrl(url: String): Boolean = videoUrlPatterns.any { url.contains(it) }
-
-    /**
-     * Load the episode page in a WebView, intercept all outgoing network requests,
-     * and capture URLs that look like real video sources.
-     * This is needed because /ajax/embed is protected by Cloudflare Managed Challenge
-     * and cannot be fetched programmatically.
-     */
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun extractVideoUrlsViaWebView(pageUrl: String): List<String> {
-        val capturedUrls = java.util.Collections.synchronizedList(mutableListOf<String>())
-        val latch = CountDownLatch(1)
-        val handler = android.os.Handler(android.os.Looper.getMainLooper())
-        var webView: WebView? = null
-
-        handler.post {
-            try {
-                val context = Injekt.get<Application>()
-                val wv = WebView(context)
-                webView = wv
-                wv.settings.javaScriptEnabled = true
-                wv.settings.domStorageEnabled = true
-                wv.settings.databaseEnabled = true
-                wv.settings.mediaPlaybackRequiresUserGesture = false
-
-                wv.webViewClient = object : WebViewClient() {
-                    override fun shouldInterceptRequest(
-                        view: WebView?,
-                        request: WebResourceRequest?,
-                    ): WebResourceResponse? {
-                        val url = request?.url?.toString() ?: return null
-                        if (isVideoUrl(url) && !url.startsWith("blob:")) {
-                            capturedUrls.add(url)
-                            // Signal as soon as we have at least one video URL
-                            latch.countDown()
-                        }
-                        return null // let the request proceed normally
-                    }
-
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        // After page finishes, give JS 5 extra seconds to trigger the player
-                        handler.postDelayed({ latch.countDown() }, 5000)
-                    }
-                }
-
-                wv.loadUrl(pageUrl)
-            } catch (e: Exception) {
-                latch.countDown()
-            }
-        }
-
-        // Wait up to 30 seconds for a video URL or page timeout
-        latch.await(30, TimeUnit.SECONDS)
-
-        handler.post {
-            try {
-                webView?.stopLoading()
-                webView?.destroy()
-                webView = null
-            } catch (_: Exception) {}
-        }
-
-        return capturedUrls.distinct()
-    }
-
     override fun videoListParse(response: Response, hoster: Hoster): List<Video> {
         val videoList = java.util.Collections.synchronizedList(mutableListOf<Video>())
         val pageUrl = response.request.url.toString()
         val document = response.asJsoup()
 
-        // Use WebView to load the page and intercept the actual video requests.
-        // The /ajax/embed endpoint is behind Cloudflare Managed Challenge and cannot
-        // be accessed programmatically — the WebView approach bypasses this entirely.
-        val capturedUrls = extractVideoUrlsViaWebView(pageUrl)
+        // Try to get embed ID
+        val embedId = document.selectFirst("a#videoSource")?.attr("data-embed")
+            ?: document.selectFirst("[data-embed]")?.attr("data-embed")
 
-        val pool = Executors.newFixedThreadPool(3)
-        val futures = capturedUrls.map { rawUrl ->
-            pool.submit {
-                val videoHeaders = buildVideoHeaders(rawUrl, pageUrl)
-                try {
-                    when {
-                        rawUrl.contains(".m3u8") || rawUrl.contains(".mp4") -> {
-                            videoList.add(Video(videoUrl = rawUrl, videoTitle = "Nepu", headers = videoHeaders))
-                        }
+        if (!embedId.isNullOrEmpty()) {
+            try {
+                val postBody = okhttp3.FormBody.Builder()
+                    .add("id", embedId)
+                    .build()
 
-                        rawUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(rawUrl, "DoodStream"))
+                val postHeaders = headers.newBuilder()
+                    .set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                    .set("X-Requested-With", "XMLHttpRequest")
+                    .set("Referer", pageUrl)
+                    .build()
 
-                        rawUrl.contains("filemoon") || rawUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(rawUrl, "Filemoon", videoHeaders))
+                val postRequest = Request.Builder()
+                    .url("$baseUrl/ajax/embed")
+                    .post(postBody)
+                    .headers(postHeaders)
+                    .build()
 
-                        rawUrl.contains("vidmoly") -> videoList.addAll(runBlocking { VidMolyExtractor(client, videoHeaders).videosFromUrl(rawUrl, "VidMoly") })
+                val embedResponse = client.newCall(postRequest).execute()
+                val responseBody = embedResponse.body.string()
 
-                        rawUrl.contains("vidhide") || rawUrl.contains("guccihide") || rawUrl.contains("streamhide") -> videoList.addAll(runBlocking { VidHideExtractor(client, videoHeaders).videosFromUrl(rawUrl, { "VidHide - $it" }) })
-
-                        rawUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(rawUrl, "Voe"))
-
-                        rawUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(rawUrl, "StreamTape"))
-
-                        else -> {
-                            val extracted = UniversalExtractor(client).videosFromUrl(rawUrl, videoHeaders, prefix = "Nepu")
-                            if (extracted.isNotEmpty()) videoList.addAll(extracted)
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-        }
-        futures.forEach { runCatching { it.get(15, TimeUnit.SECONDS) } }
-        pool.shutdown()
-
-        if (videoList.isEmpty()) {
-            document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe, iframe[src*='embed']").forEach { iframe ->
-                val src = iframe.attr("abs:src")
-                if (src.isNotBlank() && !src.contains("index.html")) {
-                    val videoHeaders = buildVideoHeaders(src, src)
-                    if (src.contains(".mp4") || src.contains(".m3u8")) {
-                        videoList.add(Video(videoUrl = src, videoTitle = "Video", headers = videoHeaders))
+                val servedUrlRegex = Regex("""var servedUrl\s*=\s*"([^"]+)"""")
+                val match = servedUrlRegex.find(responseBody)
+                val rawServedUrl = match?.groupValues?.get(1)
+                
+                if (!rawServedUrl.isNullOrEmpty()) {
+                    val servedUrl = rawServedUrl.replace("\\u0026", "&")
+                    
+                    val matchFilename = Regex("""var hlsFileName\s*=\s*"([^"]+)"""").find(responseBody)
+                    val matchNonce = Regex("""var playerNonce\s*=\s*"([^"]+)"""").find(responseBody)
+                    
+                    if (matchFilename != null) hlsFile = matchFilename.groupValues[1]
+                    if (matchNonce != null) playerNonce = matchNonce.groupValues[1]
+                    tToken = servedUrl.toHttpUrl().queryParameter("t") ?: ""
+                    
+                    val videoHeaders = buildVideoHeaders(servedUrl, pageUrl)
+                    if (servedUrl.contains(".m3u8") || servedUrl.contains(".mp4")) {
+                        videoList.add(Video(videoUrl = servedUrl, videoTitle = "Nepu", headers = videoHeaders))
                     } else {
-                        try {
-                            when {
-                                src.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(src, "DoodStream"))
+                        when {
+                            servedUrl.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(servedUrl, "DoodStream"))
 
-                                src.contains("filemoon") || src.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(src, "Filemoon", videoHeaders))
+                            servedUrl.contains("filemoon") || servedUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(servedUrl, "Filemoon", videoHeaders))
 
-                                src.contains("vidmoly") -> videoList.addAll(runBlocking { VidMolyExtractor(client, videoHeaders).videosFromUrl(src, "VidMoly") })
+                            servedUrl.contains("vidmoly") -> videoList.addAll(runBlocking { VidMolyExtractor(client, videoHeaders).videosFromUrl(servedUrl, "VidMoly") })
 
-                                src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(runBlocking { VidHideExtractor(client, videoHeaders).videosFromUrl(src, { "VidHide - $it" }) })
+                            servedUrl.contains("vidhide") || servedUrl.contains("guccihide") || servedUrl.contains("streamhide") -> videoList.addAll(runBlocking { VidHideExtractor(client, videoHeaders).videosFromUrl(servedUrl, { "VidHide - $it" }) })
 
-                                src.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(src, "Voe"))
+                            servedUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(servedUrl, "Voe"))
 
-                                src.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(src, "StreamTape"))
+                            servedUrl.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(servedUrl, "StreamTape"))
 
-                                else -> {
-                                    val extracted = UniversalExtractor(client).videosFromUrl(src, videoHeaders, prefix = "Video")
-                                    if (extracted.isNotEmpty()) videoList.addAll(extracted)
-                                }
+                            else -> {
+                                val extracted = UniversalExtractor(client).videosFromUrl(servedUrl, videoHeaders, prefix = "Nepu")
+                                if (extracted.isNotEmpty()) videoList.addAll(extracted)
                             }
-                        } catch (_: Exception) {}
+                        }
                     }
+                }
+            } catch (_: Exception) {}
+        }
+
+        document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe, iframe[src*='embed']").forEach { iframe ->
+            val src = iframe.attr("abs:src")
+            if (src.isNotBlank() && !src.contains("index.html")) {
+                val videoHeaders = buildVideoHeaders(src, src)
+                if (src.contains(".mp4") || src.contains(".m3u8")) {
+                    videoList.add(Video(videoUrl = src, videoTitle = "Video", headers = videoHeaders))
+                } else {
+                    try {
+                        when {
+                            src.contains("dood") -> videoList.addAll(DoodExtractor(client).videosFromUrl(src, "DoodStream"))
+
+                            src.contains("filemoon") || src.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(src, "Filemoon", videoHeaders))
+
+                            src.contains("vidmoly") -> videoList.addAll(runBlocking { VidMolyExtractor(client, videoHeaders).videosFromUrl(src, "VidMoly") })
+
+                            src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(runBlocking { VidHideExtractor(client, videoHeaders).videosFromUrl(src, { "VidHide - $it" }) })
+
+                            src.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(src, "Voe"))
+
+                            src.contains("streamtape") -> videoList.addAll(StreamTapeExtractor(client).videosFromUrl(src, "StreamTape"))
+
+                            else -> {
+                                val extracted = UniversalExtractor(client).videosFromUrl(src, videoHeaders, prefix = "Video")
+                                if (extracted.isNotEmpty()) videoList.addAll(extracted)
+                            }
+                        }
+                    } catch (_: Exception) {}
                 }
             }
         }
@@ -695,6 +645,10 @@ class Nepu : ParsedAnimeHttpSource() {
 
         val m3u8Cache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
+        var hlsFile = ""
+        var playerNonce = ""
+        var tToken = ""
+
         @Synchronized
         fun getProxyUrl(source: Nepu, targetUrl: String, headers: okhttp3.Headers?): String {
             if (proxy == null) {
@@ -821,6 +775,7 @@ class LocalProxy(
     }
 
     private fun handleSocket(socket: Socket) {
+        var targetUrl = ""
         try {
             val input = socket.getInputStream()
             val reader = input.bufferedReader()
@@ -843,7 +798,52 @@ class LocalProxy(
                 return
             }
 
-            val targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+            targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+            if (targetUrl.contains("/_nepu_hls/")) {
+                try {
+                    val parsedUrl = targetUrl.toHttpUrl()
+                    val pathSegments = parsedUrl.pathSegments
+                    val sessionId = pathSegments[1]
+                    val g = pathSegments[2].toIntOrNull() ?: 0
+                    val uB64 = pathSegments.subList(3, pathSegments.size).joinToString("/")
+                    
+                    val keyBody = okhttp3.FormBody.Builder()
+                        .add("f", Nepu.hlsFile)
+                        .add("s", sessionId)
+                        .add("t", Nepu.tToken)
+                        .add("n", Nepu.playerNonce)
+                        .add("g", g.toString())
+                        .build()
+                        
+                    val keyHeaders = okhttp3.Headers.Builder()
+                        .set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                        .set("X-Requested-With", "XMLHttpRequest")
+                        .set("Referer", "$baseUrl/")
+                        .set("Origin", baseUrl)
+                        .build()
+                        
+                    val keyRequest = Request.Builder()
+                        .url("$baseUrl/ajax/hlskey")
+                        .post(keyBody)
+                        .headers(keyHeaders)
+                        .build()
+                        
+                    client.newCall(keyRequest).execute().use { keyResp ->
+                        val keyJson = org.json.JSONObject(keyResp.body.string())
+                        if (keyJson.optBoolean("ok") && keyJson.has("k")) {
+                            val k = keyJson.getString("k")
+                            val decryptedUrl = decryptAesGcm(uB64, k)
+                            if (decryptedUrl.isNotEmpty()) {
+                                targetUrl = if (decryptedUrl.startsWith("http")) {
+                                    decryptedUrl
+                                } else {
+                                    "$baseUrl/${decryptedUrl.removePrefix("/")}"
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
             val isM3u8Request = targetUrl.contains(".m3u8") || path.contains(".m3u8")
             val isCdnRequest = targetUrl.contains("vr-cdn.com")
 
@@ -977,11 +977,12 @@ class LocalProxy(
                         var resolvedUri = resolveUrl(playlistUrl, uriValue)
                         if (resolvedUri.contains("/_nepu_hls/")) {
                             val base64 = resolvedUri.substringAfterLast("/")
-                            resolvedUri = try {
-                                String(Base64.decode(base64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-                            } catch (_: Exception) {
-                                resolvedUri
-                            }
+                            try {
+                                val decoded = String(Base64.decode(base64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+                                if (decoded.startsWith("http://") || decoded.startsWith("https://")) {
+                                    resolvedUri = decoded
+                                }
+                            } catch (_: Exception) {}
                         }
                         val proxiedUri = getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders)
                         builder.append(trimmed.replace(uriValue, proxiedUri))
@@ -993,11 +994,12 @@ class LocalProxy(
                 var resolvedUri = resolveUrl(playlistUrl, trimmed)
                 if (resolvedUri.contains("/_nepu_hls/")) {
                     val base64 = resolvedUri.substringAfterLast("/")
-                    resolvedUri = try {
-                        String(Base64.decode(base64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-                    } catch (_: Exception) {
-                        resolvedUri
-                    }
+                    try {
+                        val decoded = String(Base64.decode(base64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+                        if (decoded.startsWith("http://") || decoded.startsWith("https://")) {
+                            resolvedUri = decoded
+                        }
+                    } catch (_: Exception) {}
                 }
                 builder.append(getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders))
             }
@@ -1026,6 +1028,26 @@ class LocalProxy(
         baseUrl.toHttpUrl().resolve(relativeUrl)?.toString() ?: relativeUrl
     } catch (_: Exception) {
         relativeUrl
+    }
+
+    private fun decryptAesGcm(uB64: String, keyB64: String): String {
+        return try {
+            val keyBytes = Base64.decode(keyB64, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            val uBytes = Base64.decode(uB64, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            
+            val iv = uBytes.copyOfRange(0, 12)
+            val ciphertext = uBytes.copyOfRange(12, uBytes.size)
+            
+            val secretKey = javax.crypto.spec.SecretKeySpec(keyBytes, "AES")
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            val spec = javax.crypto.spec.GCMParameterSpec(128, iv)
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, spec)
+            
+            val decryptedBytes = cipher.doFinal(ciphertext)
+            String(decryptedBytes, Charsets.UTF_8)
+        } catch (e: Exception) {
+            ""
+        }
     }
 
     private fun sendError(socket: Socket, code: Int, message: String) {
