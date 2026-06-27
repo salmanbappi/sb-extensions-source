@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit
 class Anikoto : Source() {
 
     override val name = "Anikoto"
-    override val baseUrl = "https://anikototv.to"
+    override val baseUrl = "https://anixtv.me"
     override val lang = "all"
     override val supportsLatest = true
 
@@ -181,7 +181,7 @@ class Anikoto : Source() {
         val slug = anime.url
         val detailResponse = client.newCall(GET("$baseUrl/watch/$slug/ep-1")).execute()
         val detailDoc = detailResponse.asJsoup()
-        val watchMain = detailDoc.selectFirst("#watch-main")
+        val watchMain = detailDoc.selectFirst("#watch-main, .watch-wrap")
         val animeId = watchMain?.attr("data-id") ?: run {
             loge("getEpisodeList: no #watch-main data-id found")
             return emptyList()
@@ -296,7 +296,7 @@ class Anikoto : Source() {
                 logi("PATH A: parsed status=${pJson.status}, result HTML length = ${pJson.result.length}")
                 if (pJson.status == 200 && pJson.result.isNotEmpty()) {
                     val pDoc = Jsoup.parse(pJson.result)
-                    for (element in pDoc.select("div.servers > div.type")) {
+                    for (element in pDoc.select("div.servers > div.type, div.ani-server-wrapper > div.type")) {
                         val dataType = element.attr("data-type")
                         val audioLabel = when (dataType) {
                             "dub" -> "DUB"
@@ -308,7 +308,7 @@ class Anikoto : Source() {
                             continue
                         }
 
-                        for (serverElement in element.select("li")) {
+                        for (serverElement in element.select("li, .server")) {
                             val linkId = serverElement.attr("data-link-id")
                             val serverName = serverElement.text().trim()
                             if (excludedServers.any { it.equals(serverName, true) }) {
