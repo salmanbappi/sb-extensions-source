@@ -455,8 +455,8 @@ class Anikoto : Source() {
                 Hoster(
                     hosterUrl = "",
                     hosterName = serverName,
-                    videoList = sortedVideos
-                )
+                    videoList = sortedVideos,
+                ),
             )
         }
 
