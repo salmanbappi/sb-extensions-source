@@ -431,7 +431,8 @@ class Anikoto : Source() {
         )
         server.playlist = LocalProxyServer.Playlist(resolvedStreams)
         server.prefetchCount = prefetchBuffer.toIntOrNull() ?: 10
-        val proxyUrl = server.start()
+        server.start()
+        val proxyUrl = server.baseUrl
         logi("getHosterList: proxy started at $proxyUrl (prefetch=${server.prefetchCount}%)")
         swapProxyServer(server)
 
