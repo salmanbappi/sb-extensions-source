@@ -19,7 +19,7 @@ class SortFilter :
             "Number of episodes",
         ),
     ) {
-    private val values = arrayOf(
+    private val queryValues = arrayOf(
         "default",
         "latest-updated",
         "latest-added",
@@ -30,7 +30,7 @@ class SortFilter :
         "number_of_episodes",
     )
 
-    fun toQuery(): String? = if (state > 0 && state < values.size) values[state] else null
+    fun toQuery(): String? = if (state > 0 && state < queryValues.size) queryValues[state] else null
 }
 
 class GenreFilter :
