@@ -22,21 +22,18 @@ import kotlin.math.min
 
 class LocalProxyServer(
     client: OkHttpClient,
+    private val segmentHeaders: Headers,
+    private val webViewFetcher: WebViewFetcher? = null,
 ) {
     companion object {
         private const val IDLE_TIMEOUT_MS = 600000L
         private const val MAX_CACHE_ENTRIES = 50
         private const val SOCKET_READ_TIMEOUT_MS = 120000
         private const val TAG = "AnikotoProxy"
+        private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    private val fetchClient: OkHttpClient = client.newBuilder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .callTimeout(60, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .build()
+    private val fetchClient: OkHttpClient = client
 
     var prefetchCount: Int = 10
     private val running = AtomicBoolean(false)
@@ -288,7 +285,9 @@ class LocalProxyServer(
         logi("FETCH: $cacheKey → ${seg.url.take(80)}...")
         fetching[cacheKey] = true
         try {
-            val segBytes = fetchSegmentWithRetry(seg.url, stream.headers)
+            val streamIndex = pl.streams.indexOf(stream)
+            val fetchHeaders = headersForStream(streamIndex)
+            val segBytes = fetchSegment(seg.url, fetchHeaders, retry = true)
             val stripped = stripPngHeader(segBytes)
             val firstByte = if (stripped.isNotEmpty()) stripped[0] else 0.toByte()
             val isTsSync = firstByte == 0x47.toByte()
@@ -308,11 +307,41 @@ class LocalProxyServer(
         }
     }
 
-    private fun fetchSegmentWithRetry(url: String, headers: Headers): ByteArray {
-        var lastError: Exception? = null
-        for (i in 0 until 2) {
+    private fun isWafBlockedHost(url: String): Boolean {
+        return url.contains("mewstream.buzz") || url.contains("voltara.click") || url.contains("zaptrix.buzz")
+    }
+
+    private fun headersForStream(streamIndex: Int): Headers {
+        val pl = playlist ?: return segmentHeaders
+        if (streamIndex < 0 || streamIndex >= pl.streams.size) return segmentHeaders
+        val stream = pl.streams[streamIndex]
+        val referer = stream.headers["Referer"]
+        return if (referer.isNullOrBlank()) {
+            segmentHeaders
+        } else {
+            Headers.Builder()
+                .set("User-Agent", BROWSER_UA)
+                .set("Referer", referer)
+                .set("Accept", "*/*")
+                .build()
+        }
+    }
+
+    private fun fetchSegment(url: String, headers: Headers, retry: Boolean = true): ByteArray {
+        val isWaf = isWafBlockedHost(url)
+        if (isWaf && webViewFetcher != null) {
             try {
-                val request = Request.Builder().url(url).headers(headers).build()
+                return webViewFetcher.fetchBytes(url)
+            } catch (e: Exception) {
+                loge("fetchSegment: WebView fetch failed for ${url.take(60)}: ${e.message}")
+                throw e
+            }
+        }
+        val request = Request.Builder().url(url).headers(headers).build()
+        var lastError: Exception? = null
+        val attempts = if (retry) 2 else 1
+        for (i in 0 until attempts) {
+            try {
                 fetchClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         throw RuntimeException("Upstream ${response.code}")
@@ -322,8 +351,17 @@ class LocalProxyServer(
                 }
             } catch (e: Exception) {
                 lastError = e
+                if (isWaf && webViewFetcher != null) {
+                    logi("fetchSegment: OkHttp failed (${e.message?.take(50)}), falling back to WebView for ${url.take(60)}")
+                    try {
+                        return webViewFetcher.fetchBytes(url)
+                    } catch (eFallback: Exception) {
+                        loge("fetchSegment: WebView fallback also failed: ${eFallback.message}")
+                        throw eFallback
+                    }
+                }
                 logw("Fetch attempt ${i + 1} failed: ${e.message}")
-                if (i < 1) {
+                if (i < attempts - 1) {
                     Thread.sleep(500L)
                 }
             }
@@ -372,8 +410,11 @@ class LocalProxyServer(
             val stream = playlist?.streams?.firstOrNull { it.audioType == key.substringBefore("/") }
                 ?: return
             val seg = variant.segments[index]
+            val pl = playlist ?: return
+            val streamIndex = pl.streams.indexOf(stream)
+            val fetchHeaders = headersForStream(streamIndex)
             logi("PREFETCH: $key → ${seg.url.take(60)}...")
-            val bytes = fetchSegmentWithRetry(seg.url, stream.headers)
+            val bytes = fetchSegment(seg.url, fetchHeaders, retry = false)
             val stripped = stripPngHeader(bytes)
             cacheSegment(key, stripped)
             logi("PREFETCH DONE: $key (${stripped.size} bytes)")

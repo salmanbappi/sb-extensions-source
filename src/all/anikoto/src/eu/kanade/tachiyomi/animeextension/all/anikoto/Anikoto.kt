@@ -68,6 +68,16 @@ class Anikoto : Source() {
         builder.build()
     }
 
+    private val proxyFetchClient by lazy {
+        client.newBuilder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(0, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+    }
+
     private val metadataClient by lazy {
         val builder = network.client.newBuilder()
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -260,22 +270,30 @@ class Anikoto : Source() {
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         logi("=== getHosterList START ===")
+        logi("episode.url = ${episode.url}")
+        logi("episode.name = ${episode.name}")
+
         val meta = try {
             EpisodeMeta.decode(episode.url)
         } catch (e: Exception) {
-            loge("EpisodeMeta.decode FAILED", e)
+            loge("getHosterList: EpisodeMeta.decode FAILED — episode.url is not a valid encoded meta", e)
             return emptyList()
         }
 
-        val tasksByServer = mutableMapOf<String, MutableList<HosterTask>>()
+        logi("getHosterList: EpisodeMeta parsed OK: slug=${meta.slug} num=${meta.epNum} mal=${meta.malId} ts=${meta.timestamp} hasSub=${meta.hasSub} hasDub=${meta.hasDub}")
+
+        val tasks = mutableListOf<HosterTask>()
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
         val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
 
+        // PATH A: Primary Server List
         if (meta.dataIds.isNotEmpty()) {
             val primaryUrl = "$baseUrl/ajax/server/list?servers=${meta.dataIds}"
+            logi("PATH A: GET $primaryUrl")
             try {
                 val primaryResponse = client.newCall(GET(primaryUrl, ajaxHeaders(meta.slug))).execute()
                 val pJson = json.decodeFromString<ServerListResponse>(primaryResponse.body.string())
+                logi("PATH A: parsed status=${pJson.status}, result HTML length = ${pJson.result.length}")
                 if (pJson.status == 200 && pJson.result.isNotEmpty()) {
                     val pDoc = Jsoup.parse(pJson.result)
                     for (element in pDoc.select("div.servers > div.type")) {
@@ -284,7 +302,7 @@ class Anikoto : Source() {
                             "dub" -> "DUB"
                             "sub" -> "SUB"
                             "hsub" -> "HSUB"
-                            else -> dataType.uppercase(java.util.Locale.ROOT)
+                            else -> dataType.uppercase(Locale.ROOT)
                         }
                         if (excludedAudios.any { it.equals(audioLabel, true) }) {
                             continue
@@ -297,32 +315,80 @@ class Anikoto : Source() {
                                 continue
                             }
                             if (linkId.isNotEmpty()) {
-                                tasksByServer.getOrPut(serverName) { mutableListOf() }
-                                    .add(HosterTask("$audioLabel - $serverName", linkId, dataType, "primary", meta.slug))
+                                val label = "$audioLabel - $serverName"
+                                tasks.add(HosterTask(label, linkId, dataType, "primary", meta.slug))
+                                logi("  + task (primary): $label")
                             }
                         }
                     }
                 }
             } catch (e: Exception) {
-                loge("primary API FAILED", e)
+                loge("PATH A: FAILED — continuing to mapper", e)
             }
         }
 
-        return tasksByServer.map { (serverName, tasks) ->
-            Hoster(hosterName = serverName, hosterUrl = json.encodeToString(tasks))
-        }
-    }
+        // PATH B: Nekostream Mapper API (Kiwi-Stream)
+        val enableKiwi = preferences.getBoolean(PREF_ENABLE_KIWI_KEY, PREF_ENABLE_KIWI_DEFAULT)
+        if (!enableKiwi) {
+            logi("PATH B: skipped (Kiwi-Stream disabled in settings)")
+        } else if (meta.malId.isEmpty() || meta.epNum.isEmpty() || meta.timestamp.isEmpty()) {
+            logw("PATH B: skipped (missing malId/epNum/timestamp in EpisodeMeta)")
+        } else {
+            val mapperUrl = "https://mapper.nekostream.site/api/mal/${meta.malId}/${meta.epNum}/${meta.timestamp}"
+            logi("PATH B: GET $mapperUrl")
+            try {
+                val mapperResponse = client.newCall(GET(mapperUrl, ajaxHeaders(meta.slug))).execute()
+                if (mapperResponse.isSuccessful) {
+                    val bodyStr = mapperResponse.body.string()
+                    val jsonObj = json.decodeFromString<JsonObject>(bodyStr)
+                    val mapperTokens = parseMapperResponse(jsonObj)
+                    logi("PATH B: parsed ${mapperTokens.size} mapper tokens")
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        logi("=== getVideoList(hoster) START ===")
-        val tasks = try {
-            json.decodeFromString<List<HosterTask>>(hoster.hosterUrl)
-        } catch (e: Exception) {
-            emptyList()
+                    if (mapperTokens.isEmpty()) {
+                        val keys = jsonObj.keys
+                        if (keys.any { it == "Kiwi-Stream" }) {
+                            logi("PATH B: Kiwi-Stream has download links but no streaming URL — streaming not available for this episode")
+                        } else {
+                            logi("PATH B: no Kiwi-Stream entries found in mapper response")
+                        }
+                    }
+
+                    for (token in mapperTokens) {
+                        val audioLabel = when (token.audio) {
+                            "dub" -> "DUB"
+                            "sub" -> "SUB"
+                            "hsub" -> "HSUB"
+                            else -> token.audio.uppercase(Locale.ROOT)
+                        }
+                        if (excludedAudios.any { it.equals(audioLabel, true) }) {
+                            continue
+                        }
+                        if (token.serverName == "Kiwi-Stream") {
+                            val serverName = token.serverName
+                            if (excludedServers.any { it.equals(serverName, true) }) {
+                                continue
+                            }
+                            val label = "$audioLabel - $serverName"
+                            tasks.add(HosterTask(label, token.token, token.audio, "mapper", meta.slug))
+                            logi("  + task (mapper): $label")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                loge("PATH B: mapper FAILED — continuing with primary tasks", e)
+            }
         }
 
-        logi("Total tasks for hoster ${hoster.hosterName}: ${tasks.size}")
-        if (tasks.isEmpty()) return emptyList()
+        logi("getHosterList: total servers found = ${tasks.size}")
+        if (tasks.isEmpty()) {
+            loge("getHosterList: no tasks to resolve — returning empty")
+            return emptyList()
+        }
+
+        logi("getHosterList: resolving ${tasks.size} servers in parallel...")
+        for (task in tasks) {
+            logi("  server: ${task.label} [${task.audioType}] source=${task.source} token=${task.token.take(40)}")
+        }
 
         val resolvedStreams = coroutineScope {
             tasks.map { task ->
@@ -332,53 +398,92 @@ class Anikoto : Source() {
             }.awaitAll().filterNotNull()
         }
 
-        logi("Total resolved streams: ${resolvedStreams.size}")
+        logi("getHosterList: resolved ${resolvedStreams.size}/${tasks.size} streams")
         if (resolvedStreams.isEmpty()) {
-            displayToast("Anikoto: No playable streams found for this server", android.widget.Toast.LENGTH_LONG)
+            loge("getHosterList: all streams failed — returning empty")
             return emptyList()
         }
 
-        val server = LocalProxyServer(noCloudflareClient)
+        for (stream in resolvedStreams) {
+            logi("  resolved: ${stream.hosterName} [${stream.audioLabel}] — ${stream.variants.size} variants, ${stream.subtitles.size} subs")
+        }
+
+        val server = LocalProxyServer(
+            client = proxyFetchClient,
+            segmentHeaders = Headers.Builder()
+                .set("User-Agent", USER_AGENT)
+                .set("Referer", "https://vidtube.site/")
+                .set("Accept", "*/*")
+                .build(),
+            webViewFetcher = webViewFetcher
+        )
         server.playlist = LocalProxyServer.Playlist(resolvedStreams)
         server.prefetchCount = prefetchBuffer.toIntOrNull() ?: 10
-        server.start()
+        val proxyUrl = server.start()
+        logi("getHosterList: proxy started at $proxyUrl (prefetch=${server.prefetchCount}%)")
         swapProxyServer(server)
 
-        val allVideos = mutableListOf<Video>()
-        for (stream in resolvedStreams) {
-            val subtitleTracks = server.getSubtitleTracks(stream.audioType)
-            for (variant in stream.variants) {
-                val videoUrl = "${server.baseUrl}/variant/${stream.audioType}/${variant.quality}.m3u8"
-                val audioPrefix = stream.audioLabel.split(" - ").firstOrNull() ?: stream.audioLabel
+        logi("getHosterList: building Video objects (grouped by server)...")
+        val linkedHashMap = mutableMapOf<String, MutableList<Video>>()
+        resolvedStreams.forEachIndexed { i, audioStream ->
+            val subtitleTracks = server.getSubtitleTracks(i)
+            for (variant in audioStream.variants) {
+                val videoUrl = "$proxyUrl/variant/$i/${variant.quality}.m3u8"
+                val audioPrefix = audioStream.audioLabel.split(" - ").firstOrNull() ?: audioStream.audioLabel
                 val title = "$audioPrefix - ${variant.quality}"
-                allVideos.add(
-                    Video(
-                        videoUrl = videoUrl,
-                        videoTitle = title,
-                        subtitleTracks = subtitleTracks,
-                    ),
+                
+                // Using named arguments as required by checklist
+                val video = Video(
+                    videoUrl = videoUrl,
+                    videoTitle = title,
+                    subtitleTracks = subtitleTracks,
+                    headers = null
                 )
+                linkedHashMap.getOrPut(audioStream.hosterName) { mutableListOf() }.add(video)
             }
         }
 
-        return try {
-            allVideos.sortVideos()
-        } catch (t: Throwable) {
-            allVideos
+        val hostersList = mutableListOf<Hoster>()
+        for ((serverName, videos) in linkedHashMap) {
+            val sortedVideos = try {
+                videos.sortVideos()
+            } catch (t: Throwable) {
+                videos
+            }
+            logi("  Hoster: $serverName — ${sortedVideos.size} videos")
+            hostersList.add(
+                Hoster(
+                    url = null,
+                    name = serverName,
+                    videoList = sortedVideos
+                )
+            )
         }
+
+        val preferredServerVal = preferredServer
+        var sortedHosters = hostersList.toList()
+        if (preferredServerVal != PREF_SERVER_DEFAULT) {
+            sortedHosters = hostersList.sortedByDescending {
+                it.hosterName.contains(preferredServerVal, ignoreCase = true)
+            }
+        }
+
+        var totalVideosCount = 0
+        for (h in sortedHosters) {
+            totalVideosCount += h.videoList?.size ?: 0
+        }
+        logi("getHosterList: ${sortedHosters.size} hosters, $totalVideosCount total videos")
+        logi("========== getHosterList END ==========")
+
+        return sortedHosters
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        return hoster.videoList ?: emptyList()
     }
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val hosters = getHosterList(episode)
-        val allVideos = mutableListOf<Video>()
-        for (hoster in hosters) {
-            allVideos.addAll(getVideoList(hoster))
-        }
-        return try {
-            allVideos.sortVideos()
-        } catch (t: Throwable) {
-            allVideos
-        }
+        return getHosterList(episode).flatMap { it.videoList ?: emptyList() }
     }
 
     override suspend fun resolveVideo(video: Video): Video {

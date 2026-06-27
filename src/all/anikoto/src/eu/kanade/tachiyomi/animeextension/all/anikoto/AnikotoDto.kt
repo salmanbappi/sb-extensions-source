@@ -100,3 +100,29 @@ data class EpisodeMeta(
         }
     }
 }
+
+@Serializable
+data class MapperStreamToken(
+    val serverName: String,
+    val audio: String,
+    val token: String,
+)
+
+fun parseMapperResponse(obj: JsonObject): List<MapperStreamToken> {
+    val out = mutableListOf<MapperStreamToken>()
+    for ((key, value) in obj) {
+        if (!key.endsWith("-")) continue
+        val serverName = key.removeSuffix("-")
+        try {
+            val serverObj = value.jsonObject
+            for (audio in listOf("sub", "dub")) {
+                serverObj[audio]?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull?.let { url ->
+                    out.add(MapperStreamToken(serverName, audio, url))
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+    return out
+}
