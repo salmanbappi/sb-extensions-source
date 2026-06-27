@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.addEditTextPreference
+import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingMapNotNull
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
@@ -59,8 +60,7 @@ class CastleTv : Source() {
 
     private suspend fun getSecurityKey(): String? = try {
         val url = "$baseUrl/v0.1/system/getSecurityKey/1?channel=IndiaA&clientType=1&lang=en-US"
-        val response = client.newCall(GET(url)).execute()
-        val text = response.body.string()
+        val text = client.newCall(GET(url)).execute().use { it.body.string() }
         val securityResponse = json.decodeFromString<SecurityKeyResponse>(text)
         if (securityResponse.code == 200) {
             securityResponse.data
@@ -84,8 +84,7 @@ class CastleTv : Source() {
     ): List<SAnime> {
         val securityKey = getSecurityKey() ?: return emptyList()
         val url = "$baseUrl/film-api/v0.1/category/home?channel=IndiaA&clientType=1&clientType=1&lang=en-US&locationId=$locationId&mode=1&packageName=com.external.castle&page=$page&size=50"
-        val response = client.newCall(GET(url)).execute()
-        val text = response.body.string()
+        val text = client.newCall(GET(url)).execute().use { it.body.string() }
         val apiResponse = try {
             json.decodeFromString<CastleApiResponse>(text)
         } catch (e: Exception) {
@@ -276,8 +275,7 @@ class CastleTv : Source() {
 
         val searchUrl = "$baseUrl/film-api/v1.1.0/movie/searchByKeyword?channel=IndiaA&clientType=1&clientType=1&keyword=${URLEncoder.encode(query, "UTF-8")}&lang=en-US&mode=1&packageName=com.external.castle&page=$page&size=30$tagParam"
 
-        val response = client.newCall(GET(searchUrl)).execute()
-        val encryptedData = response.body.string()
+        val encryptedData = client.newCall(GET(searchUrl)).execute().use { it.body.string() }
         if (encryptedData.isBlank()) return AnimesPage(emptyList(), false)
 
         val decryptedJson = decryptData(encryptedData, securityKey) ?: return AnimesPage(emptyList(), false)
@@ -347,8 +345,7 @@ class CastleTv : Source() {
         val securityKey = getSecurityKey() ?: return anime
         val detailsUrl = "$baseUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&clientType=1&lang=en-US&movieId=$movieId&packageName=com.external.castle"
 
-        val response = client.newCall(GET(detailsUrl)).execute()
-        val encryptedData = response.body.string()
+        val encryptedData = client.newCall(GET(detailsUrl)).execute().use { it.body.string() }
         if (encryptedData.isBlank()) return anime
 
         val decryptedJson = decryptData(encryptedData, securityKey) ?: return anime
@@ -377,8 +374,7 @@ class CastleTv : Source() {
         val securityKey = getSecurityKey() ?: return emptyList()
         val detailsUrl = "$baseUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&clientType=1&lang=en-US&movieId=$movieId&packageName=com.external.castle"
 
-        val response = client.newCall(GET(detailsUrl)).execute()
-        val encryptedData = response.body.string()
+        val encryptedData = client.newCall(GET(detailsUrl)).execute().use { it.body.string() }
         if (encryptedData.isBlank()) return emptyList()
 
         val decryptedJson = decryptData(encryptedData, securityKey) ?: return emptyList()
@@ -397,8 +393,7 @@ class CastleTv : Source() {
 
                     try {
                         val seasonUrl = "$baseUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&clientType=1&lang=en-US&movieId=$seasonId&packageName=com.external.castle"
-                        val seasonResponse = client.newCall(GET(seasonUrl)).execute()
-                        val seasonEncrypted = seasonResponse.body.string()
+                        val seasonEncrypted = client.newCall(GET(seasonUrl)).execute().use { it.body.string() }
                         if (seasonEncrypted.isNotBlank()) {
                             val seasonDecrypted = decryptData(seasonEncrypted, securityKey)
                             if (seasonDecrypted != null) {
@@ -460,8 +455,8 @@ class CastleTv : Source() {
 
         val securityKey = getSecurityKey() ?: return emptyList()
         val detailsUrl = "$baseUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&clientType=1&lang=en-US&movieId=$movieId&packageName=com.external.castle"
-        val response = client.newCall(GET(detailsUrl)).execute()
-        val detailsDecrypted = decryptData(response.body.string(), securityKey) ?: return emptyList()
+        val responseBody = client.newCall(GET(detailsUrl)).execute().use { it.body.string() }
+        val detailsDecrypted = decryptData(responseBody, securityKey) ?: return emptyList()
         val details = json.decodeFromString<MovieDetailsResponse>(detailsDecrypted).data
 
         val ep = details.episodes?.find { it.id?.toString() == episodeId } ?: return emptyList()
@@ -499,8 +494,7 @@ class CastleTv : Source() {
                     .post(postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
                     .build()
 
-                val videoResponse = client.newCall(req).execute()
-                val encryptedData = videoResponse.body.string()
+                val encryptedData = client.newCall(req).execute().use { it.body.string() }
                 if (encryptedData.isBlank()) return@parallelCatchingMapNotNull null
 
                 val decryptedJson = decryptData(encryptedData, securityKey) ?: return@parallelCatchingMapNotNull null
@@ -535,8 +529,8 @@ class CastleTv : Source() {
             }
             videoList.addAll(videos)
         } else {
-            val videos = availableTracks.flatMap { track ->
-                val languageId = track.languageId ?: return@flatMap emptyList()
+            val videos = availableTracks.parallelCatchingFlatMap { track ->
+                val languageId = track.languageId ?: return@parallelCatchingFlatMap emptyList()
                 val languageName = track.languageName ?: track.abbreviate ?: "Unknown"
 
                 resolutions.parallelCatchingMapNotNull { resolution ->
@@ -563,8 +557,7 @@ class CastleTv : Source() {
                         .post(postBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
                         .build()
 
-                    val videoResponse = client.newCall(req).execute()
-                    val encryptedData = videoResponse.body.string()
+                    val encryptedData = client.newCall(req).execute().use { it.body.string() }
                     if (encryptedData.isBlank()) return@parallelCatchingMapNotNull null
 
                     val decryptedJson = decryptData(encryptedData, securityKey) ?: return@parallelCatchingMapNotNull null
