@@ -48,9 +48,7 @@ class Nepu : ParsedAnimeHttpSource() {
 
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
 
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        return listOf(Hoster(hosterName = "Default", hosterUrl = baseUrl + episode.url))
-    }
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(Hoster(hosterName = "Default", hosterUrl = baseUrl + episode.url))
 
     override val id: Long = 5181466391484419855L
 
@@ -434,17 +432,17 @@ class Nepu : ParsedAnimeHttpSource() {
                 val servedUrlRegex = Regex("""var servedUrl\s*=\s*"([^"]+)"""")
                 val match = servedUrlRegex.find(responseBody)
                 val rawServedUrl = match?.groupValues?.get(1)
-                
+
                 if (!rawServedUrl.isNullOrEmpty()) {
                     val servedUrl = rawServedUrl.replace("\\u0026", "&")
-                    
+
                     val matchFilename = Regex("""var hlsFileName\s*=\s*"([^"]+)"""").find(responseBody)
                     val matchNonce = Regex("""var playerNonce\s*=\s*"([^"]+)"""").find(responseBody)
-                    
+
                     if (matchFilename != null) hlsFile = matchFilename.groupValues[1]
                     if (matchNonce != null) playerNonce = matchNonce.groupValues[1]
                     tToken = servedUrl.toHttpUrl().queryParameter("t") ?: ""
-                    
+
                     val videoHeaders = buildVideoHeaders(servedUrl, pageUrl)
                     if (servedUrl.contains(".m3u8") || servedUrl.contains(".mp4")) {
                         videoList.add(Video(videoUrl = servedUrl, videoTitle = "Nepu", headers = videoHeaders))
@@ -806,7 +804,7 @@ class LocalProxy(
                     val sessionId = pathSegments[1]
                     val g = pathSegments[2].toIntOrNull() ?: 0
                     val uB64 = pathSegments.subList(3, pathSegments.size).joinToString("/")
-                    
+
                     val keyBody = okhttp3.FormBody.Builder()
                         .add("f", Nepu.hlsFile)
                         .add("s", sessionId)
@@ -814,20 +812,20 @@ class LocalProxy(
                         .add("n", Nepu.playerNonce)
                         .add("g", g.toString())
                         .build()
-                        
+
                     val keyHeaders = okhttp3.Headers.Builder()
                         .set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
                         .set("X-Requested-With", "XMLHttpRequest")
                         .set("Referer", "$baseUrl/")
                         .set("Origin", baseUrl)
                         .build()
-                        
+
                     val keyRequest = Request.Builder()
                         .url("$baseUrl/ajax/hlskey")
                         .post(keyBody)
                         .headers(keyHeaders)
                         .build()
-                        
+
                     client.newCall(keyRequest).execute().use { keyResp ->
                         val keyJson = org.json.JSONObject(keyResp.body.string())
                         if (keyJson.optBoolean("ok") && keyJson.has("k")) {
@@ -1030,24 +1028,22 @@ class LocalProxy(
         relativeUrl
     }
 
-    private fun decryptAesGcm(uB64: String, keyB64: String): String {
-        return try {
-            val keyBytes = Base64.decode(keyB64, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-            val uBytes = Base64.decode(uB64, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-            
-            val iv = uBytes.copyOfRange(0, 12)
-            val ciphertext = uBytes.copyOfRange(12, uBytes.size)
-            
-            val secretKey = javax.crypto.spec.SecretKeySpec(keyBytes, "AES")
-            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
-            val spec = javax.crypto.spec.GCMParameterSpec(128, iv)
-            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, spec)
-            
-            val decryptedBytes = cipher.doFinal(ciphertext)
-            String(decryptedBytes, Charsets.UTF_8)
-        } catch (e: Exception) {
-            ""
-        }
+    private fun decryptAesGcm(uB64: String, keyB64: String): String = try {
+        val keyBytes = Base64.decode(keyB64, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        val uBytes = Base64.decode(uB64, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+
+        val iv = uBytes.copyOfRange(0, 12)
+        val ciphertext = uBytes.copyOfRange(12, uBytes.size)
+
+        val secretKey = javax.crypto.spec.SecretKeySpec(keyBytes, "AES")
+        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        val spec = javax.crypto.spec.GCMParameterSpec(128, iv)
+        cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey, spec)
+
+        val decryptedBytes = cipher.doFinal(ciphertext)
+        String(decryptedBytes, Charsets.UTF_8)
+    } catch (e: Exception) {
+        ""
     }
 
     private fun sendError(socket: Socket, code: Int, message: String) {
