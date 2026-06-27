@@ -1,9 +1,9 @@
 package eu.kanade.tachiyomi.animeextension.all.anikoto
 
+import ListPreference
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
-import ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
