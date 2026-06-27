@@ -559,10 +559,11 @@ class Anikoto : Source() {
     // ---- Parsers ----
 
     private fun parseAnimeList(doc: Document): AnimesPage {
-        val elements = doc.select("div#list-items > div.item")
+        val elements = doc.select("div#list-items > div.item, div.content-item > div.piece, div.sidebar-set div.piece")
         val animes = elements.mapNotNull { element ->
             val nameLink = element.selectFirst("a.name.d-title")
                 ?: element.selectFirst("div.ani.poster.tip > a")
+                ?: element.selectFirst(".ani-name > a")
                 ?: return@mapNotNull null
             val href = nameLink.attr("href")
             val slug = href.substringAfter("/watch/", "").substringBefore("/ep-", "")
