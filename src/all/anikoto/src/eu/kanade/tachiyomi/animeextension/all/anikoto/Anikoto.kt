@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.all.anikoto
 
-import ListPreference
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
