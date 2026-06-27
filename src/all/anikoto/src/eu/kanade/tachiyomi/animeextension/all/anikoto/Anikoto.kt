@@ -662,7 +662,6 @@ class Anikoto : Source() {
         }
     }
 
-
     // ---- Preferences ----
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
