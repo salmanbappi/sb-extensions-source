@@ -146,9 +146,8 @@ class AnikotoExtractors(
         logi("resolveVidTube: START hoster=$hosterName audio=$audioType")
         return try {
             val host = extractHost(iframeUrl) ?: "vidtube.site"
-            logi("resolveVidTube: [1/5] GET iframe $iframeUrl (host=$host)")
+            logi("resolveVidTube: [1/5] GET iframe page: $iframeUrl (host=$host)")
             val pageHtml = fetchString(iframeUrl, vidtubePageHeaders(host))
-            logi("resolveVidTube: [1/5] page len=${pageHtml.length}")
 
             val dataId = DATA_ID_REGEX.find(pageHtml)?.groupValues?.get(1)
             if (dataId.isNullOrEmpty()) {
@@ -157,13 +156,7 @@ class AnikotoExtractors(
             }
             logi("resolveVidTube: data-id=$dataId")
 
-            val apiHeaders = Headers.Builder()
-                .set("User-Agent", BROWSER_UA)
-                .set("Accept", "*/*")
-                .set("X-Requested-With", "XMLHttpRequest")
-                .set("Referer", iframeUrl)
-                .set("Origin", "https://$host")
-                .build()
+            val apiHeaders = vidtubeApiHeaders()
 
             var sourcesBody: String? = null
             try {
@@ -171,7 +164,7 @@ class AnikotoExtractors(
                 logi("resolveVidTube: [2/5] GET getSources: $sourcesUrl")
                 sourcesBody = fetchString(sourcesUrl, apiHeaders)
             } catch (e: Exception) {
-                logi("resolveVidTube: getSources failed: ${e.message}")
+                // Ignore
             }
 
             if (sourcesBody == null) {
@@ -185,18 +178,21 @@ class AnikotoExtractors(
                 loge("resolveVidTube: no valid m3u8 in getSources response (sources.file='$masterM3u8')")
                 return null
             }
-            logi("resolveVidTube: [3/5] master m3u8=$masterM3u8")
+            logi("resolveVidTube: [3/5] fetching master m3u8")
 
             val subtitles = sourcesResp.tracks.filter {
                 it.file.startsWith("http") && it.label.isNotEmpty()
             }.map { track ->
                 LocalProxyServer.SubtitleData(track.file, track.label, inferLang(track.label))
             }
+            if (subtitles.isNotEmpty()) {
+                logi("resolveVidTube: subs=${subtitles.size} track(s)")
+            }
 
             val seg = segHeaders(host)
             val masterText = fetchString(masterM3u8, seg)
             if (!masterText.startsWith("#EXTM3U")) {
-                loge("resolveVidTube: master is not m3u8: ${masterText.take(80)}")
+                loge("resolveVidTube: master is not m3u8 (starts with ${masterText.take(40)})")
                 return null
             }
 
@@ -205,21 +201,20 @@ class AnikotoExtractors(
                 loge("resolveVidTube: no variants in master m3u8")
                 return null
             }
-            logi("resolveVidTube: [4/5] ${variants.size} variants")
+            logi("resolveVidTube: ${variants.size} variants: ${variants.joinToString { it.quality }}")
+            logi("resolveVidTube: [4/5] fetching ${variants.size} variant playlists")
 
             val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
             for (vi in variants) {
                 try {
-                    logi("resolveVidTube: [4/5] fetching variant ${vi.quality} → ${vi.url}")
                     val varText = fetchString(vi.url, seg)
                     val segs = parseVariantSegments(varText, vi.url)
+                    logi("resolveVidTube:   variant ${vi.quality}(${vi.bandwidth}): ${segs.size} segments")
                     if (segs.isNotEmpty()) {
                         variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
-                    } else {
-                        loge("resolveVidTube: variant ${vi.quality} has no segments")
                     }
                 } catch (e: Exception) {
-                    loge("resolveVidTube: variant ${vi.quality} FAILED: ${e.message}")
+                    loge("resolveVidTube:   variant ${vi.quality} fetch FAILED: ${e.message}")
                 }
             }
 
@@ -234,7 +229,7 @@ class AnikotoExtractors(
                 "hsub" -> "HSUB"
                 else -> audioType.uppercase()
             }
-            logi("resolveVidTube: [5/5] resolved $hosterName — ${variantDataList.size} variants, ${subtitles.size} subs")
+            logi("resolveVidTube: SUCCESS hoster=$hosterName audio=$audioLabel variants=${variantDataList.size} subs=${subtitles.size} referer=https://$host/")
             LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, subtitles, seg)
         } catch (e: Exception) {
             loge("resolveVidTube: FAILED hoster=$hosterName audio=$audioType", e)
@@ -249,85 +244,63 @@ class AnikotoExtractors(
     ): LocalProxyServer.AudioStream? {
         logi("resolveKiwi: START hoster=$hosterName audio=$audioType")
         return try {
-            val fragment = iframeUrl.substringAfter("#")
+            val fragment = iframeUrl.substringAfter("#", "")
             if (fragment.isBlank()) {
                 loge("resolveKiwi: no #fragment in iframe URL")
                 return null
             }
-            var decoded = try {
-                String(Base64.decode(fragment, Base64.DEFAULT), Charsets.ISO_8859_1)
+            val decoded = try {
+                val bytes = android.util.Base64.decode(fragment, 0)
+                String(bytes, Charsets.ISO_8859_1)
             } catch (e: Exception) {
-                String(android.util.Base64.decode(fragment, android.util.Base64.DEFAULT), Charsets.ISO_8859_1)
-            }
-
-            try {
-                val pageHeaders = kiwiHeaders()
-                val pageBody = fetchString(iframeUrl, pageHeaders)
-                val mapMatch = Regex("""var HOST_MAP\s*=\s*\{([^}]+)\}""").find(pageBody)
-                if (mapMatch != null) {
-                    val mapString = mapMatch.groupValues[1]
-                    val hostMap = Regex("""'([^']+)'\s*:\s*'([^']+)'""").findAll(mapString).associate {
-                        it.groupValues[1] to it.groupValues[2]
-                    }
-                    for ((origin, proxy) in hostMap) {
-                        if (decoded.contains(origin)) {
-                            decoded = decoded.replace(origin, proxy)
-                            logi("resolveKiwi: HOST_MAP replaced $origin with $proxy")
-                            break
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                loge("resolveKiwi: failed to parse HOST_MAP", e)
+                loge("resolveKiwi: base64 decode failed", e)
+                return null
             }
 
             if (!decoded.startsWith("http")) {
-                loge("resolveKiwi: decoded m3u8 is not http ($decoded)")
+                loge("resolveKiwi: decoded fragment is not a URL: ${decoded.take(60)}")
                 return null
             }
             logi("resolveKiwi: decoded m3u8=${decoded.take(80)}")
+            logd("resolveKiwi: [2/4] fetching master m3u8")
 
             val headers = kiwiHeaders()
             val masterText = fetchString(decoded, headers)
-            if (!masterText.startsWith("#EXTM3U")) {
-                loge("resolveKiwi: master is not m3u8 (starts with ${masterText.take(40)})")
-                return null
-            }
-
-            val variants = parseMasterPlaylist(masterText, decoded)
-            if (variants.isEmpty()) {
-                loge("resolveKiwi: no variants in master m3u8")
-                return null
-            }
-            logi("resolveKiwi: ${variants.size} variants")
-
-            val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
-            for (vi in variants) {
-                try {
-                    val varText = fetchString(vi.url, headers)
-                    val segs = parseVariantSegments(varText, vi.url)
-                    if (segs.isNotEmpty()) {
-                        variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
-                        logi("resolveKiwi: variant ${vi.quality}: ${segs.size} segments")
-                    }
-                } catch (e: Exception) {
-                    loge("resolveKiwi: variant ${vi.quality} FAILED: ${e.message}")
+            if (masterText.startsWith("#EXTM3U")) {
+                val variants = parseMasterPlaylist(masterText, decoded)
+                if (variants.isEmpty()) {
+                    loge("resolveKiwi: no variants in master m3u8")
+                    return null
                 }
-            }
+                logi("resolveKiwi: ${variants.size} variants: ${variants.joinToString { it.quality }}")
+                logd("resolveKiwi: [3/4] fetching ${variants.size} variant playlists (NO ad filter)")
 
-            if (variantDataList.isEmpty()) {
-                loge("resolveKiwi: no variants could be loaded")
-                return null
-            }
+                val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
+                for (vi in variants) {
+                    try {
+                        val varText = fetchString(vi.url, headers)
+                        val segs = parseVariantSegments(varText, vi.url)
+                        logd("resolveKiwi:   variant ${vi.quality}: ${segs.size} segments (no filter)")
+                        if (segs.isNotEmpty()) {
+                            variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
+                        }
+                    } catch (e: Exception) {
+                        loge("resolveKiwi:   variant ${vi.quality} fetch FAILED: ${e.message}")
+                    }
+                }
 
-            val audioLabel = when (audioType) {
-                "sub" -> "SUB"
-                "dub" -> "DUB"
-                "hsub" -> "HSUB"
-                else -> audioType.uppercase()
+                if (variantDataList.isEmpty()) {
+                    loge("resolveKiwi: no variants could be loaded")
+                    return null
+                }
+
+                val audioLabel = if (audioType == "sub") "H-SUB" else "A-DUB"
+                logi("resolveKiwi: SUCCESS hoster=$hosterName audio=$audioLabel variants=${variantDataList.size} referer=https://vibeplayer.site/")
+                LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, emptyList(), headers)
+            } else {
+                loge("resolveKiwi: master is not m3u8 (starts with ${masterText.take(40)})")
+                null
             }
-            logi("resolveKiwi: resolved $hosterName — ${variantDataList.size} variants")
-            LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, emptyList(), headers)
         } catch (e: Exception) {
             loge("resolveKiwi: FAILED hoster=$hosterName audio=$audioType", e)
             null
