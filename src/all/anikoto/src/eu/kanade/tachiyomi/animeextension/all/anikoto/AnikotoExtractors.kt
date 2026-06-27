@@ -68,9 +68,7 @@ class AnikotoExtractors(
 
     private fun isWafBlockedHost(url: String): Boolean = url.contains("mewstream.buzz", ignoreCase = true) ||
         url.contains("voltara.click", ignoreCase = true) ||
-        url.contains("zaptrix.buzz", ignoreCase = true) ||
-        url.contains("vidtube.site", ignoreCase = true) ||
-        url.contains("megaplay.buzz", ignoreCase = true)
+        url.contains("zaptrix.buzz", ignoreCase = true)
 
     private fun fetchString(url: String, headers: Headers): String {
         if (isWafBlockedHost(url) && webViewFetcher != null) {
