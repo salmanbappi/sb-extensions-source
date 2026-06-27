@@ -137,4 +137,11 @@ class CryptoTest {
         }
         assertEquals("RC4 skip must be non-negative, got -1", exception.message)
     }
+
+    @Test
+    fun `decodeHex throws exception for odd length string`() {
+        assertFailsWith<IllegalArgumentException> {
+            "abc".decodeHex()
+        }
+    }
 }
