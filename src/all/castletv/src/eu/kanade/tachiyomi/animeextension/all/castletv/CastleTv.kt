@@ -10,6 +10,10 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.addEditTextPreference
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -390,36 +394,43 @@ class CastleTv : Source() {
 
         if (isSeriesLike) {
             if (details.seasons != null && details.seasons.size > 1) {
-                for (season in details.seasons) {
-                    val seasonId = season.movieId?.toString() ?: continue
-                    val seasonNumber = season.number ?: continue
+                val seasonEpisodesResult = runBlocking {
+                    details.seasons.map { season ->
+                        async(Dispatchers.IO) {
+                            val seasonId = season.movieId?.toString() ?: return@async emptyList<SEpisode>()
+                            val seasonNumber = season.number ?: return@async emptyList<SEpisode>()
 
-                    try {
-                        val seasonUrl = "$baseUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&clientType=1&lang=en-US&movieId=$seasonId&packageName=com.external.castle"
-                        val seasonResponse = client.newCall(GET(seasonUrl)).execute()
-                        val seasonEncrypted = seasonResponse.body.string()
-                        if (seasonEncrypted.isNotBlank()) {
-                            val seasonDecrypted = decryptData(seasonEncrypted, securityKey)
-                            if (seasonDecrypted != null) {
-                                val seasonDetails = json.decodeFromString<MovieDetailsResponse>(seasonDecrypted).data
-                                seasonDetails.episodes?.forEach { ep ->
-                                    val epName = "S$seasonNumber E${ep.number ?: 0} - ${ep.title ?: ""}"
-                                    episodes.add(
-                                        SEpisode.create().apply {
-                                            name = epName
-                                            url = "${seasonId}_${ep.id}"
-                                            episode_number = ep.number?.toFloat() ?: 0f
-                                            date_upload = ep.onlineTime ?: 0L
-                                            preview_url = ep.coverImage
-                                        },
-                                    )
+                            try {
+                                val seasonUrl = "$baseUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&clientType=1&lang=en-US&movieId=$seasonId&packageName=com.external.castle"
+                                val seasonResponse = client.newCall(GET(seasonUrl)).execute()
+                                val seasonEncrypted = seasonResponse.body.string()
+                                if (seasonEncrypted.isNotBlank()) {
+                                    val seasonDecrypted = decryptData(seasonEncrypted, securityKey)
+                                    if (seasonDecrypted != null) {
+                                        val seasonDetails = json.decodeFromString<MovieDetailsResponse>(seasonDecrypted).data
+                                        seasonDetails.episodes?.map { ep ->
+                                            val epName = "S$seasonNumber E${ep.number ?: 0} - ${ep.title ?: ""}"
+                                            SEpisode.create().apply {
+                                                name = epName
+                                                url = "${seasonId}_${ep.id}"
+                                                episode_number = ep.number?.toFloat() ?: 0f
+                                                date_upload = ep.onlineTime ?: 0L
+                                                preview_url = ep.coverImage
+                                            }
+                                        } ?: emptyList<SEpisode>()
+                                    } else {
+                                        emptyList<SEpisode>()
+                                    }
+                                } else {
+                                    emptyList<SEpisode>()
                                 }
+                            } catch (e: Exception) {
+                                emptyList<SEpisode>()
                             }
                         }
-                    } catch (e: Exception) {
-                        // Skip failed seasons
-                    }
+                    }.awaitAll()
                 }
+                episodes.addAll(seasonEpisodesResult.flatten())
             } else {
                 details.episodes?.forEachIndexed { index, ep ->
                     val epName = "Episode ${ep.number ?: (index + 1)} - ${ep.title ?: ""}"
