@@ -332,7 +332,7 @@ class Anikoto : Source() {
         if (!enableKiwi) {
             logi("PATH B: skipped (Kiwi-Stream disabled in settings)")
         } else if (meta.malId.isEmpty() || meta.epNum.isEmpty() || meta.timestamp.isEmpty()) {
-            logw("PATH B: skipped (missing malId/epNum/timestamp in EpisodeMeta)")
+            loge("PATH B: skipped (missing malId/epNum/timestamp in EpisodeMeta)")
         } else {
             val mapperUrl = "https://mapper.nekostream.site/api/mal/${meta.malId}/${meta.epNum}/${meta.timestamp}"
             logi("PATH B: GET $mapperUrl")
@@ -426,9 +426,9 @@ class Anikoto : Source() {
         logi("getHosterList: building Video objects (grouped by server)...")
         val linkedHashMap = mutableMapOf<String, MutableList<Video>>()
         resolvedStreams.forEachIndexed { i, audioStream ->
-            val subtitleTracks = server.getSubtitleTracks(i)
+            val subtitleTracks = server.getSubtitleTracks(audioStream.audioType)
             for (variant in audioStream.variants) {
-                val videoUrl = "$proxyUrl/variant/$i/${variant.quality}.m3u8"
+                val videoUrl = "$proxyUrl/variant/${audioStream.audioType}/${variant.quality}.m3u8"
                 val audioPrefix = audioStream.audioLabel.split(" - ").firstOrNull() ?: audioStream.audioLabel
                 val title = "$audioPrefix - ${variant.quality}"
 
@@ -453,10 +453,10 @@ class Anikoto : Source() {
             logi("  Hoster: $serverName — ${sortedVideos.size} videos")
             hostersList.add(
                 Hoster(
-                    url = null,
-                    name = serverName,
-                    videoList = sortedVideos,
-                ),
+                    hosterUrl = "",
+                    hosterName = serverName,
+                    videoList = sortedVideos
+                )
             )
         }
 
@@ -629,10 +629,12 @@ class Anikoto : Source() {
 
         val bmeta = doc.selectFirst("#w-info .bmeta") ?: return synopsis
         val metaMap = mutableMapOf<String, String>()
-        for (element in bmeta.select(".meta > div")) {
-            val label = element.selectFirst("label, strong, b")?.text()?.removeSuffix(":")?.trim()
-            val value = element.select("span, a").joinToString(", ") { it.text() }.trim()
-            if (label != null && value.isNotEmpty()) metaMap[label] = value
+        for (element in bmeta.select("div.meta > div")) {
+            val label = element.ownText().removeSuffix(":").trim()
+            val value = element.select("span").text().trim()
+            if (label.isNotEmpty() && value.isNotEmpty()) {
+                metaMap[label] = value
+            }
         }
 
         val rating = doc.selectFirst("#w-info .binfo i.rating")?.text()
