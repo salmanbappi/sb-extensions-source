@@ -36,9 +36,9 @@ class AnikotoExtractors(
         .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .build()
 
-    private fun vidtubeApiHeaders(host: String): Headers = Headers.Builder()
+    private fun vidtubeApiHeaders(): Headers = Headers.Builder()
         .set("User-Agent", BROWSER_UA)
-        .set("Referer", "https://$host/")
+        .set("Referer", "https://vidtube.site/")
         .set("X-Requested-With", "XMLHttpRequest")
         .set("Accept", "*/*")
         .build()
@@ -169,7 +169,7 @@ class AnikotoExtractors(
             }
             logi("resolveVidTube: data-id=$dataId")
 
-            val apiHeaders = vidtubeApiHeaders(host)
+            val apiHeaders = vidtubeApiHeaders()
 
             var sourcesBody: String? = null
             try {

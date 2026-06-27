@@ -510,7 +510,12 @@ class Anikoto : Source() {
             logi("  [${task.label}] iframe=$url host=$host")
 
             when {
-                host.contains("mewcdn.online") || host.contains("zaptrix.buzz") || host.contains("mewstream.buzz") || host.contains("voltara.click") -> {
+                host.contains("vidtube.site", ignoreCase = true) || host.contains("megaplay.buzz", ignoreCase = true) || host.contains("vidwish.live", ignoreCase = true) -> {
+                    logi("  [${task.label}] → Flow A (VidTube), host=$host")
+                    extractors.resolveVidTube(url, task.audioType, hosterName)
+                }
+
+                host.contains("mewcdn.online", ignoreCase = true) -> {
                     if (preferences.getBoolean(PREF_ENABLE_KIWI_KEY, PREF_ENABLE_KIWI_DEFAULT)) {
                         logi("  [${task.label}] → Flow B (Kiwi), host=$host")
                         extractors.resolveKiwi(url, task.audioType, hosterName)
@@ -520,8 +525,8 @@ class Anikoto : Source() {
                 }
 
                 else -> {
-                    logi("  [${task.label}] → Flow A (VidTube/Vidstream), host=$host")
-                    extractors.resolveVidTube(url, task.audioType, hosterName)
+                    logi("  [${task.label}] → UNKNOWN host=$host, skipping")
+                    null
                 }
             }
         } catch (e: Exception) {
