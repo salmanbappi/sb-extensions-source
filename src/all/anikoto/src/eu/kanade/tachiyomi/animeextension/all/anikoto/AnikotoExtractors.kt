@@ -80,6 +80,7 @@ class AnikotoExtractors(
         }
         return response.body.string()
     }
+    private fun inferLang(label: String): String = when {
         label.contains("English", ignoreCase = true) -> "eng"
         label.contains("Spanish", ignoreCase = true) -> "spa"
         label.contains("French", ignoreCase = true) -> "fra"
