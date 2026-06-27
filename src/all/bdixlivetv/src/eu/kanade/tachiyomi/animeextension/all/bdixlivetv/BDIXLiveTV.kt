@@ -123,7 +123,16 @@ class BDIXLiveTV :
     }
 
     private suspend fun getXtreamChannels(query: String): AnimesPage {
-        val xtreamUrl = "http://172.16.29.34/player_api.php?username=ontest1&password=ontest1&action=get_live_streams"
+        val xtreamApiUrl = preferences.getString("xtream_url", "http://172.16.29.34") ?: ""
+        val xtreamUsername = preferences.getString("xtream_username", "") ?: ""
+        val xtreamPassword = preferences.getString("xtream_password", "") ?: ""
+
+        if (xtreamApiUrl.isBlank() || xtreamUsername.isBlank() || xtreamPassword.isBlank()) {
+            return AnimesPage(emptyList(), false)
+        }
+
+        val baseUrl = xtreamApiUrl.trimEnd('/')
+        val xtreamUrl = "$baseUrl/player_api.php?username=$xtreamUsername&password=$xtreamPassword&action=get_live_streams"
         val response = client.newCall(GET(xtreamUrl)).execute()
         val json = response.body?.string() ?: ""
 
@@ -145,7 +154,7 @@ class BDIXLiveTV :
                 animeList.add(
                     SAnime.create().apply {
                         title = name
-                        url = "http://172.16.29.34/live/ontest1/ontest1/$id.ts"
+                        url = "$baseUrl/live/$xtreamUsername/$xtreamPassword/$id.ts"
                         thumbnail_url = icon.ifBlank { null }
                         initialized = true
                     },
@@ -188,7 +197,7 @@ class BDIXLiveTV :
         val modePref = ListPreference(screen.context).apply {
             key = "preferred_mode"
             title = "Streaming Source"
-            entries = arrayOf("Website (172.16.29.28)", "M3U Playlist", "Xtream Codes API (172.16.29.34)")
+            entries = arrayOf("Website (172.16.29.28)", "M3U Playlist", "Xtream Codes API")
             entryValues = arrayOf("website", "m3u", "xtream")
             setDefaultValue("website")
             summary = "%s"
@@ -202,5 +211,29 @@ class BDIXLiveTV :
             summary = "Enter the full URL to your .m3u file"
         }
         screen.addPreference(m3uUrlPref)
+
+        val xtreamUrlPref = EditTextPreference(screen.context).apply {
+            key = "xtream_url"
+            title = "Xtream API URL"
+            setDefaultValue("http://172.16.29.34")
+            summary = "Enter the base URL for Xtream API"
+        }
+        screen.addPreference(xtreamUrlPref)
+
+        val xtreamUsernamePref = EditTextPreference(screen.context).apply {
+            key = "xtream_username"
+            title = "Xtream Username"
+            setDefaultValue("")
+            summary = "Enter the username"
+        }
+        screen.addPreference(xtreamUsernamePref)
+
+        val xtreamPasswordPref = EditTextPreference(screen.context).apply {
+            key = "xtream_password"
+            title = "Xtream Password"
+            setDefaultValue("")
+            summary = "Enter the password"
+        }
+        screen.addPreference(xtreamPasswordPref)
     }
 }
