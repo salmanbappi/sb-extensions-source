@@ -17,9 +17,11 @@ import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import extensions.utils.Source
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runBlocking
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -348,19 +350,31 @@ class Udvash : Source() {
                 indexLinks.add("/Content/Index?id=3")
             }
 
-            indexLinks.forEach { path ->
-                try {
-                    val url = if (path.startsWith("http")) path else "$baseUrl$path"
-                    val res = client.newCall(GET(url, headers)).execute()
-                    val d = Jsoup.parse(res.body?.string().orEmpty())
-                    d.select("a[href*=masterCourseId=]").forEach {
-                        val name = it.select("h3, .action-title").text().trim().ifEmpty { it.text().trim() }
-                        val courseUrl = it.attr("href")
-                        if (name.isNotEmpty() && courseUrl.isNotEmpty() && list.none { c -> c.url == courseUrl }) {
-                            list.add(Course(name, courseUrl))
-                        }
+            val fetchedCourses = runBlocking(Dispatchers.IO) {
+                indexLinks.map { path ->
+                    async {
+                        val localList = mutableListOf<Course>()
+                        try {
+                            val url = if (path.startsWith("http")) path else "$baseUrl$path"
+                            val res = client.newCall(GET(url, headers)).execute()
+                            val d = Jsoup.parse(res.body?.string().orEmpty())
+                            d.select("a[href*=masterCourseId=]").forEach {
+                                val name = it.select("h3, .action-title").text().trim().ifEmpty { it.text().trim() }
+                                val courseUrl = it.attr("href")
+                                if (name.isNotEmpty() && courseUrl.isNotEmpty()) {
+                                    localList.add(Course(name, courseUrl))
+                                }
+                            }
+                        } catch (e: Exception) {}
+                        localList
                     }
-                } catch (e: Exception) {}
+                }.awaitAll().flatten()
+            }
+
+            fetchedCourses.forEach { course ->
+                if (list.none { c -> c.url == course.url }) {
+                    list.add(course)
+                }
             }
 
             // Also check Dashboard directly just in case
