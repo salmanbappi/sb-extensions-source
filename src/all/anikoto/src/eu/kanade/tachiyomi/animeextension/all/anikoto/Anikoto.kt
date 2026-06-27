@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit
 class Anikoto : Source() {
 
     override val name = "Anikoto"
-    override val baseUrl = "https://anixtv.me"
+    override val baseUrl = "https://anikototv.to"
     override val lang = "all"
     override val supportsLatest = true
 
@@ -201,7 +201,7 @@ class Anikoto : Source() {
         }
 
         val epDoc = Jsoup.parse(ajaxJson.result)
-        val elements = epDoc.select("ul.ep-range a, .ep-range a, .range a")
+        val elements = epDoc.select("ul.ep-range a, .ep-range a, .range a, a[data-ids]")
         val episodes = elements.mapNotNull { element ->
             val num = element.attr("data-num")
             if (num.isEmpty()) return@mapNotNull null
@@ -296,8 +296,12 @@ class Anikoto : Source() {
                 logi("PATH A: parsed status=${pJson.status}, result HTML length = ${pJson.result.length}")
                 if (pJson.status == 200 && pJson.result.isNotEmpty()) {
                     val pDoc = Jsoup.parse(pJson.result)
-                    for (element in pDoc.select("div.servers > div.type, div.ani-server-wrapper > div.type")) {
-                        val dataType = element.attr("data-type")
+                    for (element in pDoc.select("div.servers > div.type, div.ani-server-wrapper > div.type, .server-type")) {
+                        var dataType = element.attr("data-type")
+                        if (dataType.isEmpty()) {
+                            // Fallback if structure is different
+                            dataType = "sub"
+                        }
                         val audioLabel = when (dataType) {
                             "dub" -> "DUB"
                             "sub" -> "SUB"
@@ -308,8 +312,9 @@ class Anikoto : Source() {
                             continue
                         }
 
-                        for (serverElement in element.select("li, .server")) {
-                            val linkId = serverElement.attr("data-link-id")
+                        for (serverElement in element.select("li[data-link-id], .server")) {
+                            var linkId = serverElement.attr("data-link-id")
+                            if (linkId.isEmpty()) linkId = serverElement.attr("data-id")
                             val serverName = serverElement.text().trim()
                             if (excludedServers.any { it.equals(serverName, true) }) {
                                 continue
@@ -566,7 +571,7 @@ class Anikoto : Source() {
                 ?: element.selectFirst(".ani-name > a")
                 ?: return@mapNotNull null
             val href = nameLink.attr("href")
-            val slug = href.substringAfter("/watch/", "").substringBefore("/ep-", "")
+            val slug = href.substringAfter("/watch/").substringBefore("/ep-")
             if (slug.isEmpty()) return@mapNotNull null
             SAnime.create().apply {
                 url = slug

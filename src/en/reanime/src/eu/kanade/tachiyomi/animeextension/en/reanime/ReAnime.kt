@@ -1,15 +1,15 @@
 package eu.kanade.tachiyomi.animeextension.en.reanime
 
 import android.util.Base64
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
-import androidx.preference.PreferenceScreen
 import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
@@ -18,7 +18,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
-import kotlin.getValue
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -37,17 +36,18 @@ import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import kotlin.getValue
 
 @Serializable
 data class SearchResponseDto(
-    val results: List<AnimeDto> = emptyList()
+    val results: List<AnimeDto> = emptyList(),
 )
 
 @Serializable
 data class AnimeDto(
     val anime_id: String,
     val title: TitleDto,
-    val cover_image: CoverImageDto
+    val cover_image: CoverImageDto,
 )
 
 @Serializable
@@ -55,38 +55,38 @@ data class TitleDto(
     val user_preferred: String? = null,
     val english: String? = null,
     val romaji: String? = null,
-    val native: String? = null
+    val native: String? = null,
 )
 
 @Serializable
 data class CoverImageDto(
     val extra_large: String? = null,
     val large: String? = null,
-    val medium: String? = null
+    val medium: String? = null,
 )
 
 @Serializable
 data class FlixResponseDto(
     val success: Boolean,
-    val servers: List<FlixServerDto> = emptyList()
+    val servers: List<FlixServerDto> = emptyList(),
 )
 
 @Serializable
 data class FlixServerDto(
     val serverName: String,
     val dataLink: String,
-    val dataType: String
+    val dataType: String,
 )
 
 @Serializable
 data class LatestResponseDto(
-    val data: List<AnimeDto> = emptyList()
+    val data: List<AnimeDto> = emptyList(),
 )
 
 @Serializable
 data class WatchPageResponseDto(
     val anime: DetailAnimeDto? = null,
-    val episode_links: List<FlixServerDto> = emptyList()
+    val episode_links: List<FlixServerDto> = emptyList(),
 )
 
 @Serializable
@@ -95,7 +95,7 @@ data class DetailAnimeDto(
     val status: String? = null,
     val genres: List<String> = emptyList(),
     val cover_image: CoverImageDto? = null,
-    val anilist: Int? = null
+    val anilist: Int? = null,
 )
 
 @Serializable
@@ -103,7 +103,7 @@ data class EpisodeDto(
     val episode_number: Float,
     val title: String? = null,
     val description: String? = null,
-    val thumbnail: String? = null
+    val thumbnail: String? = null,
 )
 
 class ReAnime : Source() {
@@ -131,9 +131,7 @@ class ReAnime : Source() {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return GET("$baseUrl/api/top/anime?period=week&limit=20", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/top/anime?period=week&limit=20", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val data = response.parseAs<LatestResponseDto>()
@@ -149,9 +147,7 @@ class ReAnime : Source() {
 
     // ============================== Latest ================================
 
-    override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/api/home/latest-aired?limit=20", headers)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/home/latest-aired?limit=20", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val data = response.parseAs<LatestResponseDto>()
@@ -317,7 +313,7 @@ class ReAnime : Source() {
                         val jsonObject = json.parseToJsonElement(tokenBody).jsonObject
                         val v = jsonObject[kField]?.jsonPrimitive?.content
                             ?: return@async emptyList()
-                        val T = jsonObject[pField]?.jsonPrimitive?.content
+                        val t = jsonObject[pField]?.jsonPrimitive?.content
                             ?: return@async emptyList()
 
                         // Dynamic keys resolution via container parsing
@@ -358,7 +354,7 @@ class ReAnime : Source() {
                             referer = server.dataLink,
                             masterHeaders = playHeaders,
                             videoHeaders = playHeaders,
-                            videoNameGen = { quality -> "${server.serverName} (${server.dataType}) - $quality" }
+                            videoNameGen = { quality -> "${server.serverName} (${server.dataType}) - $quality" },
                         )
                     } catch (e: Throwable) {
                         exceptions.add(e)
@@ -395,7 +391,7 @@ class ReAnime : Source() {
         val arrayName: String,
         val objectName: String,
         val tokenField: String,
-        val keyFrag2Field: String
+        val keyFrag2Field: String,
     )
 
     private fun resolveMappings(seed: String): Mappings {
@@ -412,7 +408,7 @@ class ReAnime : Source() {
             arrayName = "ad_${e.substring(32, 40)}",
             objectName = "od_${e.substring(40, 48)}",
             tokenField = "${e.substring(48, 64)}_${e.substring(56, 64)}",
-            keyFrag2Field = "${s.substring(0, 16)}_${s.substring(16, 24)}"
+            keyFrag2Field = "${s.substring(0, 16)}_${s.substring(16, 24)}",
         )
     }
 
@@ -479,8 +475,8 @@ class ReAnime : Source() {
                 { video ->
                     val index = order.indexOfFirst { video.videoTitle.contains(it) }
                     if (index == -1) order.size else index
-                }
-            )
+                },
+            ),
         )
     }
 

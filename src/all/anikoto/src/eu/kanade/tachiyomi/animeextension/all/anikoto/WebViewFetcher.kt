@@ -6,10 +6,10 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
+import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.util.Log
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
@@ -19,9 +19,9 @@ import java.util.concurrent.atomic.AtomicLong
 
 class WebViewFetcher(
     private val context: Context = Injekt.get<Application>(),
-    private val originUrl: String = "https://megaplay.buzz/"
+    private val originUrl: String = "https://megaplay.buzz/",
 ) {
-    private val TAG = "WebViewFetcher"
+    private val tag = "WebViewFetcher"
     private val mainHandler = Handler(Looper.getMainLooper())
     private val atomicId = AtomicLong(0)
     private val pendingRequests = ConcurrentHashMap<String, RequestState>()
@@ -63,7 +63,7 @@ class WebViewFetcher(
 
         @JavascriptInterface
         fun onError(id: String, error: String) {
-            Log.e(TAG, "JS error for request $id: $error")
+            Log.e(tag, "JS error for request $id: $error")
             val state = pendingRequests[id] ?: return
             state.error = error
             state.latch.countDown()
@@ -90,16 +90,16 @@ class WebViewFetcher(
                     wv.settings.blockNetworkImage = true
                     wv.webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
-                            Log.i(TAG, "origin page loaded: $url")
+                            Log.i(tag, "origin page loaded: $url")
                             webViewReady = true
                         }
                     }
                     wv.addJavascriptInterface(JSInterface(), "Android")
                     webView = wv
-                    Log.i(TAG, "loading origin: $originUrl")
+                    Log.i(tag, "loading origin: $originUrl")
                     wv.loadUrl(originUrl)
                 } catch (e: Exception) {
-                    Log.e(TAG, "failed to create WebView", e)
+                    Log.e(tag, "failed to create WebView", e)
                     webViewReady = true
                 }
             }
@@ -108,20 +108,17 @@ class WebViewFetcher(
                 Thread.sleep(200)
             }
             if (!webViewReady) {
-                Log.e(TAG, "timeout waiting for origin page load")
+                Log.e(tag, "timeout waiting for origin page load")
             }
         }
     }
 
-    private fun escapeJsString(s: String): String {
-        return s.replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-    }
+    private fun escapeJsString(s: String): String = s.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
 
-    private fun buildFetchBytesJs(id: String, url: String): String {
-        return """
+    private fun buildFetchBytesJs(id: String, url: String): String = """
             (async function() {
                 try {
                     const response = await fetch('${escapeJsString(url)}');
@@ -144,11 +141,9 @@ class WebViewFetcher(
                     Android.onBytesComplete('$id', bytes.length);
                 } catch(e) { Android.onError('$id', e.message); }
             })();
-        """.trimIndent()
-    }
+    """.trimIndent()
 
-    private fun buildFetchTextJs(id: String, url: String): String {
-        return """
+    private fun buildFetchTextJs(id: String, url: String): String = """
             (async function() {
                 try {
                     const response = await fetch('${escapeJsString(url)}');
@@ -157,11 +152,9 @@ class WebViewFetcher(
                     Android.onResult('$id', text);
                 } catch(e) { Android.onError('$id', e.message); }
             })();
-        """.trimIndent()
-    }
+    """.trimIndent()
 
-    private fun buildPostJsonJs(id: String, url: String, jsonBody: String): String {
-        return """
+    private fun buildPostJsonJs(id: String, url: String, jsonBody: String): String = """
             (async function() {
                 try {
                     const response = await fetch('${escapeJsString(url)}', {
@@ -174,8 +167,7 @@ class WebViewFetcher(
                     Android.onResult('$id', text);
                 } catch(e) { Android.onError('$id', e.message); }
             })();
-        """.trimIndent()
-    }
+    """.trimIndent()
 
     fun destroy() {
         webViewReady = false
