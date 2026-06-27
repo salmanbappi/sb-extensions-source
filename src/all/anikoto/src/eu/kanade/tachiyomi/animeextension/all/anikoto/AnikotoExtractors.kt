@@ -243,18 +243,6 @@ class AnikotoExtractors(
                 else -> audioType.uppercase()
             }
 
-            // --- VERIFICATION: Test segment fetch to verify route is actually alive ---
-            val firstSeg = variantDataList.first().segments.firstOrNull()?.url
-            if (firstSeg != null) {
-                logi("resolveVidTube: [5/5] testing segment to verify route...")
-                val isAlive = testSegment(firstSeg, seg)
-                if (!isAlive) {
-                    loge("resolveVidTube: segment test FAILED. Route is dead.")
-                    return null
-                }
-                logi("resolveVidTube: segment test SUCCESS.")
-            }
-
             logi("resolveVidTube: SUCCESS hoster=$hosterName audio=$audioLabel variants=${variantDataList.size} subs=${subtitles.size} referer=https://$host/")
             LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, subtitles, seg)
         } catch (e: Exception) {
@@ -321,18 +309,6 @@ class AnikotoExtractors(
                 }
 
                 val audioLabel = if (audioType == "sub") "H-SUB" else "A-DUB"
-
-                // --- VERIFICATION: Test segment fetch to verify route is actually alive ---
-                val firstSeg = variantDataList.first().segments.firstOrNull()?.url
-                if (firstSeg != null) {
-                    logd("resolveKiwi: [4/4] testing segment to verify route...")
-                    val isAlive = testSegment(firstSeg, headers)
-                    if (!isAlive) {
-                        loge("resolveKiwi: segment test FAILED. Route is dead.")
-                        return null
-                    }
-                    logi("resolveKiwi: segment test SUCCESS.")
-                }
 
                 logi("resolveKiwi: SUCCESS hoster=$hosterName audio=$audioLabel variants=${variantDataList.size} referer=https://vibeplayer.site/")
                 LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, emptyList(), headers)
