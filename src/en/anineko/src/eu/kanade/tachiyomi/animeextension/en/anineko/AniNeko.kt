@@ -232,9 +232,13 @@ class AniNeko : Source() {
                     val iframeHtml = client.newCall(GET(iframeUrl, headers)).execute().body.string()
                     val m3u8Url = vibeRegex.find(iframeHtml)?.groupValues?.get(1)
                     if (m3u8Url != null) {
-                        val proxiedM3u8 = localProxy.getProxyUrl(m3u8Url, headers)
+                        val finalM3u8 = if (iframeUrl.contains("bibiemb.xyz")) {
+                            m3u8Url
+                        } else {
+                            localProxy.getProxyUrl(m3u8Url, headers)
+                        }
                         playlistUtils.extractFromHls(
-                            proxiedM3u8,
+                            finalM3u8,
                             referer = iframeUrl,
                             videoNameGen = { quality -> "$serverName ($versionType) - $quality" },
                             subtitleList = subtitleTracks,
