@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
@@ -353,7 +354,9 @@ class AniNeko : Source() {
         fun isDefault() = state == 0
     }
 
-    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { AnimeFilter.CheckBox(it.first, false) }) {
+    private class CheckBoxVal(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
+
+    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first, false) }) {
         fun getCheckedUriParts(): List<String> = state.mapIndexedNotNull { index, checkbox ->
             if (checkbox.state) vals[index].second else null
         }
