@@ -20,13 +20,13 @@ import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
-import kotlin.math.min
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
+import kotlin.math.min
 
 class AniNeko : Source() {
 
