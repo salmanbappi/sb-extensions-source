@@ -39,17 +39,13 @@ class AniNeko : Source() {
 
     // ============================== Popular / Latest ==============================
 
-    override fun popularAnimeRequest(page: Int): Request =
-        GET("$baseUrl/browser?page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/browser?page=$page", headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage =
-        searchAnimeParse(response)
+    override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
 
-    override fun latestUpdatesRequest(page: Int): Request =
-        GET("$baseUrl/browser?sort=recently_updated&page=$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/browser?sort=recently_updated&page=$page", headers)
 
-    override fun latestUpdatesParse(response: Response): AnimesPage =
-        searchAnimeParse(response)
+    override fun latestUpdatesParse(response: Response): AnimesPage = searchAnimeParse(response)
 
     // ============================== Search ==============================
 
@@ -68,31 +64,37 @@ class AniNeko : Source() {
                         urlBuilder.addQueryParameter("genre[]", it)
                     }
                 }
+
                 is TypeFilter -> {
                     filter.getCheckedUriParts().forEach {
                         urlBuilder.addQueryParameter("type[]", it)
                     }
                 }
+
                 is StatusFilter -> {
                     filter.getCheckedUriParts().forEach {
                         urlBuilder.addQueryParameter("status[]", it)
                     }
                 }
+
                 is LanguageFilter -> {
                     filter.getCheckedUriParts().forEach {
                         urlBuilder.addQueryParameter("language[]", it)
                     }
                 }
+
                 is YearFilter -> {
                     filter.getCheckedUriParts().forEach {
                         urlBuilder.addQueryParameter("year[]", it)
                     }
                 }
+
                 is SortFilter -> {
                     if (!filter.isDefault()) {
                         urlBuilder.addQueryParameter("sort", filter.toUriPart())
                     }
                 }
+
                 else -> {}
             }
         }
@@ -103,13 +105,13 @@ class AniNeko : Source() {
     override fun searchAnimeParse(response: Response): AnimesPage {
         val document = response.useAsJsoup()
         val cards = document.select("article.nv-anime-card.nv-browse-card")
-        
+
         val animes = cards.map { card ->
             SAnime.create().apply {
                 val linkEl = card.selectFirst("a.nv-anime-thumb") ?: card.selectFirst("a")!!
                 url = linkEl.attr("href")
-                title = card.selectFirst("h3.nv-anime-title a")?.text() 
-                    ?: linkEl.selectFirst("img")?.attr("alt") 
+                title = card.selectFirst("h3.nv-anime-title a")?.text()
+                    ?: linkEl.selectFirst("img")?.attr("alt")
                     ?: ""
                 thumbnail_url = linkEl.selectFirst("img")?.attr("src")
             }
@@ -121,8 +123,7 @@ class AniNeko : Source() {
 
     // ============================== Anime Details ==============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request =
-        GET("$baseUrl${anime.url}", headers)
+    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.useAsJsoup()
@@ -137,7 +138,7 @@ class AniNeko : Source() {
             }
 
             genre = document.select("div.nv-info-genres span").joinToString { it.text() }
-            
+
             val statusStr = document.selectFirst("div.nv-info-list div:contains(Status) strong, div.nv-info-stats div:contains(Status) strong")?.text() ?: ""
             status = when {
                 statusStr.contains("Currently Airing", ignoreCase = true) -> SAnime.ONGOING
@@ -159,21 +160,20 @@ class AniNeko : Source() {
 
     // ============================== Episode List ==============================
 
-    override fun episodeListRequest(anime: SAnime): Request =
-        GET("$baseUrl${anime.url}", headers)
+    override fun episodeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.useAsJsoup()
         val episodes = document.select("div.nv-info-episode-grid article.nv-info-episode-item")
-        
+
         val list = episodes.map { element ->
             SEpisode.create().apply {
                 val linkEl = element.selectFirst("a.nv-info-episode-main") ?: element.selectFirst("a")!!
                 url = linkEl.attr("href")
-                
+
                 val titleEl = linkEl.selectFirst("strong")
                 name = titleEl?.text() ?: linkEl.text()
-                
+
                 episode_number = name.substringAfter("Episode").trim().toFloatOrNull() ?: 1.0f
             }
         }
@@ -183,8 +183,7 @@ class AniNeko : Source() {
 
     // ============================== Video List ==============================
 
-    override fun videoListRequest(episode: SEpisode): Request =
-        GET("$baseUrl${episode.url}", headers)
+    override fun videoListRequest(episode: SEpisode): Request = GET("$baseUrl${episode.url}", headers)
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
@@ -230,12 +229,13 @@ class AniNeko : Source() {
                             m3u8Url,
                             referer = iframeUrl,
                             videoNameGen = { quality -> "$serverName ($versionType) - $quality" },
-                            subtitleList = subtitleTracks
+                            subtitleList = subtitleTracks,
                         )
                     } else {
                         emptyList()
                     }
                 }
+
                 iframeUrl.contains("otakuhg.site") || iframeUrl.contains("otakuvid.online") -> {
                     val extractor = VidHideExtractor(client, headers)
                     extractor.videosFromUrl(iframeUrl) { quality -> "$serverName ($versionType) - $quality" }.map { video ->
@@ -243,10 +243,11 @@ class AniNeko : Source() {
                             videoUrl = video.videoUrl,
                             videoTitle = video.videoTitle,
                             headers = video.headers,
-                            subtitleTracks = video.subtitleTracks + subtitleTracks
+                            subtitleTracks = video.subtitleTracks + subtitleTracks,
                         )
                     }
                 }
+
                 iframeUrl.contains("playmogo.com") || iframeUrl.contains("dood") -> {
                     val extractor = DoodExtractor(client)
                     extractor.videosFromUrl(iframeUrl, quality = "$serverName ($versionType)").map { video ->
@@ -254,10 +255,11 @@ class AniNeko : Source() {
                             videoUrl = video.videoUrl,
                             videoTitle = video.videoTitle,
                             headers = video.headers,
-                            subtitleTracks = video.subtitleTracks + subtitleTracks
+                            subtitleTracks = video.subtitleTracks + subtitleTracks,
                         )
                     }
                 }
+
                 else -> emptyList()
             }
         }
@@ -275,13 +277,13 @@ class AniNeko : Source() {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
         val type = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT)!!
         val host = preferences.getString(PREF_HOST_KEY, PREF_HOST_DEFAULT)!!
-        
+
         return this.sortedWith(
             compareBy(
                 { !it.videoTitle.contains(host, ignoreCase = true) },
                 { !it.videoTitle.contains(quality, ignoreCase = true) },
-                { !it.videoTitle.contains(type, ignoreCase = true) }
-            )
+                { !it.videoTitle.contains(type, ignoreCase = true) },
+            ),
         )
     }
 
@@ -346,18 +348,14 @@ class AniNeko : Source() {
 
     // ============================== Filters ==============================
 
-    open class UriPartFilter(displayName: String, private val vals: Array<Pair<String, String>>) :
-        AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
+    open class UriPartFilter(displayName: String, private val vals: Array<Pair<String, String>>) : AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
         fun toUriPart() = vals[state].second
         fun isDefault() = state == 0
     }
 
-    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) :
-        AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { AnimeFilter.CheckBox(it.first, false) }) {
-        fun getCheckedUriParts(): List<String> {
-            return state.mapIndexedNotNull { index, checkbox ->
-                if (checkbox.state) vals[index].second else null
-            }
+    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { AnimeFilter.CheckBox(it.first, false) }) {
+        fun getCheckedUriParts(): List<String> = state.mapIndexedNotNull { index, checkbox ->
+            if (checkbox.state) vals[index].second else null
         }
     }
 
@@ -379,7 +377,7 @@ class AniNeko : Source() {
         AnimeFilter.Separator(),
         LanguageFilter(),
         AnimeFilter.Separator(),
-        YearFilter()
+        YearFilter(),
     )
 
     companion object {
@@ -444,7 +442,7 @@ class AniNeko : Source() {
             Pair("Super Power", "super-power"),
             Pair("Supernatural", "supernatural"),
             Pair("Thriller", "thriller"),
-            Pair("Vampire", "vampire")
+            Pair("Vampire", "vampire"),
         )
 
         private val TYPES = arrayOf(
@@ -454,18 +452,18 @@ class AniNeko : Source() {
             Pair("ONA", "4"),
             Pair("Special", "5"),
             Pair("Music", "6"),
-            Pair("TV_SHORT", "7")
+            Pair("TV_SHORT", "7"),
         )
 
         private val STATUSES = arrayOf(
             Pair("Ongoing", "Ongoing"),
             Pair("Completed", "Completed"),
-            Pair("Upcoming", "info")
+            Pair("Upcoming", "info"),
         )
 
         private val LANGUAGES = arrayOf(
             Pair("Subbed", "sub"),
-            Pair("Dubbed", "dub")
+            Pair("Dubbed", "dub"),
         )
 
         private val YEARS = (2026 downTo 2000).map { Pair(it.toString(), it.toString()) }.toTypedArray()
@@ -474,7 +472,7 @@ class AniNeko : Source() {
             Pair("Latest Update", "recently_updated"),
             Pair("Release Date", "release_date"),
             Pair("Recently Added", "recently_added"),
-            Pair("Title A-Z", "title_az")
+            Pair("Title A-Z", "title_az"),
         )
     }
 }
