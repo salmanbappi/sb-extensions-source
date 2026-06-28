@@ -3,9 +3,6 @@ package eu.kanade.tachiyomi.animeextension.en.anineko
 import android.net.Uri
 import android.util.Base64
 import androidx.preference.PreferenceScreen
-import java.net.ServerSocket
-import java.net.Socket
-import java.util.concurrent.Executors
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -26,6 +23,9 @@ import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.concurrent.Executors
 
 class AniNeko : Source() {
 
@@ -626,7 +626,7 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
         } else {
             out.write("Content-Type: video/mp2t\r\n".toByteArray())
             out.write("Connection: close\r\n\r\n".toByteArray())
-            
+
             val rawBytes = response.body.bytes()
             val stripped = stripPngHeader(rawBytes)
             out.write(stripped)
