@@ -199,7 +199,7 @@ class AniNeko : Source() {
         val buttons = document.select("button.server-video")
 
         return buttons.map { button ->
-            val serverName = button.text().substringBefore("Sub").substringBefore("Dub").trim()
+            val serverName = button.ownText().trim()
             Hoster(
                 hosterName = serverName,
                 hosterUrl = episode.url,
@@ -218,7 +218,7 @@ class AniNeko : Source() {
 
         val targetServerName = hoster.hosterName
         val matchedButtons = buttons.filter { button ->
-            val serverName = button.text().substringBefore("Sub").substringBefore("Dub").trim()
+            val serverName = button.ownText().trim()
             serverName.equals(targetServerName, ignoreCase = true)
         }
 
