@@ -6,6 +6,7 @@ import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
@@ -189,22 +190,42 @@ class AniNeko : Source() {
         return list.reversed()
     }
 
-    // ============================== Video List ==============================
+    // ============================== Video / Hoster List ==============================
 
-    override fun videoListRequest(episode: SEpisode): Request = GET("$baseUrl${episode.url}", headers)
-
-    override fun videoListParse(response: Response): List<Video> {
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val request = GET("$baseUrl${episode.url}", headers)
+        val response = client.newCall(request).execute()
         val document = response.useAsJsoup()
         val buttons = document.select("button.server-video")
 
-        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
-        val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
+        return buttons.map { button ->
+            val serverName = button.text().substringBefore("Sub").substringBefore("Dub").trim()
+            Hoster(
+                hosterName = serverName,
+                hosterUrl = episode.url,
+            )
+        }.distinctBy { it.hosterName }
+    }
 
-        val videos = buttons.parallelCatchingFlatMapBlocking { button ->
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val watchPageUrl = hoster.hosterUrl
+        if (watchPageUrl.isBlank()) return emptyList()
+
+        val request = GET("$baseUrl$watchPageUrl", headers)
+        val response = client.newCall(request).execute()
+        val document = response.useAsJsoup()
+        val buttons = document.select("button.server-video")
+
+        val targetServerName = hoster.hosterName
+        val matchedButtons = buttons.filter { button ->
+            val serverName = button.text().substringBefore("Sub").substringBefore("Dub").trim()
+            serverName.equals(targetServerName, ignoreCase = true)
+        }
+
+        val videos = matchedButtons.parallelCatchingFlatMapBlocking { button ->
             val iframeUrl = button.attr("data-video")
             if (iframeUrl.isBlank()) return@parallelCatchingFlatMapBlocking emptyList<Video>()
 
-            val serverName = button.text().substringBefore("Sub").substringBefore("Dub").trim()
             val rawType = button.selectFirst("span")?.text() ?: ""
             val versionType = when {
                 rawType.contains("Sort Sub", ignoreCase = true) -> "Soft Sub"
@@ -241,7 +262,7 @@ class AniNeko : Source() {
                         playlistUtils.extractFromHls(
                             finalM3u8,
                             referer = iframeUrl,
-                            videoNameGen = { quality -> "$serverName ($versionType) - $quality" },
+                            videoNameGen = { quality -> "$versionType - $quality" },
                             subtitleList = subtitleTracks,
                         )
                     } else {
@@ -251,7 +272,7 @@ class AniNeko : Source() {
 
                 iframeUrl.contains("otakuhg.site") || iframeUrl.contains("otakuvid.online") -> {
                     val extractor = VidHideExtractor(client, headers)
-                    extractor.videosFromUrl(iframeUrl) { quality -> "$serverName ($versionType) - $quality" }.map { video ->
+                    extractor.videosFromUrl(iframeUrl) { quality -> "$versionType - $quality" }.map { video ->
                         Video(
                             videoUrl = video.videoUrl,
                             videoTitle = video.videoTitle,
@@ -263,7 +284,7 @@ class AniNeko : Source() {
 
                 iframeUrl.contains("playmogo.com") || iframeUrl.contains("dood") -> {
                     val extractor = DoodExtractor(client)
-                    extractor.videosFromUrl(iframeUrl, quality = "$serverName ($versionType)").map { video ->
+                    extractor.videosFromUrl(iframeUrl, quality = versionType).map { video ->
                         Video(
                             videoUrl = video.videoUrl,
                             videoTitle = video.videoTitle,
@@ -276,6 +297,9 @@ class AniNeko : Source() {
                 else -> emptyList()
             }
         }
+
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+        val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
 
         return videos.filter { video ->
             val matchesServer = excludedServers.any { video.videoTitle.contains(it, ignoreCase = true) }
