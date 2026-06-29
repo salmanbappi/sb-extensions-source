@@ -476,12 +476,30 @@ class CineplexBD : Source() {
                                         ?: epJson["overview"]?.jsonPrimitive?.content
                                 } catch (e: Exception) {}
 
+                                // Fetch upload date from player page
+                                var epDate = 0L
+                                try {
+                                    val playerUrl = if (epPath.startsWith("http")) epPath else "$baseUrl/${epPath.trimStart('/')}"
+                                    val playerResponse = client.newCall(GET(playerUrl, headers)).execute()
+                                    val playerHtml = playerResponse.body.string()
+                                    playerResponse.close()
+                                    val playerDoc = Jsoup.parse(playerHtml)
+                                    val dateSpan = playerDoc.selectFirst("span:contains(Uploaded:)")
+                                    if (dateSpan != null) {
+                                        val dateStr = dateSpan.text().substringAfter("Uploaded:").trim()
+                                        epDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(dateStr)?.time ?: 0L
+                                    }
+                                } catch (e: Exception) {}
+
                                 SEpisode.create().apply {
                                     name = if (seasons.size > 1) "S$season $epName" else epName
                                     episode_number = epNum
                                     this.url = epPath
                                     if (showStats && epViews != null) {
                                         scanlator = epViews
+                                    }
+                                    if (epDate != 0L) {
+                                        date_upload = epDate
                                     }
                                     if (!thumbnail.isNullOrBlank()) {
                                         preview_url = thumbnail
@@ -519,12 +537,30 @@ class CineplexBD : Source() {
 
                                 val epViews = if (showStats) card.selectFirst(".meta-views")?.text()?.trim() else null
 
+                                // Fetch upload date from player page
+                                var epDate = 0L
+                                try {
+                                    val playerUrl = if (epPath.startsWith("http")) epPath else "$baseUrl/${epPath.trimStart('/')}"
+                                    val playerResponse = client.newCall(GET(playerUrl, headers)).execute()
+                                    val playerHtml = playerResponse.body.string()
+                                    playerResponse.close()
+                                    val playerDoc = Jsoup.parse(playerHtml)
+                                    val dateSpan = playerDoc.selectFirst("span:contains(Uploaded:)")
+                                    if (dateSpan != null) {
+                                        val dateStr = dateSpan.text().substringAfter("Uploaded:").trim()
+                                        epDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(dateStr)?.time ?: 0L
+                                    }
+                                } catch (e: Exception) {}
+
                                 SEpisode.create().apply {
                                     name = if (seasons.size > 1) "S$season $epName" else epName
                                     episode_number = epNum
                                     this.url = epPath
                                     if (showStats && epViews != null) {
                                         scanlator = epViews
+                                    }
+                                    if (epDate != 0L) {
+                                        date_upload = epDate
                                     }
                                     if (!thumbnail.isNullOrBlank()) {
                                         preview_url = thumbnail
