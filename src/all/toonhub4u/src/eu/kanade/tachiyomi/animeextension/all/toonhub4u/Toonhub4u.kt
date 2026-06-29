@@ -94,24 +94,28 @@ class Toonhub4u :
                         break
                     }
                 }
+
                 is GenreFilter -> {
                     if (filter.state > 0) {
                         path = genrePaths[filter.state]
                         break
                     }
                 }
+
                 is LanguageFilter -> {
                     if (filter.state > 0) {
                         path = languagePaths[filter.state]
                         break
                     }
                 }
+
                 is QualityFilter -> {
                     if (filter.state > 0) {
                         path = qualityPaths[filter.state]
                         break
                     }
                 }
+
                 is OttFilter -> {
                     if (filter.state > 0) {
                         path = ottPaths[filter.state]
@@ -345,31 +349,32 @@ class Toonhub4u :
         OttFilter(),
     )
 
-    private class CategoryFilter : AnimeFilter.Select<String>(
-        "Category/Type",
-        arrayOf(
-            "All",
-            "Animated",
-            "Animated Series",
-            "Animated Movies",
-            "Anime Series",
-            "Anime Movies",
-            "Cartoon Network",
-            "Disney XD India",
-            "Disney",
-            "Disney Channel India",
-            "Hungama",
-            "Just Kids Sahara TV",
-            "Marvel HQ",
-            "Zee Cafe",
-            "Sony Yay",
-            "Nick India",
-            "Sonic Nickelodeon",
-            "ETV Bal Bharat",
-            "Big Magic",
-            "Kids Zone Plus",
-        ),
-    )
+    private class CategoryFilter :
+        AnimeFilter.Select<String>(
+            "Category/Type",
+            arrayOf(
+                "All",
+                "Animated",
+                "Animated Series",
+                "Animated Movies",
+                "Anime Series",
+                "Anime Movies",
+                "Cartoon Network",
+                "Disney XD India",
+                "Disney",
+                "Disney Channel India",
+                "Hungama",
+                "Just Kids Sahara TV",
+                "Marvel HQ",
+                "Zee Cafe",
+                "Sony Yay",
+                "Nick India",
+                "Sonic Nickelodeon",
+                "ETV Bal Bharat",
+                "Big Magic",
+                "Kids Zone Plus",
+            ),
+        )
 
     private val categoryPaths = arrayOf(
         "",
@@ -394,31 +399,32 @@ class Toonhub4u :
         "category/channel-list/kinds-zone-pluse",
     )
 
-    private class GenreFilter : AnimeFilter.Select<String>(
-        "Genre",
-        arrayOf(
-            "All",
-            "Action",
-            "Adventure",
-            "Family",
-            "Ecchi",
-            "Shounen",
-            "Supernatural",
-            "Romance",
-            "Sci-Fi",
-            "Thriller",
-            "Fantasy",
-            "Comedy",
-            "Drama",
-            "Horror",
-            "Magical Animated",
-            "Martial Arts",
-            "Mystery",
-            "Harem",
-            "18+",
-            "Hentai",
-        ),
-    )
+    private class GenreFilter :
+        AnimeFilter.Select<String>(
+            "Genre",
+            arrayOf(
+                "All",
+                "Action",
+                "Adventure",
+                "Family",
+                "Ecchi",
+                "Shounen",
+                "Supernatural",
+                "Romance",
+                "Sci-Fi",
+                "Thriller",
+                "Fantasy",
+                "Comedy",
+                "Drama",
+                "Horror",
+                "Magical Animated",
+                "Martial Arts",
+                "Mystery",
+                "Harem",
+                "18+",
+                "Hentai",
+            ),
+        )
 
     private val genrePaths = arrayOf(
         "",
@@ -443,23 +449,24 @@ class Toonhub4u :
         "category/gener/hentai",
     )
 
-    private class LanguageFilter : AnimeFilter.Select<String>(
-        "Language",
-        arrayOf(
-            "All",
-            "Hindi",
-            "Tamil",
-            "Telugu",
-            "Malayalam",
-            "Kannada",
-            "Urdu Dub",
-            "Hindi Sub",
-            "Fan Dub",
-            "English",
-            "Dual Audio",
-            "Multi Audio",
-        ),
-    )
+    private class LanguageFilter :
+        AnimeFilter.Select<String>(
+            "Language",
+            arrayOf(
+                "All",
+                "Hindi",
+                "Tamil",
+                "Telugu",
+                "Malayalam",
+                "Kannada",
+                "Urdu Dub",
+                "Hindi Sub",
+                "Fan Dub",
+                "English",
+                "Dual Audio",
+                "Multi Audio",
+            ),
+        )
 
     private val languagePaths = arrayOf(
         "",
@@ -476,17 +483,18 @@ class Toonhub4u :
         "category/language/multi-audio",
     )
 
-    private class QualityFilter : AnimeFilter.Select<String>(
-        "Quality",
-        arrayOf(
-            "All",
-            "1080p",
-            "720p",
-            "480p",
-            "576p",
-            "360p",
-        ),
-    )
+    private class QualityFilter :
+        AnimeFilter.Select<String>(
+            "Quality",
+            arrayOf(
+                "All",
+                "1080p",
+                "720p",
+                "480p",
+                "576p",
+                "360p",
+            ),
+        )
 
     private val qualityPaths = arrayOf(
         "",
@@ -497,21 +505,22 @@ class Toonhub4u :
         "category/quality/360p",
     )
 
-    private class OttFilter : AnimeFilter.Select<String>(
-        "OTT Network",
-        arrayOf(
-            "All",
-            "Crunchyroll",
-            "AnimeTimes",
-            "Ani-One India",
-            "Amazon Prime Video",
-            "Netflix",
-            "Jio Cinema",
-            "Zee5",
-            "Apple TV",
-            "Hotstar",
-        ),
-    )
+    private class OttFilter :
+        AnimeFilter.Select<String>(
+            "OTT Network",
+            arrayOf(
+                "All",
+                "Crunchyroll",
+                "AnimeTimes",
+                "Ani-One India",
+                "Amazon Prime Video",
+                "Netflix",
+                "Jio Cinema",
+                "Zee5",
+                "Apple TV",
+                "Hotstar",
+            ),
+        )
 
     private val ottPaths = arrayOf(
         "",
