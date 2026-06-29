@@ -855,10 +855,9 @@ class FourKHDHub : Source() {
 
         screen.addSwitchPreference(
             key = PREF_SHOW_THUMBNAILS_KEY,
+            default = true,
             title = "Show episode thumbnails",
-            summary = "Fetch and display images in the episode list from TMDB.",
-            defaultValue = true,
-            preferences = preferences
+            summary = "Fetch and display images in the episode list from TMDB."
         )
     }
 
