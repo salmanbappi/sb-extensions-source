@@ -45,7 +45,7 @@ class Toonhub4u :
 
     override val name = "Toonhub4u"
     override val baseUrl = "https://toonhub4u.co"
-    override val lang = "multi"
+    override val lang = "all"
     override val supportsLatest = true
     override val id: Long = 5182749372810482937L
 
@@ -95,6 +95,10 @@ class Toonhub4u :
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
+
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, headers)
+
+    override fun episodeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
