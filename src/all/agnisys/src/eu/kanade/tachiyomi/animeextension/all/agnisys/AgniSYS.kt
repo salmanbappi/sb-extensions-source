@@ -106,10 +106,13 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     val taglines: List<String>? = null,
     val criticRating: Float? = null,
     val productionLocations: List<String>? = null,
+    val people: List<PersonDto>? = null,
 ) {
     @Serializable data class ImageDto(val primary: String? = null)
 
     @Serializable data class StudioDto(val name: String)
+
+    @Serializable data class PersonDto(val name: String, val type: String)
 
     fun toSAnime(baseUrl: String, userId: String): SAnime = SAnime.create().apply {
         url = "$baseUrl/Users/$userId/Items/$id"
@@ -124,6 +127,10 @@ object ItemTypeSerializer : KSerializer<ItemType> {
             communityRating?.let { append("⭐ Rating: ${"%.1f".format(it)}\n") }
             criticRating?.let { append("🍅 Critic Rating: ${"%.1f".format(it)}\n") }
             officialRating?.let { append("🔞 Rating: $it\n") }
+            val studioNames = studios?.map { it.name }?.filter { it.isNotBlank() }
+            if (!studioNames.isNullOrEmpty()) {
+                append("🏢 Studio: ${studioNames.joinToString(", ")}\n")
+            }
             val location = productionLocations?.firstOrNull()
             if (!location.isNullOrBlank()) {
                 append("🌐 Country: $location\n")
@@ -196,7 +203,10 @@ object ItemTypeSerializer : KSerializer<ItemType> {
             }
         }.trim()
         genre = genres?.joinToString(", ")
-        author = studios?.joinToString(", ") { it.name }
+        val directors = people?.filter { it.type.equals("Director", ignoreCase = true) }?.map { it.name }
+        val writers = people?.filter { it.type.equals("Writer", ignoreCase = true) }?.map { it.name }
+        author = directors?.takeIf { it.isNotEmpty() }?.joinToString(", ")
+        artist = writers?.takeIf { it.isNotEmpty() }?.joinToString(", ")
         status = SAnime.COMPLETED
     }
 
@@ -496,7 +506,7 @@ class AgniSYS :
     // ── Details ────────────────────────────────────────────────────────────
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val fields = "Genres,Studios,Overview,ProductionYear,CommunityRating,OfficialRating,MediaSources,Tags,Taglines,CriticRating,ProductionLocations"
+        val fields = "Genres,Studios,Overview,ProductionYear,CommunityRating,OfficialRating,MediaSources,Tags,Taglines,CriticRating,ProductionLocations,People"
         val url = "${anime.url}?Fields=$fields"
         val item = client.newCall(GET(url)).await().parseAs<ItemDto>(json)
         return item.toSAnime(baseUrl, userId)
