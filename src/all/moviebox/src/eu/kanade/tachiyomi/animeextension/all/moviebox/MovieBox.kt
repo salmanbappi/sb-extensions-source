@@ -475,7 +475,8 @@ class MovieBox : Source() {
                         name = metaEp?.name?.let { "Season $seNum - Episode $epNum - $it" } ?: "Season $seNum - Episode $epNum"
                         episode_number = epNum.toFloat()
                         url = "$seNum|$epNum|$idsString|$detailPath" + if (!token.isNullOrBlank()) "|$token" else ""
-                        date_upload = System.currentTimeMillis()
+                        val date = parseDate(metaEp?.released)
+                        date_upload = if (date > 0L) date else System.currentTimeMillis()
                         if (!metaEp?.overview.isNullOrBlank()) {
                             summary = metaEp.overview
                         }
@@ -498,6 +499,29 @@ class MovieBox : Source() {
                     date_upload = System.currentTimeMillis()
                 },
             )
+        }
+    }
+
+    private fun parseDate(dateStr: String?): Long {
+        if (dateStr.isNullOrBlank()) return 0L
+        return try {
+            java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }.parse(dateStr)?.time ?: 0L
+        } catch (_: Exception) {
+            try {
+                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
+                    timeZone = java.util.TimeZone.getTimeZone("UTC")
+                }.parse(dateStr)?.time ?: 0L
+            } catch (_: Exception) {
+                try {
+                    java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply {
+                        timeZone = java.util.TimeZone.getTimeZone("UTC")
+                    }.parse(dateStr)?.time ?: 0L
+                } catch (_: Exception) {
+                    0L
+                }
+            }
         }
     }
 
@@ -541,7 +565,8 @@ class MovieBox : Source() {
                             val episode = v["number"]?.jsonPrimitive?.intOrNull ?: v["episode"]?.jsonPrimitive?.intOrNull ?: 1
                             val overview = v["overview"]?.str ?: v["description"]?.str
                             val thumbnail = v["thumbnail"]?.str
-                            episodesList.add(CinemetaEpisode(season, episode, name, overview, thumbnail))
+                            val released = v["released"]?.str ?: v["firstAired"]?.str
+                            episodesList.add(CinemetaEpisode(season, episode, name, overview, thumbnail, released))
                         }
                         return Pair(description, episodesList)
                     }
@@ -559,6 +584,7 @@ class MovieBox : Source() {
         val name: String?,
         val overview: String?,
         val thumbnail: String?,
+        val released: String?
     )
 
     override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl, headersBuilder().add("X-Tachiyomi-Episode-Url", episode.url).build())
