@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.buzzheavierextractor.BuzzheavierExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
@@ -252,7 +253,7 @@ class Toonhub4u :
                             }
 
                             friendlyName.contains("Vidhide", ignoreCase = true) || friendlyName.contains("Animezia", ignoreCase = true) || friendlyName.contains("StreamHG", ignoreCase = true) || friendlyName.contains("EarnVids", ignoreCase = true) -> {
-                                videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(fullUrl, "VidHide"))
+                                videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(fullUrl) { "VidHide - $it" })
                             }
 
                             friendlyName.equals("Buzzheavier", ignoreCase = true) -> {
