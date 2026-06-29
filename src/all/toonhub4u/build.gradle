@@ -1,32 +1,10 @@
 ext {
     extName = 'Toonhub4u'
     extClass = '.Toonhub4u'
-    extVersionCode = 2
+    extVersionCode = 1
 }
 
 apply from: "$rootDir/common.gradle"
-
-android {
-    defaultConfig {
-        manifestPlaceholders.appName = "Toonhub4u"
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlin {
-        jvmToolchain(17)
-    }
-}
-
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-    }
-}
-
 
 dependencies {
     implementation(project(':lib:filemoon-extractor'))
@@ -34,5 +12,3 @@ dependencies {
     implementation(project(':lib:vidhide-extractor'))
     implementation(project(':lib:buzzheavier-extractor'))
 }
-
-

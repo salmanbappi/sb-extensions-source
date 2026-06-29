@@ -3,7 +3,7 @@
 android-sdk-min = "21"
 android-sdk-compile = "34"
 android-sdk-target = "34"
-java = "11"
+java = "17"
 
 [plugins]
 android-base = { id = "kei.plugins.android.base" }
