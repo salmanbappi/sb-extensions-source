@@ -122,6 +122,7 @@ class Toonhub4u :
                         break
                     }
                 }
+                else -> {}
             }
         }
         if (path.isNotBlank()) {
