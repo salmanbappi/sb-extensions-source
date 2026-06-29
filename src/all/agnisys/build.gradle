@@ -1,7 +1,7 @@
 ext {
     extName = 'AgniSYS'
     extClass = '.AgniSYS'
-    extVersionCode = 11005
+    extVersionCode = 11006
     isNsfw = false
 }
 

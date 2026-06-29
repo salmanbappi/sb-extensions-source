@@ -102,6 +102,10 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     val dateCreated: String? = null,
     val mediaSources: List<MediaDto>? = null,
     val officialRating: String? = null,
+    val tags: List<String>? = null,
+    val taglines: List<String>? = null,
+    val criticRating: Float? = null,
+    val productionLocations: List<String>? = null,
 ) {
     @Serializable data class ImageDto(val primary: String? = null)
 
@@ -118,7 +122,78 @@ object ItemTypeSerializer : KSerializer<ItemType> {
             }
             productionYear?.let { append("📅 Year: $it\n") }
             communityRating?.let { append("⭐ Rating: ${"%.1f".format(it)}\n") }
+            criticRating?.let { append("🍅 Critic Rating: ${"%.1f".format(it)}\n") }
             officialRating?.let { append("🔞 Rating: $it\n") }
+            val location = productionLocations?.firstOrNull()
+            if (!location.isNullOrBlank()) {
+                append("🌐 Country: $location\n")
+            }
+            val mediaSource = mediaSources?.firstOrNull()
+            if (mediaSource != null) {
+                mediaSource.container?.let { append("📦 Container: ${it.uppercase(Locale.ENGLISH)}\n") }
+                val streams = mediaSource.mediaStreams
+                if (streams != null) {
+                    val videoStreams = streams.filter { it.type.equals("Video", ignoreCase = true) }
+                    if (videoStreams.isNotEmpty()) {
+                        val videoInfo = videoStreams.joinToString(", ") { vs ->
+                            buildString {
+                                if (vs.width != null && vs.height != null) {
+                                    append("${vs.width}x${vs.height}")
+                                }
+                                vs.codec?.let {
+                                    if (isNotEmpty()) append(" ")
+                                    append(it.uppercase(Locale.ENGLISH))
+                                }
+                            }.trim()
+                        }
+                        if (videoInfo.isNotBlank()) {
+                            append("🎥 Video: $videoInfo\n")
+                        }
+                    }
+                    val audioStreams = streams.filter { it.type.equals("Audio", ignoreCase = true) }
+                    if (audioStreams.isNotEmpty()) {
+                        val audioInfo = audioStreams.joinToString(", ") { asStream ->
+                            buildString {
+                                val lang = asStream.language?.let { code ->
+                                    val locale = Locale(code)
+                                    locale.getDisplayLanguage(Locale.ENGLISH).takeIf { it != code } ?: code
+                                } ?: asStream.title
+                                if (!lang.isNullOrBlank()) {
+                                    append(lang.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ENGLISH) else it.toString() })
+                                }
+                                asStream.codec?.let {
+                                    if (isNotEmpty()) append(" (")
+                                    append(it.uppercase(Locale.ENGLISH))
+                                    if (isNotEmpty()) append(")")
+                                }
+                            }.trim()
+                        }
+                        if (audioInfo.isNotBlank()) {
+                            append("🔊 Audio: $audioInfo\n")
+                        }
+                    }
+                    val subtitleStreams = streams.filter { it.type.equals("Subtitle", ignoreCase = true) }
+                    if (subtitleStreams.isNotEmpty()) {
+                        val subInfo = subtitleStreams.mapNotNull {
+                            it.language?.let { code ->
+                                val locale = Locale(code)
+                                locale.getDisplayLanguage(Locale.ENGLISH).takeIf { it != code } ?: code
+                            } ?: it.title
+                        }.map { it.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ENGLISH) else it.toString() } }
+                            .distinct()
+                            .joinToString(", ")
+                        if (subInfo.isNotBlank()) {
+                            append("💬 Subtitles: $subInfo\n")
+                        }
+                    }
+                }
+            }
+            if (!tags.isNullOrEmpty()) {
+                append("\n🏷️ Tags: ${tags.joinToString(", ")}\n")
+            }
+            if (!taglines.isNullOrEmpty()) {
+                append("\n💬 ${taglines.joinToString("\n💬 ")}\n")
+            }
         }.trim()
         genre = genres?.joinToString(", ")
         author = studios?.joinToString(", ") { it.name }
@@ -128,9 +203,11 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     fun toSEpisode(baseUrl: String, userId: String): SEpisode = SEpisode.create().apply {
         val runtimeInSec = runTimeTicks?.div(10_000_000)
         val size = mediaSources?.firstOrNull()?.size?.formatBytes()
+        val container = mediaSources?.firstOrNull()?.container
         val extraInfo = buildList {
             size?.let { add(it) }
             runtimeInSec?.formatSeconds()?.let { add(it) }
+            container?.let { add(it.uppercase(Locale.ENGLISH)) }
         }
         name = this@ItemDto.name
         url = "$baseUrl/Users/$userId/Items/$id"
@@ -160,7 +237,24 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     @Serializable data class LoginSessionDto(val userId: String)
 }
 
-@Serializable data class MediaDto(val size: Long? = null, val id: String? = null)
+@Serializable data class MediaDto(
+    val size: Long? = null,
+    val id: String? = null,
+    val container: String? = null,
+    val mediaStreams: List<MediaStreamDto>? = null,
+)
+
+@Serializable data class MediaStreamDto(
+    val type: String? = null,
+    val codec: String? = null,
+    val displayTitle: String? = null,
+    val language: String? = null,
+    val title: String? = null,
+    val bitRate: Int? = null,
+    val channels: Int? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -259,12 +353,8 @@ class AgniSYS :
     override val supportsLatest = true
     override val id: Long = 84759302158234567L
 
-    private val prefs: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
-
     override val baseUrl: String
-        get() = prefs.getString(PREF_BASE_URL, DEFAULT_URL)!!
+        get() = preferences.getString(PREF_BASE_URL, DEFAULT_URL)!!
 
     override val json = Json {
         isLenient = true
@@ -273,8 +363,8 @@ class AgniSYS :
     }
 
     private val deviceInfo by lazy { buildDeviceInfo(Injekt.get<Application>()) }
-    private var accessToken: String by prefs.delegate("access_token", "")
-    private var userId: String by prefs.delegate("user_id", "")
+    private var accessToken: String by preferences.delegate("access_token", "")
+    private var userId: String by preferences.delegate("user_id", "")
 
     // ── OkHttp client with auto-login interceptor ──────────────────────────
 
@@ -406,7 +496,7 @@ class AgniSYS :
     // ── Details ────────────────────────────────────────────────────────────
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val fields = "Genres,Studios,Overview,ProductionYear,CommunityRating,OfficialRating,MediaSources"
+        val fields = "Genres,Studios,Overview,ProductionYear,CommunityRating,OfficialRating,MediaSources,Tags,Taglines,CriticRating,ProductionLocations"
         val url = "${anime.url}?Fields=$fields"
         val item = client.newCall(GET(url)).await().parseAs<ItemDto>(json)
         return item.toSAnime(baseUrl, userId)
@@ -535,9 +625,9 @@ class AgniSYS :
     data class DeviceInfo(val clientName: String, val version: String, val id: String, val name: String)
 
     private fun buildDeviceInfo(context: Application): DeviceInfo {
-        val deviceId = prefs.getString("device_id", null)
+        val deviceId = preferences.getString("device_id", null)
             ?: UUID.randomUUID().toString().replace("-", "").take(16)
-                .also { prefs.edit().putString("device_id", it).apply() }
+                .also { preferences.edit().putString("device_id", it).apply() }
         return DeviceInfo("Aniyomi", "1.0.0", deviceId, Build.MODEL)
     }
 
