@@ -1,0 +1,469 @@
+package eu.kanade.tachiyomi.animeextension.all.toonhub4u
+
+import android.app.Application
+import android.content.SharedPreferences
+import android.net.Uri
+import android.util.Base64
+import androidx.preference.ListPreference
+import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
+import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
+import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.buzzheavierextractor.BuzzheavierExtractor
+import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
+import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
+import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
+import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.util.asJsoup
+import extensions.utils.Source
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.FormBody
+import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import org.jsoup.nodes.Element
+import java.net.URLDecoder
+
+class Toonhub4u : Source(), ConfigurableAnimeSource {
+
+    override val name = "Toonhub4u"
+    override val baseUrl = "https://toonhub4u.co"
+    override val lang = "multi"
+    override val supportsLatest = true
+    override val id: Long = 5182749372810482937L
+
+    override fun headersBuilder(): Headers.Builder = Headers.Builder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
+
+    override fun popularAnimeRequest(page: Int): Request {
+        return GET("$baseUrl/home/page/$page/", headers)
+    }
+
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
+        val animeList = document.select("li.post-item").mapNotNull { element ->
+            try {
+                val titleEl = element.selectFirst("h2.post-title a") ?: return@mapNotNull null
+                val titleText = titleEl.text().trim()
+                val cleanTitle = titleText.substringBefore("[").trim()
+                
+                SAnime.create().apply {
+                    title = cleanTitle
+                    setUrlWithoutDomain(titleEl.attr("href"))
+                    
+                    val img = element.selectFirst("a.post-thumb img")
+                    thumbnail_url = img?.attr("data-src")?.takeIf { it.isNotBlank() }
+                        ?: img?.attr("src")?.takeIf { it.isNotBlank() }
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+        val hasNextPage = document.select("ul.pages-numbers li.the-next-page").isNotEmpty()
+        return AnimesPage(animeList, hasNextPage)
+    }
+
+    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
+    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
+
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        return if (query.isNotBlank()) {
+            GET("$baseUrl/page/$page/?s=$query", headers)
+        } else {
+            val catFilter = filters.filterIsInstance<CategoryFilter>().firstOrNull()
+            val catIndex = catFilter?.state ?: 0
+            val path = categoryPaths.getOrNull(catIndex) ?: ""
+            if (path.isNotBlank()) {
+                GET("$baseUrl/$path/page/$page/", headers)
+            } else {
+                GET("$baseUrl/page/$page/", headers)
+            }
+        }
+    }
+
+    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
+
+    override fun animeDetailsParse(response: Response): SAnime {
+        val document = response.asJsoup()
+        return SAnime.create().apply {
+            val titleText = document.selectFirst("meta[property=og:title]")?.attr("content")
+                ?: document.selectFirst("h1.entry-title")?.text()
+                ?: ""
+            title = titleText.substringBefore("[").trim()
+            
+            description = document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
+                ?: document.select(".entry-content p").firstOrNull()?.text()
+                
+            val ogImg = document.selectFirst("meta[property=og:image]")?.attr("content")
+            val mainImg = document.selectFirst(".entry-content img")?.attr("src")
+            thumbnail_url = ogImg ?: mainImg
+            
+            genre = document.select(".post-cats a").joinToString(", ") { it.text() }
+            status = SAnime.COMPLETED
+        }
+    }
+
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val document = response.asJsoup()
+        val episodes = mutableListOf<SEpisode>()
+        
+        val entryContent = document.selectFirst(".entry-content") ?: return emptyList()
+        val pTags = entryContent.select("p, h4, h3, h2")
+        val hasEpisodes = pTags.any { it.text().contains("Episode", ignoreCase = true) }
+        
+        if (hasEpisodes) {
+            var episodeCount = 1
+            pTags.forEach { pTag ->
+                val text = pTag.text().trim()
+                val episodeMatch = Regex("Episode\\s*(\\d+)", RegexOption.IGNORE_CASE).find(text)
+                if (episodeMatch != null) {
+                    val episodeNumber = episodeMatch.groupValues[1].toFloatOrNull() ?: episodeCount.toFloat()
+                    val episodeLinks = mutableListOf<String>()
+                    
+                    var nextSibling = pTag.nextElementSibling()
+                    while (nextSibling != null && nextSibling.tagName() != "hr") {
+                        nextSibling.select("a[href]").forEach { aTag ->
+                            val href = aTag.attr("href")
+                            if (href.contains("gdmirrorbot") || href.contains("iqsmartgames")) {
+                                episodeLinks.add(href.replace("/file/", "/embed/"))
+                            }
+                        }
+                        nextSibling = nextSibling.nextElementSibling()
+                    }
+                    
+                    if (episodeLinks.isNotEmpty()) {
+                        episodes.add(SEpisode.create().apply {
+                            name = text
+                            episode_number = episodeNumber
+                            url = episodeLinks.joinToString(",")
+                        })
+                        episodeCount++
+                    }
+                }
+            }
+        } else {
+            val movieLinks = entryContent.select("div.mks_toggle_content a[href], .entry-content p a[href]").mapNotNull { aTag ->
+                val href = aTag.attr("href")
+                if (href.contains("gdmirrorbot") || href.contains("iqsmartgames")) {
+                    href.replace("/file/", "/embed/")
+                } else null
+            }.distinct()
+            
+            if (movieLinks.isNotEmpty()) {
+                episodes.add(SEpisode.create().apply {
+                    name = "Movie"
+                    episode_number = 1f
+                    url = movieLinks.joinToString(",")
+                })
+            }
+        }
+        
+        return episodes.reversed()
+    }
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val videoList = mutableListOf<Video>()
+        val embedUrls = episode.url.split(",")
+        
+        embedUrls.forEach { embedUrl ->
+            try {
+                val embedResponse = client.newCall(GET(embedUrl, headers)).execute()
+                val finalUrl = embedResponse.request.url.toString()
+                embedResponse.close()
+                
+                val sid = embedUrl.substringAfterLast("embed/").substringBefore("?").substringBefore("/")
+                val hostUri = Uri.parse(finalUrl)
+                val host = "${hostUri.scheme}://${hostUri.host}"
+                
+                val formBody = FormBody.Builder()
+                    .add("sid", sid)
+                    .build()
+                    
+                val helperRequest = Request.Builder()
+                    .url("$host/embedhelper.php")
+                    .post(formBody)
+                    .header("User-Agent", headers["User-Agent"] ?: "")
+                    .header("Referer", finalUrl)
+                    .header("X-Requested-With", "XMLHttpRequest")
+                    .build()
+                    
+                val helperResponse = client.newCall(helperRequest).execute()
+                val helperBody = helperResponse.body.string()
+                helperResponse.close()
+                
+                val jsonObject = Json.parseToJsonElement(helperBody).jsonObject
+                val siteUrls = jsonObject["siteUrls"]?.jsonObject ?: emptyMap()
+                val siteFriendlyNames = jsonObject["siteFriendlyNames"]?.jsonObject ?: emptyMap()
+                val mresultElement = jsonObject["mresult"]
+                
+                val mresultString = when {
+                    mresultElement == null -> null
+                    mresultElement is JsonPrimitive && mresultElement.isString -> {
+                        val base64Str = mresultElement.content
+                        try {
+                            String(Base64.decode(base64Str, Base64.DEFAULT), Charsets.UTF_8)
+                        } catch (e: Exception) {
+                            base64Str
+                        }
+                    }
+                    else -> mresultElement.toString()
+                }
+                
+                val mresultObject = if (!mresultString.isNullOrBlank()) {
+                    Json.parseToJsonElement(mresultString).jsonObject
+                } else {
+                    null
+                }
+                
+                mresultObject?.forEach { (key, pathElement) ->
+                    val path = pathElement.jsonPrimitive.content.trimStart('/')
+                    val base = siteUrls[key]?.jsonPrimitive?.content?.trimEnd('/') ?: return@forEach
+                    val fullUrl = "$base/$path"
+                    val friendlyName = siteFriendlyNames[key]?.jsonPrimitive?.content ?: key
+                    
+                    try {
+                        when {
+                            friendlyName.equals("FileMoon", ignoreCase = true) || friendlyName.equals("Fmoon", ignoreCase = true) -> {
+                                videoList.addAll(FilemoonExtractor(client).videosFromUrl(fullUrl, "FileMoon - "))
+                            }
+                            friendlyName.contains("Streamwish", ignoreCase = true) || friendlyName.contains("Cdnwish", ignoreCase = true) || friendlyName.contains("Wish", ignoreCase = true) -> {
+                                videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(fullUrl, "StreamWish"))
+                            }
+                            friendlyName.contains("Vidhide", ignoreCase = true) || friendlyName.contains("Animezia", ignoreCase = true) || friendlyName.contains("StreamHG", ignoreCase = true) || friendlyName.contains("EarnVids", ignoreCase = true) -> {
+                                videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(fullUrl, "VidHide"))
+                            }
+                            friendlyName.equals("Buzzheavier", ignoreCase = true) -> {
+                                videoList.addAll(BuzzheavierExtractor(client, headers).videosFromUrl(fullUrl, "Buzzheavier - "))
+                            }
+                            friendlyName.contains("StreamP2p", ignoreCase = true) || friendlyName.contains("RpmShare", ignoreCase = true) || friendlyName.contains("UpnShare", ignoreCase = true) -> {
+                                videoList.addAll(StreamP2PExtractor(client, headers).videosFromUrl(fullUrl, friendlyName))
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ignore error
+                    }
+                }
+            } catch (e: Exception) {
+                // ignore error
+            }
+        }
+        
+        return videoList
+    }
+
+    override fun List<Video>.sortVideos(): List<Video> {
+        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        return sortedWith(
+            compareBy(
+                { it.videoTitle.contains(quality) },
+                { it.videoTitle.contains("In-House") },
+                { it.videoTitle.contains("Cloudflare") },
+                { it.videoTitle.contains("Tiktok") }
+            )
+        ).reversed()
+    }
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        ListPreference(screen.context).apply {
+            key = PREF_QUALITY_KEY
+            title = "Preferred quality"
+            entries = PREF_QUALITY_ENTRIES
+            entryValues = PREF_QUALITY_VALUES
+            setDefaultValue(PREF_QUALITY_DEFAULT)
+            summary = "%s"
+        }.also { screen.addPreference(it) }
+    }
+
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        CategoryFilter()
+    )
+
+    private class CategoryFilter : AnimeFilter.Select<String>(
+        "Category",
+        arrayOf(
+            "All",
+            "Anime Series",
+            "Anime Movies",
+            "Animated Movies",
+            "Animated Series",
+            "Cartoon Network",
+            "Disney XD India",
+            "Disney",
+            "Crunchyroll",
+            "Amazon Prime Video",
+            "Netflix",
+            "Jio Cinema",
+            "Hindi Language"
+        )
+    )
+
+    private val categoryPaths = arrayOf(
+        "",
+        "category/anime/anime-series",
+        "category/anime/anime-movies",
+        "category/animated/animation-movies",
+        "category/animated/animated-series",
+        "category/channel-list/cartoon-network",
+        "category/channel-list/disney-xd-india",
+        "category/channel-list/disney",
+        "category/ott-network/crunchyroll",
+        "category/ott-network/amazon-prime-video",
+        "category/ott-network/netflix",
+        "category/ott-network/jio-cinema",
+        "category/language/hindi"
+    )
+
+    companion object {
+        private const val PREF_QUALITY_KEY = "preferred_quality"
+        private const val PREF_QUALITY_DEFAULT = "1080"
+        private val PREF_QUALITY_VALUES = arrayOf("1080", "720", "480", "360")
+        private val PREF_QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
+    }
+
+    class StreamP2PExtractor(private val client: OkHttpClient, private val headers: Headers) {
+        fun videosFromUrl(url: String, prefix: String = "StreamP2P"): List<Video> {
+            val strmp2Id = url.substringAfterLast("embed/").substringAfterLast("/").substringBefore("?").substringBefore("#")
+            val apiHost = "https://cloudy.p2pplay.pro"
+            val apiUrl = "$apiHost/api/v1/video?id=$strmp2Id&w=1920&h=1080&r=pro.iqsmartgames.com"
+            
+            val reqHeaders = headers.newBuilder()
+                .set("Referer", "https://clswine.strp2p.com/")
+                .set("Origin", "https://clswine.strp2p.com")
+                .build()
+                
+            val response = client.newCall(GET(apiUrl, reqHeaders)).execute()
+            if (response.code != 200) {
+                response.close()
+                return emptyList()
+            }
+            val encryptedHex = response.body.string().trim()
+            response.close()
+            
+            val decryptedJson = tryDecrypt(encryptedHex) ?: return emptyList()
+            val jsonObject = Json.parseToJsonElement(decryptedJson).jsonObject
+            val streamingConfigStr = jsonObject["streamingConfig"]?.jsonPrimitive?.content ?: return emptyList()
+            val streamingConfig = Json.parseToJsonElement(streamingConfigStr).jsonObject
+            val order = streamingConfig["order"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+            val adjust = streamingConfig["adjust"]?.jsonObject ?: emptyMap()
+            
+            val videoList = mutableListOf<Video>()
+            
+            fun addVideo(streamPath: String, hostName: String, params: Map<String, String>) {
+                val base = if (streamPath.startsWith("//")) {
+                    "https:$streamPath"
+                } else if (streamPath.startsWith("http")) {
+                    streamPath
+                } else {
+                    "$apiHost/${streamPath.trimStart('/')}"
+                }
+                
+                val builder = base.toHttpUrlOrNull()?.newBuilder() ?: return
+                params.forEach { (k, v) ->
+                    builder.setQueryParameter(k, v)
+                }
+                val finalUrl = builder.build().toString()
+                
+                val subtitleTracks = mutableListOf<Track>()
+                jsonObject["subtitle"]?.jsonObject?.forEach { (lang, subPathElement) ->
+                    val subPath = subPathElement.jsonPrimitive.content.substringBefore("#")
+                    val subUrl = if (subPath.startsWith("http")) subPath else "$apiHost/${subPath.trimStart('/')}"
+                    subtitleTracks.add(Track(subUrl, lang))
+                }
+                
+                videoList.add(
+                    Video(
+                        videoUrl = finalUrl,
+                        videoTitle = "$prefix - $hostName",
+                        headers = reqHeaders,
+                        subtitleTracks = subtitleTracks
+                    )
+                )
+            }
+            
+            order.forEach { host ->
+                val hostConfig = adjust[host]?.jsonObject
+                val disabled = hostConfig?.get("disabled")?.jsonPrimitive?.booleanOrNull ?: false
+                if (disabled) return@forEach
+                
+                val rawParams = hostConfig?.get("params")
+                val params = mutableMapOf<String, String>()
+                if (rawParams != null && rawParams is JsonObject) {
+                    rawParams.forEach { (k, v) ->
+                        params[k] = v.jsonPrimitive.content
+                    }
+                }
+                
+                when (host) {
+                    "Cloudflare" -> {
+                        val cfPath = jsonObject["cf"]?.jsonPrimitive?.contentOrNull
+                        if (!cfPath.isNullOrBlank()) {
+                            addVideo(cfPath, "Cloudflare", params)
+                        }
+                    }
+                    "Tiktok" -> {
+                        val tiktokPath = jsonObject["hlsVideoTiktok"]?.jsonPrimitive?.contentOrNull
+                        if (!tiktokPath.isNullOrBlank()) {
+                            addVideo(tiktokPath, "Tiktok", params)
+                        }
+                    }
+                    "Google" -> {
+                        val googlePath = jsonObject["hlsVideoGoogle"]?.jsonPrimitive?.contentOrNull
+                        if (!googlePath.isNullOrBlank()) {
+                            addVideo(googlePath, "Google", params)
+                        }
+                    }
+                    "In-House" -> {
+                        val sourcePath = jsonObject["source"]?.jsonPrimitive?.contentOrNull
+                        if (!sourcePath.isNullOrBlank()) {
+                            addVideo(sourcePath, "In-House", params)
+                        }
+                    }
+                }
+            }
+            
+            return videoList
+        }
+        
+        private fun tryDecrypt(encryptedHex: String): String? {
+            val key = "kiemtienmua911ca".toByteArray(Charsets.UTF_8)
+            val ivs = listOf("1234567890oiuytr", "0123456789abcdef")
+            
+            for (ivStr in ivs) {
+                try {
+                    val iv = ivStr.toByteArray(Charsets.UTF_8)
+                    val cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
+                    val keySpec = javax.crypto.spec.SecretKeySpec(key, "AES")
+                    val ivSpec = javax.crypto.spec.IvParameterSpec(iv)
+                    cipher.init(javax.crypto.Cipher.DECRYPT_MODE, keySpec, ivSpec)
+                    
+                    val encryptedBytes = encryptedHex.chunked(2)
+                        .map { it.toInt(16).toByte() }
+                        .toByteArray()
+                        
+                    val decryptedBytes = cipher.doFinal(encryptedBytes)
+                    val decrypted = String(decryptedBytes, Charsets.UTF_8)
+                    if (decrypted.contains("streamingConfig")) {
+                        return decrypted
+                    }
+                } catch (e: Exception) {
+                    // ignore
+                }
+            }
+            return null
+        }
+    }
+}
