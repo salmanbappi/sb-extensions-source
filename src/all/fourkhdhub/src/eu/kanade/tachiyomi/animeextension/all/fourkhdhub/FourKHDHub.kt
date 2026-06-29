@@ -9,9 +9,14 @@ import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import extensions.utils.Source
+import keiyoushi.utils.addSwitchPreference
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
@@ -30,17 +35,47 @@ class FourKHDHub : Source() {
     override val supportsLatest = true
     override val id: Long = 1358941295719324683L
 
+    private var dynamic4khdhub = "https://4khdhub.one"
+    private var dynamicHubcloud = "https://hubcloud.foo"
+    private var domainsFetched = false
+
+    private fun getRealBaseUrl(): String {
+        if (!domainsFetched) {
+            try {
+                val response = client.newCall(
+                    GET("https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json", headers)
+                ).execute()
+                val body = response.body.string()
+                response.close()
+
+                val match4k = Regex(""""4khdhub"\s*:\s*"([^"]+)"""").find(body)
+                if (match4k != null) {
+                    dynamic4khdhub = match4k.groupValues[1]
+                }
+                val matchHub = Regex(""""hubcloud"\s*:\s*"([^"]+)"""").find(body)
+                if (matchHub != null) {
+                    dynamicHubcloud = matchHub.groupValues[1]
+                }
+                domainsFetched = true
+            } catch (e: Exception) {
+                // fallback
+            }
+        }
+        return dynamic4khdhub
+    }
+
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
     override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
-        GET(baseUrl, headers)
+        GET(getRealBaseUrl(), headers)
     } else {
-        GET("$baseUrl/?pagex=$page", headers)
+        GET("${getRealBaseUrl()}/?pagex=$page", headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val doc = response.asJsoup()
+        val realBase = getRealBaseUrl()
         val animeList = doc.select("a.movie-card").map { element ->
             SAnime.create().apply {
                 val href = element.attr("href")
@@ -49,7 +84,7 @@ class FourKHDHub : Source() {
 
                 val posterImg = element.selectFirst("img")
                 val rawImg = posterImg?.attr("src") ?: posterImg?.attr("data-src") ?: ""
-                thumbnail_url = if (rawImg.startsWith("http")) rawImg else "$baseUrl/${rawImg.trimStart('/')}"
+                thumbnail_url = if (rawImg.startsWith("http")) rawImg else "$realBase/${rawImg.trimStart('/')}"
 
                 val formats = element.select(".movie-card-format").map { it.text() }
                 genre = formats.joinToString(", ")
@@ -69,7 +104,7 @@ class FourKHDHub : Source() {
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
-        val url = "$baseUrl/".toHttpUrlOrNull()!!.newBuilder()
+        val url = getRealBaseUrl().toHttpUrlOrNull()!!.newBuilder()
             .addQueryParameter("s", query)
         if (page > 1) {
             url.addQueryParameter("pagex", page.toString())
@@ -83,11 +118,12 @@ class FourKHDHub : Source() {
 
     override fun animeDetailsRequest(anime: SAnime): Request {
         val url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
-        return GET(baseUrl + url, headers)
+        return GET(getRealBaseUrl() + url, headers)
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.asJsoup()
+        val realBase = getRealBaseUrl()
         val anime = SAnime.create().apply {
             title = doc.selectFirst(".page-title")?.text() ?: doc.selectFirst("title")?.text()?.replace(" - 4KHDHub", "") ?: "Unknown"
 
@@ -96,7 +132,7 @@ class FourKHDHub : Source() {
             val detailsImg = doc.selectFirst(".poster-container img")
             val rawDetailsImg = detailsImg?.attr("src") ?: detailsImg?.attr("data-src")
             thumbnail_url = rawDetailsImg?.let {
-                if (it.startsWith("http")) it else "$baseUrl/${it.trimStart('/')}"
+                if (it.startsWith("http")) it else "$realBase/${it.trimStart('/')}"
             }
 
             genre = doc.select(".badge.badge-outline a").joinToString { it.text() }
@@ -128,6 +164,11 @@ class FourKHDHub : Source() {
         val doc = response.asJsoup()
         val episodes = mutableListOf<SEpisode>()
         val pagePath = response.request.url.encodedPath
+        val animeTitle = doc.selectFirst(".page-title")?.text() 
+            ?: doc.selectFirst("title")?.text()?.replace(" - 4KHDHub", "") 
+            ?: "Unknown"
+
+        val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
 
         // 1. Series/Individual Episodes logic
         val seriesItems = doc.select(".episode-download-item")
@@ -158,6 +199,42 @@ class FourKHDHub : Source() {
                 Triple(seasonPrefix, epNum, cleanName)
             }
 
+            // Fetch TMDB episode details
+            val tmdbId = fetchTmdbId(animeTitle, isMovie = false)
+            val tmdbEpisodes = mutableMapOf<Pair<Int, Int>, TmdbEpisode>()
+
+            if (tmdbId != null) {
+                val seasonsToFetch = itemsData.map { it.first }.distinct().mapNotNull {
+                    Regex("""\d+""").find(it)?.value?.toIntOrNull()
+                }
+                seasonsToFetch.forEach { season ->
+                    try {
+                        val url = "https://api.themoviedb.org/3/tv/$tmdbId/season/$season?api_key=1865f43a0549ca50d341dd9ab8b29f49"
+                        val resp = client.newCall(GET(url, headers)).execute()
+                        val text = resp.body.string()
+                        resp.close()
+
+                        val root = org.json.JSONObject(text)
+                        val episodesArr = root.optJSONArray("episodes")
+                        if (episodesArr != null) {
+                            for (i in 0 until episodesArr.length()) {
+                                val ep = episodesArr.optJSONObject(i) ?: continue
+                                val epNum = ep.optInt("episode_number")
+                                val name = ep.optString("name").takeIf { it.isNotBlank() }
+                                val overview = ep.optString("overview").takeIf { it.isNotBlank() }
+                                val stillPath = ep.optString("still_path").takeIf { it.isNotBlank() }
+                                val airDateStr = ep.optString("air_date").takeIf { it.isNotBlank() }
+                                val airDateMs = parseAirDate(airDateStr)
+
+                                tmdbEpisodes[Pair(season, epNum)] = TmdbEpisode(name, overview, stillPath, airDateMs)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ignore
+                    }
+                }
+            }
+
             val grouped = itemsData.groupBy { Pair(it.first, it.second) }
 
             grouped.forEach { (key, list) ->
@@ -165,11 +242,20 @@ class FourKHDHub : Source() {
                 val epNum = key.second
                 val firstItem = list.first()
 
+                val seasonNumber = Regex("""\d+""").find(seasonPrefix)?.value?.toIntOrNull() ?: 1
+                val tmdbEp = tmdbEpisodes[Pair(seasonNumber, epNum.toInt())]
+
                 episodes.add(
                     SEpisode.create().apply {
-                        name = "$seasonPrefix - ${firstItem.third}"
+                        name = tmdbEp?.name?.let { "$seasonPrefix - Episode ${epNum.toInt()}: $it" }
+                            ?: "$seasonPrefix - ${firstItem.third}"
                         episode_number = epNum
                         url = "$pagePath?season=${URLDecoder.decode(seasonPrefix, "UTF-8")}&episode=$epNum"
+                        summary = tmdbEp?.overview
+                        preview_url = if (showThumbnails && !tmdbEp?.stillPath.isNullOrEmpty()) {
+                            "https://image.tmdb.org/t/p/original${tmdbEp!!.stillPath}"
+                        } else null
+                        date_upload = tmdbEp?.airDate ?: 0L
                     },
                 )
             }
@@ -184,11 +270,38 @@ class FourKHDHub : Source() {
                 }
 
                 if (validMovieItems.isNotEmpty()) {
+                    var movieOverview: String? = null
+                    var moviePoster: String? = null
+                    var movieReleaseDate: Long = 0L
+
+                    val tmdbId = fetchTmdbId(animeTitle, isMovie = true)
+                    if (tmdbId != null) {
+                        try {
+                            val url = "https://api.themoviedb.org/3/movie/$tmdbId?api_key=1865f43a0549ca50d341dd9ab8b29f49"
+                            val resp = client.newCall(GET(url, headers)).execute()
+                            val text = resp.body.string()
+                            resp.close()
+
+                            val root = org.json.JSONObject(text)
+                            movieOverview = root.optString("overview").takeIf { it.isNotBlank() }
+                            val backdropPath = root.optString("backdrop_path").takeIf { it.isNotBlank() } 
+                                ?: root.optString("poster_path").takeIf { it.isNotBlank() }
+                            moviePoster = backdropPath?.let { "https://image.tmdb.org/t/p/original$it" }
+                            val releaseDateStr = root.optString("release_date").takeIf { it.isNotBlank() }
+                            movieReleaseDate = parseAirDate(releaseDateStr)
+                        } catch (e: Exception) {
+                            // ignore
+                        }
+                    }
+
                     episodes.add(
                         SEpisode.create().apply {
                             name = "Movie"
                             episode_number = 1f
                             url = "$pagePath?movie=true"
+                            summary = movieOverview
+                            preview_url = if (showThumbnails) moviePoster else null
+                            date_upload = movieReleaseDate
                         },
                     )
                 }
@@ -196,6 +309,56 @@ class FourKHDHub : Source() {
         }
 
         return episodes.sortedByDescending { it.episode_number }
+    }
+
+    private data class TmdbEpisode(
+        val name: String?,
+        val overview: String?,
+        val stillPath: String?,
+        val airDate: Long
+    )
+
+    private fun cleanTitleForTmdb(title: String): String {
+        return title
+            .replace(Regex("""\(\d{4}\)"""), "")
+            .replace(Regex("""(?i)\b(season|series|s)\b\s*\d+"""), "")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+    }
+
+    private fun fetchTmdbId(title: String, isMovie: Boolean): Int? {
+        try {
+            val query = cleanTitleForTmdb(title)
+            val url = "https://api.themoviedb.org/3/search/multi?api_key=1865f43a0549ca50d341dd9ab8b29f49&query=${java.net.URLEncoder.encode(query, "UTF-8")}"
+            val response = client.newCall(GET(url, headers)).execute()
+            val text = response.body.string()
+            response.close()
+
+            val root = org.json.JSONObject(text)
+            val results = root.optJSONArray("results") ?: return null
+            val targetType = if (isMovie) "movie" else "tv"
+
+            for (i in 0 until results.length()) {
+                val item = results.optJSONObject(i) ?: continue
+                if (item.optString("media_type") == targetType) {
+                    return item.optInt("id")
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+        return null
+    }
+
+    private fun parseAirDate(dateStr: String?): Long {
+        if (dateStr.isNullOrBlank()) return 0L
+        return try {
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+            sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+            sdf.parse(dateStr)?.time ?: 0L
+        } catch (e: Exception) {
+            0L
+        }
     }
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
@@ -207,7 +370,7 @@ class FourKHDHub : Source() {
         if (query.isEmpty()) return emptyList()
 
         try {
-            val response = client.newCall(GET(baseUrl + pagePath, headers)).execute()
+            val response = client.newCall(GET(getRealBaseUrl() + pagePath, headers)).execute()
             val html = response.body.string()
             response.close()
 
@@ -233,27 +396,31 @@ class FourKHDHub : Source() {
                     val suffix = parseLabelSuffix(filename, sizeText)
 
                     val links = mutableListOf<String>()
-                    element.select("a[href*='hubcloud'], a[href*='hubdrive']").forEach {
-                        links.add(it.attr("href"))
+                    element.select("a").forEach {
+                        val href = it.attr("href")
+                        if (href.isNotEmpty() && !href.startsWith("javascript") && !href.startsWith("#")) {
+                            links.add(href)
+                        }
                     }
 
                     if (links.isEmpty()) {
                         val fileId = element.selectFirst(".download-header")?.attr("data-file-id")
                         if (fileId != null) {
-                            doc.select("#content-$fileId a[href*='hubcloud'], #content-$fileId a[href*='hubdrive']").forEach {
-                                links.add(it.attr("href"))
+                            doc.select("#content-$fileId a").forEach {
+                                val href = it.attr("href")
+                                if (href.isNotEmpty() && !href.startsWith("javascript") && !href.startsWith("#")) {
+                                    links.add(href)
+                                }
                             }
                         }
                     }
 
                     links.distinct().forEach { link ->
-                        when {
-                            link.contains("hubcloud.", ignoreCase = true) -> {
-                                list.addAll(resolveHubCloud(link, suffix))
-                            }
-
-                            link.contains("hubdrive.", ignoreCase = true) -> {
-                                list.addAll(resolveHubDrive(link, suffix))
+                        runBlocking {
+                            try {
+                                list.addAll(resolveVideoUrl(link, suffix))
+                            } catch (e: Exception) {
+                                // ignore
                             }
                         }
                     }
@@ -299,18 +466,19 @@ class FourKHDHub : Source() {
                                 val suffix = parseLabelSuffix(filename, sizeText)
 
                                 val links = mutableListOf<String>()
-                                element.select("a[href*='hubcloud'], a[href*='hubdrive']").forEach {
-                                    links.add(it.attr("href"))
+                                element.select("a").forEach {
+                                    val href = it.attr("href")
+                                    if (href.isNotEmpty() && !href.startsWith("javascript") && !href.startsWith("#")) {
+                                        links.add(href)
+                                    }
                                 }
 
                                 links.distinct().forEach { link ->
-                                    when {
-                                        link.contains("hubcloud.", ignoreCase = true) -> {
-                                            list.addAll(resolveHubCloud(link, suffix))
-                                        }
-
-                                        link.contains("hubdrive.", ignoreCase = true) -> {
-                                            list.addAll(resolveHubDrive(link, suffix))
+                                    runBlocking {
+                                        try {
+                                            list.addAll(resolveVideoUrl(link, suffix))
+                                        } catch (e: Exception) {
+                                            // ignore
                                         }
                                     }
                                 }
@@ -323,16 +491,7 @@ class FourKHDHub : Source() {
             // ignore
         }
 
-        // Sort videos list according to user preferences
-        val preferredQuality = preferences.getString(PREF_PREFERRED_QUALITY, DEFAULT_PREFERRED_QUALITY)!!
-        val preferredServer = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)!!
-
-        list.sortWith(
-            compareByDescending<Video> { it.videoTitle.contains(preferredQuality, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(preferredServer, ignoreCase = true) },
-        )
-
-        return list
+        return list.sortVideos()
     }
 
     private fun parseLabelSuffix(filename: String, sizeText: String): String {
@@ -359,80 +518,320 @@ class FourKHDHub : Source() {
         }
     }
 
-    private fun resolveHubCloud(hubCloudUrl: String, suffix: String): List<Video> {
+    private val REDIRECT_REGEX = Regex("""s\('o','([A-Za-z0-9+/=]+)'|ck\('_wp_http_\d+','([^']+)'""")
+
+    private suspend fun getRedirectLinks(url: String): String = withContext(Dispatchers.IO) {
+        try {
+            val response = client.newCall(GET(url, headers)).execute()
+            val html = response.body.string()
+            response.close()
+
+            val combined = StringBuilder(128)
+            for (m in REDIRECT_REGEX.findAll(html)) {
+                val g1 = m.groups[1]?.value
+                val g2 = m.groups[2]?.value
+                if (g1 != null) {
+                    combined.append(g1)
+                } else if (g2 != null) {
+                    combined.append(g2)
+                }
+            }
+
+            if (combined.isEmpty()) return@withContext ""
+
+            val step1 = decodeBase64(combined.toString())
+            val step2 = decodeBase64(step1)
+            val step3 = pen(step2)
+            val decoded = decodeBase64(step3)
+
+            val json = org.json.JSONObject(decoded)
+            val encodedUrl = decodeBase64(json.optString("o"))
+            if (encodedUrl.isNotBlank()) return@withContext encodedUrl.trim()
+
+            val data = decodeBase64(json.optString("data"))
+            val wp = json.optString("blog_url")
+            if (wp.isBlank() || data.isBlank()) return@withContext ""
+
+            val followResp = client.newCall(GET("$wp?re=$data", headers)).execute()
+            val followText = followResp.body.string()
+            followResp.close()
+
+            val textDoc = Jsoup.parse(followText)
+            textDoc.text().trim()
+        } catch (e: Exception) {
+            url
+        }
+    }
+
+    private fun decodeBase64(value: String): String {
+        return try {
+            val decodedBytes = android.util.Base64.decode(value, android.util.Base64.DEFAULT)
+            String(decodedBytes)
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    private fun pen(value: String): String {
+        val out = StringBuilder(value.length)
+        for (c in value) {
+            out.append(
+                when (c) {
+                    in 'A'..'Z' -> ((c - 'A' + 13) % 26 + 'A'.code).toChar()
+                    in 'a'..'z' -> ((c - 'a' + 13) % 26 + 'a'.code).toChar()
+                    else -> c
+                },
+            )
+        }
+        return out.toString()
+    }
+
+    private suspend fun resolveVideoUrl(url: String, suffix: String): List<Video> {
+        val lower = url.lowercase()
+        return when {
+            lower.contains("id=") -> {
+                val redirected = getRedirectLinks(url)
+                if (redirected.isNotEmpty() && redirected != url) {
+                    resolveVideoUrl(redirected, suffix)
+                } else {
+                    emptyList()
+                }
+            }
+            lower.contains("hubcloud") -> resolveHubCloud(url, suffix)
+            lower.contains("hubdrive") -> resolveHubDrive(url, suffix)
+            lower.contains("hubcdn") -> resolveHubCdn(url, suffix)
+            lower.contains("hblinks") -> resolveHblinks(url, suffix)
+            lower.contains("pixeldrain") || lower.contains("pixelserver") -> resolvePixelDrain(url, suffix)
+            lower.contains("hdstream4u") || lower.contains("hubstream") -> {
+                try {
+                    VidHideExtractor(client, headers).videosFromUrl(url) { quality ->
+                        "VidHide - $quality$suffix"
+                    }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+            else -> {
+                if (lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".m3u8")) {
+                    listOf(Video(videoUrl = url, videoTitle = "Direct Link$suffix", headers = headers))
+                } else {
+                    emptyList()
+                }
+            }
+        }
+    }
+
+    private suspend fun resolveHubCloud(hubCloudUrl: String, suffix: String): List<Video> = withContext(Dispatchers.IO) {
         val list = mutableListOf<Video>()
         try {
-            val resp = client.newCall(GET(hubCloudUrl, headers)).execute()
-            val html = resp.body.string()
-            resp.close()
+            val uri = java.net.URI(hubCloudUrl)
+            val realUrl = uri.toString()
+            val hostBase = "${uri.scheme}://${uri.host}"
 
-            val doc = Jsoup.parse(html)
-            var genLink = doc.select("a[href*=hubcloud.php]").attr("href")
-            if (genLink.isEmpty()) {
-                val match = Regex("""https://[^/]+/hubcloud\.php\?[^\s"\'<>]+""").find(html)
-                if (match != null) {
-                    genLink = match.value
+            val href = if (realUrl.contains("hubcloud.php")) {
+                realUrl
+            } else {
+                val resp = client.newCall(GET(realUrl, headers)).execute()
+                val doc = resp.asJsoup()
+                resp.close()
+                val raw = doc.selectFirst("#download")?.attr("href") ?: ""
+                if (raw.startsWith("http", true)) {
+                    raw
+                } else {
+                    hostBase.trimEnd('/') + "/" + raw.trimStart('/')
                 }
             }
 
-            if (genLink.isEmpty()) return emptyList()
+            if (href.isBlank()) return@withContext emptyList()
 
-            val resp2 = client.newCall(GET(genLink, headers)).execute()
-            val html2 = resp2.body.string()
+            val resp2 = client.newCall(GET(href, headers)).execute()
+            val doc2 = resp2.asJsoup()
             resp2.close()
 
-            val doc2 = Jsoup.parse(html2)
+            val size = doc2.selectFirst("i#size")?.text() ?: ""
+            val header = doc2.selectFirst("div.card-header")?.text() ?: ""
+            val quality = getIndexQuality(header)
 
-            val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
-            val minute = calendar.get(Calendar.MINUTE)
-
-            val s3El = doc2.selectFirst("a#s3")
-            if (s3El != null) {
-                val rawUrl = s3El.attr("href")
-                if (rawUrl.isNotEmpty()) {
-                    val finalUrl = "${rawUrl}_1$minute"
-                    list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (FSLv2)$suffix", headers = headers))
-                }
+            val labelExtras = buildString {
+                if (quality.isNotEmpty()) append(" [$quality]")
+                if (size.isNotEmpty()) append(" [$size]")
+                if (suffix.isNotEmpty()) append(suffix)
             }
 
-            val fslEl = doc2.selectFirst("a#fsl")
-            if (fslEl != null) {
-                val rawUrl = fslEl.attr("href")
-                if (rawUrl.isNotEmpty()) {
-                    val finalUrl = "$rawUrl$1$minute"
-                    list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (FSL)$suffix", headers = headers))
-                }
-            }
+            doc2.select("a.btn, a[class*=btn]").forEach { element ->
+                val link = element.attr("href")
+                val text = element.ownText()
+                val label = text.lowercase()
 
-            val pxlEl = doc2.selectFirst("a#pxl-1")
-            if (pxlEl != null) {
-                val scriptMatch = Regex("""pxl\s*=\s*["\']([^"\']+)["\']""").find(html2)
-                if (scriptMatch != null) {
-                    val pxlUrl = scriptMatch.groupValues[1]
-                    list.add(Video(videoUrl = pxlUrl, videoTitle = "HubCloud (PixelServer)$suffix", headers = headers))
+                when {
+                    label.contains("fsl server") || label.contains("fslv2") -> {
+                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (FSL)$labelExtras", headers = headers))
+                    }
+                    label.contains("download file") -> {
+                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (Download)$labelExtras", headers = headers))
+                    }
+                    label.contains("buzzserver") -> {
+                        try {
+                            val noRedirectClient = client.newBuilder()
+                                .followRedirects(false)
+                                .followSslRedirects(false)
+                                .build()
+                            val buzzReq = Request.Builder().url("$link/download").header("Referer", link).build()
+                            val buzzResp = noRedirectClient.newCall(buzzReq).execute()
+                            val dlink = buzzResp.header("hx-redirect") ?: buzzResp.header("HX-Redirect") ?: ""
+                            buzzResp.close()
+                            if (dlink.isNotBlank()) {
+                                list.add(Video(videoUrl = dlink, videoTitle = "HubCloud (BuzzServer)$labelExtras", headers = headers))
+                            }
+                        } catch (e: Exception) {
+                            // ignore
+                        }
+                    }
+                    label.contains("pixeldra") || label.contains("pixelserver") || label.contains("pixel server") || label.contains("pixeldrain") -> {
+                        val base = getBaseUrl(link)
+                        val finalUrl = if (link.contains("download")) link else "$base/api/file/${link.substringAfterLast("/")}?download"
+                        list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (Pixeldrain)$labelExtras", headers = headers))
+                    }
+                    label.contains("s3 server") -> {
+                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (S3 Server)$labelExtras", headers = headers))
+                    }
+                    label.contains("mega server") -> {
+                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (Mega Server)$labelExtras", headers = headers))
+                    }
+                    label.contains("pdl server") -> {
+                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (PDL Server)$labelExtras", headers = headers))
+                    }
+                    label.contains("10gbps") || label.contains("10 gbps") || label.contains("10gb") -> {
+                        try {
+                            val gpdlResp = client.newCall(GET(link, headers)).execute()
+                            val finalUrl = gpdlResp.request.url.toString()
+                            gpdlResp.close()
+
+                            if (finalUrl.contains("gamerxyt.com/dl.php?link=")) {
+                                val directLink = finalUrl.substringAfter("dl.php?link=")
+                                if (directLink.isNotEmpty()) {
+                                    list.add(Video(videoUrl = directLink, videoTitle = "HubCloud (10Gbps)$labelExtras", headers = headers))
+                                }
+                            } else if (finalUrl.contains("video-downloads.googleusercontent.com")) {
+                                list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (10Gbps)$labelExtras", headers = headers))
+                            }
+                        } catch (e: Exception) {
+                            // ignore
+                        }
+                    }
                 }
             }
         } catch (e: Exception) {
             // ignore
         }
-        return list
+        list
     }
 
-    private fun resolveHubDrive(hubDriveUrl: String, suffix: String): List<Video> {
+    private suspend fun resolveHubDrive(hubDriveUrl: String, suffix: String): List<Video> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<Video>()
         try {
             val resp = client.newCall(GET(hubDriveUrl, headers)).execute()
             val html = resp.body.string()
             resp.close()
 
             val doc = Jsoup.parse(html)
-            val hubCloudUrl = doc.selectFirst("a[href*='hubcloud']")?.attr("href")
-            if (!hubCloudUrl.isNullOrEmpty()) {
-                return resolveHubCloud(hubCloudUrl, suffix)
+            val href = doc.select(".btn.btn-primary.btn-user.btn-success1.m-1").attr("href")
+            if (href.isNotEmpty()) {
+                if (href.contains("hubcloud", ignoreCase = true)) {
+                    return@withContext resolveHubCloud(href, suffix)
+                } else {
+                    return@withContext resolveVideoUrl(href, suffix)
+                }
             }
         } catch (e: Exception) {
             // ignore
         }
-        return emptyList()
+        list
+    }
+
+    private suspend fun resolveHubCdn(url: String, suffix: String): List<Video> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<Video>()
+        try {
+            val response = client.newCall(GET(url, headers)).execute()
+            val html = response.body.string()
+            response.close()
+
+            val doc = Jsoup.parse(html)
+            val scriptText = doc.selectFirst("script:containsData(var reurl)")?.data() ?: ""
+            var encodedUrl = Regex("""reurl\s*=\s*"([^"]+)"""")
+                .find(scriptText)
+                ?.groupValues?.getOrNull(1)
+                ?.substringAfter("?r=")
+
+            if (encodedUrl.isNullOrEmpty()) {
+                encodedUrl = Regex("""r=([A-Za-z0-9+/=]+)""").find(html)?.groupValues?.getOrNull(1)
+            }
+
+            val decodedUrl = encodedUrl?.let {
+                val decodedBytes = android.util.Base64.decode(it, android.util.Base64.DEFAULT)
+                val decodedStr = String(decodedBytes)
+                if (decodedStr.contains("link=")) decodedStr.substringAfterLast("link=") else decodedStr
+            }
+
+            if (!decodedUrl.isNullOrEmpty()) {
+                list.add(Video(videoUrl = decodedUrl, videoTitle = "HubCDN$suffix", headers = headers))
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+        list
+    }
+
+    private suspend fun resolveHblinks(url: String, suffix: String): List<Video> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<Video>()
+        try {
+            val response = client.newCall(GET(url, headers)).execute()
+            val doc = response.asJsoup()
+            response.close()
+
+            val elements = doc.select("h3 a, h5 a, div.entry-content p a")
+            elements.forEach { el ->
+                val href = el.attr("abs:href").ifBlank { el.attr("href") }.trim()
+                if (href.isNotEmpty()) {
+                    list.addAll(resolveVideoUrl(href, suffix))
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+        list
+    }
+
+    private fun resolvePixelDrain(url: String, suffix: String): List<Video> {
+        val fileId = url.substringAfterLast("/")
+        val finalUrl = "https://pixeldrain.com/api/file/$fileId?download"
+        return listOf(Video(videoUrl = finalUrl, videoTitle = "PixelDrain$suffix", headers = headers))
+    }
+
+    private fun getIndexQuality(str: String): String {
+        return Regex("""(\d{3,4})[pP]""")
+            .find(str)
+            ?.groupValues
+            ?.getOrNull(1) ?: ""
+    }
+
+    private fun getBaseUrl(url: String): String {
+        return try {
+            val uri = java.net.URI(url)
+            "${uri.scheme}://${uri.host}"
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    override fun List<Video>.sortVideos(): List<Video> {
+        val preferredQuality = preferences.getString(PREF_PREFERRED_QUALITY, DEFAULT_PREFERRED_QUALITY)!!
+        val preferredServer = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)!!
+
+        return sortedWith(
+            compareByDescending<Video> { it.videoTitle.contains(preferredQuality, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(preferredServer, ignoreCase = true) },
+        )
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
@@ -448,17 +847,26 @@ class FourKHDHub : Source() {
         ListPreference(screen.context).apply {
             key = PREF_PREFERRED_SERVER
             title = "Preferred Server"
-            entries = arrayOf("FSLv2", "FSL", "PixelServer")
-            entryValues = arrayOf("FSLv2", "FSL", "PixelServer")
+            entries = arrayOf("FSL Server", "Download", "BuzzServer", "Pixeldrain", "S3 Server", "Mega Server", "PDL Server", "10Gbps")
+            entryValues = arrayOf("FSL Server", "Download", "BuzzServer", "Pixeldrain", "S3 Server", "Mega Server", "PDL Server", "10Gbps")
             setDefaultValue(DEFAULT_PREFERRED_SERVER)
             summary = "%s"
         }.also(screen::addPreference)
+
+        screen.addSwitchPreference(
+            key = PREF_SHOW_THUMBNAILS_KEY,
+            title = "Show episode thumbnails",
+            summary = "Fetch and display images in the episode list from TMDB.",
+            defaultValue = true,
+            preferences = preferences
+        )
     }
 
     companion object {
         private const val PREF_PREFERRED_QUALITY = "pref_preferred_quality"
         private const val DEFAULT_PREFERRED_QUALITY = "1080p"
         private const val PREF_PREFERRED_SERVER = "pref_preferred_server"
-        private const val DEFAULT_PREFERRED_SERVER = "FSLv2"
+        private const val DEFAULT_PREFERRED_SERVER = "FSL Server"
+        private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
     }
 }
