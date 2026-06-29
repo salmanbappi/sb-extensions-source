@@ -164,8 +164,8 @@ class FourKHDHub : Source() {
         val doc = response.asJsoup()
         val episodes = mutableListOf<SEpisode>()
         val pagePath = response.request.url.encodedPath
-        val animeTitle = doc.selectFirst(".page-title")?.text() 
-            ?: doc.selectFirst("title")?.text()?.replace(" - 4KHDHub", "") 
+        val animeTitle = doc.selectFirst(".page-title")?.text()
+            ?: doc.selectFirst("title")?.text()?.replace(" - 4KHDHub", "")
             ?: "Unknown"
 
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
@@ -284,7 +284,7 @@ class FourKHDHub : Source() {
 
                             val root = org.json.JSONObject(text)
                             movieOverview = root.optString("overview").takeIf { it.isNotBlank() }
-                            val backdropPath = root.optString("backdrop_path").takeIf { it.isNotBlank() } 
+                            val backdropPath = root.optString("backdrop_path").takeIf { it.isNotBlank() }
                                 ?: root.optString("poster_path").takeIf { it.isNotBlank() }
                             moviePoster = backdropPath?.let { "https://image.tmdb.org/t/p/original$it" }
                             val releaseDateStr = root.optString("release_date").takeIf { it.isNotBlank() }
