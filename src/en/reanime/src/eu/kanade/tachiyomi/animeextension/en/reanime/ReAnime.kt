@@ -412,22 +412,19 @@ class ReAnime : Source() {
         )
     }
 
-    private fun hmacSHA256(key: ByteArray, data: ByteArray): ByteArray {
+    private fun pbkdf2(key: ByteArray, salt: ByteArray, iterations: Int): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
         val secretKey = SecretKeySpec(key, "HmacSHA256")
         mac.init(secretKey)
-        return mac.doFinal(data)
-    }
 
-    private fun pbkdf2(key: ByteArray, salt: ByteArray, iterations: Int): ByteArray {
         val input = ByteArray(salt.size + 4)
         System.arraycopy(salt, 0, input, 0, salt.size)
         input[input.size - 1] = 1
 
-        var u = hmacSHA256(key, input)
+        var u = mac.doFinal(input)
         val result = u.clone()
         for (i in 2..iterations) {
-            u = hmacSHA256(key, u)
+            u = mac.doFinal(u)
             for (j in result.indices) {
                 result[j] = (result[j].toInt() xor u[j].toInt()).toByte()
             }
