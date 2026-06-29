@@ -584,7 +584,7 @@ class MovieBox : Source() {
         val name: String?,
         val overview: String?,
         val thumbnail: String?,
-        val released: String?
+        val released: String?,
     )
 
     override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl, headersBuilder().add("X-Tachiyomi-Episode-Url", episode.url).build())
