@@ -299,7 +299,7 @@ class CineplexBD : Source() {
                 val trailerBtn = doc.selectFirst("button[onclick*=openTrailer]")
                 val trailerKey = trailerBtn?.attr("onclick")?.substringAfter("openTrailer('")?.substringBefore("')")
                 if (!trailerKey.isNullOrBlank()) {
-                    anime.description = "${anime.description.orEmpty()}\nTrailer: https://www.youtube.com/watch?v=$trailerKey".trim()
+                    anime.description = "${anime.description.orEmpty()}\n\n[Trailer](https://www.youtube.com/watch?v=$trailerKey)".trim()
                 }
 
                 val pillScore = doc.selectFirst(".pill:contains(★)")?.text()
