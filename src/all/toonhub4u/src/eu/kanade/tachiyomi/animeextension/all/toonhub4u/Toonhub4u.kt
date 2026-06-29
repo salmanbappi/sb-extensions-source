@@ -22,6 +22,7 @@ import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import extensions.utils.Source
+import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -185,10 +186,10 @@ class Toonhub4u :
     }
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val videoList = mutableListOf<Video>()
         val embedUrls = episode.url.split(",")
 
-        embedUrls.forEach { embedUrl ->
+        return embedUrls.parallelCatchingFlatMap { embedUrl ->
+            val videoList = mutableListOf<Video>()
             try {
                 val embedResponse = client.newCall(GET(embedUrl, headers)).execute()
                 val finalUrl = embedResponse.request.url.toString()
@@ -240,44 +241,45 @@ class Toonhub4u :
                     null
                 }
 
-                mresultObject?.forEach { (key, pathElement) ->
-                    val path = pathElement.jsonPrimitive.content.trimStart('/')
-                    val base = siteUrls[key]?.jsonPrimitive?.content?.trimEnd('/') ?: return@forEach
-                    val fullUrl = "$base/$path"
-                    val friendlyName = siteFriendlyNames[key]?.jsonPrimitive?.content ?: key
+                if (mresultObject != null) {
+                    for ((key, pathElement) in mresultObject) {
+                        val path = pathElement.jsonPrimitive.content.trimStart('/')
+                        val base = siteUrls[key]?.jsonPrimitive?.content?.trimEnd('/') ?: continue
+                        val fullUrl = "$base/$path"
+                        val friendlyName = siteFriendlyNames[key]?.jsonPrimitive?.content ?: key
 
-                    try {
-                        when {
-                            friendlyName.equals("FileMoon", ignoreCase = true) || friendlyName.equals("Fmoon", ignoreCase = true) -> {
-                                videoList.addAll(FilemoonExtractor(client).videosFromUrl(fullUrl, "FileMoon - "))
-                            }
+                        try {
+                            when {
+                                friendlyName.equals("FileMoon", ignoreCase = true) || friendlyName.equals("Fmoon", ignoreCase = true) -> {
+                                    videoList.addAll(FilemoonExtractor(client).videosFromUrl(fullUrl, "FileMoon - "))
+                                }
 
-                            friendlyName.contains("Streamwish", ignoreCase = true) || friendlyName.contains("Cdnwish", ignoreCase = true) || friendlyName.contains("Wish", ignoreCase = true) -> {
-                                videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(fullUrl, "StreamWish"))
-                            }
+                                friendlyName.contains("Streamwish", ignoreCase = true) || friendlyName.contains("Cdnwish", ignoreCase = true) || friendlyName.contains("Wish", ignoreCase = true) -> {
+                                    videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(fullUrl, "StreamWish"))
+                                }
 
-                            friendlyName.contains("Vidhide", ignoreCase = true) || friendlyName.contains("Animezia", ignoreCase = true) || friendlyName.contains("StreamHG", ignoreCase = true) || friendlyName.contains("EarnVids", ignoreCase = true) -> {
-                                videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(fullUrl) { "VidHide - $it" })
-                            }
+                                friendlyName.contains("Vidhide", ignoreCase = true) || friendlyName.contains("Animezia", ignoreCase = true) || friendlyName.contains("StreamHG", ignoreCase = true) || friendlyName.contains("EarnVids", ignoreCase = true) -> {
+                                    videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(fullUrl) { "VidHide - $it" })
+                                }
 
-                            friendlyName.equals("Buzzheavier", ignoreCase = true) -> {
-                                videoList.addAll(BuzzheavierExtractor(client, headers).videosFromUrl(fullUrl, "Buzzheavier - "))
-                            }
+                                friendlyName.equals("Buzzheavier", ignoreCase = true) -> {
+                                    videoList.addAll(BuzzheavierExtractor(client, headers).videosFromUrl(fullUrl, "Buzzheavier - "))
+                                }
 
-                            friendlyName.contains("StreamP2p", ignoreCase = true) || friendlyName.contains("RpmShare", ignoreCase = true) || friendlyName.contains("UpnShare", ignoreCase = true) -> {
-                                videoList.addAll(StreamP2PExtractor(client, headers).videosFromUrl(fullUrl, friendlyName))
+                                friendlyName.contains("StreamP2p", ignoreCase = true) || friendlyName.contains("RpmShare", ignoreCase = true) || friendlyName.contains("UpnShare", ignoreCase = true) -> {
+                                    videoList.addAll(StreamP2PExtractor(client, headers).videosFromUrl(fullUrl, friendlyName))
+                                }
                             }
+                        } catch (e: Exception) {
+                            // ignore error
                         }
-                    } catch (e: Exception) {
-                        // ignore error
                     }
                 }
             } catch (e: Exception) {
                 // ignore error
             }
+            videoList
         }
-
-        return videoList
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
