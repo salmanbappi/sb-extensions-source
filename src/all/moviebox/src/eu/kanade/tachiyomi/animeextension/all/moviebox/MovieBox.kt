@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -52,11 +53,54 @@ class MovieBox : Source() {
 
     private val apiHosts = listOf(
         "https://api3.aoneroom.com",
+        "https://api6.aoneroom.com",
+        "https://api5.aoneroom.com",
+        "https://api4.aoneroom.com",
+        "https://api4sg.aoneroom.com",
         "https://netfilm.world",
         "https://h5-api.aoneroom.com",
     )
 
     private val secretKeyDefault = "NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw=="
+
+    private fun saveToken(token: String?) {
+        if (!token.isNullOrBlank() && isTokenValid(token)) {
+            bearerToken = token
+            preferences.edit().putString("moviebox_bearer_token", token).apply()
+        }
+    }
+
+    private fun getCachedToken(): String {
+        synchronized(this) {
+            if (isTokenValid(bearerToken)) return bearerToken!!
+            val saved = preferences.getString("moviebox_bearer_token", null)
+            if (isTokenValid(saved)) {
+                bearerToken = saved
+                return saved!!
+            }
+
+            val host = getPreferredHost()
+            val url = "$host/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
+            val request = GET(url, getApiHeaders(url, forceNoToken = true))
+            try {
+                client.newCall(request).execute().use { response ->
+                    val xUser = response.header("x-user")
+                    if (!xUser.isNullOrBlank()) {
+                        val tokenRegex = """"token"\s*:\s*"([^"]+)"""".toRegex()
+                        val token = tokenRegex.find(xUser)?.groupValues?.get(1)
+                        if (!token.isNullOrBlank() && isTokenValid(token)) {
+                            bearerToken = token
+                            preferences.edit().putString("moviebox_bearer_token", token).apply()
+                            return token
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+            return ""
+        }
+    }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -64,12 +108,12 @@ class MovieBox : Source() {
         .add("Origin", "https://moviebox.ph")
         .add("Accept", "application/json")
 
-    private fun getApiHeaders(url: String, method: String = "GET", body: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false): Headers {
+    private fun getApiHeaders(url: String, method: String = "GET", body: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false, forceNoToken: Boolean = false): Headers {
         val timestamp = System.currentTimeMillis()
         val contentType = if (method == "POST") "application/json; charset=utf-8" else "application/json"
 
         return Headers.Builder()
-            .add("user-agent", "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; Samsung; Build/TQ3A.230901.001; Cronet/145.0.7582.0)")
+            .add("user-agent", "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)")
             .add("accept", "application/json")
             .add("content-type", contentType)
             .add("connection", "keep-alive")
@@ -80,8 +124,11 @@ class MovieBox : Source() {
             .apply {
                 if (isDetails) add("x-play-mode", "2")
                 if (isPlayback) add("x-play-mode", "1")
-                if (!token.isNullOrBlank()) {
-                    add("Authorization", "Bearer $token")
+                if (!forceNoToken) {
+                    val activeToken = if (!token.isNullOrBlank()) token else getCachedToken()
+                    if (activeToken.isNotEmpty()) {
+                        add("Authorization", "Bearer $activeToken")
+                    }
                 }
             }
             .build()
@@ -89,25 +136,21 @@ class MovieBox : Source() {
 
     private fun getClientInfo(): String = JsonObject(
         mapOf(
-            "package_name" to kotlinx.serialization.json.JsonPrimitive("com.community.oneroom"),
-            "version_name" to kotlinx.serialization.json.JsonPrimitive("3.0.13.0325.03"),
-            "version_code" to kotlinx.serialization.json.JsonPrimitive(50020088),
+            "package_name" to kotlinx.serialization.json.JsonPrimitive("com.community.mbox.in"),
+            "version_name" to kotlinx.serialization.json.JsonPrimitive("3.0.03.0529.03"),
+            "version_code" to kotlinx.serialization.json.JsonPrimitive(50020042),
             "os" to kotlinx.serialization.json.JsonPrimitive("android"),
-            "os_version" to kotlinx.serialization.json.JsonPrimitive("13"),
+            "os_version" to kotlinx.serialization.json.JsonPrimitive("16"),
             "device_id" to kotlinx.serialization.json.JsonPrimitive(deviceId),
             "install_store" to kotlinx.serialization.json.JsonPrimitive("ps"),
-            "gaid" to kotlinx.serialization.json.JsonPrimitive("1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d"),
-            "brand" to kotlinx.serialization.json.JsonPrimitive("Samsung"),
-            "model" to kotlinx.serialization.json.JsonPrimitive("SM-S918B"),
+            "gaid" to kotlinx.serialization.json.JsonPrimitive("d7578036d13336cc"),
+            "brand" to kotlinx.serialization.json.JsonPrimitive("google"),
+            "model" to kotlinx.serialization.json.JsonPrimitive("sdk_gphone64_x86_64"),
             "system_language" to kotlinx.serialization.json.JsonPrimitive("en"),
             "net" to kotlinx.serialization.json.JsonPrimitive("NETWORK_WIFI"),
-            "region" to kotlinx.serialization.json.JsonPrimitive("US"),
+            "region" to kotlinx.serialization.json.JsonPrimitive("IN"),
             "timezone" to kotlinx.serialization.json.JsonPrimitive("Asia/Calcutta"),
             "sp_code" to kotlinx.serialization.json.JsonPrimitive(""),
-            "X-Play-Mode" to kotlinx.serialization.json.JsonPrimitive("1"),
-            "X-Idle-Data" to kotlinx.serialization.json.JsonPrimitive("1"),
-            "X-Family-Mode" to kotlinx.serialization.json.JsonPrimitive("0"),
-            "X-Content-Mode" to kotlinx.serialization.json.JsonPrimitive("0"),
         ),
     ).toString()
 
@@ -192,7 +235,7 @@ class MovieBox : Source() {
     private fun safeGetJsonWithHeaders(urlPath: String, isPost: Boolean = false, bodyData: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false): Pair<JsonElement, Headers>? {
         for (host in apiHosts) {
             val adaptivePath = when {
-                host.contains("api3") ->
+                host.contains("aoneroom") ->
                     urlPath
                         .replace("/wefeed-h5api-bff/detail", "/wefeed-mobile-bff/subject-api/get")
                         .replace("/wefeed-h5api-bff/subject/play", "/wefeed-mobile-bff/subject-api/play-info")
@@ -334,12 +377,14 @@ class MovieBox : Source() {
     override fun animeDetailsParse(response: Response): SAnime {
         val xUser = response.header("x-user")
         var token = xUser?.let { runCatching { json.parseToJsonElement(it).obj?.get("token")?.str }.getOrNull() }
+        saveToken(token)
 
         val body = response.body.string()
         val jsonRes = if (!body.trim().startsWith("{")) {
             val id = response.request.url.queryParameter("subjectId") ?: response.request.url.toString().substringAfterLast("/")
             val result = safeGetJsonWithHeaders("/wefeed-mobile-bff/subject-api/get?subjectId=$id", isDetails = true)
             token = result?.second?.get("x-user")?.let { runCatching { json.parseToJsonElement(it).obj?.get("token")?.str }.getOrNull() }
+            saveToken(token)
             result?.first
         } else {
             json.parseToJsonElement(body)
@@ -364,6 +409,7 @@ class MovieBox : Source() {
     override fun episodeListParse(response: Response): List<SEpisode> {
         val xUser = response.header("x-user")
         val headerToken = xUser?.let { runCatching { json.parseToJsonElement(it).obj?.get("token")?.str }.getOrNull() }
+        saveToken(headerToken)
         val urlParts = response.request.url.toString().split("|")
         val token = headerToken ?: (if (urlParts.size > 1) urlParts[1] else null)
 
@@ -411,15 +457,31 @@ class MovieBox : Source() {
             }
         }
 
+        val showTitle = data["subject"]?.obj?.get("title")?.str ?: data["title"]?.str ?: ""
+        val isTv = seasonsMap.isNotEmpty() && (seasonsMap.keys.size > 1 || (seasonsMap[1]?.size ?: 0) > 1)
+        val (_, metaEps) = if (showTitle.isNotBlank()) {
+            fetchCinemetaMeta(showTitle, isTv)
+        } else {
+            Pair(null, emptyList())
+        }
+
+        val showThumbnails = preferences.getBoolean("pref_show_thumbnails", true)
         val idsString = allIds.joinToString("~~") { "${it.first}:${it.second}" }
         seasonsMap.forEach { (seNum, epSet) ->
             epSet.sorted().forEach { epNum ->
+                val metaEp = metaEps.firstOrNull { it.season == seNum && it.episode == epNum }
                 episodes.add(
                     SEpisode.create().apply {
-                        name = "Season $seNum - Episode $epNum"
+                        name = metaEp?.name?.let { "Season $seNum - Episode $epNum - $it" } ?: "Season $seNum - Episode $epNum"
                         episode_number = epNum.toFloat()
                         url = "$seNum|$epNum|$idsString|$detailPath" + if (!token.isNullOrBlank()) "|$token" else ""
                         date_upload = System.currentTimeMillis()
+                        if (!metaEp?.overview.isNullOrBlank()) {
+                            summary = metaEp.overview
+                        }
+                        if (showThumbnails && !metaEp?.thumbnail.isNullOrBlank()) {
+                            preview_url = metaEp.thumbnail
+                        }
                     },
                 )
             }
@@ -438,6 +500,66 @@ class MovieBox : Source() {
             )
         }
     }
+
+    private fun fetchCinemetaMeta(title: String, isTv: Boolean): Pair<String?, List<CinemetaEpisode>> {
+        val cleanTitle = title.substringBefore("(").substringBefore("[").trim()
+        if (cleanTitle.isBlank()) return Pair(null, emptyList())
+        val metaType = if (isTv) "series" else "movie"
+
+        val searchUrl = "https://v3-cinemeta.strem.io/catalog/$metaType/imdb-search/search=${Uri.encode(cleanTitle)}.json"
+        val searchRequest = GET(searchUrl)
+        try {
+            client.newCall(searchRequest).execute().use { response ->
+                val body = response.body.string()
+                val jsonRes = json.parseToJsonElement(body).obj ?: return Pair(null, emptyList())
+                val metas = jsonRes["metas"]?.arr ?: return Pair(null, emptyList())
+                var bestImdbId: String? = null
+                for (metaEl in metas) {
+                    val m = metaEl.obj ?: continue
+                    val name = m["name"]?.str ?: continue
+                    if (name.equals(cleanTitle, ignoreCase = true) || name.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(name, ignoreCase = true)) {
+                        bestImdbId = m["imdb_id"]?.str
+                        if (bestImdbId != null) break
+                    }
+                }
+
+                if (bestImdbId != null) {
+                    val detailsUrl = "https://v3-cinemeta.strem.io/meta/$metaType/$bestImdbId.json"
+                    val detailsRequest = GET(detailsUrl)
+                    client.newCall(detailsRequest).execute().use { detailsResponse ->
+                        val detailsBody = detailsResponse.body.string()
+                        val detailsJson = json.parseToJsonElement(detailsBody).obj ?: return Pair(null, emptyList())
+                        val metaObj = detailsJson["meta"]?.obj ?: return Pair(null, emptyList())
+                        val description = metaObj["description"]?.str
+
+                        val episodesList = mutableListOf<CinemetaEpisode>()
+                        val videos = metaObj["videos"]?.arr
+                        videos?.forEach { videoEl ->
+                            val v = videoEl.obj ?: return@forEach
+                            val name = v["name"]?.str
+                            val season = v["season"]?.jsonPrimitive?.intOrNull ?: 1
+                            val episode = v["number"]?.jsonPrimitive?.intOrNull ?: v["episode"]?.jsonPrimitive?.intOrNull ?: 1
+                            val overview = v["overview"]?.str ?: v["description"]?.str
+                            val thumbnail = v["thumbnail"]?.str
+                            episodesList.add(CinemetaEpisode(season, episode, name, overview, thumbnail))
+                        }
+                        return Pair(description, episodesList)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+        return Pair(null, emptyList())
+    }
+
+    private data class CinemetaEpisode(
+        val season: Int,
+        val episode: Int,
+        val name: String?,
+        val overview: String?,
+        val thumbnail: String?
+    )
 
     override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl, headersBuilder().add("X-Tachiyomi-Episode-Url", episode.url).build())
 
@@ -482,7 +604,7 @@ class MovieBox : Source() {
                 res.split(",").forEach { r -> videos.add(Video(videoUrl = url, videoTitle = "${r.trim()}P ($langTag)", headers = headers, subtitleTracks = subtitleTracks)) }
             }
         }
-        return videos.sort()
+        return videos.sortVideos()
     }
 
     private val blockedKeywords = listOf(
@@ -532,7 +654,7 @@ class MovieBox : Source() {
     private val JsonElement?.str get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
     private val JsonElement?.bool get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false
 
-    private fun List<Video>.sort(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
         val audio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT)!!
         return this.sortedWith(
@@ -545,7 +667,7 @@ class MovieBox : Source() {
         ListPreference(screen.context).apply {
             key = PREF_HOST_KEY
             title = "API Host"
-            entries = arrayOf("Official (Aoneroom)", "Mirror (Netfilm)", "H5 API")
+            entries = arrayOf("Official (api3)", "Official (api6)", "Official (api5)", "Official (api4)", "Official (api4sg)", "Mirror (Netfilm)", "H5 API")
             entryValues = apiHosts.toTypedArray()
             setDefaultValue(apiHosts[0])
             summary = "%s"
@@ -567,6 +689,12 @@ class MovieBox : Source() {
             entryValues = PREF_AUDIO_VALUES
             setDefaultValue(PREF_AUDIO_DEFAULT)
             summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = "pref_show_thumbnails"
+            title = "Show episode thumbnails"
+            setDefaultValue(true)
         }.also { screen.addPreference(it) }
     }
     override fun latestUpdatesRequest(page: Int): Request = throw Exception("Not used")
@@ -700,5 +828,24 @@ class MovieBox : Source() {
         private const val PREF_AUDIO_DEFAULT = "English"
         private val PREF_AUDIO_ENTRIES = arrayOf("English", "Original", "Original Audio", "Japanese", "Hindi", "Telugu", "Tamil", "Portuguese (Brazil)", "Tagalog")
         private val PREF_AUDIO_VALUES = arrayOf("English", "Original", "Original Audio", "Japanese", "Hindi", "Telugu", "Tamil", "ptbr", "Tagalog")
+
+        private var bearerToken: String? = null
+
+        fun decodeJwtExpiry(token: String): Long {
+            return try {
+                val payload = token.split(".").getOrNull(1) ?: return 0L
+                val padded = payload.replace("-", "+").replace("_", "/")
+                    .let { it + "=".repeat((4 - it.length % 4) % 4) }
+                val jsonStr = String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8)
+                val expRegex = """"exp"\s*:\s*(\d+)""".toRegex()
+                expRegex.find(jsonStr)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+            } catch (_: Exception) { 0L }
+        }
+
+        fun isTokenValid(token: String?): Boolean {
+            if (token.isNullOrBlank()) return false
+            val exp = decodeJwtExpiry(token)
+            return exp > System.currentTimeMillis() / 1000 + 3600
+        }
     }
 }
