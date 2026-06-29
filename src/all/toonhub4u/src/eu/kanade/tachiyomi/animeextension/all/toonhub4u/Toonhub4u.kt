@@ -42,6 +42,8 @@ import org.jsoup.nodes.Element
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import kotlin.math.min
 
@@ -705,6 +707,11 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
     var port: Int = 0
         private set
 
+    private val segmentCache = ConcurrentHashMap<String, ByteArray>()
+    private val cacheOrder = Collections.synchronizedList(mutableListOf<String>())
+    private val fetching = ConcurrentHashMap<String, Boolean>()
+    private val playlistSegments = ConcurrentHashMap<String, List<String>>()
+
     init {
         try {
             serverSocket = ServerSocket(0)
@@ -734,6 +741,76 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
     }
 
+    private fun buildHeaders(encodedHeaders: String): okhttp3.Headers {
+        val builder = okhttp3.Headers.Builder()
+        if (encodedHeaders.isNotEmpty()) {
+            val headersStr = String(Base64.decode(encodedHeaders, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+            headersStr.split("\n").forEach { line ->
+                val headerParts = line.split(":", limit = 2)
+                if (headerParts.size == 2) {
+                    builder.set(headerParts[0].trim(), headerParts[1].trim())
+                }
+            }
+        }
+        return builder.build()
+    }
+
+    private fun cacheSegment(key: String, data: ByteArray) {
+        while (segmentCache.size >= 100) {
+            val oldest = synchronized(cacheOrder) {
+                if (cacheOrder.isNotEmpty()) cacheOrder.removeAt(0) else null
+            } ?: break
+            segmentCache.remove(oldest)
+        }
+        segmentCache[key] = data
+        synchronized(cacheOrder) {
+            cacheOrder.remove(key)
+            cacheOrder.add(key)
+        }
+    }
+
+    private fun triggerPrefetch(playlistUrl: String, currentIndex: Int, encodedHeaders: String) {
+        val segments = playlistSegments[playlistUrl] ?: return
+        val prefetchAhead = 5
+        val maxIndex = min(currentIndex + prefetchAhead, segments.size - 1)
+        val targetHeaders = buildHeaders(encodedHeaders)
+
+        for (i in (currentIndex + 1)..maxIndex) {
+            val segmentUrl = segments[i]
+            val cacheKey = segmentUrl
+            if (!segmentCache.containsKey(cacheKey) && fetching[cacheKey] != true) {
+                fetching[cacheKey] = true
+                executor.execute {
+                    try {
+                        val request = Request.Builder().url(segmentUrl).headers(targetHeaders).build()
+                        client.newCall(request).execute().use { response ->
+                            if (response.isSuccessful) {
+                                val rawBytes = response.body?.bytes()
+                                if (rawBytes != null) {
+                                    val stripped = stripPngHeader(rawBytes)
+                                    cacheSegment(cacheKey, stripped)
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {
+                    } finally {
+                        fetching.remove(cacheKey)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun findPlaylistAndTriggerPrefetch(segmentUrl: String, encodedHeaders: String) {
+        for ((playlistUrl, segments) in playlistSegments) {
+            val idx = segments.indexOf(segmentUrl)
+            if (idx != -1) {
+                triggerPrefetch(playlistUrl, idx, encodedHeaders)
+                break
+            }
+        }
+    }
+
     private fun handleSocket(socket: Socket) {
         try {
             val input = socket.getInputStream()
@@ -760,17 +837,30 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
             val targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
             val isM3u8Request = targetUrl.contains(".m3u8") || path.contains("playlist.m3u8")
 
-            val targetHeaders = okhttp3.Headers.Builder()
-            if (encodedHeaders.isNotEmpty()) {
-                val headersStr = String(Base64.decode(encodedHeaders, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-                headersStr.split("\n").forEach { line ->
-                    val headerParts = line.split(":", limit = 2)
-                    if (headerParts.size == 2) {
-                        targetHeaders.set(headerParts[0].trim(), headerParts[1].trim())
+            if (!isM3u8Request) {
+                val cached = segmentCache[targetUrl]
+                if (cached != null) {
+                    sendCachedResponse(socket, cached)
+                    findPlaylistAndTriggerPrefetch(targetUrl, encodedHeaders)
+                    return
+                }
+
+                if (fetching[targetUrl] == true) {
+                    var waited = 0
+                    while (fetching[targetUrl] == true && waited < 10000) {
+                        Thread.sleep(50L)
+                        waited += 50
+                    }
+                    val waitedCached = segmentCache[targetUrl]
+                    if (waitedCached != null) {
+                        sendCachedResponse(socket, waitedCached)
+                        findPlaylistAndTriggerPrefetch(targetUrl, encodedHeaders)
+                        return
                     }
                 }
             }
 
+            val targetHeaders = buildHeaders(encodedHeaders).newBuilder()
             var line: String?
             while (reader.readLine().also { line = it } != null) {
                 if (line!!.isEmpty()) break
@@ -784,13 +874,18 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
                 }
             }
 
-            val request = Request.Builder()
-                .url(targetUrl)
-                .headers(targetHeaders.build())
-                .build()
+            fetching[targetUrl] = true
+            try {
+                val request = Request.Builder()
+                    .url(targetUrl)
+                    .headers(targetHeaders.build())
+                    .build()
 
-            client.newCall(request).execute().use { response ->
-                sendResponse(socket, response, targetUrl, encodedHeaders)
+                client.newCall(request).execute().use { response ->
+                    sendResponse(socket, response, targetUrl, encodedHeaders)
+                }
+            } finally {
+                fetching.remove(targetUrl)
             }
         } catch (e: Exception) {
             try {
@@ -801,6 +896,16 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
                 socket.close()
             } catch (_: Exception) {}
         }
+    }
+
+    private fun sendCachedResponse(socket: Socket, bytes: ByteArray) {
+        val out = socket.getOutputStream()
+        out.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        out.write("Content-Type: video/mp2t\r\n".toByteArray())
+        out.write("Content-Length: ${bytes.size}\r\n".toByteArray())
+        out.write("Connection: close\r\n\r\n".toByteArray())
+        out.write(bytes)
+        out.flush()
     }
 
     private fun sendResponse(socket: Socket, response: Response, targetUrl: String, encodedHeaders: String) {
@@ -841,7 +946,9 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
 
             val rawBytes = response.body.bytes()
             val stripped = stripPngHeader(rawBytes)
+            cacheSegment(targetUrl, stripped)
             out.write(stripped)
+            findPlaylistAndTriggerPrefetch(targetUrl, encodedHeaders)
         }
         out.flush()
     }
@@ -849,6 +956,7 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
     private fun processM3u8(content: String, playlistUrl: String, encodedHeaders: String): String {
         val lines = content.split(Regex("""\r?\n"""))
         val builder = StringBuilder(content.length * 2)
+        val segmentsList = mutableListOf<String>()
 
         for (line in lines) {
             val trimmed = line.trim()
@@ -871,9 +979,15 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
                 }
             } else {
                 val resolvedUri = resolveUrl(playlistUrl, trimmed)
+                segmentsList.add(resolvedUri)
                 builder.append(getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders))
             }
             builder.append("\n")
+        }
+
+        if (segmentsList.isNotEmpty()) {
+            playlistSegments[playlistUrl] = segmentsList
+            triggerPrefetch(playlistUrl, -1, encodedHeaders)
         }
 
         return builder.toString()
