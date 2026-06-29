@@ -1,7 +1,7 @@
 ext {
     extName = 'Toonhub4u'
     extClass = '.Toonhub4u'
-    extVersionCode = 1
+    extVersionCode = 2
 }
 
 apply from: "$rootDir/common.gradle"
@@ -9,6 +9,15 @@ apply from: "$rootDir/common.gradle"
 android {
     defaultConfig {
         manifestPlaceholders.appName = "Toonhub4u"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlin {
+        jvmToolchain(17)
     }
 }
 
@@ -18,4 +27,5 @@ dependencies {
     implementation(project(':lib:vidhide-extractor'))
     implementation(project(':lib:buzzheavier-extractor'))
 }
+
 
