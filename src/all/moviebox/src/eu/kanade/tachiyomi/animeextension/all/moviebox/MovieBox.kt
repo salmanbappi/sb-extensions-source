@@ -558,7 +558,7 @@ class MovieBox : Source() {
         val episode: Int,
         val name: String?,
         val overview: String?,
-        val thumbnail: String?
+        val thumbnail: String?,
     )
 
     override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl, headersBuilder().add("X-Tachiyomi-Episode-Url", episode.url).build())
@@ -839,7 +839,9 @@ class MovieBox : Source() {
                 val jsonStr = String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8)
                 val expRegex = """"exp"\s*:\s*(\d+)""".toRegex()
                 expRegex.find(jsonStr)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
-            } catch (_: Exception) { 0L }
+            } catch (_: Exception) {
+                0L
+            }
         }
 
         fun isTokenValid(token: String?): Boolean {
