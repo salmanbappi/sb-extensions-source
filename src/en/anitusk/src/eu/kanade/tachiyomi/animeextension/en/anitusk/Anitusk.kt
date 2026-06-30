@@ -38,7 +38,9 @@ import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
 
-class Anitusk : Source(), ConfigurableAnimeSource {
+class Anitusk :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "Anitusk"
 
@@ -106,26 +108,32 @@ class Anitusk : Source(), ConfigurableAnimeSource {
                 is SortFilter -> {
                     selectedSort = listOf(filter.toValue())
                 }
+
                 is GenreFilter -> {
                     val genres = filter.state.filter { it.state }.map { it.value }
                     if (genres.isNotEmpty()) selectedGenres = genres
                 }
+
                 is FormatFilter -> {
                     val formats = filter.state.filter { it.state }.map { it.value }
                     if (formats.isNotEmpty()) selectedFormats = formats
                 }
+
                 is StatusFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) selectedStatus = listOf(value)
                 }
+
                 is SeasonFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) selectedSeason = value
                 }
+
                 is YearFilter -> {
                     val value = filter.state
                     if (value.isNotBlank()) selectedYear = value.toIntOrNull()
                 }
+
                 else -> {}
             }
         }
@@ -330,10 +338,11 @@ class Anitusk : Source(), ConfigurableAnimeSource {
                                 videoUrl = v.videoUrl,
                                 videoTitle = v.videoTitle,
                                 headers = refHeaders,
-                            )
+                            ),
                         )
                     }
                 }
+
                 stream.type == "mp4" -> {
                     val refererUrl = stream.referer ?: "https://allmanga.to/"
                     val refHeaders = headersBuilder().set("Referer", refererUrl).build()
@@ -342,9 +351,10 @@ class Anitusk : Source(), ConfigurableAnimeSource {
                             videoUrl = stream.url,
                             videoTitle = "${hoster.hosterName} - MP4 (${stream.quality ?: "1080p"})",
                             headers = refHeaders,
-                        )
+                        ),
                     )
                 }
+
                 stream.type == "embed" -> {
                     val embedUrl = stream.url
                     when {
@@ -357,10 +367,11 @@ class Anitusk : Source(), ConfigurableAnimeSource {
                                         videoTitle = v.videoTitle,
                                         headers = v.headers,
                                         subtitleTracks = v.subtitleTracks,
-                                    )
+                                    ),
                                 )
                             }
                         }
+
                         embedUrl.contains("otakuhg.site") || embedUrl.contains("otakuvid.online") || embedUrl.contains("bysekoze.com") -> {
                             val extractor = VidHideExtractor(client, headers)
                             extractor.videosFromUrl(embedUrl) { quality -> "${hoster.hosterName} - $quality" }.forEach { v ->
@@ -370,7 +381,7 @@ class Anitusk : Source(), ConfigurableAnimeSource {
                                         videoTitle = v.videoTitle,
                                         headers = v.headers,
                                         subtitleTracks = v.subtitleTracks,
-                                    )
+                                    ),
                                 )
                             }
                         }
@@ -392,7 +403,7 @@ class Anitusk : Source(), ConfigurableAnimeSource {
         val quality = preferences.getString(PREF_QUALITY_KEY, "1080p")!!
         return this.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(quality, ignoreCase = true) }
-                .thenByDescending { it.resolution ?: 0 }
+                .thenByDescending { it.resolution ?: 0 },
         )
     }
 
