@@ -456,9 +456,18 @@ class Anitusk :
         }.let { videos.addAll(it) }
 
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
-        return videos.filter { video ->
-            !excludedServers.any { video.videoTitle.contains(it, ignoreCase = true) }
-        }
+        val audioLabel = audioType.uppercase()
+        return videos
+            .filter { video -> !excludedServers.any { video.videoTitle.contains(it, ignoreCase = true) } }
+            .map { video ->
+                Video(
+                    videoUrl = video.videoUrl,
+                    videoTitle = "${video.videoTitle} ($audioLabel)",
+                    headers = video.headers,
+                    subtitleTracks = video.subtitleTracks,
+                    audioTracks = video.audioTracks,
+                )
+            }
     }
 
     // ============================== Video Sorting ==============================
