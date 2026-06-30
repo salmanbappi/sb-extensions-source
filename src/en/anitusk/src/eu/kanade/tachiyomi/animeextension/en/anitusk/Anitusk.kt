@@ -25,6 +25,10 @@ import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -34,6 +38,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.net.ServerSocket
 import java.net.Socket
+import java.text.SimpleDateFormat
+import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
@@ -246,32 +252,92 @@ class Anitusk :
 
     override fun episodeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
 
+    private fun parseDate(dateStr: String?): Long {
+        if (dateStr.isNullOrBlank()) return 0L
+        return try {
+            SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).parse(dateStr.trim())?.time ?: 0L
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    private fun formatEpNum(num: Double): String {
+        return if (num % 1.0 == 0.0) num.toInt().toString() else num.toString()
+    }
+
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val anilistId = anime.url.substringAfter("/anime/")
-        val request = animeDetailsRequest(anime)
+        val request = GET("$apiBaseUrl/episodes/$anilistId", headers)
         val response = client.newCall(request).execute()
-        val responseBody = response.body.string()
-        val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
-        val media = anilistRes.data.Media ?: throw Exception("Anime not found")
-
-        val nextAiring = media.nextAiringEpisode
-        val airedEps = if (nextAiring != null) nextAiring.episode - 1 else media.episodes ?: 0
-        val totalEps = if (airedEps > 0) airedEps else media.episodes ?: 0
-
-        val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
-
-        val epMap = media.streamingEpisodes.associateBy {
-            Regex("""Episode\s+(\d+)""", RegexOption.IGNORE_CASE).find(it.title)?.groupValues?.get(1)?.toIntOrNull() ?: -1
+        if (!response.isSuccessful) {
+            response.close()
+            throw Exception("Failed to fetch episodes list")
+        }
+        
+        val epResponse = json.decodeFromString<EpisodeListResponse>(response.body.string())
+        val providerKeys = listOf("kiwi", "bonk", "ally", "pewe", "moo", "bee", "hop")
+        
+        var providerData: ProviderData? = null
+        var episodesMap: Map<String, List<EpisodeItem>> = emptyMap()
+        
+        for (key in providerKeys) {
+            if (epResponse.providers.containsKey(key)) {
+                val data = epResponse.providers[key]
+                if (data != null) {
+                    val map = data.getEpisodeMap(json)
+                    if (map["sub"]?.isNotEmpty() == true || map["dub"]?.isNotEmpty() == true) {
+                        providerData = data
+                        episodesMap = map
+                        break
+                    }
+                }
+            }
+        }
+        
+        if (providerData == null) {
+            for (data in epResponse.providers.values) {
+                val map = data.getEpisodeMap(json)
+                if (map["sub"]?.isNotEmpty() == true || map["dub"]?.isNotEmpty() == true) {
+                    providerData = data
+                    episodesMap = map
+                    break
+                }
+            }
+        }
+        
+        if (providerData == null) {
+            throw Exception("No episode providers found")
         }
 
-        val list = (1..totalEps).map { epNum ->
-            val streamEp = epMap[epNum]
+        val subEps = episodesMap["sub"] ?: emptyList()
+        val dubEps = episodesMap["dub"] ?: emptyList()
+        
+        val allEpNumbers = (subEps.map { it.number } + dubEps.map { it.number }).distinct().sorted()
+        val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
+        
+        val list = allEpNumbers.map { epNum ->
+            val subEp = subEps.find { it.number == epNum }
+            val dubEp = dubEps.find { it.number == epNum }
+            val epItem = subEp ?: dubEp!!
+            
             SEpisode.create().apply {
-                url = "/watch/$anilistId/$epNum"
-                val epTitle = streamEp?.title?.replace(Regex("^.*? - "), "") ?: ""
-                name = if (epTitle.isNotBlank()) "Episode $epNum: $epTitle" else "Episode $epNum"
+                url = "/watch/$anilistId/${formatEpNum(epNum)}"
+                val epTitle = epItem.title?.replace(Regex("^.*? - "), "") ?: ""
+                name = if (epTitle.isNotBlank() && !epTitle.equals("Episode ${formatEpNum(epNum)}", ignoreCase = true)) {
+                    "Episode ${formatEpNum(epNum)}: $epTitle"
+                } else {
+                    "Episode ${formatEpNum(epNum)}"
+                }
                 episode_number = epNum.toFloat()
-                preview_url = if (showThumbnails) streamEp?.thumbnail else null
+                date_upload = parseDate(epItem.airDate)
+                summary = epItem.description?.takeIf { it.isNotBlank() }
+                preview_url = if (showThumbnails) epItem.image else null
+                scanlator = when {
+                    subEp != null && dubEp != null -> "Sub, Dub"
+                    dubEp != null -> "Dub"
+                    subEp != null -> "Sub"
+                    else -> null
+                }
             }
         }
         return list.reversed()
@@ -973,4 +1039,41 @@ data class StreamItem(
     val referer: String? = null,
     val server: String? = null,
     val priority: Int? = null,
+)
+
+@Serializable
+data class EpisodeListResponse(
+    val providers: Map<String, ProviderData> = emptyMap(),
+)
+
+@Serializable
+data class ProviderData(
+    val episodes: JsonElement? = null,
+) {
+    fun getEpisodeMap(json: Json): Map<String, List<EpisodeItem>> {
+        val element = episodes ?: return emptyMap()
+        return try {
+            if (element is JsonObject) {
+                json.decodeFromJsonElement<Map<String, List<EpisodeItem>>>(element)
+            } else if (element is JsonArray) {
+                val list = json.decodeFromJsonElement<List<EpisodeItem>>(element)
+                mapOf("sub" to list)
+            } else {
+                emptyMap()
+            }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+}
+
+@Serializable
+data class EpisodeItem(
+    val id: String,
+    val number: Double,
+    val title: String? = null,
+    val image: String? = null,
+    val airDate: String? = null,
+    val description: String? = null,
+    val filler: Boolean? = null,
 )
