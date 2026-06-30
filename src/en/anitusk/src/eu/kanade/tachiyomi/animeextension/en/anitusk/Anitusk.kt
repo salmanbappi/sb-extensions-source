@@ -361,121 +361,133 @@ class Anitusk :
         if (urlPath.isBlank()) return emptyList()
 
         val audioType = preferences.getString(PREF_TYPE_KEY, "sub") ?: "sub"
-        val resolvedUrl = "$apiBaseUrl${urlPath.replace("/watch/", "/watch/")}"
-            .replace(Regex("/(kiwi|bonk|ally)/(\\d+)/"), "/$1/$2/$audioType/")
+        val audioTypes = listOf("sub", "dub")
 
-        val request = GET(resolvedUrl, headers)
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) {
-            response.close()
-            return emptyList()
-        }
+        val videos = audioTypes.parallelCatchingFlatMapBlocking { type ->
+            val resolvedUrl = "$apiBaseUrl${urlPath.replace("/watch/", "/watch/")}"
+                .replace(Regex("/(kiwi|bonk|ally)/(\\d+)/"), "/$1/$2/$type/")
 
-        val resData = json.decodeFromString<StreamResponse>(response.body.string())
-        val videos = mutableListOf<Video>()
+            val request = GET(resolvedUrl, headers)
+            val response = try {
+                client.newCall(request).execute()
+            } catch (_: Exception) {
+                null
+            }
 
-        val customHeaders = headersBuilder()
-            .set("Referer", "https://vivibebe.site/")
-            .build()
+            if (response == null || !response.isSuccessful) {
+                response?.close()
+                return@parallelCatchingFlatMapBlocking emptyList<Video>()
+            }
 
-        resData.streams.parallelCatchingFlatMapBlocking { stream ->
-            val videoList = mutableListOf<Video>()
-            when {
-                stream.type == "hls" -> {
-                    val streamUrl = stream.url
-                    val isProxied = streamUrl.contains("vivibebe.site") || streamUrl.contains("workers.dev")
-                    val finalUrl = if (isProxied) {
-                        localProxy.getProxyUrl(streamUrl, customHeaders)
-                    } else {
-                        streamUrl
+            val resData = try {
+                json.decodeFromString<StreamResponse>(response.body.string())
+            } catch (_: Exception) {
+                null
+            }
+
+            if (resData == null) {
+                return@parallelCatchingFlatMapBlocking emptyList<Video>()
+            }
+
+            val typeVideos = mutableListOf<Video>()
+            val customHeaders = headersBuilder()
+                .set("Referer", "https://vivibebe.site/")
+                .build()
+
+            resData.streams.parallelCatchingFlatMapBlocking { stream ->
+                val videoList = mutableListOf<Video>()
+                when {
+                    stream.type == "hls" -> {
+                        val streamUrl = stream.url
+                        val isProxied = streamUrl.contains("vivibebe.site") || streamUrl.contains("workers.dev")
+                        val finalUrl = if (isProxied) {
+                            localProxy.getProxyUrl(streamUrl, customHeaders)
+                        } else {
+                            streamUrl
+                        }
+                        val refererUrl = stream.referer ?: "https://kwik.cx/"
+                        val refHeaders = headersBuilder().set("Referer", refererUrl).build()
+
+                        playlistUtils.extractFromHls(
+                            finalUrl,
+                            referer = refererUrl,
+                            videoNameGen = { quality -> "${hoster.hosterName} - $quality (${type.uppercase()})" },
+                        ).forEach { v ->
+                            videoList.add(
+                                Video(
+                                    videoUrl = v.videoUrl,
+                                    videoTitle = v.videoTitle,
+                                    headers = refHeaders,
+                                ),
+                            )
+                        }
                     }
-                    val refererUrl = stream.referer ?: "https://kwik.cx/"
-                    val refHeaders = headersBuilder().set("Referer", refererUrl).build()
 
-                    playlistUtils.extractFromHls(
-                        finalUrl,
-                        referer = refererUrl,
-                        videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
-                    ).forEach { v ->
+                    stream.type == "mp4" -> {
+                        val refererUrl = stream.referer ?: "https://allmanga.to/"
+                        val refHeaders = headersBuilder().set("Referer", refererUrl).build()
                         videoList.add(
                             Video(
-                                videoUrl = v.videoUrl,
-                                videoTitle = v.videoTitle,
+                                videoUrl = stream.url,
+                                videoTitle = "${hoster.hosterName} - MP4 (${stream.quality ?: "1080p"}) (${type.uppercase()})",
                                 headers = refHeaders,
                             ),
                         )
                     }
-                }
 
-                stream.type == "mp4" -> {
-                    val refererUrl = stream.referer ?: "https://allmanga.to/"
-                    val refHeaders = headersBuilder().set("Referer", refererUrl).build()
-                    videoList.add(
-                        Video(
-                            videoUrl = stream.url,
-                            videoTitle = "${hoster.hosterName} - MP4 (${stream.quality ?: "1080p"})",
-                            headers = refHeaders,
-                        ),
-                    )
-                }
-
-                stream.type == "embed" -> {
-                    val embedUrl = stream.url
-                    when {
-                        embedUrl.contains("playmogo.com") || embedUrl.contains("dood") -> {
-                            val extractor = DoodExtractor(client)
-                            extractor.videosFromUrl(embedUrl, quality = hoster.hosterName).forEach { v ->
-                                videoList.add(
-                                    Video(
-                                        videoUrl = v.videoUrl,
-                                        videoTitle = v.videoTitle,
-                                        headers = v.headers,
-                                        subtitleTracks = v.subtitleTracks,
-                                    ),
-                                )
+                    stream.type == "embed" -> {
+                        val embedUrl = stream.url
+                        when {
+                            embedUrl.contains("playmogo.com") || embedUrl.contains("dood") -> {
+                                val extractor = DoodExtractor(client)
+                                extractor.videosFromUrl(embedUrl, quality = "${hoster.hosterName} (${type.uppercase()})").forEach { v ->
+                                    videoList.add(
+                                        Video(
+                                            videoUrl = v.videoUrl,
+                                            videoTitle = v.videoTitle,
+                                            headers = v.headers,
+                                            subtitleTracks = v.subtitleTracks,
+                                        ),
+                                    )
+                                }
                             }
-                        }
 
-                        embedUrl.contains("otakuhg.site") || embedUrl.contains("otakuvid.online") || embedUrl.contains("bysekoze.com") -> {
-                            val extractor = VidHideExtractor(client, headers)
-                            extractor.videosFromUrl(embedUrl) { quality -> "${hoster.hosterName} - $quality" }.forEach { v ->
-                                videoList.add(
-                                    Video(
-                                        videoUrl = v.videoUrl,
-                                        videoTitle = v.videoTitle,
-                                        headers = v.headers,
-                                        subtitleTracks = v.subtitleTracks,
-                                    ),
-                                )
+                            embedUrl.contains("otakuhg.site") || embedUrl.contains("otakuvid.online") || embedUrl.contains("bysekoze.com") -> {
+                                val extractor = VidHideExtractor(client, headers)
+                                extractor.videosFromUrl(embedUrl) { quality -> "${hoster.hosterName} - $quality (${type.uppercase()})" }.forEach { v ->
+                                    videoList.add(
+                                        Video(
+                                            videoUrl = v.videoUrl,
+                                            videoTitle = v.videoTitle,
+                                            headers = v.headers,
+                                            subtitleTracks = v.subtitleTracks,
+                                        ),
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
-            videoList
-        }.let { videos.addAll(it) }
+                videoList
+            }.let { typeVideos.addAll(it) }
+
+            typeVideos
+        }
 
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
-        val audioLabel = audioType.uppercase()
-        return videos
-            .filter { video -> !excludedServers.any { video.videoTitle.contains(it, ignoreCase = true) } }
-            .map { video ->
-                Video(
-                    videoUrl = video.videoUrl,
-                    videoTitle = "${video.videoTitle} ($audioLabel)",
-                    headers = video.headers,
-                    subtitleTracks = video.subtitleTracks,
-                    audioTracks = video.audioTracks,
-                )
-            }
+        return videos.filter { video ->
+            !excludedServers.any { video.videoTitle.contains(it, ignoreCase = true) }
+        }
     }
 
     // ============================== Video Sorting ==============================
 
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, "1080p")!!
+        val audioType = preferences.getString(PREF_TYPE_KEY, "sub")!!
         return this.sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(quality, ignoreCase = true) }
+            compareByDescending<Video> { it.videoTitle.contains("(${audioType.uppercase()})") }
+                .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) }
                 .thenByDescending { it.resolution ?: 0 },
         )
     }
