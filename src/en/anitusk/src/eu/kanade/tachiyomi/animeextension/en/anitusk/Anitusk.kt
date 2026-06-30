@@ -110,12 +110,12 @@ class Anitusk :
                 }
 
                 is GenreFilter -> {
-                    val genres = filter.state.filter { it.state }.map { it.value }
+                    val genres = filter.getCheckedValues()
                     if (genres.isNotEmpty()) selectedGenres = genres
                 }
 
                 is FormatFilter -> {
-                    val formats = filter.state.filter { it.state }.map { it.value }
+                    val formats = filter.getCheckedValues()
                     if (formats.isNotEmpty()) selectedFormats = formats
                 }
 
@@ -472,9 +472,13 @@ class Anitusk :
         fun toValue() = vals[state].second
     }
 
-    private class CheckBoxVal(name: String, val value: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
+    private class CheckBoxVal(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
 
-    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first, it.second, false) })
+    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first, false) }) {
+        fun getCheckedValues(): List<String> = state.mapIndexedNotNull { index, checkbox ->
+            if (checkbox.state) vals[index].second else null
+        }
+    }
 
     class GenreFilter : CheckBoxFilterList("Genres", GENRES)
     class FormatFilter : CheckBoxFilterList("Formats", FORMATS)
