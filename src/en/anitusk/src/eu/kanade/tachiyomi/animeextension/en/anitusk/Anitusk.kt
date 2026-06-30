@@ -261,9 +261,7 @@ class Anitusk :
         }
     }
 
-    private fun formatEpNum(num: Double): String {
-        return if (num % 1.0 == 0.0) num.toInt().toString() else num.toString()
-    }
+    private fun formatEpNum(num: Double): String = if (num % 1.0 == 0.0) num.toInt().toString() else num.toString()
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val anilistId = anime.url.substringAfter("/anime/")
@@ -273,13 +271,13 @@ class Anitusk :
             response.close()
             throw Exception("Failed to fetch episodes list")
         }
-        
+
         val epResponse = json.decodeFromString<EpisodeListResponse>(response.body.string())
         val providerKeys = listOf("kiwi", "bonk", "ally", "pewe", "moo", "bee", "hop")
-        
+
         var providerData: ProviderData? = null
         var episodesMap: Map<String, List<EpisodeItem>> = emptyMap()
-        
+
         for (key in providerKeys) {
             if (epResponse.providers.containsKey(key)) {
                 val data = epResponse.providers[key]
@@ -293,7 +291,7 @@ class Anitusk :
                 }
             }
         }
-        
+
         if (providerData == null) {
             for (data in epResponse.providers.values) {
                 val map = data.getEpisodeMap(json)
@@ -304,22 +302,22 @@ class Anitusk :
                 }
             }
         }
-        
+
         if (providerData == null) {
             throw Exception("No episode providers found")
         }
 
         val subEps = episodesMap["sub"] ?: emptyList()
         val dubEps = episodesMap["dub"] ?: emptyList()
-        
+
         val allEpNumbers = (subEps.map { it.number } + dubEps.map { it.number }).distinct().sorted()
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
-        
+
         val list = allEpNumbers.map { epNum ->
             val subEp = subEps.find { it.number == epNum }
             val dubEp = dubEps.find { it.number == epNum }
             val epItem = subEp ?: dubEp!!
-            
+
             SEpisode.create().apply {
                 url = "/watch/$anilistId/${formatEpNum(epNum)}"
                 val epTitle = epItem.title?.replace(Regex("^.*? - "), "") ?: ""
