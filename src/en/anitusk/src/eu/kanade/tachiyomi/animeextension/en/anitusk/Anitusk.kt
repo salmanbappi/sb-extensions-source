@@ -606,7 +606,6 @@ class Anitusk :
             }
         """.trimIndent()
 
-
         private val SEARCH_QUERY = """
             query(${"$"}page: Int, ${"$"}search: String, ${"$"}sort: [MediaSort], ${"$"}genres: [String], ${"$"}format: [MediaFormat], ${"$"}status: [MediaStatus], ${"$"}season: MediaSeason, ${"$"}seasonYear: Int) {
               Page(page: ${"$"}page, perPage: 24) {
