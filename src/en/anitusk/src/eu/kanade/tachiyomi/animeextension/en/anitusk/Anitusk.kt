@@ -178,12 +178,12 @@ class Anitusk :
                     "native" -> media.title.native ?: media.title.english ?: media.title.romaji ?: "Unknown Title"
                     else -> media.title.english ?: media.title.romaji ?: media.title.native ?: "Unknown Title"
                 }
-                thumbnail_url = media.coverImage.extraLarge ?: media.coverImage.large
+                thumbnail_url = media.coverImage?.extraLarge ?: media.coverImage?.large
                 description = media.description
                 genre = media.genres.joinToString()
             }
         }
-        return AnimesPage(animeList, animeList.size == 24)
+        return AnimesPage(animeList, pageInfo.pageInfo?.hasNextPage ?: (animeList.size == 24))
     }
 
     // ============================== Anime Details ==============================
@@ -210,7 +210,7 @@ class Anitusk :
                 "native" -> media.title.native ?: media.title.english ?: media.title.romaji ?: "Unknown Title"
                 else -> media.title.english ?: media.title.romaji ?: media.title.native ?: "Unknown Title"
             }
-            thumbnail_url = media.coverImage.extraLarge ?: media.coverImage.large
+            thumbnail_url = media.coverImage?.extraLarge ?: media.coverImage?.large
             genre = media.genres.joinToString()
             status = when (media.status) {
                 "FINISHED" -> SAnime.COMPLETED
@@ -599,6 +599,9 @@ class Anitusk :
         private val POPULAR_QUERY = """
             query(${"$"}page: Int) {
               Page(page: ${"$"}page, perPage: 24) {
+                pageInfo {
+                  hasNextPage
+                }
                 media(sort: [TRENDING_DESC], type: ANIME, isAdult: false) {
                   id
                   title { english romaji native }
@@ -613,6 +616,9 @@ class Anitusk :
         private val LATEST_QUERY = """
             query(${"$"}page: Int) {
               Page(page: ${"$"}page, perPage: 24) {
+                pageInfo {
+                  hasNextPage
+                }
                 media(sort: [START_DATE_DESC], type: ANIME, isAdult: false) {
                   id
                   title { english romaji native }
@@ -627,6 +633,9 @@ class Anitusk :
         private val SEARCH_QUERY = """
             query(${"$"}page: Int, ${"$"}search: String, ${"$"}sort: [MediaSort], ${"$"}genres: [String], ${"$"}format: [MediaFormat], ${"$"}status: [MediaStatus], ${"$"}season: MediaSeason, ${"$"}seasonYear: Int) {
               Page(page: ${"$"}page, perPage: 24) {
+                pageInfo {
+                  hasNextPage
+                }
                 media(search: ${"$"}search, sort: ${"$"}sort, genre_in: ${"$"}genres, format_in: ${"$"}format, status_in: ${"$"}status, season: ${"$"}season, seasonYear: ${"$"}seasonYear, type: ANIME, isAdult: false) {
                   id
                   title { english romaji native }
@@ -985,14 +994,20 @@ data class AnilistData(
 
 @Serializable
 data class AnilistPage(
+    val pageInfo: AnilistPageInfo? = null,
     val media: List<AnilistMedia> = emptyList(),
+)
+
+@Serializable
+data class AnilistPageInfo(
+    val hasNextPage: Boolean,
 )
 
 @Serializable
 data class AnilistMedia(
     val id: Int,
     val title: AnilistTitle,
-    val coverImage: AnilistCoverImage,
+    val coverImage: AnilistCoverImage? = null,
     val bannerImage: String? = null,
     val description: String? = null,
     val status: String? = null,
