@@ -58,7 +58,7 @@ class Anitusk :
 
     override val lang = "en"
 
-    override val supportsLatest = true
+    override val supportsLatest = false
 
     private val localProxy by lazy { LocalProxy(client) }
 
@@ -88,16 +88,9 @@ class Anitusk :
 
     override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
 
-    override fun latestUpdatesRequest(page: Int): Request {
-        val queryBody = GraphQLRequest(
-            query = LATEST_QUERY,
-            variables = GraphQLVariables(page = page),
-        )
-        val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-        return POST("https://graphql.anilist.co", headers, body)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException()
 
-    override fun latestUpdatesParse(response: Response): AnimesPage = searchAnimeParse(response)
+    override fun latestUpdatesParse(response: Response): AnimesPage = throw UnsupportedOperationException()
 
     // ============================== Search ==============================
 
@@ -613,22 +606,6 @@ class Anitusk :
             }
         """.trimIndent()
 
-        private val LATEST_QUERY = """
-            query(${"$"}page: Int) {
-              Page(page: ${"$"}page, perPage: 24) {
-                pageInfo {
-                  hasNextPage
-                }
-                media(sort: [START_DATE_DESC], type: ANIME, isAdult: false) {
-                  id
-                  title { english romaji native }
-                  coverImage { large extraLarge }
-                  description(asHtml: false)
-                  genres
-                }
-              }
-            }
-        """.trimIndent()
 
         private val SEARCH_QUERY = """
             query(${"$"}page: Int, ${"$"}search: String, ${"$"}sort: [MediaSort], ${"$"}genres: [String], ${"$"}format: [MediaFormat], ${"$"}status: [MediaStatus], ${"$"}season: MediaSeason, ${"$"}seasonYear: Int) {
