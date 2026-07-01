@@ -62,8 +62,11 @@ class M3u8HttpServer(
 
         val response = when {
             uri.startsWith("/m3u8") -> handleM3u8Request(session)
+
             uri.startsWith("/segment") -> handleSegmentRequest(session)
+
             uri.startsWith("/health") -> handleHealthRequest()
+
             else -> {
                 Log.w(tag, "Unknown endpoint: $uri")
                 newFixedLengthResponse(Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
@@ -292,6 +295,7 @@ class M3u8HttpServer(
                     // Keep comments and headers
                     modifiedLines.add(line)
                 }
+
                 line.isNotBlank() && !line.startsWith("#") -> {
                     // This is a segment URL, resolve against base URL
                     val resolvedUrl = baseHttpUrl?.resolve(line)?.toString() ?: line
@@ -300,6 +304,7 @@ class M3u8HttpServer(
                     modifiedLines.add(localUrl)
                     segmentCount++
                 }
+
                 else -> {
                     // Keep empty lines
                     modifiedLines.add(line)
