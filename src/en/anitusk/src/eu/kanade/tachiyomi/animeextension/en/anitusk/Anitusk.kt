@@ -63,9 +63,10 @@ class Anitusk :
     override val supportsLatest = false
 
     override val client by lazy {
-        network.client.newBuilder()
-            .addInterceptor(AnituskCloudflareInterceptor(network.client) { baseUrl })
-            .build()
+        network.client.newBuilder().apply {
+            interceptors().removeAll { it.javaClass.simpleName.contains("Cloudflare", true) }
+            addInterceptor(AnituskCloudflareInterceptor(network.client) { baseUrl })
+        }.build()
     }
 
     private val localProxy by lazy { LocalProxy(client) }
@@ -1113,8 +1114,19 @@ class AnituskCloudflareInterceptor(
 
         if (isCloudflare && request.header("X-CF-Bypassed") == null) {
             response.close()
+            val targetHost = try {
+                baseUrlProvider().toHttpUrl().host
+            } catch (_: Exception) {
+                "anitusk.com"
+            }
+            val host = request.url.host
+            val bypassUrl = if (host.contains(targetHost) || host.contains("miruro.")) {
+                baseUrlProvider()
+            } else {
+                request.url.toString()
+            }
             val bypassRequest = request.newBuilder()
-                .url(baseUrlProvider())
+                .url(bypassUrl)
                 .build()
             cfInterceptor.resolveWithWebView(bypassRequest, client)
             val retriedRequest = request.newBuilder()
