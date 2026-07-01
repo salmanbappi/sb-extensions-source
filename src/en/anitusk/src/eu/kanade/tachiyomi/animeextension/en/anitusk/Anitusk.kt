@@ -319,7 +319,7 @@ class Anitusk :
                     summary = null
                     preview_url = if (showThumbnails) streamEp?.thumbnail else null
                     scanlator = "Sub, Dub"
-                }
+                },
             )
         }
 
