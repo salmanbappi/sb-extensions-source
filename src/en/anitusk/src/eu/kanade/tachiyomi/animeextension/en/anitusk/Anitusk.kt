@@ -321,7 +321,7 @@ class Anitusk :
                     episode_number = i.toFloat()
                     date_upload = 0L
                     summary = null
-                    preview_url = if (showThumbnails) (streamEp?.thumbnail ?: anime.thumbnail_url) else null
+                    preview_url = if (showThumbnails) streamEp?.thumbnail else null
                     scanlator = "Sub, Dub"
                 },
             )
