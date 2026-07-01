@@ -362,7 +362,7 @@ class Anitusk :
                     if (hosterType == "fast") {
                         val resolvedUrl = "https://megaplay.buzz/stream/ani/$anilistId/$episodeNumber/$type"
                         val reqHeaders = headersBuilder()
-                            .add("Referer", "https://anitusk.com/")
+                            .set("Referer", "https://anitusk.com/")
                             .build()
                         val response = client.newCall(GET(resolvedUrl, reqHeaders)).execute()
                         if (response.isSuccessful) {
@@ -372,7 +372,7 @@ class Anitusk :
                             if (streamId != null) {
                                 val sourcesUrl = "https://megaplay.buzz/stream/getSources?id=$streamId&id=$streamId"
                                 val sourcesHeaders = headersBuilder()
-                                    .add("Referer", resolvedUrl)
+                                    .set("Referer", resolvedUrl)
                                     .add("X-Requested-With", "XMLHttpRequest")
                                     .build()
                                 val sourcesResponse = client.newCall(GET(sourcesUrl, sourcesHeaders)).execute()
@@ -381,7 +381,7 @@ class Anitusk :
                                     val masterUrl = sourcesJson.sources?.file
                                     if (masterUrl != null) {
                                         val refHeaders = headersBuilder()
-                                            .add("Referer", "https://megaplay.buzz/")
+                                            .set("Referer", "https://megaplay.buzz/")
                                             .build()
                                         playlistUtils.extractFromHls(
                                             masterUrl,
@@ -407,7 +407,7 @@ class Anitusk :
                     } else if (hosterType == "vidnest") {
                         val resolvedUrl = "https://new.vidnest.fun/hianime/anime/$anilistId/$episodeNumber/$type"
                         val reqHeaders = headersBuilder()
-                            .add("Referer", "https://vidnest.fun/")
+                            .set("Referer", "https://vidnest.fun/")
                             .build()
                         val response = client.newCall(GET(resolvedUrl, reqHeaders)).execute()
                         if (response.isSuccessful) {
@@ -422,7 +422,7 @@ class Anitusk :
                                 val masterUrl = sourcesJson.sources?.firstOrNull()?.file
                                 if (masterUrl != null) {
                                     val refHeaders = headersBuilder()
-                                        .add("Referer", "https://megaplay.buzz/")
+                                        .set("Referer", "https://megaplay.buzz/")
                                         .build()
                                     playlistUtils.extractFromHls(
                                         masterUrl,
