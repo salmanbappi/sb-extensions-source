@@ -32,6 +32,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -62,7 +63,14 @@ class Anitusk :
     override val supportsLatest = false
 
     override val client = network.client.newBuilder()
-        .addInterceptor(CloudflareInterceptor(network.client))
+        .addInterceptor { chain ->
+            val request = chain.request()
+            if (request.url.host.contains("miruro.")) {
+                chain.proceed(request)
+            } else {
+                CloudflareInterceptor(network.client).intercept(chain)
+            }
+        }
         .build()
 
     private val localProxy by lazy { LocalProxy(client) }
