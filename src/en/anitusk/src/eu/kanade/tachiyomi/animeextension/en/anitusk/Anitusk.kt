@@ -293,15 +293,19 @@ class Anitusk :
         val list = mutableListOf<SEpisode>()
 
         for (i in 1..totalEps) {
-            val streamEp = media.streamingEpisodes.find { ep ->
-                val title = ep.title.lowercase()
-                title.startsWith("episode $i ") ||
-                    title.startsWith("episode $i:") ||
-                    title.startsWith("episode $i -") ||
-                    title == "episode $i" ||
-                    title.contains("ep $i ") ||
-                    title.contains("ep. $i ") ||
-                    title.contains("episode ${"%02d".format(i)}")
+            val streamEp = if (media.streamingEpisodes.size == totalEps) {
+                media.streamingEpisodes[i - 1]
+            } else {
+                media.streamingEpisodes.find { ep ->
+                    val title = ep.title.lowercase()
+                    title.startsWith("episode $i ") ||
+                        title.startsWith("episode $i:") ||
+                        title.startsWith("episode $i -") ||
+                        title == "episode $i" ||
+                        title.contains("ep $i ") ||
+                        title.contains("ep. $i ") ||
+                        title.contains("episode ${"%02d".format(i)}")
+                }
             }
 
             list.add(
@@ -317,7 +321,7 @@ class Anitusk :
                     episode_number = i.toFloat()
                     date_upload = 0L
                     summary = null
-                    preview_url = if (showThumbnails) streamEp?.thumbnail else null
+                    preview_url = if (showThumbnails) (streamEp?.thumbnail ?: anime.thumbnail_url) else null
                     scanlator = "Sub, Dub"
                 },
             )
