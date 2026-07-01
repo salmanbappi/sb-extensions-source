@@ -352,6 +352,8 @@ class Anitusk :
         val anilistId = parts[2]
         val episodeNumber = parts[3]
         return listOf(
+            Hoster(hosterName = "Fast (MegaPlay)", hosterUrl = "fast|$anilistId|$episodeNumber"),
+            Hoster(hosterName = "VidNest", hosterUrl = "vidnest|$anilistId|$episodeNumber"),
             Hoster(hosterName = "Kiwi (AnimePahe)", hosterUrl = "/watch/kiwi/$anilistId/animepahe-$episodeNumber"),
             Hoster(hosterName = "Net (AnimeDao)", hosterUrl = "/watch/bonk/$anilistId/animedao-$episodeNumber"),
             Hoster(hosterName = "Ally (AllManga)", hosterUrl = "/watch/ally/$anilistId/allmanga-$episodeNumber"),
@@ -362,8 +364,111 @@ class Anitusk :
         val urlPath = hoster.hosterUrl
         if (urlPath.isBlank()) return emptyList()
 
-        val audioType = preferences.getString(PREF_TYPE_KEY, "sub") ?: "sub"
         val audioTypes = listOf("sub", "dub")
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+
+        if (urlPath.startsWith("fast|") || urlPath.startsWith("vidnest|")) {
+            val parts = urlPath.split("|")
+            val hosterType = parts[0]
+            val anilistId = parts[1]
+            val episodeNumber = parts[2]
+
+            val videos = audioTypes.parallelCatchingFlatMapBlocking { type ->
+                val videoList = mutableListOf<Video>()
+                try {
+                    if (hosterType == "fast") {
+                        val resolvedUrl = "https://megaplay.buzz/stream/ani/$anilistId/$episodeNumber/$type"
+                        val reqHeaders = headersBuilder()
+                            .add("Referer", "https://anitusk.com/")
+                            .build()
+                        val response = client.newCall(GET(resolvedUrl, reqHeaders)).execute()
+                        if (response.isSuccessful) {
+                            val pageHtml = response.body.string()
+                            val streamId = Regex("""<title>File (\d+)""").find(pageHtml)?.groupValues?.get(1)
+                                ?: Regex("""data-id="(\d+)"""").find(pageHtml)?.groupValues?.get(1)
+                            if (streamId != null) {
+                                val sourcesUrl = "https://megaplay.buzz/stream/getSources?id=$streamId&id=$streamId"
+                                val sourcesHeaders = headersBuilder()
+                                    .add("Referer", resolvedUrl)
+                                    .add("X-Requested-With", "XMLHttpRequest")
+                                    .build()
+                                val sourcesResponse = client.newCall(GET(sourcesUrl, sourcesHeaders)).execute()
+                                if (sourcesResponse.isSuccessful) {
+                                    val sourcesJson = json.decodeFromString<FastSourcesResponse>(sourcesResponse.body.string())
+                                    val masterUrl = sourcesJson.sources?.file
+                                    if (masterUrl != null) {
+                                        val refHeaders = headersBuilder()
+                                            .add("Referer", "https://megaplay.buzz/")
+                                            .build()
+                                        playlistUtils.extractFromHls(
+                                            masterUrl,
+                                            referer = "https://megaplay.buzz/",
+                                            videoNameGen = { quality -> "Fast (MegaPlay) - $quality (${type.uppercase()})" },
+                                        ).forEach { v ->
+                                            videoList.add(
+                                                Video(
+                                                    videoUrl = v.videoUrl,
+                                                    videoTitle = v.videoTitle,
+                                                    headers = refHeaders,
+                                                ),
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    sourcesResponse.close()
+                                }
+                            }
+                        } else {
+                            response.close()
+                        }
+                    } else if (hosterType == "vidnest") {
+                        val resolvedUrl = "https://new.vidnest.fun/hianime/anime/$anilistId/$episodeNumber/$type"
+                        val reqHeaders = headersBuilder()
+                            .add("Referer", "https://vidnest.fun/")
+                            .build()
+                        val response = client.newCall(GET(resolvedUrl, reqHeaders)).execute()
+                        if (response.isSuccessful) {
+                            val apiJson = json.decodeFromString<VidNestApiResponse>(response.body.string())
+                            val decryptedStr = if (apiJson.encrypted && apiJson.data != null) {
+                                decryptVidNest(apiJson.data)
+                            } else {
+                                apiJson.data ?: ""
+                            }
+                            if (decryptedStr.isNotBlank()) {
+                                val sourcesJson = json.decodeFromString<VidNestSourcesResponse>(decryptedStr)
+                                val masterUrl = sourcesJson.sources?.firstOrNull()?.file
+                                if (masterUrl != null) {
+                                    val refHeaders = headersBuilder()
+                                        .add("Referer", "https://megaplay.buzz/")
+                                        .build()
+                                    playlistUtils.extractFromHls(
+                                        masterUrl,
+                                        referer = "https://megaplay.buzz/",
+                                        videoNameGen = { quality -> "VidNest - $quality (${type.uppercase()})" },
+                                    ).forEach { v ->
+                                        videoList.add(
+                                            Video(
+                                                videoUrl = v.videoUrl,
+                                                videoTitle = v.videoTitle,
+                                                headers = refHeaders,
+                                            ),
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            response.close()
+                        }
+                    }
+                } catch (_: Exception) {
+                    // Ignore
+                }
+                videoList
+            }
+            return videos.filter { video ->
+                !excludedServers.any { video.videoTitle.contains(it, ignoreCase = true) }
+            }
+        }
 
         val videos = audioTypes.parallelCatchingFlatMapBlocking { type ->
             val resolvedUrl = "$apiBaseUrl${urlPath.replace("/watch/", "/watch/")}"
@@ -454,7 +559,12 @@ class Anitusk :
                                 }
                             }
 
-                            embedUrl.contains("otakuhg.site") || embedUrl.contains("otakuvid.online") || embedUrl.contains("bysekoze.com") -> {
+                            embedUrl.contains("vidhide") || embedUrl.contains("vidshow") ||
+                                embedUrl.contains("vidsp") || embedUrl.contains("vidspe") ||
+                                embedUrl.contains("streamwish") || embedUrl.contains("wishembed") ||
+                                embedUrl.contains("filemoon") || embedUrl.contains("embedwish") ||
+                                embedUrl.contains("strcloud") || embedUrl.contains("stwish") ||
+                                embedUrl.contains("wishtv") -> {
                                 val extractor = VidHideExtractor(client, headers)
                                 extractor.videosFromUrl(embedUrl) { quality -> "${hoster.hosterName} - $quality (${type.uppercase()})" }.forEach { v ->
                                     videoList.add(
@@ -462,7 +572,6 @@ class Anitusk :
                                             videoUrl = v.videoUrl,
                                             videoTitle = v.videoTitle,
                                             headers = v.headers,
-                                            subtitleTracks = v.subtitleTracks,
                                         ),
                                     )
                                 }
@@ -476,7 +585,6 @@ class Anitusk :
             typeVideos
         }
 
-        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
         return videos.filter { video ->
             !excludedServers.any { video.videoTitle.contains(it, ignoreCase = true) }
         }
@@ -542,8 +650,8 @@ class Anitusk :
             default = emptySet(),
             title = "Exclude Servers",
             summary = "Select servers to exclude from the video list",
-            entries = listOf("Kiwi", "Net", "Ally", "Doodstream", "StreamHG", "Earnvids"),
-            entryValues = listOf("Kiwi", "Net", "Ally", "Doodstream", "StreamHG", "Earnvids"),
+            entries = listOf("Fast", "VidNest", "Kiwi", "Net", "Ally", "Doodstream", "StreamHG", "Earnvids"),
+            entryValues = listOf("Fast", "VidNest", "Kiwi", "Net", "Ally", "Doodstream", "StreamHG", "Earnvids"),
         )
         screen.addSwitchPreference(
             key = PREF_SHOW_THUMBNAILS_KEY,
@@ -587,6 +695,46 @@ class Anitusk :
         AnimeFilter.Separator(),
         YearFilter(),
     )
+
+    private fun decryptVidNest(encryptedText: String): String {
+        val alphabet = "RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW+/="
+        val a = IntArray(256) { 64 }
+        for (i in alphabet.indices) {
+            val code = alphabet[i].code
+            if (code < 256) {
+                a[code] = i
+            }
+        }
+
+        val out = java.io.ByteArrayOutputStream()
+        var t = 0
+        while (t < encryptedText.length) {
+            val endIdx = if (t + 4 < encryptedText.length) t + 4 else encryptedText.length
+            val chunk = encryptedText.substring(t, endIdx)
+            t += 4
+            val d = IntArray(4) { 64 }
+            for (e in chunk.indices) {
+                val code = chunk[e].code
+                d[e] = if (code < 256) a[code] else 64
+            }
+
+            val b1 = (d[0] shl 2) or (d[1] shr 4)
+            out.write(b1)
+            if (d[2] != 64) {
+                val b2 = ((d[1] and 15) shl 4) or (d[2] shr 2)
+                out.write(b2)
+            }
+            if (d[3] != 64) {
+                val b3 = ((d[2] and 3) shl 6) or d[3]
+                out.write(b3)
+            }
+        }
+        return try {
+            out.toString("UTF-8")
+        } catch (_: Exception) {
+            out.toString()
+        }
+    }
 
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain"
@@ -1137,3 +1285,39 @@ class AnituskCloudflareInterceptor(
         return response
     }
 }
+
+@Serializable
+data class FastSourcesResponse(
+    val sources: FastSourceFile? = null,
+    val tracks: List<FastTrack>? = null,
+)
+
+@Serializable
+data class FastSourceFile(
+    val file: String? = null,
+)
+
+@Serializable
+data class FastTrack(
+    val file: String? = null,
+    val label: String? = null,
+    val kind: String? = null,
+)
+
+@Serializable
+data class VidNestSourcesResponse(
+    val sources: List<VidNestSourceFile>? = null,
+    val tracks: List<FastTrack>? = null,
+)
+
+@Serializable
+data class VidNestSourceFile(
+    val file: String? = null,
+    val type: String? = null,
+)
+
+@Serializable
+data class VidNestApiResponse(
+    val encrypted: Boolean = false,
+    val data: String? = null,
+)
