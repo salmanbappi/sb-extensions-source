@@ -265,6 +265,67 @@ class Anitusk :
 
     private fun formatEpNum(num: Double): String = if (num % 1.0 == 0.0) num.toInt().toString() else num.toString()
 
+    private fun fetchKitsuMetadata(malId: Int): Map<Int, Pair<String?, String?>> {
+        val kitsuMap = mutableMapOf<Int, Pair<String?, String?>>()
+        try {
+            val mappingUrl = "https://kitsu.app/api/edge/mappings?filter[externalSite]=myanimelist/anime&filter[externalId]=$malId"
+            val mapRequest = Request.Builder()
+                .url(mappingUrl)
+                .headers(Headers.Builder().add("Accept", "application/vnd.api+json").build())
+                .build()
+            val mapResponse = client.newCall(mapRequest).execute()
+            if (!mapResponse.isSuccessful) {
+                mapResponse.close()
+                return emptyMap()
+            }
+            val mapJson = json.decodeFromString<KitsuMappingResponse>(mapResponse.body.string())
+            val kitsuAnimeUrl = mapJson.data.firstOrNull()?.relationships?.item?.links?.related ?: return emptyMap()
+
+            val animeRequest = Request.Builder()
+                .url(kitsuAnimeUrl)
+                .headers(Headers.Builder().add("Accept", "application/vnd.api+json").build())
+                .build()
+            val animeResponse = client.newCall(animeRequest).execute()
+            if (!animeResponse.isSuccessful) {
+                animeResponse.close()
+                return emptyMap()
+            }
+            val animeJson = json.decodeFromString<KitsuAnimeResponse>(animeResponse.body.string())
+            val kitsuId = animeJson.data.id
+
+            var offset = 0
+            var hasMore = true
+            while (hasMore) {
+                val epUrl = "https://kitsu.app/api/edge/anime/$kitsuId/episodes?page[limit]=100&page[offset]=$offset"
+                val epRequest = Request.Builder()
+                    .url(epUrl)
+                    .headers(Headers.Builder().add("Accept", "application/vnd.api+json").build())
+                    .build()
+                val epResponse = client.newCall(epRequest).execute()
+                if (!epResponse.isSuccessful) {
+                    epResponse.close()
+                    break
+                }
+                val epJson = json.decodeFromString<KitsuEpisodesResponse>(epResponse.body.string())
+                val episodesData = epJson.data
+                if (episodesData.isEmpty()) {
+                    break
+                }
+                for (ep in episodesData) {
+                    val epNum = ep.attributes.number
+                    val summaryText = ep.attributes.synopsis?.takeIf { it.isNotBlank() } ?: ep.attributes.description?.takeIf { it.isNotBlank() }
+                    val thumbnailText = ep.attributes.thumbnail?.medium ?: ep.attributes.thumbnail?.original ?: ep.attributes.thumbnail?.large ?: ep.attributes.thumbnail?.small
+                    kitsuMap[epNum] = Pair(summaryText, thumbnailText)
+                }
+                offset += episodesData.size
+                hasMore = episodesData.size >= 100
+            }
+        } catch (_: Exception) {
+            // Fallback on error
+        }
+        return kitsuMap
+    }
+
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val anilistId = anime.url.substringAfter("/anime/").toInt()
         val queryBody = GraphQLRequest(
@@ -289,6 +350,7 @@ class Anitusk :
             return emptyList()
         }
 
+        val kitsuMetadata = media.idMal?.let { fetchKitsuMetadata(it) } ?: emptyMap()
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
         val list = mutableListOf<SEpisode>()
 
@@ -308,6 +370,8 @@ class Anitusk :
                 }
             }
 
+            val kitsuEp = kitsuMetadata[i]
+
             list.add(
                 SEpisode.create().apply {
                     url = "/watch/$anilistId/$i"
@@ -320,8 +384,8 @@ class Anitusk :
                     }
                     episode_number = i.toFloat()
                     date_upload = 0L
-                    summary = null
-                    preview_url = if (showThumbnails) streamEp?.thumbnail else null
+                    summary = kitsuEp?.first
+                    preview_url = if (showThumbnails) (kitsuEp?.second ?: streamEp?.thumbnail) else null
                     scanlator = "Sub, Dub"
                 },
             )
@@ -771,6 +835,7 @@ class Anitusk :
             query(${"$"}id: Int) {
               Media(id: ${"$"}id, type: ANIME) {
                 id
+                idMal
                 title { english romaji native }
                 coverImage { large extraLarge }
                 bannerImage
@@ -1126,6 +1191,7 @@ data class AnilistPageInfo(
 @Serializable
 data class AnilistMedia(
     val id: Int,
+    val idMal: Int? = null,
     val title: AnilistTitle,
     val coverImage: AnilistCoverImage? = null,
     val bannerImage: String? = null,
@@ -1307,4 +1373,67 @@ data class VidNestSourceFile(
 data class VidNestApiResponse(
     val encrypted: Boolean = false,
     val data: String? = null,
+)
+
+@Serializable
+data class KitsuMappingResponse(
+    val data: List<KitsuMappingData> = emptyList(),
+)
+
+@Serializable
+data class KitsuMappingData(
+    val id: String,
+    val relationships: KitsuRelationships? = null,
+)
+
+@Serializable
+data class KitsuRelationships(
+    val item: KitsuRelationLink? = null,
+)
+
+@Serializable
+data class KitsuRelationLink(
+    val links: KitsuLinks? = null,
+)
+
+@Serializable
+data class KitsuLinks(
+    val related: String? = null,
+)
+
+@Serializable
+data class KitsuAnimeResponse(
+    val data: KitsuAnimeData,
+)
+
+@Serializable
+data class KitsuAnimeData(
+    val id: String,
+)
+
+@Serializable
+data class KitsuEpisodesResponse(
+    val data: List<KitsuEpisodeData> = emptyList(),
+)
+
+@Serializable
+data class KitsuEpisodeData(
+    val attributes: KitsuEpisodeAttributes,
+)
+
+@Serializable
+data class KitsuEpisodeAttributes(
+    val number: Int,
+    val synopsis: String? = null,
+    val description: String? = null,
+    val thumbnail: KitsuThumbnail? = null,
+)
+
+@Serializable
+data class KitsuThumbnail(
+    val original: String? = null,
+    val large: String? = null,
+    val medium: String? = null,
+    val small: String? = null,
+    val tiny: String? = null,
 )
