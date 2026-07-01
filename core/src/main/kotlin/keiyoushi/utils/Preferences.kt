@@ -519,3 +519,49 @@ fun PreferenceScreen.addSwitchPreference(
         onComplete = onComplete,
     ).also(::addPreference)
 }
+
+/**
+ * Adds an EditTextPreference for managing the extension's base URL dynamically.
+ * Cleans user inputs by trimming whitespace and removing trailing slashes.
+ * If input is cleared/blank, it resets the value back to the default URL.
+ */
+fun PreferenceScreen.addBaseUrlPreference(
+    preferences: SharedPreferences,
+    defaultUrl: String,
+    title: String = "Base URL",
+    key: String = "pref_base_url",
+    summary: String? = null,
+    onComplete: (String) -> Unit = {},
+) {
+    val currentUrl = preferences.getString(key, defaultUrl) ?: defaultUrl
+
+    addEditTextPreference(
+        key = key,
+        title = title,
+        summary = if (summary.isNullOrBlank()) currentUrl else summary,
+        default = defaultUrl,
+        getSummary = { newValue ->
+            if (summary.isNullOrBlank()) {
+                if (newValue.isBlank()) defaultUrl else newValue
+            } else {
+                summary
+            }
+        },
+        onChange = { _, newValue ->
+            val cleanUrl = newValue.trim().removeSuffix("/")
+
+            if (newValue.isBlank()) {
+                preferences.edit().remove(key).apply()
+                onComplete(defaultUrl)
+                true
+            } else if (cleanUrl.isNotEmpty()) {
+                preferences.edit().putString(key, cleanUrl).apply()
+                onComplete(cleanUrl)
+                true
+            } else {
+                false
+            }
+        },
+    )
+}
+
