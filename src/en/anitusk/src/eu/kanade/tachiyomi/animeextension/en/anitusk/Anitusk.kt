@@ -62,16 +62,11 @@ class Anitusk :
 
     override val supportsLatest = false
 
-    override val client = network.client.newBuilder()
-        .addInterceptor { chain ->
-            val request = chain.request()
-            if (request.url.host.contains("miruro.")) {
-                chain.proceed(request)
-            } else {
-                CloudflareInterceptor(network.client).intercept(chain)
-            }
-        }
-        .build()
+    override val client by lazy {
+        network.client.newBuilder()
+            .addInterceptor(AnituskCloudflareInterceptor(network.client) { baseUrl })
+            .build()
+    }
 
     private val localProxy by lazy { LocalProxy(client) }
 
@@ -1100,3 +1095,33 @@ data class EpisodeItem(
     val description: String? = null,
     val filler: Boolean? = null,
 )
+
+class AnituskCloudflareInterceptor(
+    private val client: OkHttpClient,
+    private val baseUrlProvider: () -> String,
+) : Interceptor {
+    private val cfInterceptor = CloudflareInterceptor(client)
+
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val response = chain.proceed(request)
+
+        val isHtml = response.header("Content-Type")?.contains("text/html", ignoreCase = true) == true
+        val isCloudflare = response.code in listOf(403, 503) &&
+            response.header("Server")?.contains("cloudflare", ignoreCase = true) == true &&
+            isHtml
+
+        if (isCloudflare && request.header("X-CF-Bypassed") == null) {
+            response.close()
+            val bypassRequest = request.newBuilder()
+                .url(baseUrlProvider())
+                .build()
+            cfInterceptor.resolveWithWebView(bypassRequest, client)
+            val retriedRequest = request.newBuilder()
+                .header("X-CF-Bypassed", "true")
+                .build()
+            return chain.proceed(retriedRequest)
+        }
+        return response
+    }
+}
