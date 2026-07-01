@@ -1,7 +1,7 @@
 ext {
     extName = 'Anitusk'
     extClass = '.Anitusk'
-    extVersionCode = 7
+    extVersionCode = 8
 }
 
 apply from: "$rootDir/common.gradle"
@@ -14,4 +14,6 @@ dependencies {
     implementation(project(":lib:vidhide-extractor"))
     implementation(project(":lib:dood-extractor"))
     implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:cloudflare-interceptor"))
 }
+

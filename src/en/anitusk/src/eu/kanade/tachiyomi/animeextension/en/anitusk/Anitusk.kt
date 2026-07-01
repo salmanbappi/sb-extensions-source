@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
@@ -59,6 +60,10 @@ class Anitusk :
     override val lang = "en"
 
     override val supportsLatest = false
+
+    override val client = network.client.newBuilder()
+        .addInterceptor(CloudflareInterceptor(network.client))
+        .build()
 
     private val localProxy by lazy { LocalProxy(client) }
 
