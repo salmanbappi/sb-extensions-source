@@ -186,15 +186,25 @@ class KwikExtractor(
 
     /** Returns Pair(streamUrl, cookies) so callers can thread the CF cookies to the player. */
     suspend fun getStreamUrlFromKwik(paheUrl: String): Pair<String, String> {
-        val kwikUrl = noRedirectClient.newCall(GET("$paheUrl/i", headers)).await().use { response ->
+        // Resolve pahe.win -> kwik.cx/f/token
+        val kwikFUrl = noRedirectClient.newCall(GET("$paheUrl/i", headers)).await().use { response ->
             val location = response.header("location")
                 ?: throw KwikException.ExtractionException("Pahe redirect failed: No location header found.")
             "https://" + location.substringAfterLast("https://")
         }
 
-        var (fContentCookies, fContentString, fContentUrl) = fetchKwikHtml(kwikUrl)
+        // Primary path: WebView form submission. The WebView automatically sends ALL CF cookies
+        // including httpOnly cf_bm which OkHttp cannot access via CookieManager.
+        // cf_clearance (non-httpOnly) is then read from CookieManager for MPV headers.
+        val webViewUrl = CloudflareBypass().getKwikStreamUrl(kwikFUrl, cfBypassUserAgent)
+        if (webViewUrl != null) {
+            val cfCookies = cookieManager.getCookie("https://kwik.cx") ?: ""
+            return webViewUrl to cfCookies
+        }
 
-        // Extract JS Parameters
+        // Fallback: OkHttp POST loop (works if CF challenge is not active)
+        var (fContentCookies, fContentString, fContentUrl) = fetchKwikHtml(kwikFUrl)
+
         val match = kwikParamsRegex.find(fContentString)
             ?: throw KwikException.ExtractionException("Could not find decryption parameters in Kwik HTML.")
 
@@ -206,7 +216,6 @@ class KwikExtractor(
         val tok = kwikDToken.find(decrypted)?.groupValues?.get(1)
             ?: throw KwikException.ExtractionException("Failed to decrypt stream Token.")
 
-        // Extraction Loop
         var cloudFlareBypassResult: CloudFlareBypassResult? = null
         var kwikLocation: String? = null
         var code = 419

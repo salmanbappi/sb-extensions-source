@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.animeextension.en.animepahe.AnimePahe.Companion.UA
@@ -65,6 +66,72 @@ class CloudflareBypass {
         }
 
         return result
+    }
+
+    /**
+     * Loads [kwikFUrl] (kwik.cx/f/token) in a WebView, auto-submits the form via JS,
+     * and intercepts the presigned CDN redirect URL. The WebView automatically sends
+     * ALL CF cookies including httpOnly cf_bm, making the POST succeed where OkHttp fails.
+     * The returned presigned URL works with just cf_clearance (not cf_bm), which
+     * CookieManager can provide for MPV playback headers.
+     *
+     * @return the presigned na6x.kwik.cx/d/... URL, or null on timeout/failure.
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    @Synchronized
+    fun getKwikStreamUrl(kwikFUrl: String, customUserAgent: String? = null): String? {
+        val latch = CountDownLatch(1)
+        var streamUrl: String? = null
+        var webView: WebView? = null
+        val cancelled = AtomicBoolean(false)
+        val userAgentToUse = customUserAgent ?: UA
+
+        Handler(Looper.getMainLooper()).post {
+            webView = WebView(applicationContext)
+            webView.settings.javaScriptEnabled = true
+            webView.settings.domStorageEnabled = true
+            webView.settings.userAgentString = userAgentToUse
+
+            webView.webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val url = request.url.toString()
+                    // The form POST results in a 302 redirect to the presigned CDN URL
+                    if (url.contains("/d/") && !cancelled.get()) {
+                        streamUrl = url
+                        latch.countDown()
+                        return true
+                    }
+                    return false
+                }
+
+                override fun onPageFinished(view: WebView, loadedUrl: String) {
+                    if (cancelled.get()) return
+                    // Once the kwik/f/ page loads, auto-submit the form via JS
+                    if (loadedUrl.contains("kwik.cx") && !loadedUrl.contains("/d/")) {
+                        view.evaluateJavascript(
+                            """(function() {
+                                var form = document.querySelector('form');
+                                if (form) form.submit();
+                            })()""",
+                            null,
+                        )
+                    }
+                }
+            }
+
+            webView.loadUrl(kwikFUrl)
+        }
+
+        try {
+            latch.await(30, TimeUnit.SECONDS)
+        } finally {
+            cancelled.set(true)
+            Handler(Looper.getMainLooper()).post {
+                webView?.destroy()
+            }
+        }
+
+        return streamUrl
     }
 
     private fun pollForClearance(
