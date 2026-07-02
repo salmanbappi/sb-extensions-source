@@ -50,6 +50,7 @@ class KwikExtractor(
     private val kwikParamsRegex by lazy { Regex("""\("(\w+)",\d+,"(\w+)",(\d+),(\d+),\d+\)""") }
     private val kwikDUrl by lazy { Regex("action=\"([^\"]+)\"") }
     private val kwikDToken by lazy { Regex("value=\"([^\"]+)\"") }
+    private val hlsSourceRegex by lazy { Regex("""(?:const|var|let)\s+\w+\s*=\s*['\\\'](https?://[^'\\\\]+\.m3u8[^'\\\\]*)['\\\']""") }
 
     // Clone the base client so interceptors, cookie jars, logging, etc. are preserved,
     // and only override redirect behavior.
@@ -85,7 +86,8 @@ class KwikExtractor(
             ?: throw KwikException.ExtractionException("JsUnpacker not found.")
         val unpacked = JsUnpacker.unpackAndCombine("eval(function($script")
             ?: throw KwikException.ExtractionException("JsUnpacker failed to unpack Kwik script.")
-        return unpacked.substringAfter("const source=\\'").substringBefore("\\';")
+        return hlsSourceRegex.find(unpacked)?.groupValues?.get(1)
+            ?: throw KwikException.ExtractionException("HLS source URL not found in unpacked Kwik script.")
     }
 
     suspend fun getStreamVideo(paheUrl: String, quality: String = ""): Video {
