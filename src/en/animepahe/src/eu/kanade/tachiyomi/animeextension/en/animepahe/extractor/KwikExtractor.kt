@@ -29,6 +29,7 @@ package eu.kanade.tachiyomi.animeextension.en.animepahe.extractor
 
 import android.webkit.CookieManager
 import dev.datlag.jsunpacker.JsUnpacker
+import eu.kanade.tachiyomi.animeextension.en.animepahe.AnimePahe
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -79,16 +80,27 @@ class KwikExtractor(
     suspend fun getHlsVideo(kwikUrl: String, referer: String, quality: String = ""): Video {
         val videoUrl = getHlsStreamUrl(kwikUrl, referer)
         val cookies = cookieManager.getCookie(videoUrl) ?: cookieManager.getCookie("https://kwik.cx")
+        val ua = cfBypassUserAgent ?: AnimePahe.UA
         val headersWithCookies = kwikHeaders.newBuilder().apply {
             if (!cookies.isNullOrBlank()) {
                 set("Cookie", cookies)
             }
         }.build()
 
+        val headerField = buildString {
+            append("Referer: https://kwik.cx/")
+            if (!cookies.isNullOrBlank()) append(",Cookie: $cookies")
+        }
+
         return Video(
             videoUrl = videoUrl,
             videoTitle = quality,
             headers = headersWithCookies,
+            mpvArgs = listOf(
+                "referrer" to "https://kwik.cx/",
+                "http-header-fields" to headerField,
+                "user-agent" to ua,
+            ),
         )
     }
 
@@ -107,16 +119,27 @@ class KwikExtractor(
     suspend fun getStreamVideo(paheUrl: String, quality: String = ""): Video {
         val videoUrl = getStreamUrlFromKwik(paheUrl)
         val cookies = cookieManager.getCookie(videoUrl) ?: cookieManager.getCookie("https://kwik.cx")
+        val ua = cfBypassUserAgent ?: AnimePahe.UA
         val headersWithCookies = kwikHeaders.newBuilder().apply {
             if (!cookies.isNullOrBlank()) {
                 set("Cookie", cookies)
             }
         }.build()
 
+        val headerField = buildString {
+            append("Referer: https://kwik.cx/")
+            if (!cookies.isNullOrBlank()) append(",Cookie: $cookies")
+        }
+
         return Video(
             videoUrl = videoUrl,
             videoTitle = quality,
             headers = headersWithCookies,
+            mpvArgs = listOf(
+                "referrer" to "https://kwik.cx/",
+                "http-header-fields" to headerField,
+                "user-agent" to ua,
+            ),
         )
     }
 
