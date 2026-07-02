@@ -166,13 +166,13 @@ class Toonhub4u :
 
         val entryContent = document.selectFirst(".entry-content") ?: return emptyList()
         val pTags = entryContent.select("p, h4, h3, h2")
-        val hasEpisodes = pTags.any { it.text().contains("Episode", ignoreCase = true) }
+        val hasEpisodes = pTags.any { HAS_EPISODE_REGEX.containsMatchIn(it.text()) }
 
         if (hasEpisodes) {
             var episodeCount = 1
             pTags.forEach { pTag ->
                 val text = pTag.text().trim()
-                val episodeMatch = Regex("Episode\\s*(\\d+)", RegexOption.IGNORE_CASE).find(text)
+                val episodeMatch = EPISODE_NUMBER_REGEX.find(text)
                 if (episodeMatch != null) {
                     val episodeNumber = episodeMatch.groupValues[1].toFloatOrNull() ?: episodeCount.toFloat()
                     val episodeLinks = mutableListOf<String>()
@@ -561,6 +561,9 @@ class Toonhub4u :
         private const val PREF_QUALITY_DEFAULT = "1080"
         private val PREF_QUALITY_VALUES = arrayOf("1080", "720", "480", "360")
         private val PREF_QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
+
+        private val EPISODE_NUMBER_REGEX = Regex("Episode\\s*(\\d+)", RegexOption.IGNORE_CASE)
+        private val HAS_EPISODE_REGEX = Regex("Episode\\s*\\d+", RegexOption.IGNORE_CASE)
     }
 
     class StreamP2PExtractor(private val client: OkHttpClient, private val headers: Headers) {
