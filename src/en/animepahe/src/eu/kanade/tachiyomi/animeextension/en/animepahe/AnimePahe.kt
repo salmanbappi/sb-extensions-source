@@ -481,10 +481,9 @@ class AnimePahe : Source() {
 
         private const val PREF_LINK_TYPE_KEY = "preferred_link_type"
         private const val PREF_LINK_TYPE_TITLE = "Use HLS links"
-        private const val PREF_LINK_TYPE_DEFAULT = true
-        private val PREF_LINK_TYPE_SUMMARY = """Enable this if you are having Cloudflare issues.
-            |Note that this will break the ability to seek inside of the video unless the episode is downloaded in advance.
-        """.trimMargin()
+        private const val PREF_LINK_TYPE_DEFAULT = false
+        private val PREF_LINK_TYPE_SUMMARY = "Use HLS (.m3u8) streams instead of MP4. " +
+            "Disable (recommended) to use MP4 streams which bypass Cloudflare bot cookie restrictions on the HLS CDN."
 
         // Big slap to whoever misspelled `preferred`
         private const val PREF_AV1_KEY = "preferred_av1"
