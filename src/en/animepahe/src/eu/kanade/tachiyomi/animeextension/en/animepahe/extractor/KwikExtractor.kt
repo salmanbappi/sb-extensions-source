@@ -156,10 +156,9 @@ class KwikExtractor(
 
         // Last resort: force a fresh bypass on kwik.cx root (not the embed) so CookieManager is seeded
         val bypass = CloudflareBypass().getCookies("https://kwik.cx", cfBypassUserAgent)
-            ?: return embedCookies  // Give up gracefully; video may still 403 but we tried.
+            ?: return embedCookies // Give up gracefully; video may still 403 but we tried.
         return if (embedCookies.isBlank()) bypass.cookies else "$embedCookies; ${bypass.cookies}"
     }
-
 
     suspend fun getStreamVideo(paheUrl: String, quality: String = ""): Video {
         val (videoUrl, cookies) = getStreamUrlFromKwik(paheUrl)
