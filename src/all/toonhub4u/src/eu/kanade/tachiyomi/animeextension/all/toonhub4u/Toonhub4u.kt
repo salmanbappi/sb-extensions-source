@@ -206,10 +206,13 @@ class Toonhub4u :
                 when {
                     href.contains("gdmirrorbot") || href.contains("iqsmartgames") ->
                         href.replace("/file/", "/embed/")
+
                     href.contains("filemoon.sx") ->
                         href.replace("/d/", "/e/").substringBefore("/_")
+
                     href.contains("dood.") ->
                         href.replace("/d/", "/e/")
+
                     else -> null
                 }
             }.distinct()
@@ -239,6 +242,7 @@ class Toonhub4u :
                     embedUrl.contains("filemoon.sx") -> {
                         return@parallelCatchingFlatMap FilemoonExtractor(client).videosFromUrl(embedUrl, "FileMoon - ")
                     }
+
                     embedUrl.contains("dood.") -> {
                         return@parallelCatchingFlatMap DoodExtractor(client).videosFromUrl(embedUrl, "DoodStream")
                     }
