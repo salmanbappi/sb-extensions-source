@@ -27,6 +27,7 @@ SOFTWARE.
 
 package eu.kanade.tachiyomi.animeextension.en.animepahe.extractor
 
+import android.webkit.CookieManager
 import dev.datlag.jsunpacker.JsUnpacker
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
@@ -47,6 +48,8 @@ class KwikExtractor(
     private val headers: Headers,
     private val cfBypassUserAgent: String? = null, // Added custom User-Agent parameter
 ) {
+    private val cookieManager by lazy { CookieManager.getInstance() }
+
     private val kwikParamsRegex by lazy { Regex("""\("(\w+)",\d+,"(\w+)",(\d+),(\d+),\d+\)""") }
     private val kwikDUrl by lazy { Regex("action=\"([^\"]+)\"") }
     private val kwikDToken by lazy { Regex("value=\"([^\"]+)\"") }
@@ -75,11 +78,17 @@ class KwikExtractor(
 
     suspend fun getHlsVideo(kwikUrl: String, referer: String, quality: String = ""): Video {
         val videoUrl = getHlsStreamUrl(kwikUrl, referer)
+        val cookies = cookieManager.getCookie(videoUrl) ?: cookieManager.getCookie("https://kwik.cx")
+        val headersWithCookies = kwikHeaders.newBuilder().apply {
+            if (!cookies.isNullOrBlank()) {
+                set("Cookie", cookies)
+            }
+        }.build()
 
         return Video(
             videoUrl = videoUrl,
             videoTitle = quality,
-            headers = kwikHeaders,
+            headers = headersWithCookies,
         )
     }
 
@@ -97,11 +106,17 @@ class KwikExtractor(
 
     suspend fun getStreamVideo(paheUrl: String, quality: String = ""): Video {
         val videoUrl = getStreamUrlFromKwik(paheUrl)
+        val cookies = cookieManager.getCookie(videoUrl) ?: cookieManager.getCookie("https://kwik.cx")
+        val headersWithCookies = kwikHeaders.newBuilder().apply {
+            if (!cookies.isNullOrBlank()) {
+                set("Cookie", cookies)
+            }
+        }.build()
 
         return Video(
             videoUrl = videoUrl,
             videoTitle = quality,
-            headers = kwikHeaders,
+            headers = headersWithCookies,
         )
     }
 
