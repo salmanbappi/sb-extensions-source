@@ -43,6 +43,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Response
 
 data class KwikContent(val cookies: String, val html: String, val finalUrl: String)
+data class HlsResult(val url: String, val cookies: String)
 
 class KwikExtractor(
     private val client: OkHttpClient,
@@ -78,18 +79,23 @@ class KwikExtractor(
     }
 
     suspend fun getHlsVideo(kwikUrl: String, referer: String, quality: String = ""): Video {
-        val videoUrl = getHlsStreamUrl(kwikUrl, referer)
-        val cookies = cookieManager.getCookie(videoUrl) ?: cookieManager.getCookie("https://kwik.cx")
+        val result = getHlsStreamResult(kwikUrl, referer)
+        val videoUrl = result.url
+        // Use cookies returned directly from the bypass flow — CookieManager.getCookie() cannot
+        // retrieve partitioned (CHIPS) cookies that kwik.cx sets when loaded as a cross-site iframe
+        // under animepahe.pw, so we must use the cookies obtained from the WebView bypass which
+        // loads kwik.cx as top-level and therefore gets unpartitioned cookies.
+        val cookies = result.cookies.ifBlank {
+            cookieManager.getCookie(videoUrl) ?: cookieManager.getCookie("https://kwik.cx") ?: ""
+        }
         val ua = cfBypassUserAgent ?: AnimePahe.UA
         val headersWithCookies = kwikHeaders.newBuilder().apply {
-            if (!cookies.isNullOrBlank()) {
-                set("Cookie", cookies)
-            }
+            if (cookies.isNotBlank()) set("Cookie", cookies)
         }.build()
 
         val headerField = buildString {
             append("Referer: https://kwik.cx/")
-            if (!cookies.isNullOrBlank()) append(",Cookie: $cookies")
+            if (cookies.isNotBlank()) append(",Cookie: $cookies")
         }
 
         return Video(
@@ -104,31 +110,40 @@ class KwikExtractor(
         )
     }
 
-    suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String {
-        val eContent = client.newCall(GET(kwikUrl, headers.newBuilder().set("Referer", referer).build()))
-            .awaitSuccess().useAsJsoup()
-        val script = eContent.selectFirst("script:containsData(eval\\(function)")?.data()
-            ?.substringAfterLast("eval(function(")
-            ?: throw KwikException.ExtractionException("JsUnpacker not found.")
+    suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String =
+        getHlsStreamResult(kwikUrl, referer).url
+
+    private suspend fun getHlsStreamResult(kwikUrl: String, referer: String): HlsResult {
+        // Use fetchKwikHtml (same CF-bypass path as getStreamUrlFromKwik) so that
+        // Cloudflare clearance cookies are obtained and the page loads reliably.
+        val (cookies, html) = fetchKwikHtml(kwikUrl)
+        val script = html.substringAfterLast("eval(function(", "")
+            .takeIf { it.isNotBlank() }
+            ?: run {
+                // Fallback: direct fetch with referer (may work without CF challenge)
+                val doc = client.newCall(GET(kwikUrl, headers.newBuilder().set("Referer", referer).build()))
+                    .awaitSuccess().useAsJsoup()
+                doc.selectFirst("script:containsData(eval\\(function)")?.data()
+                    ?.substringAfterLast("eval(function(")
+                    ?: throw KwikException.ExtractionException("JsUnpacker not found.")
+            }
         val unpacked = JsUnpacker.unpackAndCombine("eval(function($script")
             ?: throw KwikException.ExtractionException("JsUnpacker failed to unpack Kwik script.")
-        return hlsSourceRegex.find(unpacked)?.value
+        val url = hlsSourceRegex.find(unpacked)?.value
             ?: throw KwikException.ExtractionException("HLS source URL not found in unpacked Kwik script.")
+        return HlsResult(url = url, cookies = cookies)
     }
 
     suspend fun getStreamVideo(paheUrl: String, quality: String = ""): Video {
-        val videoUrl = getStreamUrlFromKwik(paheUrl)
-        val cookies = cookieManager.getCookie(videoUrl) ?: cookieManager.getCookie("https://kwik.cx")
+        val (videoUrl, cookies) = getStreamUrlFromKwik(paheUrl)
         val ua = cfBypassUserAgent ?: AnimePahe.UA
         val headersWithCookies = kwikHeaders.newBuilder().apply {
-            if (!cookies.isNullOrBlank()) {
-                set("Cookie", cookies)
-            }
+            if (cookies.isNotBlank()) set("Cookie", cookies)
         }.build()
 
         val headerField = buildString {
             append("Referer: https://kwik.cx/")
-            if (!cookies.isNullOrBlank()) append(",Cookie: $cookies")
+            if (cookies.isNotBlank()) append(",Cookie: $cookies")
         }
 
         return Video(
@@ -143,7 +158,8 @@ class KwikExtractor(
         )
     }
 
-    suspend fun getStreamUrlFromKwik(paheUrl: String): String {
+    /** Returns Pair(streamUrl, cookies) so callers can thread the CF cookies to the player. */
+    suspend fun getStreamUrlFromKwik(paheUrl: String): Pair<String, String> {
         val kwikUrl = noRedirectClient.newCall(GET("$paheUrl/i", headers)).await().use { response ->
             val location = response.header("location")
                 ?: throw KwikException.ExtractionException("Pahe redirect failed: No location header found.")
@@ -201,7 +217,8 @@ class KwikExtractor(
             }
         }
 
-        return kwikLocation ?: throw KwikException.ExtractionException("Failed to extract stream URI after $tries attempts.")
+        val location = kwikLocation ?: throw KwikException.ExtractionException("Failed to extract stream URI after $tries attempts.")
+        return location to fContentCookies
     }
 
     private suspend fun fetchKwikHtml(kwikUrl: String): KwikContent {
