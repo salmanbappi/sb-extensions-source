@@ -240,7 +240,7 @@ class KwikExtractor(
             // Cloudflare/Session Timeout Handling
             if (code == 403 || code == 419) {
                 // Pass the custom User-Agent to the bypass
-                cloudFlareBypassResult = CloudflareBypass().getCookies(kwikUrl, cfBypassUserAgent)
+                cloudFlareBypassResult = CloudflareBypass().getCookies(kwikFUrl, cfBypassUserAgent)
                     ?: throw KwikException.CloudflareBlockedException("Cloudflare bypass failed to return result.")
 
                 // Prevent stacking multiple cf_clearance cookies
