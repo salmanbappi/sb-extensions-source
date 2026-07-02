@@ -50,7 +50,7 @@ class KwikExtractor(
     private val kwikParamsRegex by lazy { Regex("""\("(\w+)",\d+,"(\w+)",(\d+),(\d+),\d+\)""") }
     private val kwikDUrl by lazy { Regex("action=\"([^\"]+)\"") }
     private val kwikDToken by lazy { Regex("value=\"([^\"]+)\"") }
-    private val hlsSourceRegex by lazy { Regex("""https?://\S+?\.m3u8\S*""") }
+    private val hlsSourceRegex by lazy { Regex("""https?://[^'\"\s]+?\.m3u8[^'\"\s]*""") }
 
     // Clone the base client so interceptors, cookie jars, logging, etc. are preserved,
     // and only override redirect behavior.
@@ -65,6 +65,11 @@ class KwikExtractor(
         headers.newBuilder()
             .set("Origin", "https://kwik.cx")
             .set("Referer", "https://kwik.cx/")
+            .apply {
+                if (!cfBypassUserAgent.isNullOrBlank()) {
+                    set("User-Agent", cfBypassUserAgent)
+                }
+            }
             .build()
     }
 
