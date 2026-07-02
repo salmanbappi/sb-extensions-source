@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.buzzheavierextractor.BuzzheavierExtractor
+import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
 import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
@@ -202,10 +203,14 @@ class Toonhub4u :
         } else {
             val movieLinks = entryContent.select("div.mks_toggle_content a[href], .entry-content p a[href]").mapNotNull { aTag ->
                 val href = aTag.attr("href")
-                if (href.contains("gdmirrorbot") || href.contains("iqsmartgames")) {
-                    href.replace("/file/", "/embed/")
-                } else {
-                    null
+                when {
+                    href.contains("gdmirrorbot") || href.contains("iqsmartgames") ->
+                        href.replace("/file/", "/embed/")
+                    href.contains("filemoon.sx") ->
+                        href.replace("/d/", "/e/").substringBefore("/_")
+                    href.contains("dood.") ->
+                        href.replace("/d/", "/e/")
+                    else -> null
                 }
             }.distinct()
 
@@ -229,6 +234,16 @@ class Toonhub4u :
         return embedUrls.parallelCatchingFlatMap { embedUrl ->
             val videoList = mutableListOf<Video>()
             try {
+                // Direct hoster URLs (older posts) — bypass embedhelper flow
+                when {
+                    embedUrl.contains("filemoon.sx") -> {
+                        return@parallelCatchingFlatMap FilemoonExtractor(client).videosFromUrl(embedUrl, "FileMoon - ")
+                    }
+                    embedUrl.contains("dood.") -> {
+                        return@parallelCatchingFlatMap DoodExtractor(client).videosFromUrl(embedUrl, "DoodStream")
+                    }
+                }
+
                 val embedResponse = client.newCall(GET(embedUrl, headers)).execute()
                 val finalUrl = embedResponse.request.url.toString()
                 embedResponse.close()
