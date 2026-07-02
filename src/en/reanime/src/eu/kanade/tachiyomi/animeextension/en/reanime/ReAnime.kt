@@ -84,9 +84,8 @@ data class LatestResponseDto(
 )
 
 @Serializable
-data class WatchPageResponseDto(
-    val anime: DetailAnimeDto? = null,
-    val episode_links: List<FlixServerDto> = emptyList(),
+data class DetailAnimeResponseDto(
+    val data: DetailAnimeDto? = null,
 )
 
 @Serializable
@@ -95,7 +94,7 @@ data class DetailAnimeDto(
     val status: String? = null,
     val genres: List<String> = emptyList(),
     val cover_image: CoverImageDto? = null,
-    val anilist: Int? = null,
+    val anilist_id: Int? = null,
 )
 
 @Serializable
@@ -131,7 +130,7 @@ class ReAnime : Source() {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/top/anime?period=week&limit=20", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/v1/top/anime?period=week&limit=20", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val data = response.parseAs<LatestResponseDto>()
@@ -147,7 +146,7 @@ class ReAnime : Source() {
 
     // ============================== Latest ================================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/home/latest-aired?limit=20", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/v1/home/latest-aired?limit=20", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val data = response.parseAs<LatestResponseDto>()
@@ -166,7 +165,7 @@ class ReAnime : Source() {
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val offset = (page - 1) * 20
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        return GET("$baseUrl/api/search?q=$encodedQuery&limit=20&offset=$offset", headers)
+        return GET("$baseUrl/api/v1/search?q=$encodedQuery&limit=20&offset=$offset", headers)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
@@ -183,11 +182,11 @@ class ReAnime : Source() {
 
     // ============================== Details ===============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/api/watch/${anime.url}/1", headers)
+    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/api/v1/anime/${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val data = response.parseAs<WatchPageResponseDto>()
-        val anime = data.anime ?: return SAnime.create()
+        val data = response.parseAs<DetailAnimeResponseDto>()
+        val anime = data.data ?: return SAnime.create()
         return SAnime.create().apply {
             description = anime.description?.replace("<br>", "\n")?.replace("<BR>", "\n")?.replace(Regex("<[^>]*>"), "")
             status = when (anime.status?.lowercase()) {
@@ -202,7 +201,7 @@ class ReAnime : Source() {
 
     // ============================== Episodes ==============================
 
-    override fun episodeListRequest(anime: SAnime): Request = GET("$baseUrl/api/episodes/${anime.url}", headers)
+    override fun episodeListRequest(anime: SAnime): Request = GET("$baseUrl/api/v1/anime/${anime.url}/episodes?limit=2000", headers)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val jsonElement = response.parseAs<JsonElement>()
@@ -236,14 +235,14 @@ class ReAnime : Source() {
         val epNumStr = requestUrl.substringAfter("?ep=")
 
         // Fetch watch page to get the details & servers
-        val watchRequest = GET("$baseUrl/api/watch/$slug/$epNumStr", headers)
+        val watchRequest = GET("$baseUrl/api/v1/anime/$slug", headers)
         val watchResponse = client.newCall(watchRequest).execute()
-        val watchData = watchResponse.parseAs<WatchPageResponseDto>()
+        val watchData = watchResponse.parseAs<DetailAnimeResponseDto>()
 
-        val anime = watchData.anime ?: throw Exception("Could not find anime info")
+        val anime = watchData.data ?: throw Exception("Could not find anime info")
 
         // Find anilist ID
-        var anilistId = anime.anilist ?: 0
+        var anilistId = anime.anilist_id ?: 0
         if (anilistId == 0) {
             for (url in listOf(anime.cover_image?.extra_large, anime.cover_image?.large, anime.cover_image?.medium)) {
                 if (url != null) {
@@ -266,7 +265,6 @@ class ReAnime : Source() {
         val flixData = flixResponse.parseAs<FlixResponseDto>()
 
         val servers = mutableListOf<FlixServerDto>()
-        servers.addAll(watchData.episode_links)
         flixData.servers.forEach { server ->
             if (servers.none { it.dataLink == server.dataLink }) {
                 servers.add(server)
@@ -375,7 +373,13 @@ class ReAnime : Source() {
     private fun getSha256(text: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(text.toByteArray())
-        return hash.joinToString("") { "%02x".format(it) }
+        val hexChars = CharArray(hash.size * 2)
+        for (i in hash.indices) {
+            val v = hash[i].toInt() and 0xFF
+            hexChars[i * 2] = "0123456789abcdef"[v ushr 4]
+            hexChars[i * 2 + 1] = "0123456789abcdef"[v and 0x0F]
+        }
+        return String(hexChars)
     }
 
     private fun getSha256Bytes(data: ByteArray): ByteArray {
