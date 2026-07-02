@@ -110,8 +110,7 @@ class KwikExtractor(
         )
     }
 
-    suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String =
-        getHlsStreamResult(kwikUrl, referer).url
+    suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String = getHlsStreamResult(kwikUrl, referer).url
 
     private suspend fun getHlsStreamResult(kwikUrl: String, referer: String): HlsResult {
         // Use fetchKwikHtml (same CF-bypass path as getStreamUrlFromKwik) so that
