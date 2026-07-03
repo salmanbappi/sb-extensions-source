@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
+import keiyoushi.utils.parallelCatchingFlatMap
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -21,7 +22,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import keiyoushi.utils.parallelCatchingFlatMap
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.net.URLDecoder
@@ -291,7 +291,7 @@ class Fojik :
                                 name = "Movie"
                                 episode_number = 1f
                                 date_upload = 0L
-                            }
+                            },
                         )
                     }
                 }
@@ -403,7 +403,7 @@ class Fojik :
                                     videoTitle = "GoFile - $text$titleSuffix",
                                     headers = clientHeaders,
                                     resolution = res,
-                                )
+                                ),
                             )
                         }
                     }
@@ -416,7 +416,7 @@ class Fojik :
                                 videoTitle = "R2 Direct - $text$titleSuffix",
                                 headers = clientHeaders,
                                 resolution = res,
-                            )
+                            ),
                         )
                     }
                 }
@@ -805,5 +805,5 @@ private val GENRES = listOf(
 private data class LinkData(
     val text: String,
     val href: String,
-    val quality: String
+    val quality: String,
 )
