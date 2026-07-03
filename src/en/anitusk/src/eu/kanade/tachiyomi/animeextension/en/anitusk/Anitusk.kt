@@ -451,16 +451,23 @@ class Anitusk :
                                         val refHeaders = headersBuilder()
                                             .set("Referer", "https://megaplay.buzz/")
                                             .build()
+                                        val tracks = sourcesJson.tracks
+                                            ?.filter { it.kind == "captions" && !it.file.isNullOrBlank() && !it.label.isNullOrBlank() }
+                                            ?.map { Track(it.file!!, it.label!!) }
+                                            ?: emptyList()
                                         playlistUtils.extractFromHls(
                                             masterUrl,
                                             referer = "https://megaplay.buzz/",
                                             videoNameGen = { quality -> "Fast (MegaPlay) - $quality (${type.uppercase()})" },
+                                            subtitleList = tracks,
                                         ).forEach { v ->
                                             videoList.add(
                                                 Video(
                                                     videoUrl = v.videoUrl,
                                                     videoTitle = v.videoTitle,
                                                     headers = refHeaders,
+                                                    subtitleTracks = v.subtitleTracks,
+                                                    audioTracks = v.audioTracks,
                                                 ),
                                             )
                                         }
@@ -492,16 +499,23 @@ class Anitusk :
                                     val refHeaders = headersBuilder()
                                         .set("Referer", "https://megaplay.buzz/")
                                         .build()
+                                    val tracks = sourcesJson.tracks
+                                        ?.filter { it.kind == "captions" && !it.file.isNullOrBlank() && !it.label.isNullOrBlank() }
+                                        ?.map { Track(it.file!!, it.label!!) }
+                                        ?: emptyList()
                                     playlistUtils.extractFromHls(
                                         masterUrl,
                                         referer = "https://megaplay.buzz/",
                                         videoNameGen = { quality -> "VidNest - $quality (${type.uppercase()})" },
+                                        subtitleList = tracks,
                                     ).forEach { v ->
                                         videoList.add(
                                             Video(
                                                 videoUrl = v.videoUrl,
                                                 videoTitle = v.videoTitle,
                                                 headers = refHeaders,
+                                                subtitleTracks = v.subtitleTracks,
+                                                audioTracks = v.audioTracks,
                                             ),
                                         )
                                     }
@@ -576,6 +590,8 @@ class Anitusk :
                                     videoUrl = v.videoUrl,
                                     videoTitle = v.videoTitle,
                                     headers = refHeaders,
+                                    subtitleTracks = v.subtitleTracks,
+                                    audioTracks = v.audioTracks,
                                 ),
                             )
                         }
@@ -605,6 +621,7 @@ class Anitusk :
                                             videoTitle = v.videoTitle,
                                             headers = v.headers,
                                             subtitleTracks = v.subtitleTracks,
+                                            audioTracks = v.audioTracks,
                                         ),
                                     )
                                 }
@@ -623,6 +640,8 @@ class Anitusk :
                                             videoUrl = v.videoUrl,
                                             videoTitle = v.videoTitle,
                                             headers = v.headers,
+                                            subtitleTracks = v.subtitleTracks,
+                                            audioTracks = v.audioTracks,
                                         ),
                                     )
                                 }
