@@ -21,7 +21,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import keiyoushi.utils.parallelCatchingFlatMap
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import java.net.URLDecoder
 import java.net.URLEncoder
 
@@ -78,16 +80,24 @@ class Fojik :
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = Jsoup.parse(response.body!!.string(), baseUrl)
-        val animeList = document.select("article.item").map { el ->
+        val animeList = document.select("div.result-item, article.item").map { el ->
             SAnime.create().apply {
-                title = el.selectFirst("h3.title")?.text()?.trim()
+                title = el.selectFirst("div.title a, h3.title, h3 a, h3")?.text()?.trim()
                     ?: el.selectFirst("img")?.attr("alt")?.trim() ?: ""
-                url = el.selectFirst("a")?.attr("href")?.replace(baseUrl, "") ?: ""
+                url = el.selectFirst("div.title a, a")?.attr("href")?.replace(baseUrl, "") ?: ""
                 thumbnail_url = el.selectFirst("img")?.attr("abs:src") ?: ""
             }
         }
-        val hasNextPage = document.selectFirst("div.pagination a.next") != null ||
-            document.selectFirst("div.pagination a:contains(Next)") != null
+        val pageText = document.selectFirst("div.pagination span")?.text() ?: ""
+        val hasNextPage = if (pageText.contains("of")) {
+            val current = pageText.substringAfter("Page ").substringBefore(" of").toIntOrNull() ?: 1
+            val total = pageText.substringAfter("of ").toIntOrNull() ?: 1
+            current < total
+        } else {
+            document.selectFirst("div.resppages a span.icon-chevron-right") != null ||
+                document.selectFirst("div.pagination a.next") != null ||
+                document.selectFirst("div.pagination a:contains(Next)") != null
+        }
         return AnimesPage(animeList, hasNextPage)
     }
 
@@ -161,8 +171,135 @@ class Fojik :
 
     override fun episodeListRequest(anime: SAnime): Request = GET(baseUrl + anime.url, headers)
 
+    private fun getIndexPageHtmlAndUrl(document: Document): Pair<String, String>? {
+        val row = document.selectFirst("div#download table tbody tr") ?: return null
+        val form = row.selectFirst("form") ?: return null
+        val fu = form.selectFirst("input[name=FU]")?.attr("value") ?: ""
+        val fn = form.selectFirst("input[name=FN]")?.attr("value") ?: ""
+        if (fu.isEmpty()) return null
+
+        val clientHeaders = Headers.Builder()
+            .add("User-Agent", USER_AGENT)
+            .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+            .build()
+
+        val body1 = FormBody.Builder()
+            .add("FU", fu)
+            .add("FN", fn)
+            .build()
+        val req1 = Request.Builder()
+            .url("https://search.technews24.site/blog.php")
+            .post(body1)
+            .headers(clientHeaders)
+            .header("Referer", baseUrl + "/")
+            .build()
+        val res1 = client.newCall(req1).execute()
+        val html1 = res1.body!!.string()
+
+        val action1 = extractRegex(html1, """action="([^"]+)"""") ?: return null
+        val fu2 = extractRegex(html1, """name="FU2" value="([^"]+)"""") ?: return null
+
+        val body2 = FormBody.Builder()
+            .add("FU2", fu2)
+            .build()
+        val req2 = Request.Builder()
+            .url(action1)
+            .post(body2)
+            .headers(clientHeaders)
+            .header("Referer", "https://search.technews24.site/")
+            .build()
+        val res2 = client.newCall(req2).execute()
+        val html2 = res2.body!!.string()
+
+        val action2 = extractRegex(html2, """action="([^"]+)"""") ?: return null
+        val fu2Second = extractRegex(html2, """name="FU2" value="([^"]+)"""") ?: return null
+
+        val body3 = FormBody.Builder()
+            .add("FU2", fu2Second)
+            .build()
+        val req3 = Request.Builder()
+            .url(action2)
+            .post(body3)
+            .headers(clientHeaders)
+            .header("Referer", action1)
+            .build()
+        val res3 = client.newCall(req3).execute()
+        val html3 = res3.body!!.string()
+
+        val sss = extractRegex(html3, """var sss = '([^']+)';""") ?: return null
+        val v = extractRegex(html3, """6a48[0-9a-f]+""") ?: return null
+
+        val apiUrl = action2.toHttpUrlOrNull()!!.newBuilder().encodedPath("/new/l/api/m").build().toString()
+        val body4 = FormBody.Builder()
+            .add("s", sss)
+            .add("v", v)
+            .build()
+        val req4 = Request.Builder()
+            .url(apiUrl)
+            .post(body4)
+            .headers(clientHeaders)
+            .header("Referer", action2)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .build()
+        val res4 = client.newCall(req4).execute()
+        val linkUrl = res4.body!!.string().trim()
+        if (linkUrl.isBlank()) return null
+
+        val req5 = Request.Builder()
+            .url(linkUrl)
+            .headers(clientHeaders)
+            .build()
+        val res5 = client.newCall(req5).execute()
+        val html = res5.body!!.string()
+        return Pair(html, linkUrl)
+    }
+
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = Jsoup.parse(response.body!!.string(), baseUrl)
+        val htmlContent = response.body!!.string()
+        val document = Jsoup.parse(htmlContent, baseUrl)
+
+        try {
+            val indexData = getIndexPageHtmlAndUrl(document)
+            if (indexData != null) {
+                val (indexHtml, indexUrl) = indexData
+                val indexDoc = Jsoup.parse(indexHtml, indexUrl)
+                val content = indexDoc.selectFirst(".entry-content, .site-content")
+                if (content != null) {
+                    val seasons = mutableListOf<String>()
+                    content.select("*").forEach { el ->
+                        if (el.tagName() == "span" && el.text().trim().startsWith("Season", ignoreCase = true)) {
+                            val seasonName = el.text().trim()
+                            if (!seasons.contains(seasonName)) {
+                                seasons.add(seasonName)
+                            }
+                        }
+                    }
+
+                    if (seasons.isNotEmpty()) {
+                        return seasons.mapIndexed { idx, season ->
+                            SEpisode.create().apply {
+                                url = "$indexUrl#season=${URLEncoder.encode(season, "UTF-8")}"
+                                name = season
+                                episode_number = (idx + 1).toFloat()
+                                date_upload = 0L
+                            }
+                        }.reversed()
+                    } else {
+                        return listOf(
+                            SEpisode.create().apply {
+                                url = indexUrl
+                                name = "Movie"
+                                episode_number = 1f
+                                date_upload = 0L
+                            }
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Fail silently and fall back
+        }
+
         val rows = document.select("div#download table tbody tr")
         return rows.mapIndexed { index, row ->
             val form = row.selectFirst("form") ?: throw Exception("Download form not found")
@@ -191,6 +328,102 @@ class Fojik :
     // ============================ Video Extraction ============================
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val url = episode.url
+        if (url.startsWith("http")) {
+            val indexUrl = url.substringBefore("#")
+            val targetSeason = if (url.contains("#season=")) {
+                URLDecoder.decode(url.substringAfter("#season=").substringBefore("&"), "UTF-8")
+            } else {
+                ""
+            }
+
+            val clientHeaders = Headers.Builder()
+                .add("User-Agent", USER_AGENT)
+                .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+                .build()
+
+            val req = Request.Builder()
+                .url(indexUrl)
+                .headers(clientHeaders)
+                .build()
+
+            val html = client.newCall(req).execute().body!!.string()
+            val doc = Jsoup.parse(html, indexUrl)
+            val content = doc.selectFirst(".entry-content, .site-content") ?: return emptyList()
+
+            var currentSeason = "Movie"
+            val linksToResolve = mutableListOf<Triple<String, String, String>>()
+
+            content.select("*").forEach { el ->
+                if (el.text().trim().startsWith("Season", ignoreCase = true) &&
+                    el.tagName() in listOf("span", "p", "strong", "em", "h1", "h2", "h3", "h4", "h5", "h6")
+                ) {
+                    val txt = el.text().trim()
+                    if (txt.length < 50) {
+                        currentSeason = txt
+                    }
+                }
+
+                if (el.tagName() == "a" && el.hasAttr("href")) {
+                    val href = el.attr("href")
+                    val text = el.text().trim()
+                    if (href.contains("go2.php") || href.contains("go.php") || href.contains("gofile")) {
+                        if (targetSeason.isEmpty() || currentSeason.equals(targetSeason, ignoreCase = true)) {
+                            if (linksToResolve.none { it.first == href }) {
+                                val parentText = el.parent()?.text() ?: ""
+                                var quality = ""
+                                for (q in listOf("1080p HEVC", "720p HEVC", "1080p", "720p", "480p")) {
+                                    if (parentText.contains(q)) {
+                                        quality = q
+                                        break
+                                    }
+                                }
+                                linksToResolve.add(Triple(href, text, quality))
+                            }
+                        }
+                    }
+                }
+            }
+
+            return linksToResolve.parallelCatchingFlatMap { (href, text, quality) ->
+                val titleSuffix = if (quality.isNotEmpty()) " ($quality)" else ""
+                val res = quality.replace("p", "").replace(" HEVC", "").toIntOrNull()
+
+                val videos = mutableListOf<Video>()
+                if (href.contains("gofile.io/d/")) {
+                    val folderId = href.substringAfter("/d/").trim()
+                    if (folderId.isNotEmpty()) {
+                        val folderVideos = fetchGoFileFolderLinks(folderId, clientHeaders)
+                        if (folderVideos.isNotEmpty()) {
+                            videos.addAll(folderVideos)
+                        } else {
+                            videos.add(
+                                Video(
+                                    videoUrl = href,
+                                    videoTitle = "GoFile - $text$titleSuffix",
+                                    headers = clientHeaders,
+                                    resolution = res,
+                                )
+                            )
+                        }
+                    }
+                } else if (href.contains("go2.php") || href.contains("go.php")) {
+                    val resolvedUrl = resolveGo2Link(href, clientHeaders)
+                    if (resolvedUrl != null) {
+                        videos.add(
+                            Video(
+                                videoUrl = resolvedUrl,
+                                videoTitle = "R2 Direct - $text$titleSuffix",
+                                headers = clientHeaders,
+                                resolution = res,
+                            )
+                        )
+                    }
+                }
+                videos
+            }
+        }
+
         val urlParams = episode.url.substringAfter("?").split("&").associate {
             val parts = it.split("=")
             parts[0] to URLDecoder.decode(parts.getOrElse(1) { "" }, "UTF-8")
@@ -567,4 +800,10 @@ private val GENRES = listOf(
     Pair("Sports", "sports"),
     Pair("War", "war"),
     Pair("Western", "western"),
+)
+
+private data class LinkData(
+    val text: String,
+    val href: String,
+    val quality: String
 )
