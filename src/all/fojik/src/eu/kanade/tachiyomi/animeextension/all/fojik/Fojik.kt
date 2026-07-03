@@ -117,6 +117,8 @@ class Fojik :
 
     // ============================== Details ===============================
 
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, headers)
+
     override fun animeDetailsParse(response: Response): SAnime {
         val document = Jsoup.parse(response.body!!.string(), baseUrl)
         return SAnime.create().apply {
@@ -156,6 +158,8 @@ class Fojik :
     }
 
     // ============================== Episodes ==============================
+
+    override fun episodeListRequest(anime: SAnime): Request = GET(baseUrl + anime.url, headers)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = Jsoup.parse(response.body!!.string(), baseUrl)
