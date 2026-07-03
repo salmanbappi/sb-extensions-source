@@ -25,7 +25,9 @@ import org.jsoup.Jsoup
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-class Fojik : Source(), ConfigurableAnimeSource {
+class Fojik :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "Fojik"
 
@@ -84,8 +86,8 @@ class Fojik : Source(), ConfigurableAnimeSource {
                 thumbnail_url = el.selectFirst("img")?.attr("abs:src") ?: ""
             }
         }
-        val hasNextPage = document.selectFirst("div.pagination a.next") != null
-            || document.selectFirst("div.pagination a:contains(Next)") != null
+        val hasNextPage = document.selectFirst("div.pagination a.next") != null ||
+            document.selectFirst("div.pagination a:contains(Next)") != null
         return AnimesPage(animeList, hasNextPage)
     }
 
@@ -147,9 +149,9 @@ class Fojik : Source(), ConfigurableAnimeSource {
     private fun buildDescription(raw: String?, score: Double?, position: String): String {
         val scoreStr = formatScore(score) ?: return raw.orEmpty()
         return when (position) {
-            "top"    -> "$scoreStr\n\n${raw.orEmpty()}"
+            "top" -> "$scoreStr\n\n${raw.orEmpty()}"
             "bottom" -> "${raw.orEmpty()}\n\n$scoreStr"
-            else     -> raw.orEmpty()
+            else -> raw.orEmpty()
         }
     }
 
@@ -287,8 +289,8 @@ class Fojik : Source(), ConfigurableAnimeSource {
                     Video(
                         videoUrl = href,
                         videoTitle = "GoFile - $text",
-                        headers = clientHeaders
-                    )
+                        headers = clientHeaders,
+                    ),
                 )
             } else if (href.contains("go2.php") || href.contains("go.php")) {
                 val resolvedUrl = resolveGo2Link(href, clientHeaders)
@@ -297,8 +299,8 @@ class Fojik : Source(), ConfigurableAnimeSource {
                         Video(
                             videoUrl = resolvedUrl,
                             videoTitle = "R2 Direct - $text",
-                            headers = clientHeaders
-                        )
+                            headers = clientHeaders,
+                        ),
                     )
                 }
             }
@@ -389,7 +391,7 @@ class Fojik : Source(), ConfigurableAnimeSource {
         val preferred = preferences.getString(PREF_QUALITY_KEY, "1080p") ?: "1080p"
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(preferred, ignoreCase = true) }
-                .thenByDescending { it.resolution ?: 0 }
+                .thenByDescending { it.resolution ?: 0 },
         )
     }
 
@@ -407,10 +409,11 @@ class Fojik : Source(), ConfigurableAnimeSource {
     }
 }
 
-private class GenreFilter : AnimeFilter.Select<String>(
-    "Genre",
-    GENRES.map { it.first }.toTypedArray(),
-) {
+private class GenreFilter :
+    AnimeFilter.Select<String>(
+        "Genre",
+        GENRES.map { it.first }.toTypedArray(),
+    ) {
     fun getSelectedValue(): String = GENRES[state].second
 }
 
