@@ -84,7 +84,7 @@ class Fojik : Source(), ConfigurableAnimeSource {
                 thumbnail_url = el.selectFirst("img")?.attr("abs:src") ?: ""
             }
         }
-        val hasNextPage = document.selectFirst("div.pagination a.next") != null 
+        val hasNextPage = document.selectFirst("div.pagination a.next") != null
             || document.selectFirst("div.pagination a:contains(Next)") != null
         return AnimesPage(animeList, hasNextPage)
     }
