@@ -253,7 +253,7 @@ class Fojik :
         val html3 = res3.body!!.string()
 
         val sss = extractRegex(html3, """var sss = '([^']+)';""") ?: return emptyList()
-        val v = extractRegex(html3, """6a480[0-9a-f]+""") ?: return emptyList()
+        val v = extractRegex(html3, """6a48[0-9a-f]+""") ?: return emptyList()
 
         val apiUrl = action2.toHttpUrlOrNull()!!.newBuilder().encodedPath("/new/l/api/m").build().toString()
         val body4 = FormBody.Builder()
@@ -288,12 +288,33 @@ class Fojik :
             val href = anchor.attr("abs:href")
             val text = anchor.text().trim()
 
+            var quality = ""
+            var parent = anchor.parent()
+            while (parent != null && parent.tagName() != "body") {
+                val pText = parent.text()
+                if (pText.contains("1080p", ignoreCase = true)) {
+                    quality = "1080p"
+                    break
+                } else if (pText.contains("720p", ignoreCase = true)) {
+                    quality = "720p"
+                    break
+                } else if (pText.contains("480p", ignoreCase = true)) {
+                    quality = "480p"
+                    break
+                }
+                parent = parent.parent()
+            }
+
+            val titleSuffix = if (quality.isNotEmpty()) " ($quality)" else ""
+            val res = quality.replace("p", "").toIntOrNull()
+
             if (href.contains("gofile.io/d/")) {
                 videos.add(
                     Video(
                         videoUrl = href,
-                        videoTitle = "GoFile - $text",
+                        videoTitle = "GoFile - $text$titleSuffix",
                         headers = clientHeaders,
+                        resolution = res,
                     ),
                 )
             } else if (href.contains("go2.php") || href.contains("go.php")) {
@@ -302,8 +323,9 @@ class Fojik :
                     videos.add(
                         Video(
                             videoUrl = resolvedUrl,
-                            videoTitle = "R2 Direct - $text",
+                            videoTitle = "R2 Direct - $text$titleSuffix",
                             headers = clientHeaders,
+                            resolution = res,
                         ),
                     )
                 }
@@ -345,7 +367,7 @@ class Fojik :
             val html3 = res3.body!!.string()
 
             val sss = extractRegex(html3, """var sss = '([^']+)';""") ?: return null
-            val v = extractRegex(html3, """6a480[0-9a-f]+""") ?: return null
+            val v = extractRegex(html3, """6a48[0-9a-f]+""") ?: return null
 
             val apiUrl = action2.toHttpUrlOrNull()!!.newBuilder().encodedPath("/l/api/m").build().toString()
             val jsonBody = """{"s":"$sss","v":"$v"}""".toRequestBody("application/json".toMediaType())
