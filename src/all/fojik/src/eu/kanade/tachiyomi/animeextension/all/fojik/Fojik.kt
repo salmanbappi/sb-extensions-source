@@ -230,10 +230,10 @@ class Fojik : Source(), ConfigurableAnimeSource {
         val html2 = res2.body!!.string()
 
         val action2 = extractRegex(html2, """action="([^"]+)"""") ?: return emptyList()
-        val fu2_2 = extractRegex(html2, """name="FU2" value="([^"]+)"""") ?: return emptyList()
+        val fu2Second = extractRegex(html2, """name="FU2" value="([^"]+)"""") ?: return emptyList()
 
         val body3 = FormBody.Builder()
-            .add("FU2", fu2_2)
+            .add("FU2", fu2Second)
             .build()
 
         val req3 = Request.Builder()
@@ -400,57 +400,57 @@ class Fojik : Source(), ConfigurableAnimeSource {
         GenreFilter(),
     )
 
-    private class GenreFilter : AnimeFilter.Select<String>(
-        "Genre",
-        GENRES.map { it.first }.toTypedArray(),
-    ) {
-        fun getSelectedValue(): String = GENRES[state].second
-    }
-
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_SCORE_POSITION_KEY = "pref_score_position"
-
-        private val GENRES = listOf(
-            Pair("All", ""),
-            Pair("DC, Marvel or Superhero", "dc-marvel-or-other-superhero-movies-tv-series"),
-            Pair("Oscar Winning Movies", "oscar-winning-movies"),
-            Pair("Bollywood Hindi", "bollywood-hindi"),
-            Pair("English (Hollywood)", "hollywood-english"),
-            Pair("Tamil", "tamil"),
-            Pair("Telugu", "telugu"),
-            Pair("Malayalam", "malayalam"),
-            Pair("Kannada", "kannada"),
-            Pair("Korean", "korean"),
-            Pair("Japanese & Chinese", "japanese-chinese"),
-            Pair("Turkish", "turkish"),
-            Pair("Spanish", "spanish"),
-            Pair("Dual Audio", "dual-audio"),
-            Pair("Hindi Dubbed", "hindi-dubbed"),
-            Pair("HEVC Collection", "hevc-collection"),
-            Pair("Tv & Web Series", "tv-web-series"),
-            Pair("Pakistani Movies", "pakistani-movies"),
-            Pair("TV Show", "tv-show"),
-            Pair("Anime", "anime"),
-            Pair("Animation & Cartoon", "animation"),
-            Pair("Action", "action"),
-            Pair("Adventure", "adventure"),
-            Pair("Biography", "biographical"),
-            Pair("Comedy", "comedy"),
-            Pair("Crime", "crime"),
-            Pair("Documentary", "documentary"),
-            Pair("Drama", "drama"),
-            Pair("Fantasy", "fantasy"),
-            Pair("Horror", "horror"),
-            Pair("Mystery", "mystery"),
-            Pair("Psychological", "psychological"),
-            Pair("Romance", "romance"),
-            Pair("Sci-Fi", "sci-fi"),
-            Pair("Thriller", "thriller"),
-            Pair("Sports", "sports"),
-            Pair("War", "war"),
-            Pair("Western", "western"),
-        )
     }
 }
+
+private class GenreFilter : AnimeFilter.Select<String>(
+    "Genre",
+    GENRES.map { it.first }.toTypedArray(),
+) {
+    fun getSelectedValue(): String = GENRES[state].second
+}
+
+private val GENRES = listOf(
+    Pair("All", ""),
+    Pair("DC, Marvel or Superhero", "dc-marvel-or-other-superhero-movies-tv-series"),
+    Pair("Oscar Winning Movies", "oscar-winning-movies"),
+    Pair("Bollywood Hindi", "bollywood-hindi"),
+    Pair("English (Hollywood)", "hollywood-english"),
+    Pair("Tamil", "tamil"),
+    Pair("Telugu", "telugu"),
+    Pair("Malayalam", "malayalam"),
+    Pair("Kannada", "kannada"),
+    Pair("Korean", "korean"),
+    Pair("Japanese & Chinese", "japanese-chinese"),
+    Pair("Turkish", "turkish"),
+    Pair("Spanish", "spanish"),
+    Pair("Dual Audio", "dual-audio"),
+    Pair("Hindi Dubbed", "hindi-dubbed"),
+    Pair("HEVC Collection", "hevc-collection"),
+    Pair("Tv & Web Series", "tv-web-series"),
+    Pair("Pakistani Movies", "pakistani-movies"),
+    Pair("TV Show", "tv-show"),
+    Pair("Anime", "anime"),
+    Pair("Animation & Cartoon", "animation"),
+    Pair("Action", "action"),
+    Pair("Adventure", "adventure"),
+    Pair("Biography", "biographical"),
+    Pair("Comedy", "comedy"),
+    Pair("Crime", "crime"),
+    Pair("Documentary", "documentary"),
+    Pair("Drama", "drama"),
+    Pair("Fantasy", "fantasy"),
+    Pair("Horror", "horror"),
+    Pair("Mystery", "mystery"),
+    Pair("Psychological", "psychological"),
+    Pair("Romance", "romance"),
+    Pair("Sci-Fi", "sci-fi"),
+    Pair("Thriller", "thriller"),
+    Pair("Sports", "sports"),
+    Pair("War", "war"),
+    Pair("Western", "western"),
+)
