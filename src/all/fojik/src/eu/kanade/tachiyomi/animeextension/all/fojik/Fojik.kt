@@ -309,14 +309,22 @@ class Fojik :
             val res = quality.replace("p", "").toIntOrNull()
 
             if (href.contains("gofile.io/d/")) {
-                videos.add(
-                    Video(
-                        videoUrl = href,
-                        videoTitle = "GoFile - $text$titleSuffix",
-                        headers = clientHeaders,
-                        resolution = res,
-                    ),
-                )
+                val folderId = href.substringAfter("/d/").trim()
+                if (folderId.isNotEmpty()) {
+                    val folderVideos = fetchGoFileFolderLinks(folderId, clientHeaders)
+                    if (folderVideos.isNotEmpty()) {
+                        videos.addAll(folderVideos)
+                    } else {
+                        videos.add(
+                            Video(
+                                videoUrl = href,
+                                videoTitle = "GoFile - $text$titleSuffix",
+                                headers = clientHeaders,
+                                resolution = res,
+                            ),
+                        )
+                    }
+                }
             } else if (href.contains("go2.php") || href.contains("go.php")) {
                 val resolvedUrl = resolveGo2Link(href, clientHeaders)
                 if (resolvedUrl != null) {
@@ -411,6 +419,54 @@ class Fojik :
     private fun extractRegex(html: String, pattern: String): String? {
         val match = Regex(pattern).find(html) ?: return null
         return if (match.groupValues.size > 1) match.groupValues[1] else match.groupValues[0]
+    }
+
+    private suspend fun fetchGoFileFolderLinks(folderId: String, clientHeaders: Headers): List<Video> {
+        val videos = mutableListOf<Video>()
+        try {
+            val accountReq = Request.Builder()
+                .url("https://api.gofile.io/accounts")
+                .post(FormBody.Builder().build())
+                .headers(clientHeaders)
+                .build()
+            val accountRes = client.newCall(accountReq).execute()
+            val accountJsonStr = accountRes.body!!.string()
+            val token = extractRegex(accountJsonStr, """"token"\s*:\s*"([^"]+)"""") ?: return emptyList()
+
+            val contentsReq = Request.Builder()
+                .url("https://api.gofile.io/contents/$folderId?token=$token")
+                .headers(clientHeaders)
+                .build()
+            val contentsRes = client.newCall(contentsReq).execute()
+            val contentsJsonStr = contentsRes.body!!.string()
+
+            val fileRegex = """"name"\s*:\s*"([^"]+)"\s*,\s*"type"\s*:\s*"file"\s*,\s*"link"\s*:\s*"([^"]+)""""
+            val matches = Regex(fileRegex).findAll(contentsJsonStr)
+            matches.forEach { match ->
+                val name = match.groupValues[1]
+                val link = match.groupValues[2]
+
+                var quality = ""
+                if (name.contains("1080p", ignoreCase = true)) quality = "1080p"
+                else if (name.contains("720p", ignoreCase = true)) quality = "720p"
+                else if (name.contains("480p", ignoreCase = true)) quality = "480p"
+
+                val titleSuffix = if (quality.isNotEmpty()) " ($quality)" else ""
+                val res = quality.replace("p", "").toIntOrNull()
+
+                videos.add(
+                    Video(
+                        videoUrl = link,
+                        videoTitle = "GoFile - $name$titleSuffix",
+                        headers = clientHeaders,
+                        resolution = res,
+                    ),
+                )
+            }
+        } catch (e: Exception) {
+            // Fail silently
+        }
+        return videos
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
