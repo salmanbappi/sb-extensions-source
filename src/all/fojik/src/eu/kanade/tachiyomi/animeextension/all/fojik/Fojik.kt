@@ -447,9 +447,13 @@ class Fojik :
                 val link = match.groupValues[2]
 
                 var quality = ""
-                if (name.contains("1080p", ignoreCase = true)) quality = "1080p"
-                else if (name.contains("720p", ignoreCase = true)) quality = "720p"
-                else if (name.contains("480p", ignoreCase = true)) quality = "480p"
+                if (name.contains("1080p", ignoreCase = true)) {
+                    quality = "1080p"
+                } else if (name.contains("720p", ignoreCase = true)) {
+                    quality = "720p"
+                } else if (name.contains("480p", ignoreCase = true)) {
+                    quality = "480p"
+                }
 
                 val titleSuffix = if (quality.isNotEmpty()) " ($quality)" else ""
                 val res = quality.replace("p", "").toIntOrNull()
