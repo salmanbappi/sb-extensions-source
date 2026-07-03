@@ -424,18 +424,38 @@ class Fojik :
     private suspend fun fetchGoFileFolderLinks(folderId: String, clientHeaders: Headers): List<Video> {
         val videos = mutableListOf<Video>()
         try {
+            val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            val headers = clientHeaders.newBuilder()
+                .set("User-Agent", userAgent)
+                .set("Accept", "*/*")
+                .set("Origin", "https://gofile.io")
+                .set("Referer", "https://gofile.io/")
+                .build()
+
             val accountReq = Request.Builder()
                 .url("https://api.gofile.io/accounts")
                 .post(FormBody.Builder().build())
-                .headers(clientHeaders)
+                .headers(headers)
                 .build()
             val accountRes = client.newCall(accountReq).execute()
             val accountJsonStr = accountRes.body!!.string()
             val token = extractRegex(accountJsonStr, """"token"\s*:\s*"([^"]+)"""") ?: return emptyList()
 
+            val browserLang = "en-US"
+            val salt = "9844d94d963d30"
+            val timeBucket = System.currentTimeMillis() / 1000 / 14400
+            val rawSig = "$userAgent::$browserLang::$token::$timeBucket::$salt"
+            val wt = sha256(rawSig)
+
             val contentsReq = Request.Builder()
-                .url("https://api.gofile.io/contents/$folderId?token=$token")
-                .headers(clientHeaders)
+                .url("https://api.gofile.io/contents/$folderId")
+                .headers(
+                    headers.newBuilder()
+                        .set("Authorization", "Bearer $token")
+                        .set("X-Website-Token", wt)
+                        .set("X-BL", browserLang)
+                        .build(),
+                )
                 .build()
             val contentsRes = client.newCall(contentsReq).execute()
             val contentsJsonStr = contentsRes.body!!.string()
@@ -462,7 +482,7 @@ class Fojik :
                     Video(
                         videoUrl = link,
                         videoTitle = "GoFile - $name$titleSuffix",
-                        headers = clientHeaders,
+                        headers = headers,
                         resolution = res,
                     ),
                 )
@@ -471,6 +491,11 @@ class Fojik :
             // Fail silently
         }
         return videos
+    }
+
+    private fun sha256(input: String): String {
+        val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
