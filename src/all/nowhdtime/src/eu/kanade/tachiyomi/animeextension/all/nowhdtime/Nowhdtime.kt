@@ -480,7 +480,7 @@ class Nowhdtime :
                         }
                     }
                 }
-            }
+            }.onFailure { it.printStackTrace() }
         }
 
         return videos
@@ -584,8 +584,8 @@ class Nowhdtime :
 
     @Serializable
     data class EncryptedResponse(
-        val iv: String,
-        val tag: String,
+        val iv: String = "",
+        val tag: String = "",
         val data: String,
     )
 
