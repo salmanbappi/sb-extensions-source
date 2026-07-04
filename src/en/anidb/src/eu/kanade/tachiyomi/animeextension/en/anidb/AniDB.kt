@@ -6,7 +6,6 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
@@ -53,10 +52,6 @@ class AniDB : Source() {
     override val lang = "en"
 
     override val supportsLatest = true
-
-    override val client = network.client.newBuilder()
-        .addInterceptor(CloudflareInterceptor(network.client))
-        .build()
 
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
