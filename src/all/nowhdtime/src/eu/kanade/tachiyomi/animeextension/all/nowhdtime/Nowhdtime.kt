@@ -416,31 +416,30 @@ class Nowhdtime :
 
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
+            default = "1080p",
             title = "Preferred Quality",
-            defaultValue = "1080p",
-            entries = arrayOf("1080p", "720p", "480p", "360p"),
-            entryValues = arrayOf("1080p", "720p", "480p", "360p"),
-            preferences = preferences,
+            summary = "",
+            entries = listOf("1080p", "720p", "480p", "360p"),
+            entryValues = listOf("1080p", "720p", "480p", "360p"),
         )
 
         screen.addListPreference(
             key = PREF_SCORE_POSITION_KEY,
+            default = "top",
             title = "Score Display Position",
             summary = "Where to show the rating (e.g. ★★★★☆ 8.29) in the description",
-            defaultValue = "top",
-            entries = arrayOf("Top of description", "Bottom of description", "Disabled"),
-            entryValues = arrayOf("top", "bottom", "disabled"),
-            preferences = preferences,
+            entries = listOf("Top of description", "Bottom of description", "Disabled"),
+            entryValues = listOf("top", "bottom", "disabled"),
         )
 
         screen.addSwitchPreference(
             key = PREF_SHOW_THUMBNAILS_KEY,
+            default = true,
             title = "Show episode thumbnails",
             summary = "Fetch and display thumbnail images in the episode list.",
-            defaultValue = true,
-            preferences = preferences,
         )
     }
+
 
     private class CategoryFilter :
         AnimeFilter.Select<String>(
