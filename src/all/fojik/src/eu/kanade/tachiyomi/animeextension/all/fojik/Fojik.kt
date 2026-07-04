@@ -260,7 +260,9 @@ class Fojik :
             }
             if (singleEpLink != null) {
                 val href = singleEpLink.attr("href")
-                val targetUrl = if (href.startsWith("http")) href else {
+                val targetUrl = if (href.startsWith("http")) {
+                    href
+                } else {
                     val uri = java.net.URI(linkUrl)
                     val base = "${uri.scheme}://${uri.host}"
                     if (href.startsWith("/")) "$base$href" else "$base/$href"
