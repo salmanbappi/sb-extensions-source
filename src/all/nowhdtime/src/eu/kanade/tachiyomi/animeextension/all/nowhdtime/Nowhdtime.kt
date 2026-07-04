@@ -259,6 +259,10 @@ class Nowhdtime :
                 extractNhdStream(embedUrl, serverName)
             }
 
+            "neodrive" in embedUrl -> {
+                extractNeodrive(embedUrl, serverName)
+            }
+
             "vidsrc" in embedUrl || "vidsrcme" in embedUrl -> {
                 try {
                     val headers = Headers.Builder()
@@ -275,6 +279,34 @@ class Nowhdtime :
             else -> emptyList()
         }
     }
+
+    private fun extractNeodrive(embedUrl: String, serverName: String): List<Video> {
+        return try {
+            val response = client.newCall(GET(embedUrl)).execute()
+            val doc = response.asJsoup()
+            val iframe = doc.selectFirst("iframe") ?: return emptyList()
+            val iframeSrc = iframe.attr("src")
+            val idEncoded = iframeSrc.substringAfter("id=").substringBefore("&")
+            val decoded1 = java.net.URLDecoder.decode(idEncoded, "UTF-8")
+            val directUrl = java.net.URLDecoder.decode(decoded1, "UTF-8")
+
+            val videoHeaders = Headers.Builder()
+                .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+                .build()
+
+            listOf(
+                Video(
+                    videoUrl = directUrl,
+                    videoTitle = "$serverName - Direct R2",
+                    headers = videoHeaders,
+                    resolution = 1080,
+                ),
+            )
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
 
     private fun extractNhdStream(embedUrl: String, serverName: String): List<Video> {
         val isTv = embedUrl.contains("/tv/")
