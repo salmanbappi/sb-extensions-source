@@ -440,7 +440,6 @@ class Nowhdtime :
         )
     }
 
-
     private class CategoryFilter :
         AnimeFilter.Select<String>(
             "Category",
