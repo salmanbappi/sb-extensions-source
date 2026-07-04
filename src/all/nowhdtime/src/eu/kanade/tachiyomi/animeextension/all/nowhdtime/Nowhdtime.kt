@@ -331,6 +331,7 @@ class Nowhdtime :
                             videos.addAll(doodVideos)
                         } catch (e: Exception) {}
                     }
+
                     iframeSrc.isNotBlank() -> {
                         try {
                             val iframeResponse = client.newCall(GET(iframeSrc)).execute()
@@ -344,7 +345,7 @@ class Nowhdtime :
                                         videoTitle = "$serverName - Player",
                                         headers = Headers.Builder().add("Referer", iframeSrc).build(),
                                         resolution = 1080,
-                                    )
+                                    ),
                                 )
                             }
                         } catch (e: Exception) {}
@@ -354,7 +355,6 @@ class Nowhdtime :
         } catch (e: Exception) {}
         return videos
     }
-
 
     private fun extractNeodrive(embedUrl: String, serverName: String): List<Video> {
         return try {
@@ -621,4 +621,3 @@ class Nowhdtime :
         private val m3u8Regex = Regex("""["'](https?:[^"']+\.m3u8[^"']*)["']""")
     }
 }
-
