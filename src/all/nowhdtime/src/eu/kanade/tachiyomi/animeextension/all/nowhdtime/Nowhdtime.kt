@@ -263,6 +263,10 @@ class Nowhdtime :
                 extractNeodrive(embedUrl, serverName)
             }
 
+            "multiembed.mov" in embedUrl || "streamingnow.mov" in embedUrl -> {
+                extractStreamingnow(embedUrl)
+            }
+
             "vidsrc" in embedUrl || "vidsrcme" in embedUrl -> {
                 try {
                     val headers = Headers.Builder()
@@ -279,6 +283,78 @@ class Nowhdtime :
             else -> emptyList()
         }
     }
+
+    private fun extractStreamingnow(embedUrl: String): List<Video> {
+        val videos = mutableListOf<Video>()
+        try {
+            val response = client.newCall(GET(embedUrl)).execute()
+            val finalUrl = response.request.url.toString()
+            val html = response.body.string()
+
+            if (html.contains("cf-turnstile-widget") || html.contains("turnstile")) {
+                return emptyList()
+            }
+
+            val token = streamingnowTokenRegex.find(html)?.groupValues?.get(1) ?: return emptyList()
+
+            val postBody = "token=$token".toRequestBody("application/x-www-form-urlencoded".toMediaType())
+            val postRequest = Request.Builder()
+                .url("https://streamingnow.mov/response.php")
+                .post(postBody)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("Referer", finalUrl)
+                .build()
+
+            val postResponse = client.newCall(postRequest).execute()
+            val responseHtml = postResponse.body.string()
+            val doc = org.jsoup.Jsoup.parse(responseHtml)
+
+            val servers = doc.select("li[data-id][data-server]")
+            servers.forEach { serverLi ->
+                val serverId = serverLi.attr("data-server")
+                val videoId = serverLi.attr("data-id")
+                val serverName = serverLi.text().trim()
+
+                val playvideoUrl = "https://streamingnow.mov/playvideo.php?video_id=$videoId&server_id=$serverId&token=$token"
+                val playvideoResponse = client.newCall(GET(playvideoUrl)).execute()
+                val playvideoHtml = playvideoResponse.body.string()
+                val playvideoDoc = org.jsoup.Jsoup.parse(playvideoHtml)
+
+                val iframe = playvideoDoc.selectFirst("iframe")
+                val iframeSrc = iframe?.attr("abs:src") ?: iframe?.attr("src") ?: ""
+                when {
+                    "dood" in iframeSrc -> {
+                        try {
+                            val doodVideos = eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor(client)
+                                .videosFromUrl(iframeSrc)
+                            videos.addAll(doodVideos)
+                        } catch (e: Exception) {}
+                    }
+                    iframeSrc.isNotBlank() -> {
+                        try {
+                            val iframeResponse = client.newCall(GET(iframeSrc)).execute()
+                            val iframeHtml = iframeResponse.body.string()
+                            val m3u8Match = m3u8Regex.find(iframeHtml)?.groupValues?.get(1)
+                            if (m3u8Match != null) {
+                                val videoUrl = if (m3u8Match.startsWith("http")) m3u8Match else "https:$m3u8Match"
+                                videos.add(
+                                    Video(
+                                        videoUrl = videoUrl,
+                                        videoTitle = "$serverName - Player",
+                                        headers = Headers.Builder().add("Referer", iframeSrc).build(),
+                                        resolution = 1080,
+                                    )
+                                )
+                            }
+                        } catch (e: Exception) {}
+                    }
+                }
+            }
+        } catch (e: Exception) {}
+        return videos
+    }
+
 
     private fun extractNeodrive(embedUrl: String, serverName: String): List<Video> {
         return try {
@@ -540,5 +616,9 @@ class Nowhdtime :
         private val ipTraceRegex = Regex("""(?m)^ip=(.+)$""")
         private val tokenRegex = Regex("""(?:"token"\s*:\s*")([^"]+)""")
         private val secureIdRegex = Regex("""(?:"secureId"\s*:\s*")([^"]+)""")
+
+        private val streamingnowTokenRegex = Regex("""load_sources\("([^"]+)"\)""")
+        private val m3u8Regex = Regex("""["'](https?:[^"']+\.m3u8[^"']*)["']""")
     }
 }
+
