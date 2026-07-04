@@ -269,10 +269,10 @@ class Fojik :
                     content.select("*").forEach { el ->
                         val text = el.text().trim()
                         val lower = text.lowercase()
-                        val isHeader = lower.startsWith("season") || 
-                                       lower.startsWith("epi ") || 
-                                       lower.startsWith("epi:") || 
-                                       lower.startsWith("episode")
+                        val isHeader = lower.startsWith("season") ||
+                            lower.startsWith("epi ") ||
+                            lower.startsWith("epi:") ||
+                            lower.startsWith("episode")
                         if (isHeader && text.length < 50 &&
                             el.tagName() in listOf("span", "p", "strong", "em", "h1", "h2", "h3", "h4", "h5", "h6")
                         ) {
@@ -284,10 +284,10 @@ class Fojik :
 
                     val filteredGroups = groups.filter { g ->
                         val lower = g.lowercase()
-                        lower.startsWith("season") || 
-                        lower.startsWith("epi ") || 
-                        lower.startsWith("epi:") || 
-                        lower.startsWith("episode")
+                        lower.startsWith("season") ||
+                            lower.startsWith("epi ") ||
+                            lower.startsWith("epi:") ||
+                            lower.startsWith("episode")
                     }
 
                     if (filteredGroups.isNotEmpty()) {
@@ -373,10 +373,10 @@ class Fojik :
             content.select("*").forEach { el ->
                 val txt = el.text().trim()
                 val lower = txt.lowercase()
-                val isHeader = lower.startsWith("season") || 
-                               lower.startsWith("epi ") || 
-                               lower.startsWith("epi:") || 
-                               lower.startsWith("episode")
+                val isHeader = lower.startsWith("season") ||
+                    lower.startsWith("epi ") ||
+                    lower.startsWith("epi:") ||
+                    lower.startsWith("episode")
                 if (isHeader && txt.length < 50 &&
                     el.tagName() in listOf("span", "p", "strong", "em", "h1", "h2", "h3", "h4", "h5", "h6")
                 ) {
