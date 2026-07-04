@@ -256,7 +256,7 @@ class Nowhdtime :
 
         return when {
             "nhdapi.com" in embedUrl || "vidnest.fun" in embedUrl -> {
-                extractNhdStream(embedUrl, serverName)
+                extractVidnest(embedUrl, serverName)
             }
 
             "neodrive" in embedUrl -> {
@@ -383,126 +383,134 @@ class Nowhdtime :
         }
     }
 
-    private fun extractNhdStream(embedUrl: String, serverName: String): List<Video> {
+    private fun extractVidnest(embedUrl: String, serverName: String): List<Video> {
         val isTv = embedUrl.contains("/tv/")
-        val id = if (isTv) {
+        val tmdbId = if (isTv) {
             tvEmbedRegex.find(embedUrl)?.groupValues?.get(1) ?: ""
         } else {
             movieEmbedRegex.find(embedUrl)?.groupValues?.get(1) ?: ""
         }
 
-        val season = if (isTv) tvEmbedRegex.find(embedUrl)?.groupValues?.get(2)?.toIntOrNull() ?: 1 else 1
-        val episode = if (isTv) tvEmbedRegex.find(embedUrl)?.groupValues?.get(3)?.toIntOrNull() ?: 1 else 1
+        if (tmdbId.isBlank()) return emptyList()
 
-        val ip = getClientIp()
-        if (ip.isBlank()) return emptyList()
+        val season = if (isTv) tvEmbedRegex.find(embedUrl)?.groupValues?.get(2) ?: "1" else "1"
+        val episode = if (isTv) tvEmbedRegex.find(embedUrl)?.groupValues?.get(3) ?: "1" else "1"
 
-        // Request token
-        val tokenBody = """{"ipv4":"$ip"}""".toRequestBody("application/json".toMediaType())
-        val tokenRequest = Request.Builder()
-            .url("https://player.nhdapi.com/api/token")
-            .post(tokenBody)
-            .header("Content-Type", "application/json")
-            .header("X-Content-Id", id)
-            .header("Referer", "https://player.nhdapi.com/")
-            .header("Origin", "https://player.nhdapi.com")
-            .build()
-
-        val tokenResponse = client.newCall(tokenRequest).execute()
-        if (!tokenResponse.isSuccessful) return emptyList()
-
-        val tokenBodyStr = tokenResponse.body.string()
-        val token = tokenRegex.find(tokenBodyStr)?.groupValues?.get(1) ?: return emptyList()
-        val secureId = secureIdRegex.find(tokenBodyStr)?.groupValues?.get(1) ?: return emptyList()
-
-        // Request movie/tv source
-        val sourceUrl = if (isTv) {
-            "https://player.nhdapi.com/api/tv?id=$secureId&season=$season&episode=$episode"
-        } else {
-            "https://player.nhdapi.com/api/movie?id=$secureId"
-        }
-
-        val sourceRequest = Request.Builder()
-            .url(sourceUrl)
-            .header("X-API-Token", token)
-            .header("X-Client-IPv4", ip)
-            .header("Referer", "https://player.nhdapi.com/")
-            .header("Origin", "https://player.nhdapi.com")
-            .build()
-
-        val sourceResponse = client.newCall(sourceRequest).execute()
-        if (!sourceResponse.isSuccessful) return emptyList()
-
-        val encryptedData = jsonParser.decodeFromString<EncryptedResponse>(sourceResponse.body.string())
-        val decryptedStr = decryptGcm(encryptedData.iv, encryptedData.tag, encryptedData.data, DECRYPTION_KEY)
-        val decryptedData = jsonParser.decodeFromString<DecryptedResponse>(decryptedStr)
-
-        val videoHeaders = Headers.Builder()
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
-            .add("Referer", "https://player.nhdapi.com/")
-            .build()
+        val base = "https://new.vidnest.fun"
+        val endpoints = listOf(
+            Pair("movies5f", if (isTv) "$base/movies5f/tv/$tmdbId/$season/$episode" else "$base/movies5f/movie/$tmdbId"),
+            Pair("klikxxi", if (isTv) "$base/klikxxi/tv/$tmdbId/$season/$episode" else "$base/klikxxi/movie/$tmdbId"),
+            Pair("vidlink", if (isTv) "$base/vidlink/tv/$tmdbId/$season/$episode" else "$base/vidlink/movie/$tmdbId"),
+        )
 
         val videos = mutableListOf<Video>()
-        decryptedData.stream?.hls_streaming?.let { hlsUrl ->
-            if (hlsUrl.isNotBlank()) {
-                videos.add(
-                    Video(
-                        videoUrl = hlsUrl,
-                        videoTitle = "$serverName - HLS",
-                        headers = videoHeaders,
-                        resolution = 1080,
-                    ),
-                )
-            }
-        }
 
-        decryptedData.stream?.download?.forEach { dl ->
-            videos.add(
-                Video(
-                    videoUrl = dl.url,
-                    videoTitle = "$serverName - ${dl.quality}",
-                    headers = videoHeaders,
-                    resolution = dl.quality.replace("p", "").toIntOrNull(),
-                ),
-            )
+        endpoints.forEach { (type, url) ->
+            runCatching {
+                val response = client.newCall(
+                    GET(
+                        url,
+                        Headers.Builder()
+                            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+                            .add("Referer", "https://vidnest.fun/")
+                            .build()
+                    )
+                ).execute()
+
+                if (response.isSuccessful) {
+                    val body = response.body.string()
+                    val responseJson = jsonParser.decodeFromString<EncryptedResponse>(body)
+                    val decrypted = decodeCustomBase64(responseJson.data, "RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW+/=")
+
+                    when (type) {
+                        "movies5f" -> {
+                            val data = jsonParser.decodeFromString<CatflixResponse>(decrypted)
+                            data.data?.downloads?.forEach { dl ->
+                                val headers = Headers.Builder()
+                                    .add("Origin", "https://fmoviesunblocked.net")
+                                    .add("Referer", "https://fmoviesunblocked.net/")
+                                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                                    .build()
+                                videos.add(
+                                    Video(
+                                        videoUrl = dl.url,
+                                        videoTitle = "$serverName - Movies5f - ${dl.resolution}p",
+                                        headers = headers,
+                                        resolution = dl.resolution,
+                                    )
+                                )
+                            }
+                        }
+                        "klikxxi" -> {
+                            val data = jsonParser.decodeFromString<OphimResponse>(decrypted)
+                            data.sources.forEach { src ->
+                                val headers = Headers.Builder()
+                                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+                                    .add("Referer", "https://vidnest.fun/")
+                                    .build()
+                                videos.add(
+                                    Video(
+                                        videoUrl = src.url,
+                                        videoTitle = "$serverName - Klikxxi - ${src.quality}",
+                                        headers = headers,
+                                        resolution = if (src.quality == "auto") 1080 else src.quality.replace("p", "").toIntOrNull() ?: 1080,
+                                    )
+                                )
+                            }
+                        }
+                        "vidlink" -> {
+                            val data = jsonParser.decodeFromString<HexaResponse>(decrypted)
+                            data.data?.stream?.qualities?.forEach { (res, item) ->
+                                val headers = Headers.Builder()
+                                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+                                    .add("Referer", "https://vidnest.fun/")
+                                    .build()
+                                val resolutionInt = res.replace("p", "").toIntOrNull() ?: 1080
+                                videos.add(
+                                    Video(
+                                        videoUrl = item.url,
+                                        videoTitle = "$serverName - Vidlink - ${res}p",
+                                        headers = headers,
+                                        resolution = resolutionInt,
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         return videos
     }
 
-    private fun getClientIp(): String {
-        val ip = runCatching {
-            val response = client.newCall(GET("https://api.ipify.org/?format=json")).execute()
-            val body = response.body.string()
-            ipRegex.find(body)?.groupValues?.get(1)
-        }.getOrNull()
-        if (!ip.isNullOrBlank() && !ip.contains(":")) return ip
-
-        val fallbackIp = runCatching {
-            val response = client.newCall(GET("https://1.1.1.1/cdn-cgi/trace")).execute()
-            val body = response.body.string()
-            ipTraceRegex.find(body)?.groupValues?.get(1)
-        }.getOrNull()
-        if (!fallbackIp.isNullOrBlank() && !fallbackIp.contains(":")) return fallbackIp
-
-        return ""
-    }
-
-    private fun decryptGcm(ivB64: String, tagB64: String, dataB64: String, keyStr: String): String {
-        val keyBytes = java.security.MessageDigest.getInstance("SHA-256").digest(keyStr.toByteArray())
-        val keySpec = SecretKeySpec(keyBytes, "AES")
-
-        val ivBytes = android.util.Base64.decode(ivB64, android.util.Base64.DEFAULT)
-        val tagBytes = android.util.Base64.decode(tagB64, android.util.Base64.DEFAULT)
-        val dataBytes = android.util.Base64.decode(dataB64, android.util.Base64.DEFAULT)
-
-        val combined = dataBytes + tagBytes
-        val spec = GCMParameterSpec(128, ivBytes)
-
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, keySpec, spec)
-        val decryptedBytes = cipher.doFinal(combined)
-        return String(decryptedBytes, Charsets.UTF_8)
+    private fun decodeCustomBase64(data: String, alphabet: String): String {
+        val s = IntArray(256) { -1 }
+        for (i in alphabet.indices) {
+            s[alphabet[i].code] = i
+        }
+        val out = mutableListOf<Byte>()
+        var t = 0
+        while (t < data.length) {
+            val chunkStr = data.substring(t, minOf(t + 4, data.length)).let {
+                if (it.length < 4) it + "=".repeat(4 - it.length) else it
+            }
+            t += 4
+            val l = IntArray(4) { 64 }
+            for (e in chunkStr.indices) {
+                val charCode = chunkStr[e].code
+                val valIdx = if (charCode < 256) s[charCode] else -1
+                l[e] = if (valIdx != -1) valIdx else 64
+            }
+            out.add(((l[0] shl 2) or (l[1] ushr 4)).toByte())
+            if (l[2] != 64) {
+                out.add((((l[1] and 15) shl 4) or (l[2] ushr 2)).toByte())
+            }
+            if (l[3] != 64) {
+                out.add((((l[2] and 3) shl 6) or l[3]).toByte())
+            }
+        }
+        return String(out.toByteArray(), Charsets.UTF_8)
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
@@ -604,20 +612,59 @@ class Nowhdtime :
         private const val PREF_SCORE_POSITION_KEY = "pref_score_position"
         private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
 
-        private const val DECRYPTION_KEY = "Z9#rL!v2K*5qP&7mXw"
-
         private val playersRegex = Regex("""const\s+players\s*=\s*([\s\S]*?);""")
         private val csrfRegex = Regex("""meta\s+name="csrf-token"\s+content="([^"]+)"""")
 
         private val movieEmbedRegex = Regex("""/movie/(\d+)""")
         private val tvEmbedRegex = Regex("""/tv/(\d+)/(\d+)/(\d+)""")
 
-        private val ipRegex = Regex("""(?:"ip"\s*:\s*")([^"]+)""")
-        private val ipTraceRegex = Regex("""(?m)^ip=(.+)$""")
-        private val tokenRegex = Regex("""(?:"token"\s*:\s*")([^"]+)""")
-        private val secureIdRegex = Regex("""(?:"secureId"\s*:\s*")([^"]+)""")
-
         private val streamingnowTokenRegex = Regex("""load_sources\("([^"]+)"\)""")
         private val m3u8Regex = Regex("""["'](https?:[^"']+\.m3u8[^"']*)["']""")
     }
 }
+
+@Serializable
+data class CatflixResponse(
+    val data: CatflixData? = null,
+) {
+    @Serializable
+    data class CatflixData(
+        val downloads: List<DownloadItem> = emptyList(),
+    )
+    @Serializable
+    data class DownloadItem(
+        val url: String,
+        val resolution: Int = 1080,
+    )
+}
+
+@Serializable
+data class OphimResponse(
+    val sources: List<SourceItem> = emptyList(),
+) {
+    @Serializable
+    data class SourceItem(
+        val url: String,
+        val quality: String = "auto",
+        val type: String = "hls",
+    )
+}
+
+@Serializable
+data class HexaResponse(
+    val data: HexaData? = null,
+) {
+    @Serializable
+    data class HexaData(
+        val stream: HexaStream? = null,
+    )
+    @Serializable
+    data class HexaStream(
+        val qualities: Map<String, QualityItem> = emptyMap(),
+    )
+    @Serializable
+    data class QualityItem(
+        val url: String,
+    )
+}
+
