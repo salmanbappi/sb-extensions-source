@@ -250,8 +250,34 @@ class Fojik :
             .headers(clientHeaders)
             .build()
         val res5 = client.newCall(req5).execute()
-        val html = res5.body!!.string()
-        return Pair(html, linkUrl)
+        var html = res5.body!!.string()
+        var finalUrl = linkUrl
+
+        try {
+            val doc = Jsoup.parse(html, linkUrl)
+            val singleEpLink = doc.select("a").firstOrNull {
+                it.text().contains("Single Episodes", ignoreCase = true)
+            }
+            if (singleEpLink != null) {
+                val href = singleEpLink.attr("href")
+                val targetUrl = if (href.startsWith("http")) href else {
+                    val uri = java.net.URI(linkUrl)
+                    val base = "${uri.scheme}://${uri.host}"
+                    if (href.startsWith("/")) "$base$href" else "$base/$href"
+                }
+                val req6 = Request.Builder()
+                    .url(targetUrl)
+                    .headers(clientHeaders)
+                    .build()
+                val res6 = client.newCall(req6).execute()
+                html = res6.body!!.string()
+                finalUrl = targetUrl
+            }
+        } catch (e: Exception) {
+            // fallback to original
+        }
+
+        return Pair(html, finalUrl)
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
