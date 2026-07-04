@@ -265,22 +265,38 @@ class Fojik :
                 val indexDoc = Jsoup.parse(indexHtml, indexUrl)
                 val content = indexDoc.selectFirst(".entry-content, .site-content")
                 if (content != null) {
-                    val seasons = mutableListOf<String>()
+                    val groups = mutableListOf<String>()
                     content.select("*").forEach { el ->
-                        if (el.tagName() == "span" && el.text().trim().startsWith("Season", ignoreCase = true)) {
-                            val seasonName = el.text().trim()
-                            if (!seasons.contains(seasonName)) {
-                                seasons.add(seasonName)
+                        val text = el.text().trim()
+                        val lower = text.lowercase()
+                        val isHeader = lower.startsWith("season") || 
+                                       lower.startsWith("epi ") || 
+                                       lower.startsWith("epi:") || 
+                                       lower.startsWith("episode")
+                        if (isHeader && text.length < 50 &&
+                            el.tagName() in listOf("span", "p", "strong", "em", "h1", "h2", "h3", "h4", "h5", "h6")
+                        ) {
+                            if (!groups.contains(text)) {
+                                groups.add(text)
                             }
                         }
                     }
 
-                    if (seasons.isNotEmpty()) {
-                        return seasons.mapIndexed { idx, season ->
+                    val filteredGroups = groups.filter { g ->
+                        val lower = g.lowercase()
+                        lower.startsWith("season") || 
+                        lower.startsWith("epi ") || 
+                        lower.startsWith("epi:") || 
+                        lower.startsWith("episode")
+                    }
+
+                    if (filteredGroups.isNotEmpty()) {
+                        return filteredGroups.mapIndexed { idx, group ->
                             SEpisode.create().apply {
-                                url = "$indexUrl#season=${URLEncoder.encode(season, "UTF-8")}"
-                                name = season
-                                episode_number = (idx + 1).toFloat()
+                                url = "$indexUrl#season=${URLEncoder.encode(group, "UTF-8")}"
+                                name = group
+                                val numberStr = Regex("""\d+""").find(group)?.value
+                                episode_number = numberStr?.toFloatOrNull() ?: (idx + 1).toFloat()
                                 date_upload = 0L
                             }
                         }.reversed()
@@ -355,13 +371,16 @@ class Fojik :
             val linksToResolve = mutableListOf<Triple<String, String, String>>()
 
             content.select("*").forEach { el ->
-                if (el.text().trim().startsWith("Season", ignoreCase = true) &&
+                val txt = el.text().trim()
+                val lower = txt.lowercase()
+                val isHeader = lower.startsWith("season") || 
+                               lower.startsWith("epi ") || 
+                               lower.startsWith("epi:") || 
+                               lower.startsWith("episode")
+                if (isHeader && txt.length < 50 &&
                     el.tagName() in listOf("span", "p", "strong", "em", "h1", "h2", "h3", "h4", "h5", "h6")
                 ) {
-                    val txt = el.text().trim()
-                    if (txt.length < 50) {
-                        currentSeason = txt
-                    }
+                    currentSeason = txt
                 }
 
                 if (el.tagName() == "a" && el.hasAttr("href")) {
