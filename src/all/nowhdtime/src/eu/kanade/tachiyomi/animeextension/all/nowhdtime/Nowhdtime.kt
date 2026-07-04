@@ -307,7 +307,6 @@ class Nowhdtime :
         }
     }
 
-
     private fun extractNhdStream(embedUrl: String, serverName: String): List<Video> {
         val isTv = embedUrl.contains("/tv/")
         val id = if (isTv) {
