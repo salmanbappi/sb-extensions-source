@@ -1,0 +1,8 @@
+ext {
+    extName = 'Nowhdtime'
+    extClass = '.Nowhdtime'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
