@@ -413,8 +413,8 @@ class Nowhdtime :
                         Headers.Builder()
                             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
                             .add("Referer", "https://vidnest.fun/")
-                            .build()
-                    )
+                            .build(),
+                    ),
                 ).execute()
 
                 if (response.isSuccessful) {
@@ -437,10 +437,11 @@ class Nowhdtime :
                                         videoTitle = "$serverName - Movies5f - ${dl.resolution}p",
                                         headers = headers,
                                         resolution = dl.resolution,
-                                    )
+                                    ),
                                 )
                             }
                         }
+
                         "klikxxi" -> {
                             val data = jsonParser.decodeFromString<OphimResponse>(decrypted)
                             data.sources.forEach { src ->
@@ -454,10 +455,11 @@ class Nowhdtime :
                                         videoTitle = "$serverName - Klikxxi - ${src.quality}",
                                         headers = headers,
                                         resolution = if (src.quality == "auto") 1080 else src.quality.replace("p", "").toIntOrNull() ?: 1080,
-                                    )
+                                    ),
                                 )
                             }
                         }
+
                         "vidlink" -> {
                             val data = jsonParser.decodeFromString<HexaResponse>(decrypted)
                             data.data?.stream?.qualities?.forEach { (res, item) ->
@@ -472,7 +474,7 @@ class Nowhdtime :
                                         videoTitle = "$serverName - Vidlink - ${res}p",
                                         headers = headers,
                                         resolution = resolutionInt,
-                                    )
+                                    ),
                                 )
                             }
                         }
@@ -631,6 +633,7 @@ data class CatflixResponse(
     data class CatflixData(
         val downloads: List<DownloadItem> = emptyList(),
     )
+
     @Serializable
     data class DownloadItem(
         val url: String,
@@ -658,13 +661,14 @@ data class HexaResponse(
     data class HexaData(
         val stream: HexaStream? = null,
     )
+
     @Serializable
     data class HexaStream(
         val qualities: Map<String, QualityItem> = emptyMap(),
     )
+
     @Serializable
     data class QualityItem(
         val url: String,
     )
 }
-
