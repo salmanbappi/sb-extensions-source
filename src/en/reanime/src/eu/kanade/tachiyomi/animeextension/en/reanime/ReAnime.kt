@@ -84,17 +84,14 @@ data class LatestResponseDto(
 )
 
 @Serializable
-data class DetailAnimeResponseDto(
-    val data: DetailAnimeDto? = null,
-)
-
-@Serializable
 data class DetailAnimeDto(
     val description: String? = null,
     val status: String? = null,
     val genres: List<String> = emptyList(),
     val cover_image: CoverImageDto? = null,
     val anilist_id: Int? = null,
+    val subbed: Int? = null,
+    val dubbed: Int? = null,
 )
 
 @Serializable
@@ -185,8 +182,7 @@ class ReAnime : Source() {
     override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/api/v1/anime/${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val data = response.parseAs<DetailAnimeResponseDto>()
-        val anime = data.data ?: return SAnime.create()
+        val anime = response.parseAs<DetailAnimeDto>()
         return SAnime.create().apply {
             description = anime.description?.replace("<br>", "\n")?.replace("<BR>", "\n")?.replace(Regex("<[^>]*>"), "")
             status = when (anime.status?.lowercase()) {
@@ -201,10 +197,15 @@ class ReAnime : Source() {
 
     // ============================== Episodes ==============================
 
-    override fun episodeListRequest(anime: SAnime): Request = GET("$baseUrl/api/v1/anime/${anime.url}/episodes?limit=2000", headers)
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = withContext(Dispatchers.IO) {
+        val detailsRequest = GET("$baseUrl/api/v1/anime/${anime.url}", headers)
+        val detailsResponse = client.newCall(detailsRequest).execute()
+        val details = detailsResponse.parseAs<DetailAnimeDto>()
 
-    override fun episodeListParse(response: Response): List<SEpisode> {
-        val jsonElement = response.parseAs<JsonElement>()
+        val episodesRequest = GET("$baseUrl/api/v1/anime/${anime.url}/episodes?limit=2000", headers)
+        val episodesResponse = client.newCall(episodesRequest).execute()
+
+        val jsonElement = episodesResponse.parseAs<JsonElement>()
         val epList = if (jsonElement is JsonArray) {
             json.decodeFromJsonElement<List<EpisodeDto>>(jsonElement)
         } else {
@@ -213,16 +214,26 @@ class ReAnime : Source() {
             } ?: emptyList()
         }
 
-        val slug = response.request.url.pathSegments.last()
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
+        val subbed = details.subbed ?: 0
+        val dubbed = details.dubbed ?: 0
 
-        return epList.map {
+        epList.map {
             SEpisode.create().apply {
-                url = "$slug?ep=${it.episode_number}"
+                url = "${anime.url}?ep=${it.episode_number}"
                 name = it.title ?: "Episode ${it.episode_number}"
                 episode_number = it.episode_number
                 summary = it.description?.takeIf { d -> d.isNotEmpty() }
                 preview_url = if (showThumbnails) it.thumbnail?.takeIf { t -> t.isNotEmpty() } else null
+
+                val hasSub = it.episode_number.toInt() <= subbed
+                val hasDub = it.episode_number.toInt() <= dubbed
+                scanlator = when {
+                    hasSub && hasDub -> "Sub, Dub"
+                    hasSub -> "Sub"
+                    hasDub -> "Dub"
+                    else -> null
+                }
             }
         }.reversed() // Ascending order
     }
@@ -237,9 +248,7 @@ class ReAnime : Source() {
         // Fetch watch page to get the details & servers
         val watchRequest = GET("$baseUrl/api/v1/anime/$slug", headers)
         val watchResponse = client.newCall(watchRequest).execute()
-        val watchData = watchResponse.parseAs<DetailAnimeResponseDto>()
-
-        val anime = watchData.data ?: throw Exception("Could not find anime info")
+        val anime = watchResponse.parseAs<DetailAnimeDto>()
 
         // Find anilist ID
         var anilistId = anime.anilist_id ?: 0
