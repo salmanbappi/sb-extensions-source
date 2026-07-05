@@ -49,6 +49,10 @@ abstract class AnikotoTheme : Source() {
     protected open val detailPosterSelector = "div.poster img"
     protected open val popularAnimeSelector = "div.ani.items > div.item"
 
+    protected open fun getVrf(animeId: String): String {
+        return URLEncoder.encode(AnikotoRC4.encodeVrf(animeId), "UTF-8")
+    }
+
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain ->
             val request = chain.request()
@@ -102,7 +106,7 @@ abstract class AnikotoTheme : Source() {
     }
 
     private val webViewFetcher by lazy { WebViewFetcher() }
-    private val extractors by lazy { AnikotoThemeExtractors(client, json, webViewFetcher) }
+    private val extractors by lazy { AnikotoExtractors(client, json, webViewFetcher) }
     private val metadataFetcher by lazy { EpisodeMetadataFetcher(client, json, webViewFetcher) }
 
     // ---- Preferences ----
@@ -204,8 +208,8 @@ abstract class AnikotoTheme : Source() {
             return emptyList()
         }
 
-        val vrf = AnikotoThemeRC4.encodeVrf(animeId)
-        val ajaxUrl = "$baseUrl/ajax/episode/list/$animeId?vrf=${URLEncoder.encode(vrf, "UTF-8")}&style=default"
+        val vrf = getVrf(animeId)
+        val ajaxUrl = "$baseUrl/ajax/episode/list/$animeId?vrf=$vrf&style=default"
         val ajaxResponse = client.newCall(GET(ajaxUrl, ajaxHeaders(slug))).execute()
         val ajaxJson = json.decodeFromString<EpisodeListResponse>(ajaxResponse.body.string())
         if (ajaxJson.status != 200 || ajaxJson.result.isEmpty()) {
