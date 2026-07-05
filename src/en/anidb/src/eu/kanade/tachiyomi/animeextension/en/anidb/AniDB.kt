@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import extensions.utils.parseAs
+import keiyoushi.utils.addEditTextPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.Serializable
@@ -60,8 +61,14 @@ class AniDB : Source() {
         .addInterceptor(CloudflareInterceptor(network.client))
         .build()
 
+    private val cfBypassUserAgent by lazy {
+        preferences.getString(PREF_CF_UA_KEY, PREF_CF_UA_DEFAULT)
+            ?.takeIf { it.isNotBlank() } ?: PREF_CF_UA_DEFAULT
+    }
+
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
+        .set("User-Agent", cfBypassUserAgent)
 
     private val playlistUtils by lazy {
         PlaylistUtils(client, headers)
@@ -257,6 +264,12 @@ class AniDB : Source() {
             default = PREF_LANG_DEFAULT,
             summary = "%s",
         )
+        screen.addEditTextPreference(
+            key = PREF_CF_UA_KEY,
+            title = PREF_CF_UA_TITLE,
+            summary = PREF_CF_UA_SUMMARY,
+            default = PREF_CF_UA_DEFAULT,
+        )
     }
 
     // ============================= Utilities ==============================
@@ -288,5 +301,13 @@ class AniDB : Source() {
         private const val PREF_LANG_DEFAULT = "jpn"
         private val PREF_LANG_ENTRIES = listOf("Japanese", "English")
         private val PREF_LANG_VALUES = listOf("jpn", "eng")
+
+        private const val DEFAULT_UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
+        private const val PREF_CF_UA_KEY = "cf_bypass_ua"
+        private const val PREF_CF_UA_TITLE = "Custom User-Agent"
+        private const val PREF_CF_UA_DEFAULT = DEFAULT_UA
+        private val PREF_CF_UA_SUMMARY = """Custom User-Agent string for the Cloudflare WebView bypass.
+            |Leave blank to use the default.
+        """.trimMargin()
     }
 }
