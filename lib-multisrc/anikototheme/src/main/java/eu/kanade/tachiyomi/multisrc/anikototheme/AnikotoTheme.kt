@@ -196,9 +196,9 @@ abstract class AnikotoTheme : Source() {
         val slug = anime.url
         val detailResponse = client.newCall(GET("$baseUrl/watch/$slug/ep-1")).execute()
         val detailDoc = detailResponse.asJsoup()
-        val watchMain = detailDoc.selectFirst("#watch-main, .watch-wrap")
+        val watchMain = detailDoc.selectFirst("#watch-page, #watch-main, .watch-wrap")
         val animeId = watchMain?.attr("data-id") ?: run {
-            loge("getEpisodeList: no #watch-main data-id found")
+            loge("getEpisodeList: no watch main element or data-id found")
             return emptyList()
         }
         if (animeId.isEmpty()) {
