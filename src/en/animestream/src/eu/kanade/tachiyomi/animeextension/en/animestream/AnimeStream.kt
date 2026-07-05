@@ -21,6 +21,8 @@ import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
@@ -73,30 +75,155 @@ class AnimeStream : Source() {
 
     // ============================== Popular ==============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/popular?limit=20&page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        val query = """
+            query (\$page: Int) {
+              Page (page: \$page, perPage: 20) {
+                pageInfo {
+                  hasNextPage
+                }
+                media (type: ANIME, sort: POPULAR_DESC) {
+                  title {
+                    romaji
+                    english
+                  }
+                  coverImage {
+                    large
+                  }
+                  description
+                  averageScore
+                }
+              }
+            }
+        """.trimIndent()
+
+        val body = buildJsonObject {
+            put("query", query)
+            put("variables", buildJsonObject {
+                put("page", page)
+            })
+        }
+        val requestBody = okhttp3.RequestBody.create(
+            okhttp3.MediaType.parse("application/json"),
+            body.toString()
+        )
+
+        return Request.Builder()
+            .url("https://graphql.anilist.co")
+            .post(requestBody)
+            .build()
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val responseData = response.body.string()
-        val popularList = json.decodeFromString<List<PopularItemDto>>(responseData)
-        val animeList = popularList.map { item ->
+        val apiResponse = json.decodeFromString<AniListResponseDto>(responseData)
+        val page = apiResponse.data?.Page ?: return AnimesPage(emptyList(), false)
+
+        val animeList = page.media.orEmpty().map { media ->
+            val titleStr = media.title?.english ?: media.title?.romaji ?: ""
+            val fallbackStr = if (media.title?.english != null) media.title.romaji ?: "" else ""
             SAnime.create().apply {
-                title = item.title
-                url = if (item.type == "movie") "/content/${item.content_id}" else "/series/${item.content_id}"
-                thumbnail_url = item.image
+                title = titleStr
+                url = buildString {
+                    append("/search_redirect?q=")
+                    append(java.net.URLEncoder.encode(titleStr, "UTF-8"))
+                    if (fallbackStr.isNotBlank()) {
+                        append("&fallback=")
+                        append(java.net.URLEncoder.encode(fallbackStr, "UTF-8"))
+                    }
+                }
+                thumbnail_url = media.coverImage?.large
+                description = media.description
             }
         }
-        return AnimesPage(animeList, animeList.size >= 20)
+        return AnimesPage(animeList, page.pageInfo?.hasNextPage ?: false)
     }
 
     // ============================== Latest ==============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/new?page=$page&limit=20", headers)
+    override fun latestUpdatesRequest(page: Int): Request {
+        val query = """
+            query (\$page: Int) {
+              Page (page: \$page, perPage: 20) {
+                pageInfo {
+                  hasNextPage
+                }
+                media (type: ANIME, sort: TRENDING_DESC) {
+                  title {
+                    romaji
+                    english
+                  }
+                  coverImage {
+                    large
+                  }
+                  description
+                  averageScore
+                }
+              }
+            }
+        """.trimIndent()
+
+        val body = buildJsonObject {
+            put("query", query)
+            put("variables", buildJsonObject {
+                put("page", page)
+            })
+        }
+        val requestBody = okhttp3.RequestBody.create(
+            okhttp3.MediaType.parse("application/json"),
+            body.toString()
+        )
+
+        return Request.Builder()
+            .url("https://graphql.anilist.co")
+            .post(requestBody)
+            .build()
+    }
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // ============================== Search ==============================
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        if (query.isNotBlank()) {
+            val graphqlQuery = """
+                query (\$page: Int, \$search: String) {
+                  Page (page: \$page, perPage: 20) {
+                    pageInfo {
+                      hasNextPage
+                    }
+                    media (type: ANIME, search: \$search) {
+                      title {
+                        romaji
+                        english
+                      }
+                      coverImage {
+                        large
+                      }
+                      description
+                      averageScore
+                    }
+                  }
+                }
+            """.trimIndent()
+
+            val body = buildJsonObject {
+                put("query", graphqlQuery)
+                put("variables", buildJsonObject {
+                    put("page", page)
+                    put("search", query)
+                })
+            }
+            val requestBody = okhttp3.RequestBody.create(
+                okhttp3.MediaType.parse("application/json"),
+                body.toString()
+            )
+            return Request.Builder()
+                .url("https://graphql.anilist.co")
+                .post(requestBody)
+                .build()
+        }
+
         val type = filters.filterIsInstance<TypeFilter>().firstOrNull()?.getSelectedValue() ?: ""
         val genre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.getSelectedValue() ?: ""
         val year = filters.filterIsInstance<YearFilter>().firstOrNull()?.getSelectedValue() ?: ""
@@ -104,10 +231,6 @@ class AnimeStream : Source() {
         val audio = filters.filterIsInstance<AudioFilter>().firstOrNull()?.getSelectedValue() ?: ""
 
         val urlBuilder = "$baseUrl/api/v1/search".toHttpUrl().newBuilder().apply {
-            if (query.isNotBlank()) {
-                addQueryParameter("query", query)
-                addQueryParameter("suggest", "1")
-            }
             addQueryParameter("page", page.toString())
             addQueryParameter("limit", "20")
 
@@ -121,6 +244,10 @@ class AnimeStream : Source() {
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
+        if (response.request.url.toString().contains("anilist.co")) {
+            return popularAnimeParse(response)
+        }
+
         val responseData = response.body.string()
         val searchResult = json.decodeFromString<SearchResponseDto>(responseData)
         val animeList = mutableListOf<SAnime>()
@@ -149,6 +276,45 @@ class AnimeStream : Source() {
     }
 
     // ============================== Details ==============================
+
+    private suspend fun resolveRedirectUrl(anime: SAnime) {
+        if (anime.url.startsWith("/search_redirect")) {
+            val uri = Uri.parse("http://127.0.0.1" + anime.url)
+            val query = uri.getQueryParameter("q") ?: ""
+            val fallback = uri.getQueryParameter("fallback") ?: ""
+
+            var matchedItem: PopularItemDto? = null
+
+            if (query.isNotBlank()) {
+                val searchUrl = "$baseUrl/api/v1/search?suggest=1&query=${java.net.URLEncoder.encode(query, "UTF-8")}&limit=10"
+                val response = client.newCall(GET(searchUrl, headers)).awaitSuccess()
+                val searchData = json.decodeFromString<SearchResponseDto>(response.body.string())
+                matchedItem = searchData.series?.firstOrNull() ?: searchData.movies?.firstOrNull()
+            }
+
+            if (matchedItem == null && fallback.isNotBlank()) {
+                val searchUrl = "$baseUrl/api/v1/search?suggest=1&query=${java.net.URLEncoder.encode(fallback, "UTF-8")}&limit=10"
+                val response = client.newCall(GET(searchUrl, headers)).awaitSuccess()
+                val searchData = json.decodeFromString<SearchResponseDto>(response.body.string())
+                matchedItem = searchData.series?.firstOrNull() ?: searchData.movies?.firstOrNull()
+            }
+
+            if (matchedItem == null) {
+                throw Exception("Anime not found on website: $query")
+            }
+
+            anime.url = if (matchedItem.type == "movie") "/content/${matchedItem.content_id}" else "/series/${matchedItem.content_id}"
+        }
+    }
+
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        resolveRedirectUrl(anime)
+        val detailsResponse = client.newCall(GET("$baseUrl/api/v1${anime.url}", headers)).awaitSuccess()
+        return animeDetailsParse(detailsResponse).apply {
+            this.url = anime.url
+            initialized = true
+        }
+    }
 
     override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/api/v1${anime.url}", headers)
 
@@ -189,6 +355,7 @@ class AnimeStream : Source() {
     // ============================== Episodes ==============================
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
+        resolveRedirectUrl(anime)
         val isMovie = anime.url.startsWith("/content/")
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
 
@@ -593,6 +760,46 @@ class AnimeStream : Source() {
     private data class MediaResponseDto(
         val hls: HlsDto? = null,
         val versions: VersionsDto? = null,
+    )
+
+    @Serializable
+    private data class AniListTitleDto(
+        val romaji: String? = null,
+        val english: String? = null,
+    )
+
+    @Serializable
+    private data class AniListCoverImageDto(
+        val large: String? = null,
+    )
+
+    @Serializable
+    private data class AniListMediaDto(
+        val title: AniListTitleDto? = null,
+        val coverImage: AniListCoverImageDto? = null,
+        val description: String? = null,
+        val averageScore: Int? = null,
+    )
+
+    @Serializable
+    private data class AniListPageInfoDto(
+        val hasNextPage: Boolean? = null,
+    )
+
+    @Serializable
+    private data class AniListPageDto(
+        val pageInfo: AniListPageInfoDto? = null,
+        val media: List<AniListMediaDto>? = null,
+    )
+
+    @Serializable
+    private data class AniListDataDto(
+        val Page: AniListPageDto? = null,
+    )
+
+    @Serializable
+    private data class AniListResponseDto(
+        val data: AniListDataDto? = null,
     )
 
     private fun getProxyUrl(targetUrl: String, mediaId: String): String {
