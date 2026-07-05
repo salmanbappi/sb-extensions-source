@@ -99,13 +99,16 @@ class AnimeStream : Source() {
 
         val body = buildJsonObject {
             put("query", query)
-            put("variables", buildJsonObject {
-                put("page", page)
-            })
+            put(
+                "variables",
+                buildJsonObject {
+                    put("page", page)
+                },
+            )
         }
         val requestBody = okhttp3.RequestBody.create(
             okhttp3.MediaType.parse("application/json"),
-            body.toString()
+            body.toString(),
         )
 
         return Request.Builder()
@@ -165,13 +168,16 @@ class AnimeStream : Source() {
 
         val body = buildJsonObject {
             put("query", query)
-            put("variables", buildJsonObject {
-                put("page", page)
-            })
+            put(
+                "variables",
+                buildJsonObject {
+                    put("page", page)
+                },
+            )
         }
         val requestBody = okhttp3.RequestBody.create(
             okhttp3.MediaType.parse("application/json"),
-            body.toString()
+            body.toString(),
         )
 
         return Request.Builder()
@@ -209,14 +215,17 @@ class AnimeStream : Source() {
 
             val body = buildJsonObject {
                 put("query", graphqlQuery)
-                put("variables", buildJsonObject {
-                    put("page", page)
-                    put("search", query)
-                })
+                put(
+                    "variables",
+                    buildJsonObject {
+                        put("page", page)
+                        put("search", query)
+                    },
+                )
             }
             val requestBody = okhttp3.RequestBody.create(
                 okhttp3.MediaType.parse("application/json"),
-                body.toString()
+                body.toString(),
             )
             return Request.Builder()
                 .url("https://graphql.anilist.co")
