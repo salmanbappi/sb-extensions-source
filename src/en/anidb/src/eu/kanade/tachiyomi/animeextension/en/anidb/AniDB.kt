@@ -17,6 +17,9 @@ import keiyoushi.utils.addListPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 
@@ -58,7 +61,7 @@ class AniDB : Source() {
     override val client = network.client.newBuilder()
         .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-        .addInterceptor(CloudflareInterceptor(network.client))
+        .addInterceptor(AniDBCloudflareInterceptor(network.client) { baseUrl })
         .build()
 
     private val cfBypassUserAgent by lazy {
@@ -309,5 +312,22 @@ class AniDB : Source() {
         private val PREF_CF_UA_SUMMARY = """Custom User-Agent string for the Cloudflare WebView bypass.
             |Leave blank to use the default.
         """.trimMargin()
+    }
+}
+
+class AniDBCloudflareInterceptor(
+    private val client: OkHttpClient,
+    private val baseUrlProvider: () -> String,
+) : Interceptor {
+    private val cfInterceptor = CloudflareInterceptor(client)
+
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val isBaseUrl = request.url.host == baseUrlProvider().toHttpUrlOrNull()?.host
+        return if (isBaseUrl) {
+            cfInterceptor.intercept(chain)
+        } else {
+            chain.proceed(request)
+        }
     }
 }
