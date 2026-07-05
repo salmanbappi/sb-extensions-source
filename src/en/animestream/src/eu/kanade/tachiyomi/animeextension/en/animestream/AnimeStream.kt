@@ -10,8 +10,8 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import extensions.utils.Source
