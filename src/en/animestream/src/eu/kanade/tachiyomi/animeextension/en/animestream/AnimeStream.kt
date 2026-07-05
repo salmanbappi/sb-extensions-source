@@ -305,7 +305,7 @@ class AnimeStream : Source() {
             compareByDescending { hoster ->
                 val hosterData = json.decodeFromString<HosterData>(hoster.hosterUrl)
                 hosterData.locale == prefAudio
-            }
+            },
         )
     }
 
@@ -632,12 +632,12 @@ class AnimeStream : Source() {
         private val AUDIO_LANGS = listOf(
             "Japanese", "English", "Spanish (LatAm)", "Spanish (Spain)", "Portuguese (Brazil)",
             "French", "German", "Italian", "Arabic", "Hindi", "Tamil", "Telugu", "Thai",
-            "Vietnamese", "Russian", "Indonesian", "Malay", "Chinese (Simplified)", "Chinese (Traditional)"
+            "Vietnamese", "Russian", "Indonesian", "Malay", "Chinese (Simplified)", "Chinese (Traditional)",
         )
         private val AUDIO_VALS = listOf(
             "ja-JP", "en-US", "es-419", "es-ES", "pt-BR",
             "fr-FR", "de-DE", "it-IT", "ar-SA", "hi-IN", "ta-IN", "te-IN", "th-TH",
-            "vi-VN", "ru-RU", "id-ID", "ms-MY", "zh-CN", "zh-HK"
+            "vi-VN", "ru-RU", "id-ID", "ms-MY", "zh-CN", "zh-HK",
         )
 
         private val GENRES = listOf(
