@@ -50,6 +50,7 @@ abstract class AnikotoTheme : Source() {
     protected open val popularAnimeSelector = "div.ani.items > div.item"
     protected open val serverSelector = "li[data-link-id], .server, div.item, .item"
     protected open val typeSelector = "div.types > div.type, div.servers > div.type, div.ani-server-wrapper > div.type, .server-type, div.type"
+    protected open val useMapper = false
 
     protected open fun getVrf(animeId: String): String = URLEncoder.encode(AnikotoRC4.encodeVrf(animeId), "UTF-8")
 
@@ -352,55 +353,59 @@ abstract class AnikotoTheme : Source() {
         }
 
         // PATH B: Nekostream Mapper API (Kiwi-Stream)
-        val enableKiwi = preferences.getBoolean(PREF_ENABLE_KIWI_KEY, PREF_ENABLE_KIWI_DEFAULT)
-        if (!enableKiwi) {
-            logi("PATH B: skipped (Kiwi-Stream disabled in settings)")
-        } else if (meta.malId.isEmpty() || meta.epNum.isEmpty() || meta.timestamp.isEmpty()) {
-            loge("PATH B: skipped (missing malId/epNum/timestamp in EpisodeMeta)")
-        } else {
-            val mapperUrl = "https://mapper.nekostream.site/api/mal/${meta.malId}/${meta.epNum}/${meta.timestamp}"
-            logi("PATH B: GET $mapperUrl")
-            try {
-                val mapperResponse = client.newCall(GET(mapperUrl, ajaxHeaders(meta.slug))).execute()
-                if (mapperResponse.isSuccessful) {
-                    val bodyStr = mapperResponse.body.string()
-                    val jsonObj = json.decodeFromString<JsonObject>(bodyStr)
-                    val mapperTokens = parseMapperResponse(jsonObj)
-                    logi("PATH B: parsed ${mapperTokens.size} mapper tokens")
+        if (useMapper) {
+            val enableKiwi = preferences.getBoolean(PREF_ENABLE_KIWI_KEY, PREF_ENABLE_KIWI_DEFAULT)
+            if (!enableKiwi) {
+                logi("PATH B: skipped (Kiwi-Stream disabled in settings)")
+            } else if (meta.malId.isEmpty() || meta.epNum.isEmpty() || meta.timestamp.isEmpty()) {
+                loge("PATH B: skipped (missing malId/epNum/timestamp in EpisodeMeta)")
+            } else {
+                val mapperUrl = "https://mapper.nekostream.site/api/mal/${meta.malId}/${meta.epNum}/${meta.timestamp}"
+                logi("PATH B: GET $mapperUrl")
+                try {
+                    val mapperResponse = client.newCall(GET(mapperUrl, ajaxHeaders(meta.slug))).execute()
+                    if (mapperResponse.isSuccessful) {
+                        val bodyStr = mapperResponse.body.string()
+                        val jsonObj = json.decodeFromString<JsonObject>(bodyStr)
+                        val mapperTokens = parseMapperResponse(jsonObj)
+                        logi("PATH B: parsed ${mapperTokens.size} mapper tokens")
 
-                    if (mapperTokens.isEmpty()) {
-                        val keys = jsonObj.keys
-                        if (keys.any { it == "Kiwi-Stream" }) {
-                            logi("PATH B: Kiwi-Stream has download links but no streaming URL — streaming not available for this episode")
-                        } else {
-                            logi("PATH B: no Kiwi-Stream entries found in mapper response")
+                        if (mapperTokens.isEmpty()) {
+                            val keys = jsonObj.keys
+                            if (keys.any { it == "Kiwi-Stream" }) {
+                                logi("PATH B: Kiwi-Stream has download links but no streaming URL — streaming not available for this episode")
+                            } else {
+                                logi("PATH B: no Kiwi-Stream entries found in mapper response")
+                            }
                         }
-                    }
 
-                    for (token in mapperTokens) {
-                        val audioLabel = when (token.audio) {
-                            "dub" -> "DUB"
-                            "sub" -> "SUB"
-                            "hsub" -> "HSUB"
-                            else -> token.audio.uppercase(Locale.ROOT)
-                        }
-                        if (excludedAudios.any { it.equals(audioLabel, true) }) {
-                            continue
-                        }
-                        if (token.serverName == "Kiwi-Stream") {
-                            val serverName = token.serverName
-                            if (excludedServers.any { it.equals(serverName, true) }) {
+                        for (token in mapperTokens) {
+                            val audioLabel = when (token.audio) {
+                                "dub" -> "DUB"
+                                "sub" -> "SUB"
+                                "hsub" -> "HSUB"
+                                else -> token.audio.uppercase(Locale.ROOT)
+                            }
+                            if (excludedAudios.any { it.equals(audioLabel, true) }) {
                                 continue
                             }
-                            val label = "$audioLabel - $serverName"
-                            tasks.add(HosterTask(label, token.token, token.audio, "mapper", meta.slug))
-                            logi("  + task (mapper): $label")
+                            if (token.serverName == "Kiwi-Stream") {
+                                val serverName = token.serverName
+                                if (excludedServers.any { it.equals(serverName, true) }) {
+                                    continue
+                                }
+                                val label = "$audioLabel - $serverName"
+                                tasks.add(HosterTask(label, token.token, token.audio, "mapper", meta.slug))
+                                logi("  + task (mapper): $label")
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    loge("PATH B: mapper FAILED — continuing with primary tasks", e)
                 }
-            } catch (e: Exception) {
-                loge("PATH B: mapper FAILED — continuing with primary tasks", e)
             }
+        } else {
+            logi("PATH B: skipped (useMapper is false for this source)")
         }
 
         logi("getHosterList: total servers found = ${tasks.size}")
@@ -732,13 +737,15 @@ abstract class AnikotoTheme : Source() {
                 setDefaultValue(true)
             }.also { screen.addPreference(it) }
 
-            SwitchPreferenceCompat(screen.context).apply {
-                key = PREF_ENABLE_KIWI_KEY
-                title = "Enable Kiwi-Stream"
-                summaryOn = "Fetching Kiwi-Stream from external sources"
-                summaryOff = "Kiwi-Stream disabled"
-                setDefaultValue(PREF_ENABLE_KIWI_DEFAULT)
-            }.also { screen.addPreference(it) }
+            if (useMapper) {
+                SwitchPreferenceCompat(screen.context).apply {
+                    key = PREF_ENABLE_KIWI_KEY
+                    title = "Enable Kiwi-Stream"
+                    summaryOn = "Fetching Kiwi-Stream from external sources"
+                    summaryOff = "Kiwi-Stream disabled"
+                    setDefaultValue(PREF_ENABLE_KIWI_DEFAULT)
+                }.also { screen.addPreference(it) }
+            }
 
             SwitchPreferenceCompat(screen.context).apply {
                 key = PREF_LOAD_TITLES
