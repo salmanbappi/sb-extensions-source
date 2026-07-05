@@ -48,6 +48,7 @@ abstract class AnikotoTheme : Source() {
     protected open val synopsisSelector = "div.synopsis div.content"
     protected open val detailPosterSelector = "div.poster img"
     protected open val popularAnimeSelector = "div.ani.items > div.item"
+    protected open val serverSelector = "li[data-link-id], .server, div.item, .item"
 
     protected open fun getVrf(animeId: String): String = URLEncoder.encode(AnikotoRC4.encodeVrf(animeId), "UTF-8")
 
@@ -329,7 +330,7 @@ abstract class AnikotoTheme : Source() {
                             continue
                         }
 
-                        for (serverElement in element.select("li[data-link-id], .server")) {
+                        for (serverElement in element.select(serverSelector)) {
                             var linkId = serverElement.attr("data-link-id")
                             if (linkId.isEmpty()) linkId = serverElement.attr("data-id")
                             val serverName = serverElement.text().trim()
