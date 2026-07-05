@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import extensions.utils.Source
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.Serializable
@@ -53,6 +54,25 @@ class AnimeStream : Source() {
         .build()
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+
+    override val client by lazy {
+        super.client.newBuilder()
+            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .addNetworkInterceptor { chain ->
+                val response = chain.proceed(chain.request())
+                if (chain.request().url.toString().contains("/api/v1/")) {
+                    response.newBuilder()
+                        .header("Cache-Control", "public, max-age=86400")
+                        .removeHeader("Pragma")
+                        .build()
+                } else {
+                    response
+                }
+            }
+            .build()
+    }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -274,7 +294,19 @@ class AnimeStream : Source() {
             )
         }
 
-        return hosters.distinctBy { it.hosterName }
+        val excludedAudio = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
+        val filteredHosters = hosters.filter { hoster ->
+            val hosterData = json.decodeFromString<HosterData>(hoster.hosterUrl)
+            !excludedAudio.contains(hosterData.locale)
+        }.distinctBy { it.hosterName }
+
+        val prefAudio = preferences.getString(PREF_AUDIO_LANG_KEY, "ja-JP")!!
+        return filteredHosters.sortedWith(
+            compareByDescending { hoster ->
+                val hosterData = json.decodeFromString<HosterData>(hoster.hosterUrl)
+                hosterData.locale == prefAudio
+            }
+        )
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -302,23 +334,27 @@ class AnimeStream : Source() {
             videoList.addAll(extracted)
         }
 
+        val excludedSub = preferences.getStringSet(PREF_EXCLUDE_SUB_KEY, emptySet()) ?: emptySet()
         // Extract videos from hardsubs playlists
         hosterData.hardSubs.forEach { sub ->
-            sub.playlist?.let { playlistUrl ->
-                val langName = getLocaleName(hosterData.locale)
-                val subLang = getLocaleName(sub.locale ?: "en-US")
-                val playlistParts = playlistUrl.split("/")
-                val mediaFolder = playlistParts.getOrNull(7) ?: ""
-                val mediaId = mediaFolder.substringBefore("_")
-                val proxiedPlaylistUrl = getProxyUrl(playlistUrl, mediaId)
+            val subLocale = sub.locale ?: "en-US"
+            if (!excludedSub.contains(subLocale)) {
+                sub.playlist?.let { playlistUrl ->
+                    val langName = getLocaleName(hosterData.locale)
+                    val subLang = getLocaleName(subLocale)
+                    val playlistParts = playlistUrl.split("/")
+                    val mediaFolder = playlistParts.getOrNull(7) ?: ""
+                    val mediaId = mediaFolder.substringBefore("_")
+                    val proxiedPlaylistUrl = getProxyUrl(playlistUrl, mediaId)
 
-                val extracted = playlistUtils.extractFromHls(
-                    playlistUrl = proxiedPlaylistUrl,
-                    masterHeaders = headers,
-                    videoHeaders = headers,
-                    videoNameGen = { quality -> "$langName [Hardsub: $subLang] - $quality" },
-                )
-                videoList.addAll(extracted)
+                    val extracted = playlistUtils.extractFromHls(
+                        playlistUrl = proxiedPlaylistUrl,
+                        masterHeaders = headers,
+                        videoHeaders = headers,
+                        videoNameGen = { quality -> "$langName [Hardsub: $subLang] - $quality" },
+                    )
+                    videoList.addAll(extracted)
+                }
             }
         }
 
@@ -326,18 +362,20 @@ class AnimeStream : Source() {
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val quality = preferences.getString(PREF_QUALITY_KEY, "720p")!!
-        val audioType = preferences.getString(PREF_TYPE_KEY, "sub")!!
+        val quality = preferences.getString(PREF_QUALITY_KEY, "1080p")!!
+        val prefSub = preferences.getString(PREF_SUB_LANG_KEY, "en-US")!!
+        val prefSubName = getLocaleName(prefSub)
+
         return this.sortedWith(
-            compareByDescending<Video> { video ->
-                val title = video.videoTitle
-                if (audioType == "sub") {
-                    title.contains("Japanese") || title.contains("Hardsub")
-                } else {
-                    title.contains("English") && !title.contains("Hardsub")
+            compareByDescending<Video> { it.videoTitle.contains(quality) }
+                .thenByDescending { video ->
+                    val title = video.videoTitle
+                    if (prefSub == "none") {
+                        !title.contains("Hardsub")
+                    } else {
+                        title.contains("[Hardsub: $prefSubName]")
+                    }
                 }
-            }
-                .thenByDescending { it.videoTitle.contains(quality) }
                 .thenByDescending { it.resolution ?: 0 },
         )
     }
@@ -393,12 +431,36 @@ class AnimeStream : Source() {
             entryValues = listOf("1080p", "720p", "480p"),
         )
         screen.addListPreference(
-            key = PREF_TYPE_KEY,
-            default = "sub",
-            title = "Preferred Audio Type",
+            key = PREF_AUDIO_LANG_KEY,
+            default = PREF_AUDIO_LANG_DEFAULT,
+            title = "Preferred Audio Language",
             summary = "%s",
-            entries = listOf("Subbed", "Dubbed"),
-            entryValues = listOf("sub", "dub"),
+            entries = AUDIO_LANGS,
+            entryValues = AUDIO_VALS,
+        )
+        screen.addListPreference(
+            key = PREF_SUB_LANG_KEY,
+            default = PREF_SUB_LANG_DEFAULT,
+            title = "Preferred Subtitle Language",
+            summary = "%s",
+            entries = listOf("None") + AUDIO_LANGS,
+            entryValues = listOf("none") + AUDIO_VALS,
+        )
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_AUDIO_KEY,
+            title = "Exclude Audio Languages",
+            summary = "Select audio languages to exclude from the list",
+            entries = AUDIO_LANGS,
+            entryValues = AUDIO_VALS,
+            default = emptySet(),
+        )
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_SUB_KEY,
+            title = "Exclude Subtitle Languages",
+            summary = "Select subtitle/hardsub languages to exclude from the list",
+            entries = AUDIO_LANGS,
+            entryValues = AUDIO_VALS,
+            default = emptySet(),
         )
         screen.addListPreference(
             key = PREF_SCORE_POSITION_KEY,
@@ -555,9 +617,28 @@ class AnimeStream : Source() {
         private const val PREF_DOMAIN_DEFAULT = "https://anime.uniquestream.net"
 
         private const val PREF_QUALITY_KEY = "pref_quality"
-        private const val PREF_TYPE_KEY = "pref_type"
         private const val PREF_SCORE_POSITION_KEY = "pref_score_position"
         private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
+
+        private const val PREF_AUDIO_LANG_KEY = "pref_audio_lang"
+        private const val PREF_AUDIO_LANG_DEFAULT = "ja-JP"
+
+        private const val PREF_SUB_LANG_KEY = "pref_sub_lang"
+        private const val PREF_SUB_LANG_DEFAULT = "en-US"
+
+        private const val PREF_EXCLUDE_AUDIO_KEY = "pref_exclude_audio"
+        private const val PREF_EXCLUDE_SUB_KEY = "pref_exclude_sub"
+
+        private val AUDIO_LANGS = listOf(
+            "Japanese", "English", "Spanish (LatAm)", "Spanish (Spain)", "Portuguese (Brazil)",
+            "French", "German", "Italian", "Arabic", "Hindi", "Tamil", "Telugu", "Thai",
+            "Vietnamese", "Russian", "Indonesian", "Malay", "Chinese (Simplified)", "Chinese (Traditional)"
+        )
+        private val AUDIO_VALS = listOf(
+            "ja-JP", "en-US", "es-419", "es-ES", "pt-BR",
+            "fr-FR", "de-DE", "it-IT", "ar-SA", "hi-IN", "ta-IN", "te-IN", "th-TH",
+            "vi-VN", "ru-RU", "id-ID", "ms-MY", "zh-CN", "zh-HK"
+        )
 
         private val GENRES = listOf(
             Pair("Any", ""),
