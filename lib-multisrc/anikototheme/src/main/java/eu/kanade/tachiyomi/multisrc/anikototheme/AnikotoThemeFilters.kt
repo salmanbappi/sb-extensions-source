@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.all.anikoto
+package eu.kanade.tachiyomi.multisrc.anikototheme
 
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -212,7 +212,7 @@ private val SOURCES = listOf(
     Pair("Unknown", "unknown"),
 )
 
-fun getAnikotoFilters(): AnimeFilterList = AnimeFilterList(
+fun getAnikotoThemeFilters(): AnimeFilterList = AnimeFilterList(
     SortFilter(),
     GenreFilter(),
     TypeFilter(),
