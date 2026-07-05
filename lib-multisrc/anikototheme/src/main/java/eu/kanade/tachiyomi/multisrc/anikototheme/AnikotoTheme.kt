@@ -49,9 +49,7 @@ abstract class AnikotoTheme : Source() {
     protected open val detailPosterSelector = "div.poster img"
     protected open val popularAnimeSelector = "div.ani.items > div.item"
 
-    protected open fun getVrf(animeId: String): String {
-        return URLEncoder.encode(AnikotoRC4.encodeVrf(animeId), "UTF-8")
-    }
+    protected open fun getVrf(animeId: String): String = URLEncoder.encode(AnikotoRC4.encodeVrf(animeId), "UTF-8")
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain ->
