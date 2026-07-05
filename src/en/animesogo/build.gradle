@@ -1,0 +1,13 @@
+ext {
+    extName = 'AnimeSogo'
+    extClass = '.AnimeSogo'
+    extVersionCode = 1
+}
+
+apply from: "$rootDir/common.gradle"
+
+android {
+    defaultConfig {
+        manifestPlaceholders.appName = "AnimeSogo"
+    }
+}
