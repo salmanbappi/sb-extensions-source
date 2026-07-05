@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.en.animesogo
+package eu.kanade.tachiyomi.multisrc.anikototheme
 
 import android.annotation.SuppressLint
 import android.app.Application

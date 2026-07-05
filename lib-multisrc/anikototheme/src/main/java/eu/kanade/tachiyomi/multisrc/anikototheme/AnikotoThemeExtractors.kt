@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.all.anikoto
+package eu.kanade.tachiyomi.multisrc.anikototheme
 
 import android.util.Base64
 import android.util.Log
