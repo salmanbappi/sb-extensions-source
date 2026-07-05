@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import extensions.utils.Source
@@ -44,6 +45,12 @@ class AnimeStream : Source() {
     override val lang = "en"
 
     override val supportsLatest = true
+
+    override val client = network.client.newBuilder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .addInterceptor(CloudflareInterceptor(network.client))
+        .build()
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
