@@ -616,7 +616,7 @@ abstract class AnikotoTheme : Source() {
 
     private fun parseAnimeDetails(doc: Document, slug: String): SAnime {
         val useJp = titleLang == "jp"
-        val binfo = doc.selectFirst("#w-info .binfo") ?: doc.selectFirst("div.binfo")
+        val binfo = doc.selectFirst("#w-info .binfo") ?: doc.selectFirst("div.binfo") ?: doc.selectFirst("#w-info")
             ?: return SAnime.create().apply { url = slug }
         val bmeta = doc.selectFirst(bmetaSelector)
 
