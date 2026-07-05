@@ -25,7 +25,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.OutputStream
 import java.net.InetAddress
@@ -77,8 +79,8 @@ class AnimeStream : Source() {
 
     override fun popularAnimeRequest(page: Int): Request {
         val query = """
-            query (\$page: Int) {
-              Page (page: \$page, perPage: 20) {
+            query (${'$'}page: Int) {
+              Page (page: ${'$'}page, perPage: 20) {
                 pageInfo {
                   hasNextPage
                 }
@@ -106,10 +108,7 @@ class AnimeStream : Source() {
                 },
             )
         }
-        val requestBody = okhttp3.RequestBody.create(
-            okhttp3.MediaType.parse("application/json"),
-            body.toString(),
-        )
+        val requestBody = body.toString().toRequestBody("application/json".toMediaType())
 
         return Request.Builder()
             .url("https://graphql.anilist.co")
@@ -146,8 +145,8 @@ class AnimeStream : Source() {
 
     override fun latestUpdatesRequest(page: Int): Request {
         val query = """
-            query (\$page: Int) {
-              Page (page: \$page, perPage: 20) {
+            query (${'$'}page: Int) {
+              Page (page: ${'$'}page, perPage: 20) {
                 pageInfo {
                   hasNextPage
                 }
@@ -175,10 +174,7 @@ class AnimeStream : Source() {
                 },
             )
         }
-        val requestBody = okhttp3.RequestBody.create(
-            okhttp3.MediaType.parse("application/json"),
-            body.toString(),
-        )
+        val requestBody = body.toString().toRequestBody("application/json".toMediaType())
 
         return Request.Builder()
             .url("https://graphql.anilist.co")
@@ -193,12 +189,12 @@ class AnimeStream : Source() {
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         if (query.isNotBlank()) {
             val graphqlQuery = """
-                query (\$page: Int, \$search: String) {
-                  Page (page: \$page, perPage: 20) {
+                query (${'$'}page: Int, ${'$'}search: String) {
+                  Page (page: ${'$'}page, perPage: 20) {
                     pageInfo {
                       hasNextPage
                     }
-                    media (type: ANIME, search: \$search) {
+                    media (type: ANIME, search: ${'$'}search) {
                       title {
                         romaji
                         english
@@ -223,10 +219,7 @@ class AnimeStream : Source() {
                     },
                 )
             }
-            val requestBody = okhttp3.RequestBody.create(
-                okhttp3.MediaType.parse("application/json"),
-                body.toString(),
-            )
+            val requestBody = body.toString().toRequestBody("application/json".toMediaType())
             return Request.Builder()
                 .url("https://graphql.anilist.co")
                 .post(requestBody)
