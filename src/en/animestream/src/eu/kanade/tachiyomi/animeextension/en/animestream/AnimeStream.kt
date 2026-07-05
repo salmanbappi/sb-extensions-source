@@ -48,31 +48,24 @@ class AnimeStream : Source() {
     override val supportsLatest = true
 
     override val client = network.client.newBuilder()
-        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .addInterceptor(CloudflareInterceptor(network.client))
+        .addNetworkInterceptor { chain ->
+            val response = chain.proceed(chain.request())
+            if (chain.request().url.toString().contains("/api/v1/")) {
+                response.newBuilder()
+                    .header("Cache-Control", "public, max-age=86400")
+                    .removeHeader("Pragma")
+                    .build()
+            } else {
+                response
+            }
+        }
         .build()
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-
-    override val client by lazy {
-        super.client.newBuilder()
-            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-            .addNetworkInterceptor { chain ->
-                val response = chain.proceed(chain.request())
-                if (chain.request().url.toString().contains("/api/v1/")) {
-                    response.newBuilder()
-                        .header("Cache-Control", "public, max-age=86400")
-                        .removeHeader("Pragma")
-                        .build()
-                } else {
-                    response
-                }
-            }
-            .build()
-    }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
