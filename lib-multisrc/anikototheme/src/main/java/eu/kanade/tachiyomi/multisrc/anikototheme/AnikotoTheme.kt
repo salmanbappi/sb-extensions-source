@@ -47,6 +47,7 @@ abstract class AnikotoTheme : Source() {
     protected open val aliasSelector = "div.names"
     protected open val synopsisSelector = "div.synopsis div.content"
     protected open val detailPosterSelector = "div.poster img"
+    protected open val popularAnimeSelector = "div.ani.items > div.item"
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain ->
@@ -584,7 +585,7 @@ abstract class AnikotoTheme : Source() {
     // ---- Parsers ----
 
     private fun parseAnimeList(doc: Document): AnimesPage {
-        val elements = doc.select("div#list-items > div.item")
+        val elements = doc.select(popularAnimeSelector)
         val animes = elements.map { el -> parseSearchItem(el) }
         val hasNext = doc.select("a.page-link[rel=next]").isNotEmpty()
         return AnimesPage(animes, hasNext)
