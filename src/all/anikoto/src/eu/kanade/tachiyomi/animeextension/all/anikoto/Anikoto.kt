@@ -7,4 +7,6 @@ class Anikoto : AnikotoTheme() {
     override val name = "Anikoto"
     override val baseUrl = "https://anikototv.to"
     override val lang = "all"
+
+    override val useMapper = true
 }
