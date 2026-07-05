@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import extensions.utils.parseAs
@@ -53,6 +54,12 @@ class AniDB : Source() {
 
     override val supportsLatest = true
 
+    override val client = network.client.newBuilder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .addInterceptor(CloudflareInterceptor(network.client))
+        .build()
+
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
 
@@ -61,6 +68,7 @@ class AniDB : Source() {
     }
 
     private val m3u8Regex = Regex("""file:\s*['"](https?://[^'"]+master\.m3u8)['"]""")
+
 
     // ============================== Popular ===============================
 
