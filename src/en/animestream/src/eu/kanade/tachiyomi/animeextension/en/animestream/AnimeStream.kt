@@ -614,7 +614,9 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
 
     fun stop() {
         running.set(false)
-        try { serverSocket?.close() } catch (_: Exception) {}
+        try {
+            serverSocket?.close()
+        } catch (_: Exception) {}
         executor.shutdownNow()
     }
 
