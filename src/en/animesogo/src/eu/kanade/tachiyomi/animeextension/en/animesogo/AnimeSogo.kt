@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.animesogo
 
+import eu.kanade.tachiyomi.multisrc.anikototheme.AnikotoRC4
 import eu.kanade.tachiyomi.multisrc.anikototheme.AnikotoTheme
 
 class AnimeSogo : AnikotoTheme() {
@@ -14,4 +15,8 @@ class AnimeSogo : AnikotoTheme() {
     override val aliasSelector = "div.alias"
     override val synopsisSelector = "div.synopsis > div.content"
     override val detailPosterSelector = "section#w-info div.poster img"
+
+    override fun getVrf(animeId: String): String {
+        return AnikotoRC4.encodeAnimeSogoVrf(animeId)
+    }
 }
