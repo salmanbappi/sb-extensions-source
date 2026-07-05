@@ -39,9 +39,7 @@ class AnimeStream : Source() {
 
     // ============================== Popular ==============================
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return GET("$baseUrl/api/v1/videos/popular?per_page=24&page=$page", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/popular?per_page=24&page=$page", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val responseData = response.body.string()
@@ -58,9 +56,7 @@ class AnimeStream : Source() {
 
     // ============================== Latest ==============================
 
-    override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/api/v1/videos/new?page=$page&limit=24", headers)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/new?page=$page&limit=24", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
@@ -96,19 +92,23 @@ class AnimeStream : Source() {
         val animeList = mutableListOf<SAnime>()
 
         searchResult.series?.forEach { item ->
-            animeList.add(SAnime.create().apply {
-                title = item.title
-                url = "/series/${item.content_id}"
-                thumbnail_url = item.image
-            })
+            animeList.add(
+                SAnime.create().apply {
+                    title = item.title
+                    url = "/series/${item.content_id}"
+                    thumbnail_url = item.image
+                },
+            )
         }
 
         searchResult.movies?.forEach { item ->
-            animeList.add(SAnime.create().apply {
-                title = item.title
-                url = "/content/${item.content_id}"
-                thumbnail_url = item.image
-            })
+            animeList.add(
+                SAnime.create().apply {
+                    title = item.title
+                    url = "/content/${item.content_id}"
+                    thumbnail_url = item.image
+                },
+            )
         }
 
         return AnimesPage(animeList, animeList.size >= 24)
@@ -116,9 +116,7 @@ class AnimeStream : Source() {
 
     // ============================== Details ==============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request {
-        return GET("$baseUrl/api/v1${anime.url}", headers)
-    }
+    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/api/v1${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val responseData = response.body.string()
@@ -148,9 +146,9 @@ class AnimeStream : Source() {
     private fun buildDescription(raw: String?, score: Double?, position: String): String {
         val scoreStr = formatScore(score) ?: return raw.orEmpty()
         return when (position) {
-            "top"    -> "$scoreStr\n\n${raw.orEmpty()}"
+            "top" -> "$scoreStr\n\n${raw.orEmpty()}"
             "bottom" -> "${raw.orEmpty()}\n\n$scoreStr"
-            else     -> raw.orEmpty()
+            else -> raw.orEmpty()
         }
     }
 
@@ -178,15 +176,17 @@ class AnimeStream : Source() {
                 val seasonResponse = client.newCall(GET("$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc", headers)).awaitSuccess()
                 val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(seasonResponse.body.string())
                 seasonEpisodes.forEach { ep ->
-                    episodes.add(SEpisode.create().apply {
-                        url = "/episode/${ep.content_id}"
-                        name = ep.title ?: "Episode ${ep.episode_number}"
-                        episode_number = ep.episode_number ?: 1.0f
-                        date_upload = 0L
-                        summary = ep.description
-                        preview_url = if (showThumbnails) ep.image else null
-                        scanlator = getScanlatorLabel(ep.audio_locales)
-                    })
+                    episodes.add(
+                        SEpisode.create().apply {
+                            url = "/episode/${ep.content_id}"
+                            name = ep.title ?: "Episode ${ep.episode_number}"
+                            episode_number = ep.episode_number ?: 1.0f
+                            date_upload = 0L
+                            summary = ep.description
+                            preview_url = if (showThumbnails) ep.image else null
+                            scanlator = getScanlatorLabel(ep.audio_locales)
+                        },
+                    )
                 }
             }
             return episodes.sortedByDescending { it.episode_number }
@@ -199,9 +199,9 @@ class AnimeStream : Source() {
         val hasDub = locales.any { it != "ja-JP" }
         return when {
             hasSub && hasDub -> "Sub, Dub"
-            hasDub           -> "Dub"
-            hasSub           -> "Sub"
-            else             -> null
+            hasDub -> "Dub"
+            hasSub -> "Sub"
+            else -> null
         }
     }
 
@@ -222,10 +222,12 @@ class AnimeStream : Source() {
             val locale = hls.locale ?: "ja-JP"
             val playlist = hls.playlist ?: ""
             val data = HosterData(locale, playlist, hls.hard_subs ?: emptyList())
-            hosters.add(Hoster(
-                hosterName = getLocaleName(locale),
-                hosterUrl = json.encodeToString(HosterData.serializer(), data)
-            ))
+            hosters.add(
+                Hoster(
+                    hosterName = getLocaleName(locale),
+                    hosterUrl = json.encodeToString(HosterData.serializer(), data),
+                ),
+            )
         }
 
         // 2. Process alternative dubbed streams
@@ -233,10 +235,12 @@ class AnimeStream : Source() {
             val locale = version.locale ?: ""
             val playlist = version.playlist ?: ""
             val data = HosterData(locale, playlist, version.hard_subs ?: emptyList())
-            hosters.add(Hoster(
-                hosterName = getLocaleName(locale),
-                hosterUrl = json.encodeToString(HosterData.serializer(), data)
-            ))
+            hosters.add(
+                Hoster(
+                    hosterName = getLocaleName(locale),
+                    hosterUrl = json.encodeToString(HosterData.serializer(), data),
+                ),
+            )
         }
 
         return hosters.distinctBy { it.hosterName }
@@ -253,7 +257,7 @@ class AnimeStream : Source() {
                 playlistUrl = hosterData.playlist,
                 masterHeaders = headers,
                 videoHeaders = headers,
-                videoNameGen = { quality -> "$langName - $quality" }
+                videoNameGen = { quality -> "$langName - $quality" },
             )
             videoList.addAll(extracted)
         }
@@ -267,7 +271,7 @@ class AnimeStream : Source() {
                     playlistUrl = playlistUrl,
                     masterHeaders = headers,
                     videoHeaders = headers,
-                    videoNameGen = { quality -> "$langName [Hardsub: $subLang] - $quality" }
+                    videoNameGen = { quality -> "$langName [Hardsub: $subLang] - $quality" },
                 )
                 videoList.addAll(extracted)
             }
@@ -289,7 +293,7 @@ class AnimeStream : Source() {
                 }
             }
                 .thenByDescending { it.videoTitle.contains(quality) }
-                .thenByDescending { it.resolution ?: 0 }
+                .thenByDescending { it.resolution ?: 0 },
         )
     }
 
@@ -300,32 +304,30 @@ class AnimeStream : Source() {
         GenreFilter(),
         YearFilter(),
         StatusFilter(),
-        AudioFilter()
+        AudioFilter(),
     )
 
-    private fun getLocaleName(locale: String): String {
-        return when (locale.lowercase()) {
-            "ja-jp" -> "Japanese (RAW)"
-            "en-us" -> "English"
-            "de-de" -> "German"
-            "fr-fr" -> "French"
-            "it-it" -> "Italian"
-            "es-es" -> "Spanish (Spain)"
-            "es-419" -> "Spanish (LATAM)"
-            "pt-br" -> "Portuguese (Brazil)"
-            "ru-ru" -> "Russian"
-            "ar-sa" -> "Arabic"
-            "hi-in" -> "Hindi"
-            "te-in" -> "Telugu"
-            "ta-in" -> "Tamil"
-            "th-th" -> "Thai"
-            "vi-vn" -> "Vietnamese"
-            "id-id" -> "Indonesian"
-            "ms-my" -> "Malay"
-            "zh-cn" -> "Chinese (Simplified)"
-            "zh-hk" -> "Chinese (Traditional)"
-            else -> locale.uppercase()
-        }
+    private fun getLocaleName(locale: String): String = when (locale.lowercase()) {
+        "ja-jp" -> "Japanese (RAW)"
+        "en-us" -> "English"
+        "de-de" -> "German"
+        "fr-fr" -> "French"
+        "it-it" -> "Italian"
+        "es-es" -> "Spanish (Spain)"
+        "es-419" -> "Spanish (LATAM)"
+        "pt-br" -> "Portuguese (Brazil)"
+        "ru-ru" -> "Russian"
+        "ar-sa" -> "Arabic"
+        "hi-in" -> "Hindi"
+        "te-in" -> "Telugu"
+        "ta-in" -> "Tamil"
+        "th-th" -> "Thai"
+        "vi-vn" -> "Vietnamese"
+        "id-id" -> "Indonesian"
+        "ms-my" -> "Malay"
+        "zh-cn" -> "Chinese (Simplified)"
+        "zh-hk" -> "Chinese (Traditional)"
+        else -> locale.uppercase()
     }
 
     // ============================== Settings ==============================
@@ -371,38 +373,43 @@ class AnimeStream : Source() {
 
     // ============================== Filters ==============================
 
-    private class TypeFilter : AnimeFilter.Select<String>(
-        "Type",
-        TYPES.map { it.first }.toTypedArray()
-    ) {
+    private class TypeFilter :
+        AnimeFilter.Select<String>(
+            "Type",
+            TYPES.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = TYPES[state].second
     }
 
-    private class GenreFilter : AnimeFilter.Select<String>(
-        "Genre",
-        GENRES.map { it.first }.toTypedArray()
-    ) {
+    private class GenreFilter :
+        AnimeFilter.Select<String>(
+            "Genre",
+            GENRES.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = GENRES[state].second
     }
 
-    private class YearFilter : AnimeFilter.Select<String>(
-        "Year",
-        YEARS.map { it.first }.toTypedArray()
-    ) {
+    private class YearFilter :
+        AnimeFilter.Select<String>(
+            "Year",
+            YEARS.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = YEARS[state].second
     }
 
-    private class StatusFilter : AnimeFilter.Select<String>(
-        "Status",
-        STATUS.map { it.first }.toTypedArray()
-    ) {
+    private class StatusFilter :
+        AnimeFilter.Select<String>(
+            "Status",
+            STATUS.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = STATUS[state].second
     }
 
-    private class AudioFilter : AnimeFilter.Select<String>(
-        "Audio",
-        AUDIO.map { it.first }.toTypedArray()
-    ) {
+    private class AudioFilter :
+        AnimeFilter.Select<String>(
+            "Audio",
+            AUDIO.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = AUDIO[state].second
     }
 
@@ -412,7 +419,7 @@ class AnimeStream : Source() {
     private data class HosterData(
         val locale: String,
         val playlist: String,
-        val hardSubs: List<SubtitleDto> = emptyList()
+        val hardSubs: List<SubtitleDto> = emptyList(),
     )
 
     @Serializable
@@ -513,13 +520,13 @@ class AnimeStream : Source() {
             Pair("Slice of Life", "slice of life"),
             Pair("Sports", "sports"),
             Pair("Supernatural", "supernatural"),
-            Pair("Thriller", "thriller")
+            Pair("Thriller", "thriller"),
         )
 
         private val TYPES = listOf(
             Pair("Any", ""),
             Pair("Series", "series"),
-            Pair("Movies", "movies")
+            Pair("Movies", "movies"),
         )
 
         private val YEARS = listOf(Pair("Any", "")) + (2026 downTo 1966).map { Pair(it.toString(), it.toString()) }
@@ -527,13 +534,13 @@ class AnimeStream : Source() {
         private val STATUS = listOf(
             Pair("Any", ""),
             Pair("Ongoing", "ongoing"),
-            Pair("Completed", "completed")
+            Pair("Completed", "completed"),
         )
 
         private val AUDIO = listOf(
             Pair("Any", ""),
             Pair("Subbed", "sub"),
-            Pair("Dubbed", "dub")
+            Pair("Dubbed", "dub"),
         )
     }
 }
