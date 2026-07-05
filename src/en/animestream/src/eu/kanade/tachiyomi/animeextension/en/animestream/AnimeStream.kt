@@ -17,6 +17,7 @@ import extensions.utils.Source
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSwitchPreference
+import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -52,7 +53,7 @@ class AnimeStream : Source() {
 
     // ============================== Popular ==============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/popular?per_page=24&page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/popular?limit=20&page=$page", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val responseData = response.body.string()
@@ -64,12 +65,12 @@ class AnimeStream : Source() {
                 thumbnail_url = item.image
             }
         }
-        return AnimesPage(animeList, animeList.size >= 24)
+        return AnimesPage(animeList, animeList.size >= 20)
     }
 
     // ============================== Latest ==============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/new?page=$page&limit=24", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/new?page=$page&limit=20", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
@@ -88,7 +89,7 @@ class AnimeStream : Source() {
                 addQueryParameter("suggest", "1")
             }
             addQueryParameter("page", page.toString())
-            addQueryParameter("limit", "24")
+            addQueryParameter("limit", "20")
 
             if (type.isNotBlank()) addQueryParameter("t", type)
             if (genre.isNotBlank()) addQueryParameter("genre", genre)
@@ -124,7 +125,7 @@ class AnimeStream : Source() {
             )
         }
 
-        return AnimesPage(animeList, animeList.size >= 24)
+        return AnimesPage(animeList, animeList.size >= 20)
     }
 
     // ============================== Details ==============================
@@ -185,20 +186,23 @@ class AnimeStream : Source() {
             val details = json.decodeFromString<DetailsResponseDto>(seriesResponse.body.string())
             val episodes = mutableListOf<SEpisode>()
 
-            details.seasons?.forEach { season ->
-                val seasonResponse = client.newCall(GET("$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc", headers)).awaitSuccess()
-                val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(seasonResponse.body.string())
-                seasonEpisodes.forEach { ep ->
-                    val epNumStr = ep.episode_number?.let {
-                        if (it % 1f == 0f) it.toInt().toString() else it.toString()
-                    } ?: "1"
-                    val epTitle = ep.title
-                    val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
-                        "S${season.season_number} Ep. $epNumStr - $epTitle"
-                    } else {
-                        "Season ${season.season_number} Episode $epNumStr"
-                    }
-                    episodes.add(
+            val episodes = details.seasons.orEmpty().parallelCatchingFlatMap { season ->
+                val epCount = season.episode_count ?: 0
+                val pagesCount = if (epCount > 0) (epCount + 19) / 20 else 1
+                (1..pagesCount).toList().parallelCatchingFlatMap { page ->
+                    val url = "$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc&limit=20&page=$page"
+                    val response = client.newCall(GET(url, headers)).awaitSuccess()
+                    val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(response.body.string())
+                    seasonEpisodes.map { ep ->
+                        val epNumStr = ep.episode_number?.let {
+                            if (it % 1f == 0f) it.toInt().toString() else it.toString()
+                        } ?: "1"
+                        val epTitle = ep.title
+                        val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
+                            "S${season.season_number} Ep. $epNumStr - $epTitle"
+                        } else {
+                            "Season ${season.season_number} Episode $epNumStr"
+                        }
                         SEpisode.create().apply {
                             url = "/episode/${ep.content_id}"
                             name = nameFormatted
@@ -207,10 +211,10 @@ class AnimeStream : Source() {
                             summary = ep.description
                             preview_url = if (showThumbnails) ep.image else null
                             scanlator = getScanlatorLabel(ep.audio_locales)
-                        },
-                    )
+                        }
+                    }
                 }
-            }
+            }.distinctBy { it.url }
             return episodes.sortedByDescending { it.episode_number }
         }
     }
