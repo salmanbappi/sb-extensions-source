@@ -184,8 +184,6 @@ class AnimeStream : Source() {
             val seriesId = anime.url.substringAfterLast("/")
             val seriesResponse = client.newCall(GET("$baseUrl/api/v1/series/$seriesId", headers)).awaitSuccess()
             val details = json.decodeFromString<DetailsResponseDto>(seriesResponse.body.string())
-            val episodes = mutableListOf<SEpisode>()
-
             val episodes = details.seasons.orEmpty().parallelCatchingFlatMap { season ->
                 val epCount = season.episode_count ?: 0
                 val pagesCount = if (epCount > 0) (epCount + 19) / 20 else 1
@@ -204,8 +202,8 @@ class AnimeStream : Source() {
                             "Season ${season.season_number} Episode $epNumStr"
                         }
                         SEpisode.create().apply {
-                            url = "/episode/${ep.content_id}"
-                            name = nameFormatted
+                            this.url = "/episode/${ep.content_id}"
+                            this.name = nameFormatted
                             episode_number = ep.episode_number ?: 1.0f
                             date_upload = 0L
                             summary = ep.description
