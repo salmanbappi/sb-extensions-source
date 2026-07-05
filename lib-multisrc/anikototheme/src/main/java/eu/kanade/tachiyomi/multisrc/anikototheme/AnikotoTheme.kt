@@ -49,6 +49,7 @@ abstract class AnikotoTheme : Source() {
     protected open val detailPosterSelector = "div.poster img"
     protected open val popularAnimeSelector = "div.ani.items > div.item"
     protected open val serverSelector = "li[data-link-id], .server, div.item, .item"
+    protected open val typeSelector = "div.types > div.type, div.servers > div.type, div.ani-server-wrapper > div.type, .server-type, div.type"
 
     protected open fun getVrf(animeId: String): String = URLEncoder.encode(AnikotoRC4.encodeVrf(animeId), "UTF-8")
 
@@ -314,7 +315,7 @@ abstract class AnikotoTheme : Source() {
                 logi("PATH A: parsed status=${pJson.status}, result HTML length = ${pJson.result.length}")
                 if (pJson.status == 200 && pJson.result.isNotEmpty()) {
                     val pDoc = Jsoup.parse(pJson.result)
-                    for (element in pDoc.select("div.servers > div.type, div.ani-server-wrapper > div.type, .server-type")) {
+                    for (element in pDoc.select(typeSelector)) {
                         var dataType = element.attr("data-type")
                         if (dataType.isEmpty()) {
                             // Fallback if structure is different
