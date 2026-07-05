@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.animestream
 
+import android.net.Uri
+import android.util.Base64
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -16,9 +18,20 @@ import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSwitchPreference
 import kotlinx.serialization.Serializable
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import java.io.OutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.security.MessageDigest
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class AnimeStream : Source() {
 
@@ -176,10 +189,19 @@ class AnimeStream : Source() {
                 val seasonResponse = client.newCall(GET("$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc", headers)).awaitSuccess()
                 val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(seasonResponse.body.string())
                 seasonEpisodes.forEach { ep ->
+                    val epNumStr = ep.episode_number?.let {
+                        if (it % 1f == 0f) it.toInt().toString() else it.toString()
+                    } ?: "1"
+                    val epTitle = ep.title
+                    val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
+                        "S${season.season_number} Ep. $epNumStr - $epTitle"
+                    } else {
+                        "Season ${season.season_number} Episode $epNumStr"
+                    }
                     episodes.add(
                         SEpisode.create().apply {
                             url = "/episode/${ep.content_id}"
-                            name = ep.title ?: "Episode ${ep.episode_number}"
+                            name = nameFormatted
                             episode_number = ep.episode_number ?: 1.0f
                             date_upload = 0L
                             summary = ep.description
@@ -250,11 +272,20 @@ class AnimeStream : Source() {
         val hosterData = json.decodeFromString<HosterData>(hoster.hosterUrl)
         val videoList = mutableListOf<Video>()
 
+        if (proxy == null) {
+            proxy = LocalProxyServer(client).apply { start() }
+        }
+
         // Extract videos from main playlist
         if (hosterData.playlist.isNotBlank()) {
             val langName = getLocaleName(hosterData.locale)
+            val playlistParts = hosterData.playlist.split("/")
+            val mediaFolder = playlistParts.getOrNull(7) ?: ""
+            val mediaId = mediaFolder.substringBefore("_")
+            val proxiedPlaylistUrl = getProxyUrl(hosterData.playlist, mediaId)
+
             val extracted = playlistUtils.extractFromHls(
-                playlistUrl = hosterData.playlist,
+                playlistUrl = proxiedPlaylistUrl,
                 masterHeaders = headers,
                 videoHeaders = headers,
                 videoNameGen = { quality -> "$langName - $quality" },
@@ -267,8 +298,13 @@ class AnimeStream : Source() {
             sub.playlist?.let { playlistUrl ->
                 val langName = getLocaleName(hosterData.locale)
                 val subLang = getLocaleName(sub.locale ?: "en-US")
+                val playlistParts = playlistUrl.split("/")
+                val mediaFolder = playlistParts.getOrNull(7) ?: ""
+                val mediaId = mediaFolder.substringBefore("_")
+                val proxiedPlaylistUrl = getProxyUrl(playlistUrl, mediaId)
+
                 val extracted = playlistUtils.extractFromHls(
-                    playlistUrl = playlistUrl,
+                    playlistUrl = proxiedPlaylistUrl,
                     masterHeaders = headers,
                     videoHeaders = headers,
                     videoNameGen = { quality -> "$langName [Hardsub: $subLang] - $quality" },
@@ -495,7 +531,17 @@ class AnimeStream : Source() {
         val versions: VersionsDto? = null,
     )
 
+    private fun getProxyUrl(targetUrl: String, mediaId: String): String {
+        val port = proxy?.port ?: 0
+        if (port == 0) return targetUrl
+        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "key.bin"
+        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&media_id=$mediaId"
+    }
+
     companion object {
+        private var proxy: LocalProxyServer? = null
+
         private const val PREF_DOMAIN_KEY = "pref_domain"
         private const val PREF_DOMAIN_DEFAULT = "https://anime.uniquestream.net"
 
@@ -542,5 +588,164 @@ class AnimeStream : Source() {
             Pair("Subbed", "sub"),
             Pair("Dubbed", "dub"),
         )
+    }
+}
+
+private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
+    private val executor = Executors.newCachedThreadPool()
+    private val running = AtomicBoolean(false)
+    private var serverSocket: ServerSocket? = null
+    val port: Int
+        get() = serverSocket?.localPort ?: 0
+
+    fun start() {
+        if (running.get()) return
+        serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
+        running.set(true)
+        executor.execute {
+            while (running.get()) {
+                try {
+                    val socket = serverSocket!!.accept()
+                    executor.execute { handleClient(socket) }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun stop() {
+        running.set(false)
+        try { serverSocket?.close() } catch (_: Exception) {}
+        executor.shutdownNow()
+    }
+
+    private fun handleClient(socket: Socket) {
+        socket.use { s ->
+            val input = s.getInputStream()
+            val output = s.getOutputStream()
+            val firstLine = input.bufferedReader().readLine() ?: return
+            val parts = firstLine.split(" ")
+            if (parts.size >= 2 && parts[0] == "GET") {
+                val path = parts[1]
+                routeRequest(path, output)
+            }
+        }
+    }
+
+    private fun routeRequest(path: String, output: OutputStream) {
+        val uri = Uri.parse("http://127.0.0.1$path")
+        val encodedUrl = uri.getQueryParameter("url") ?: return
+        val mediaId = uri.getQueryParameter("media_id") ?: ""
+        val targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+
+        try {
+            if (path.contains("playlist.m3u8")) {
+                servePlaylist(targetUrl, mediaId, output)
+            } else if (path.contains("key.bin")) {
+                serveKey(targetUrl, mediaId, output)
+            }
+        } catch (e: Exception) {
+            try {
+                output.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n".toByteArray())
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun servePlaylist(targetUrl: String, mediaId: String, output: OutputStream) {
+        val reqHeaders = Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .add("Referer", "https://anime.uniquestream.net/")
+            .build()
+
+        val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            return
+        }
+
+        val content = response.body.string()
+        val lines = content.split(Regex("""\r?\n"""))
+        val builder = StringBuilder(content.length * 2)
+
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                builder.append("\n")
+                continue
+            }
+
+            if (trimmed.startsWith("#")) {
+                if (trimmed.startsWith("#EXT-X-KEY")) {
+                    val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
+                    uriRegex.find(trimmed)?.let { match ->
+                        val uriValue = match.groupValues[1]
+                        val resolvedUri = targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
+                        val proxiedUri = getProxyUrl(resolvedUri, mediaId)
+                        builder.append(trimmed.replace(uriValue, proxiedUri))
+                    } ?: builder.append(trimmed)
+                } else {
+                    builder.append(trimmed)
+                }
+            } else {
+                val resolvedUri = targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
+                if (resolvedUri.contains(".m3u8")) {
+                    builder.append(getProxyUrl(resolvedUri, mediaId))
+                } else {
+                    builder.append(resolvedUri)
+                }
+            }
+            builder.append("\n")
+        }
+
+        val bodyBytes = builder.toString().toByteArray()
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: ${bodyBytes.size}\r\n".toByteArray())
+        output.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        output.write(bodyBytes)
+        output.flush()
+    }
+
+    private fun serveKey(targetUrl: String, mediaId: String, output: OutputStream) {
+        val reqHeaders = Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .add("Referer", "https://anime.uniquestream.net/")
+            .add("x-am-media-id", mediaId)
+            .build()
+
+        val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            return
+        }
+
+        val keyText = response.body.string().trim()
+        val decryptedKey = decryptKey(keyText, mediaId)
+
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: ${decryptedKey.size}\r\n".toByteArray())
+        output.write("Content-Type: application/octet-stream\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        output.write(decryptedKey)
+        output.flush()
+    }
+
+    private fun getProxyUrl(targetUrl: String, mediaId: String): String {
+        val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "key.bin"
+        return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&media_id=$mediaId"
+    }
+
+    private fun decryptKey(encryptedBase64: String, mediaId: String): ByteArray {
+        val encryptedBytes = Base64.decode(encryptedBase64, Base64.DEFAULT)
+        val md = MessageDigest.getInstance("SHA-256")
+        val keySalt = md.digest(("key" + mediaId).toByteArray(Charsets.UTF_8)).copyOfRange(0, 16)
+        md.reset()
+        val ivSalt = md.digest(("iv" + mediaId).toByteArray(Charsets.UTF_8)).copyOfRange(0, 16)
+        val secretKey = SecretKeySpec(keySalt, "AES")
+        val ivSpec = IvParameterSpec(ivSalt)
+        val cipher = Cipher.getInstance("AES/CBC/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, secretKey, ivSpec)
+        val decryptedFull = cipher.doFinal(encryptedBytes)
+        return decryptedFull.copyOfRange(0, 16)
     }
 }
