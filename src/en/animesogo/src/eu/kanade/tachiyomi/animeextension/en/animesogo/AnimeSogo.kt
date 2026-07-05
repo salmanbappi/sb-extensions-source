@@ -16,7 +16,5 @@ class AnimeSogo : AnikotoTheme() {
     override val synopsisSelector = "div.synopsis > div.content"
     override val detailPosterSelector = "section#w-info div.poster img"
 
-    override fun getVrf(animeId: String): String {
-        return AnikotoRC4.encodeAnimeSogoVrf(animeId)
-    }
+    override fun getVrf(animeId: String): String = AnikotoRC4.encodeAnimeSogoVrf(animeId)
 }
