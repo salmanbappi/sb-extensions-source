@@ -724,15 +724,23 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
 
     fun start() {
         if (running.get()) return
-        serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
-        running.set(true)
-        executor.execute {
-            while (running.get()) {
-                try {
-                    val socket = serverSocket!!.accept()
-                    executor.execute { handleClient(socket) }
-                } catch (_: Exception) {}
+        try {
+            serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
+            running.set(true)
+            executor.execute {
+                while (running.get()) {
+                    try {
+                        val socket = serverSocket?.accept() ?: break
+                        executor.execute { handleClient(socket) }
+                    } catch (e: Exception) {
+                        if (serverSocket?.isClosed == true || !running.get()) {
+                            break
+                        }
+                    }
+                }
             }
+        } catch (e: Exception) {
+            running.set(false)
         }
     }
 
@@ -800,17 +808,17 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
             }
 
             if (trimmed.startsWith("#")) {
-                if (trimmed.startsWith("#EXT-X-KEY")) {
-                    val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
-                    uriRegex.find(trimmed)?.let { match ->
-                        val uriValue = match.groupValues[1]
-                        val resolvedUri = targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
-                        val proxiedUri = getProxyUrl(resolvedUri, mediaId)
-                        builder.append(trimmed.replace(uriValue, proxiedUri))
-                    } ?: builder.append(trimmed)
-                } else {
-                    builder.append(trimmed)
-                }
+                val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
+                uriRegex.find(trimmed)?.let { match ->
+                    val uriValue = match.groupValues[1]
+                    val resolvedUri = targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
+                    val proxiedUri = if (resolvedUri.contains(".m3u8") || resolvedUri.contains("key") || resolvedUri.contains("playlist")) {
+                        getProxyUrl(resolvedUri, mediaId)
+                    } else {
+                        resolvedUri
+                    }
+                    builder.append(trimmed.replace(uriValue, proxiedUri))
+                } ?: builder.append(trimmed)
             } else {
                 val resolvedUri = targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
                 if (resolvedUri.contains(".m3u8")) {
