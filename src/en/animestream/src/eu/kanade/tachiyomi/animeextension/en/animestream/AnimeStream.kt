@@ -637,11 +637,7 @@ class AnimeStream : Source() {
         val port = proxy?.port ?: 0
         if (port == 0) return targetUrl
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val ext = when {
-            targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl") -> "playlist.m3u8"
-            targetUrl.contains("key") -> "key.bin"
-            else -> "segment.ts"
-        }
+        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "key.bin"
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&media_id=$mediaId"
     }
 
@@ -776,10 +772,10 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
         val targetUrl = String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
 
         try {
-            when {
-                path.contains("playlist.m3u8") -> servePlaylist(targetUrl, mediaId, output)
-                path.contains("key.bin") -> serveKey(targetUrl, mediaId, output)
-                path.contains("segment.ts") -> serveSegment(targetUrl, output)
+            if (path.contains("playlist.m3u8")) {
+                servePlaylist(targetUrl, mediaId, output)
+            } else if (path.contains("key.bin")) {
+                serveKey(targetUrl, mediaId, output)
             }
         } catch (e: Exception) {
             try {
@@ -827,7 +823,11 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
                 } ?: builder.append(trimmed)
             } else {
                 val resolvedUri = targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
-                builder.append(getProxyUrl(resolvedUri, mediaId))
+                if (resolvedUri.contains(".m3u8")) {
+                    builder.append(getProxyUrl(resolvedUri, mediaId))
+                } else {
+                    builder.append(resolvedUri)
+                }
             }
             builder.append("\n")
         }
@@ -867,67 +867,10 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
         output.flush()
     }
 
-    private fun serveSegment(targetUrl: String, output: OutputStream) {
-        val reqHeaders = Headers.Builder()
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .add("Referer", "https://anime.uniquestream.net/")
-            .build()
-
-        val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
-        if (!response.isSuccessful) {
-            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
-            response.close()
-            return
-        }
-
-        val rawBytes = response.body.bytes()
-        response.close()
-
-        val cleanBytes = stripPngHeader(rawBytes)
-
-        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
-        output.write("Content-Length: ${cleanBytes.size}\r\n".toByteArray())
-        output.write("Content-Type: video/mp2t\r\n".toByteArray())
-        output.write("Connection: close\r\n\r\n".toByteArray())
-        output.write(cleanBytes)
-        output.flush()
-    }
-
     private fun getProxyUrl(targetUrl: String, mediaId: String): String {
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val ext = when {
-            targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl") -> "playlist.m3u8"
-            targetUrl.contains("key") -> "key.bin"
-            else -> "segment.ts"
-        }
+        val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "key.bin"
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&media_id=$mediaId"
-    }
-
-    private fun stripPngHeader(data: ByteArray): ByteArray {
-        if (data.size < 8) return data
-        // Verify PNG magic signature
-        val isPng = data[0] == (-119).toByte() && data[1] == 80.toByte() && data[2] == 78.toByte() && data[3] == 71.toByte()
-        if (!isPng) return data
-
-        // Find IEND boundary
-        var videoStart = -1
-        for (i in 0 until (data.size - 4)) {
-            if (data[i] == 73.toByte() && data[i + 1] == 69.toByte() && data[i + 2] == 78.toByte() && data[i + 3] == 68.toByte()) {
-                videoStart = i + 8 // 4 bytes for name, 4 bytes for CRC
-                break
-            }
-        }
-        if (videoStart < 0 || videoStart >= data.size) return data
-        val tsData = data.copyOfRange(videoStart, data.size)
-
-        // Align to start of MPEG transport stream packet (sync byte 0x47)
-        val iMin = kotlin.math.min(tsData.size - 188, 400)
-        for (offset in 0 until iMin) {
-            if (tsData[offset] == 0x47.toByte() && tsData[offset + 188] == 0x47.toByte()) {
-                return tsData.copyOfRange(offset, tsData.size)
-            }
-        }
-        return tsData
     }
 
     private fun decryptKey(encryptedBase64: String, mediaId: String): ByteArray {
