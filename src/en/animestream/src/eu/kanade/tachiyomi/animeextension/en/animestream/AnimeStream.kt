@@ -51,6 +51,12 @@ class AnimeStream : Source() {
         .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .dispatcher(
+            okhttp3.Dispatcher().apply {
+                maxRequestsPerHost = 15
+                maxRequests = 100
+            }
+        )
         .addInterceptor(CloudflareInterceptor(network.client))
         .addNetworkInterceptor { chain ->
             val response = chain.proceed(chain.request())
@@ -202,33 +208,45 @@ class AnimeStream : Source() {
             return listOf(episode)
         } else {
             val seriesId = anime.url.substringAfterLast("/")
-            val seriesResponse = client.newCall(GET("$baseUrl/api/v1/series/$seriesId", headers)).awaitSuccess()
+            val seriesResponse = client.newCall(GET("$baseUrl/api/v1/series/$seriesId", headers)).awaitSuccessWithRetry()
             val details = json.decodeFromString<DetailsResponseDto>(seriesResponse.body.string())
-            val episodes = details.seasons.orEmpty().parallelCatchingFlatMap { season ->
-                val epCount = season.episode_count ?: 0
-                val pagesCount = if (epCount > 0) (epCount + 19) / 20 else 1
-                (1..pagesCount).toList().parallelCatchingFlatMap { page ->
-                    val url = "$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc&limit=20&page=$page"
-                    val response = client.newCall(GET(url, headers)).awaitSuccess()
-                    val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(response.body.string())
-                    seasonEpisodes.map { ep ->
-                        val epNumStr = ep.episode_number?.let {
-                            if (it % 1f == 0f) it.toInt().toString() else it.toString()
-                        } ?: "1"
-                        val epTitle = ep.title
-                        val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
-                            "S${season.season_number} Ep. $epNumStr - $epTitle"
-                        } else {
-                            "Season ${season.season_number} Episode $epNumStr"
-                        }
-                        SEpisode.create().apply {
-                            this.url = "/episode/${ep.content_id}"
-                            this.name = nameFormatted
-                            episode_number = ep.episode_number ?: 1.0f
-                            date_upload = 0L
-                            summary = ep.description
-                            preview_url = if (showThumbnails) ep.image else null
-                            scanlator = getScanlatorLabel(ep.audio_locales)
+            val seasonsToFetch = preferences.getString(PREF_SEASONS_TO_FETCH_KEY, PREF_SEASONS_TO_FETCH_DEFAULT) ?: PREF_SEASONS_TO_FETCH_DEFAULT
+            val seasons = details.seasons.orEmpty()
+            val seasonsFiltered = when (seasonsToFetch) {
+                "latest" -> seasons.takeLast(1)
+                "2" -> seasons.takeLast(2)
+                "5" -> seasons.takeLast(5)
+                else -> seasons
+            }
+            val episodes = seasonsFiltered.parallelCatchingFlatMap { season ->
+                val epCount = season.episode_count
+                if (epCount == 0) {
+                    emptyList()
+                } else {
+                    val pagesCount = if (epCount != null) (epCount + 19) / 20 else 1
+                    (1..pagesCount).toList().parallelCatchingFlatMap { page ->
+                        val url = "$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc&limit=20&page=$page"
+                        val response = client.newCall(GET(url, headers)).awaitSuccessWithRetry()
+                        val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(response.body.string())
+                        seasonEpisodes.map { ep ->
+                            val epNumStr = ep.episode_number?.let {
+                                if (it % 1f == 0f) it.toInt().toString() else it.toString()
+                            } ?: "1"
+                            val epTitle = ep.title
+                            val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
+                                "S${season.season_number} Ep. $epNumStr - $epTitle"
+                            } else {
+                                "Season ${season.season_number} Episode $epNumStr"
+                            }
+                            SEpisode.create().apply {
+                                this.url = "/episode/${ep.content_id}"
+                                this.name = nameFormatted
+                                episode_number = ep.episode_number ?: 1.0f
+                                date_upload = 0L
+                                summary = ep.description
+                                preview_url = if (showThumbnails) ep.image else null
+                                scanlator = getScanlatorLabel(ep.audio_locales)
+                            }
                         }
                     }
                 }
@@ -247,6 +265,18 @@ class AnimeStream : Source() {
             hasSub -> "Sub"
             else -> null
         }
+    }
+
+    private suspend fun okhttp3.Call.awaitSuccessWithRetry(retries: Int = 1): Response {
+        var lastException: Throwable? = null
+        for (i in 0..retries) {
+            try {
+                return this.clone().awaitSuccess()
+            } catch (e: Throwable) {
+                lastException = e
+            }
+        }
+        throw lastException ?: Exception("Request failed")
     }
 
     // ============================== Hosters (Lazy Stream Resolution) ==============================
@@ -469,6 +499,14 @@ class AnimeStream : Source() {
             title = "Show episode thumbnails",
             summary = "Fetch and display thumbnail images in the episode list.",
         )
+        screen.addListPreference(
+            key = PREF_SEASONS_TO_FETCH_KEY,
+            default = PREF_SEASONS_TO_FETCH_DEFAULT,
+            title = "Seasons to fetch",
+            summary = "Limits the seasons fetched for long-running series to make loading significantly faster.",
+            entries = listOf("All seasons", "Only latest season", "Last 2 seasons", "Last 5 seasons"),
+            entryValues = listOf("all", "latest", "2", "5"),
+        )
     }
 
     // ============================== Filters ==============================
@@ -612,6 +650,9 @@ class AnimeStream : Source() {
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_SCORE_POSITION_KEY = "pref_score_position"
         private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
+
+        private const val PREF_SEASONS_TO_FETCH_KEY = "pref_seasons_to_fetch"
+        private const val PREF_SEASONS_TO_FETCH_DEFAULT = "all"
 
         private const val PREF_AUDIO_LANG_KEY = "pref_audio_lang"
         private const val PREF_AUDIO_LANG_DEFAULT = "ja-JP"
