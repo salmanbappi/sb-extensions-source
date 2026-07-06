@@ -337,8 +337,9 @@ class AnimeStream : Source() {
         val videoList = mutableListOf<Video>()
 
         if (proxy == null) {
-            proxy = LocalProxyServer(client).apply { start() }
+            proxy = LocalProxyServer(client)
         }
+        proxy!!.start()
 
         // Extract videos from main playlist
         if (hosterData.playlist.isNotBlank()) {
@@ -731,7 +732,7 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
             serverSocket?.close()
         } catch (_: Exception) {}
         try {
-            serverSocket = ServerSocket(0)
+            serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
             running.set(true)
             executor.execute {
                 while (running.get() && serverSocket?.isClosed == false) {
