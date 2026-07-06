@@ -51,6 +51,12 @@ class AnimeStream : Source() {
         .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .dispatcher(
+            okhttp3.Dispatcher().apply {
+                maxRequestsPerHost = 15
+                maxRequests = 100
+            }
+        )
         .addInterceptor(CloudflareInterceptor(network.client))
         .addNetworkInterceptor { chain ->
             val response = chain.proceed(chain.request())
@@ -205,30 +211,34 @@ class AnimeStream : Source() {
             val seriesResponse = client.newCall(GET("$baseUrl/api/v1/series/$seriesId", headers)).awaitSuccess()
             val details = json.decodeFromString<DetailsResponseDto>(seriesResponse.body.string())
             val episodes = details.seasons.orEmpty().parallelCatchingFlatMap { season ->
-                val epCount = season.episode_count ?: 0
-                val pagesCount = if (epCount > 0) (epCount + 19) / 20 else 1
-                (1..pagesCount).toList().parallelCatchingFlatMap { page ->
-                    val url = "$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc&limit=20&page=$page"
-                    val response = client.newCall(GET(url, headers)).awaitSuccess()
-                    val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(response.body.string())
-                    seasonEpisodes.map { ep ->
-                        val epNumStr = ep.episode_number?.let {
-                            if (it % 1f == 0f) it.toInt().toString() else it.toString()
-                        } ?: "1"
-                        val epTitle = ep.title
-                        val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
-                            "S${season.season_number} Ep. $epNumStr - $epTitle"
-                        } else {
-                            "Season ${season.season_number} Episode $epNumStr"
-                        }
-                        SEpisode.create().apply {
-                            this.url = "/episode/${ep.content_id}"
-                            this.name = nameFormatted
-                            episode_number = ep.episode_number ?: 1.0f
-                            date_upload = 0L
-                            summary = ep.description
-                            preview_url = if (showThumbnails) ep.image else null
-                            scanlator = getScanlatorLabel(ep.audio_locales)
+                val epCount = season.episode_count
+                if (epCount == 0) {
+                    emptyList()
+                } else {
+                    val pagesCount = if (epCount != null) (epCount + 19) / 20 else 1
+                    (1..pagesCount).toList().parallelCatchingFlatMap { page ->
+                        val url = "$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc&limit=20&page=$page"
+                        val response = client.newCall(GET(url, headers)).awaitSuccess()
+                        val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(response.body.string())
+                        seasonEpisodes.map { ep ->
+                            val epNumStr = ep.episode_number?.let {
+                                if (it % 1f == 0f) it.toInt().toString() else it.toString()
+                            } ?: "1"
+                            val epTitle = ep.title
+                            val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
+                                "S${season.season_number} Ep. $epNumStr - $epTitle"
+                            } else {
+                                "Season ${season.season_number} Episode $epNumStr"
+                            }
+                            SEpisode.create().apply {
+                                this.url = "/episode/${ep.content_id}"
+                                this.name = nameFormatted
+                                episode_number = ep.episode_number ?: 1.0f
+                                date_upload = 0L
+                                summary = ep.description
+                                preview_url = if (showThumbnails) ep.image else null
+                                scanlator = getScanlatorLabel(ep.audio_locales)
+                            }
                         }
                     }
                 }
