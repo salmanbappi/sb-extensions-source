@@ -635,7 +635,7 @@ class AnimeStream : Source() {
 
     private fun getProxyUrl(targetUrl: String, mediaId: String): String {
         val port = proxy?.port ?: 0
-        if (port == 0) return targetUrl
+        if (port <= 0) return targetUrl
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "key.bin"
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&media_id=$mediaId"
@@ -720,15 +720,21 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
     private val running = AtomicBoolean(false)
     private var serverSocket: ServerSocket? = null
     val port: Int
-        get() = serverSocket?.localPort ?: 0
+        get() = serverSocket?.let {
+            if (it.isClosed) 0 else it.localPort
+        } ?: 0
 
     fun start() {
-        if (running.get()) return
+        if (running.get() && serverSocket?.isClosed == false) return
+        running.set(false)
         try {
-            serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
+            serverSocket?.close()
+        } catch (_: Exception) {}
+        try {
+            serverSocket = ServerSocket(0)
             running.set(true)
             executor.execute {
-                while (running.get()) {
+                while (running.get() && serverSocket?.isClosed == false) {
                     try {
                         val socket = serverSocket?.accept() ?: break
                         executor.execute { handleClient(socket) }
@@ -749,7 +755,6 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
         try {
             serverSocket?.close()
         } catch (_: Exception) {}
-        executor.shutdownNow()
     }
 
     private fun handleClient(socket: Socket) {
