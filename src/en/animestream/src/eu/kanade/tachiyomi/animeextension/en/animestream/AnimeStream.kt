@@ -55,7 +55,7 @@ class AnimeStream : Source() {
             okhttp3.Dispatcher().apply {
                 maxRequestsPerHost = 15
                 maxRequests = 100
-            }
+            },
         )
         .addInterceptor(CloudflareInterceptor(network.client))
         .addNetworkInterceptor { chain ->
