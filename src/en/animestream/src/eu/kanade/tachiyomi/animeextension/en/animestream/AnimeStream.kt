@@ -10,16 +10,13 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import extensions.utils.Source
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
-import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
-import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -47,30 +44,6 @@ class AnimeStream : Source() {
 
     override val supportsLatest = true
 
-    override val client = network.client.newBuilder()
-        .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-        .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-        .dispatcher(
-            okhttp3.Dispatcher().apply {
-                maxRequestsPerHost = 15
-                maxRequests = 100
-            },
-        )
-        .addInterceptor(CloudflareInterceptor(network.client))
-        .addNetworkInterceptor { chain ->
-            val response = chain.proceed(chain.request())
-            if (chain.request().url.toString().contains("/api/v1/")) {
-                response.newBuilder()
-                    .header("Cache-Control", "public, max-age=86400")
-                    .removeHeader("Pragma")
-                    .build()
-            } else {
-                response
-            }
-        }
-        .build()
-
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     override fun headersBuilder() = super.headersBuilder()
@@ -79,7 +52,7 @@ class AnimeStream : Source() {
 
     // ============================== Popular ==============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/popular?limit=20&page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/popular?per_page=24&page=$page", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val responseData = response.body.string()
@@ -91,12 +64,12 @@ class AnimeStream : Source() {
                 thumbnail_url = item.image
             }
         }
-        return AnimesPage(animeList, animeList.size >= 20)
+        return AnimesPage(animeList, animeList.size >= 24)
     }
 
     // ============================== Latest ==============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/new?page=$page&limit=20", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/new?page=$page&limit=24", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
@@ -115,7 +88,7 @@ class AnimeStream : Source() {
                 addQueryParameter("suggest", "1")
             }
             addQueryParameter("page", page.toString())
-            addQueryParameter("limit", "20")
+            addQueryParameter("limit", "24")
 
             if (type.isNotBlank()) addQueryParameter("t", type)
             if (genre.isNotBlank()) addQueryParameter("genre", genre)
@@ -151,7 +124,7 @@ class AnimeStream : Source() {
             )
         }
 
-        return AnimesPage(animeList, animeList.size >= 20)
+        return AnimesPage(animeList, animeList.size >= 24)
     }
 
     // ============================== Details ==============================
@@ -208,49 +181,36 @@ class AnimeStream : Source() {
             return listOf(episode)
         } else {
             val seriesId = anime.url.substringAfterLast("/")
-            val seriesResponse = client.newCall(GET("$baseUrl/api/v1/series/$seriesId", headers)).awaitSuccessWithRetry()
+            val seriesResponse = client.newCall(GET("$baseUrl/api/v1/series/$seriesId", headers)).awaitSuccess()
             val details = json.decodeFromString<DetailsResponseDto>(seriesResponse.body.string())
-            val seasonsToFetch = preferences.getString(PREF_SEASONS_TO_FETCH_KEY, PREF_SEASONS_TO_FETCH_DEFAULT) ?: PREF_SEASONS_TO_FETCH_DEFAULT
-            val seasons = details.seasons.orEmpty()
-            val seasonsFiltered = when (seasonsToFetch) {
-                "latest" -> seasons.takeLast(1)
-                "2" -> seasons.takeLast(2)
-                "5" -> seasons.takeLast(5)
-                else -> seasons
-            }
-            val episodes = seasonsFiltered.parallelCatchingFlatMap { season ->
-                val epCount = season.episode_count
-                if (epCount == 0) {
-                    emptyList()
-                } else {
-                    val pagesCount = if (epCount != null) (epCount + 19) / 20 else 1
-                    (1..pagesCount).toList().parallelCatchingFlatMap { page ->
-                        val url = "$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc&limit=20&page=$page"
-                        val response = client.newCall(GET(url, headers)).awaitSuccessWithRetry()
-                        val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(response.body.string())
-                        seasonEpisodes.map { ep ->
-                            val epNumStr = ep.episode_number?.let {
-                                if (it % 1f == 0f) it.toInt().toString() else it.toString()
-                            } ?: "1"
-                            val epTitle = ep.title
-                            val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
-                                "S${season.season_number} Ep. $epNumStr - $epTitle"
-                            } else {
-                                "Season ${season.season_number} Episode $epNumStr"
-                            }
-                            SEpisode.create().apply {
-                                this.url = "/episode/${ep.content_id}"
-                                this.name = nameFormatted
-                                episode_number = ep.episode_number ?: 1.0f
-                                date_upload = 0L
-                                summary = ep.description
-                                preview_url = if (showThumbnails) ep.image else null
-                                scanlator = getScanlatorLabel(ep.audio_locales)
-                            }
-                        }
+            val episodes = mutableListOf<SEpisode>()
+
+            details.seasons?.forEach { season ->
+                val seasonResponse = client.newCall(GET("$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc", headers)).awaitSuccess()
+                val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(seasonResponse.body.string())
+                seasonEpisodes.forEach { ep ->
+                    val epNumStr = ep.episode_number?.let {
+                        if (it % 1f == 0f) it.toInt().toString() else it.toString()
+                    } ?: "1"
+                    val epTitle = ep.title
+                    val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
+                        "S${season.season_number} Ep. $epNumStr - $epTitle"
+                    } else {
+                        "Season ${season.season_number} Episode $epNumStr"
                     }
+                    episodes.add(
+                        SEpisode.create().apply {
+                            url = "/episode/${ep.content_id}"
+                            name = nameFormatted
+                            episode_number = ep.episode_number ?: 1.0f
+                            date_upload = 0L
+                            summary = ep.description
+                            preview_url = if (showThumbnails) ep.image else null
+                            scanlator = getScanlatorLabel(ep.audio_locales)
+                        },
+                    )
                 }
-            }.distinctBy { it.url }
+            }
             return episodes.sortedByDescending { it.episode_number }
         }
     }
@@ -265,18 +225,6 @@ class AnimeStream : Source() {
             hasSub -> "Sub"
             else -> null
         }
-    }
-
-    private suspend fun okhttp3.Call.awaitSuccessWithRetry(retries: Int = 1): Response {
-        var lastException: Throwable? = null
-        for (i in 0..retries) {
-            try {
-                return this.clone().awaitSuccess()
-            } catch (e: Throwable) {
-                lastException = e
-            }
-        }
-        throw lastException ?: Exception("Request failed")
     }
 
     // ============================== Hosters (Lazy Stream Resolution) ==============================
@@ -317,19 +265,7 @@ class AnimeStream : Source() {
             )
         }
 
-        val excludedAudio = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
-        val filteredHosters = hosters.filter { hoster ->
-            val hosterData = json.decodeFromString<HosterData>(hoster.hosterUrl)
-            !excludedAudio.contains(hosterData.locale)
-        }.distinctBy { it.hosterName }
-
-        val prefAudio = preferences.getString(PREF_AUDIO_LANG_KEY, "ja-JP")!!
-        return filteredHosters.sortedWith(
-            compareByDescending { hoster ->
-                val hosterData = json.decodeFromString<HosterData>(hoster.hosterUrl)
-                hosterData.locale == prefAudio
-            },
-        )
+        return hosters.distinctBy { it.hosterName }
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -337,9 +273,8 @@ class AnimeStream : Source() {
         val videoList = mutableListOf<Video>()
 
         if (proxy == null) {
-            proxy = LocalProxyServer(client)
+            proxy = LocalProxyServer(client).apply { start() }
         }
-        proxy!!.start()
 
         // Extract videos from main playlist
         if (hosterData.playlist.isNotBlank()) {
@@ -358,27 +293,23 @@ class AnimeStream : Source() {
             videoList.addAll(extracted)
         }
 
-        val excludedSub = preferences.getStringSet(PREF_EXCLUDE_SUB_KEY, emptySet()) ?: emptySet()
         // Extract videos from hardsubs playlists
         hosterData.hardSubs.forEach { sub ->
-            val subLocale = sub.locale ?: "en-US"
-            if (!excludedSub.contains(subLocale)) {
-                sub.playlist?.let { playlistUrl ->
-                    val langName = getLocaleName(hosterData.locale)
-                    val subLang = getLocaleName(subLocale)
-                    val playlistParts = playlistUrl.split("/")
-                    val mediaFolder = playlistParts.getOrNull(7) ?: ""
-                    val mediaId = mediaFolder.substringBefore("_")
-                    val proxiedPlaylistUrl = getProxyUrl(playlistUrl, mediaId)
+            sub.playlist?.let { playlistUrl ->
+                val langName = getLocaleName(hosterData.locale)
+                val subLang = getLocaleName(sub.locale ?: "en-US")
+                val playlistParts = playlistUrl.split("/")
+                val mediaFolder = playlistParts.getOrNull(7) ?: ""
+                val mediaId = mediaFolder.substringBefore("_")
+                val proxiedPlaylistUrl = getProxyUrl(playlistUrl, mediaId)
 
-                    val extracted = playlistUtils.extractFromHls(
-                        playlistUrl = proxiedPlaylistUrl,
-                        masterHeaders = headers,
-                        videoHeaders = headers,
-                        videoNameGen = { quality -> "$langName [Hardsub: $subLang] - $quality" },
-                    )
-                    videoList.addAll(extracted)
-                }
+                val extracted = playlistUtils.extractFromHls(
+                    playlistUrl = proxiedPlaylistUrl,
+                    masterHeaders = headers,
+                    videoHeaders = headers,
+                    videoNameGen = { quality -> "$langName [Hardsub: $subLang] - $quality" },
+                )
+                videoList.addAll(extracted)
             }
         }
 
@@ -386,20 +317,18 @@ class AnimeStream : Source() {
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val quality = preferences.getString(PREF_QUALITY_KEY, "1080p")!!
-        val prefSub = preferences.getString(PREF_SUB_LANG_KEY, "en-US")!!
-        val prefSubName = getLocaleName(prefSub)
-
+        val quality = preferences.getString(PREF_QUALITY_KEY, "720p")!!
+        val audioType = preferences.getString(PREF_TYPE_KEY, "sub")!!
         return this.sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(quality) }
-                .thenByDescending { video ->
-                    val title = video.videoTitle
-                    if (prefSub == "none") {
-                        !title.contains("Hardsub")
-                    } else {
-                        title.contains("[Hardsub: $prefSubName]")
-                    }
+            compareByDescending<Video> { video ->
+                val title = video.videoTitle
+                if (audioType == "sub") {
+                    title.contains("Japanese") || title.contains("Hardsub")
+                } else {
+                    title.contains("English") && !title.contains("Hardsub")
                 }
+            }
+                .thenByDescending { it.videoTitle.contains(quality) }
                 .thenByDescending { it.resolution ?: 0 },
         )
     }
@@ -455,36 +384,12 @@ class AnimeStream : Source() {
             entryValues = listOf("1080p", "720p", "480p"),
         )
         screen.addListPreference(
-            key = PREF_AUDIO_LANG_KEY,
-            default = PREF_AUDIO_LANG_DEFAULT,
-            title = "Preferred Audio Language",
+            key = PREF_TYPE_KEY,
+            default = "sub",
+            title = "Preferred Audio Type",
             summary = "%s",
-            entries = AUDIO_LANGS,
-            entryValues = AUDIO_VALS,
-        )
-        screen.addListPreference(
-            key = PREF_SUB_LANG_KEY,
-            default = PREF_SUB_LANG_DEFAULT,
-            title = "Preferred Subtitle Language",
-            summary = "%s",
-            entries = listOf("None") + AUDIO_LANGS,
-            entryValues = listOf("none") + AUDIO_VALS,
-        )
-        screen.addSetPreference(
-            key = PREF_EXCLUDE_AUDIO_KEY,
-            title = "Exclude Audio Languages",
-            summary = "Select audio languages to exclude from the list",
-            entries = AUDIO_LANGS,
-            entryValues = AUDIO_VALS,
-            default = emptySet(),
-        )
-        screen.addSetPreference(
-            key = PREF_EXCLUDE_SUB_KEY,
-            title = "Exclude Subtitle Languages",
-            summary = "Select subtitle/hardsub languages to exclude from the list",
-            entries = AUDIO_LANGS,
-            entryValues = AUDIO_VALS,
-            default = emptySet(),
+            entries = listOf("Subbed", "Dubbed"),
+            entryValues = listOf("sub", "dub"),
         )
         screen.addListPreference(
             key = PREF_SCORE_POSITION_KEY,
@@ -499,14 +404,6 @@ class AnimeStream : Source() {
             default = true,
             title = "Show episode thumbnails",
             summary = "Fetch and display thumbnail images in the episode list.",
-        )
-        screen.addListPreference(
-            key = PREF_SEASONS_TO_FETCH_KEY,
-            default = PREF_SEASONS_TO_FETCH_DEFAULT,
-            title = "Seasons to fetch",
-            summary = "Limits the seasons fetched for long-running series to make loading significantly faster.",
-            entries = listOf("All seasons", "Only latest season", "Last 2 seasons", "Last 5 seasons"),
-            entryValues = listOf("all", "latest", "2", "5"),
         )
     }
 
@@ -636,7 +533,7 @@ class AnimeStream : Source() {
 
     private fun getProxyUrl(targetUrl: String, mediaId: String): String {
         val port = proxy?.port ?: 0
-        if (port <= 0) return targetUrl
+        if (port == 0) return targetUrl
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "key.bin"
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&media_id=$mediaId"
@@ -649,31 +546,9 @@ class AnimeStream : Source() {
         private const val PREF_DOMAIN_DEFAULT = "https://anime.uniquestream.net"
 
         private const val PREF_QUALITY_KEY = "pref_quality"
+        private const val PREF_TYPE_KEY = "pref_type"
         private const val PREF_SCORE_POSITION_KEY = "pref_score_position"
         private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
-
-        private const val PREF_SEASONS_TO_FETCH_KEY = "pref_seasons_to_fetch"
-        private const val PREF_SEASONS_TO_FETCH_DEFAULT = "all"
-
-        private const val PREF_AUDIO_LANG_KEY = "pref_audio_lang"
-        private const val PREF_AUDIO_LANG_DEFAULT = "ja-JP"
-
-        private const val PREF_SUB_LANG_KEY = "pref_sub_lang"
-        private const val PREF_SUB_LANG_DEFAULT = "en-US"
-
-        private const val PREF_EXCLUDE_AUDIO_KEY = "pref_exclude_audio"
-        private const val PREF_EXCLUDE_SUB_KEY = "pref_exclude_sub"
-
-        private val AUDIO_LANGS = listOf(
-            "Japanese", "English", "Spanish (LatAm)", "Spanish (Spain)", "Portuguese (Brazil)",
-            "French", "German", "Italian", "Arabic", "Hindi", "Tamil", "Telugu", "Thai",
-            "Vietnamese", "Russian", "Indonesian", "Malay", "Chinese (Simplified)", "Chinese (Traditional)",
-        )
-        private val AUDIO_VALS = listOf(
-            "ja-JP", "en-US", "es-419", "es-ES", "pt-BR",
-            "fr-FR", "de-DE", "it-IT", "ar-SA", "hi-IN", "ta-IN", "te-IN", "th-TH",
-            "vi-VN", "ru-RU", "id-ID", "ms-MY", "zh-CN", "zh-HK",
-        )
 
         private val GENRES = listOf(
             Pair("Any", ""),
@@ -721,33 +596,19 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
     private val running = AtomicBoolean(false)
     private var serverSocket: ServerSocket? = null
     val port: Int
-        get() = serverSocket?.let {
-            if (it.isClosed) 0 else it.localPort
-        } ?: 0
+        get() = serverSocket?.localPort ?: 0
 
     fun start() {
-        if (running.get() && serverSocket?.isClosed == false) return
-        running.set(false)
-        try {
-            serverSocket?.close()
-        } catch (_: Exception) {}
-        try {
-            serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
-            running.set(true)
-            executor.execute {
-                while (running.get() && serverSocket?.isClosed == false) {
-                    try {
-                        val socket = serverSocket?.accept() ?: break
-                        executor.execute { handleClient(socket) }
-                    } catch (e: Exception) {
-                        if (serverSocket?.isClosed == true || !running.get()) {
-                            break
-                        }
-                    }
-                }
+        if (running.get()) return
+        serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
+        running.set(true)
+        executor.execute {
+            while (running.get()) {
+                try {
+                    val socket = serverSocket!!.accept()
+                    executor.execute { handleClient(socket) }
+                } catch (_: Exception) {}
             }
-        } catch (e: Exception) {
-            running.set(false)
         }
     }
 
@@ -756,6 +617,7 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
         try {
             serverSocket?.close()
         } catch (_: Exception) {}
+        executor.shutdownNow()
     }
 
     private fun handleClient(socket: Socket) {
@@ -799,12 +661,10 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
         val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
-            response.close()
             return
         }
 
         val content = response.body.string()
-        response.close()
         val lines = content.split(Regex("""\r?\n"""))
         val builder = StringBuilder(content.length * 2)
 
@@ -816,17 +676,17 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
             }
 
             if (trimmed.startsWith("#")) {
-                val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
-                uriRegex.find(trimmed)?.let { match ->
-                    val uriValue = match.groupValues[1]
-                    val resolvedUri = targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
-                    val proxiedUri = if (resolvedUri.contains(".m3u8") || resolvedUri.contains("key") || resolvedUri.contains("playlist")) {
-                        getProxyUrl(resolvedUri, mediaId)
-                    } else {
-                        resolvedUri
-                    }
-                    builder.append(trimmed.replace(uriValue, proxiedUri))
-                } ?: builder.append(trimmed)
+                if (trimmed.startsWith("#EXT-X-KEY")) {
+                    val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
+                    uriRegex.find(trimmed)?.let { match ->
+                        val uriValue = match.groupValues[1]
+                        val resolvedUri = targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
+                        val proxiedUri = getProxyUrl(resolvedUri, mediaId)
+                        builder.append(trimmed.replace(uriValue, proxiedUri))
+                    } ?: builder.append(trimmed)
+                } else {
+                    builder.append(trimmed)
+                }
             } else {
                 val resolvedUri = targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
                 if (resolvedUri.contains(".m3u8")) {
@@ -857,12 +717,10 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
         val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
-            response.close()
             return
         }
 
         val keyText = response.body.string().trim()
-        response.close()
         val decryptedKey = decryptKey(keyText, mediaId)
 
         output.write("HTTP/1.1 200 OK\r\n".toByteArray())
