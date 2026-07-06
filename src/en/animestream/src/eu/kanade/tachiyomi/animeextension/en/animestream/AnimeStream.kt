@@ -273,8 +273,9 @@ class AnimeStream : Source() {
         val videoList = mutableListOf<Video>()
 
         if (proxy == null) {
-            proxy = LocalProxyServer(client).apply { start() }
+            proxy = LocalProxyServer(client)
         }
+        proxy!!.start()
 
         // Extract videos from main playlist
         if (hosterData.playlist.isNotBlank()) {
@@ -533,7 +534,7 @@ class AnimeStream : Source() {
 
     private fun getProxyUrl(targetUrl: String, mediaId: String): String {
         val port = proxy?.port ?: 0
-        if (port == 0) return targetUrl
+        if (port <= 0) return targetUrl
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val ext = if (targetUrl.contains(".m3u8") || targetUrl.contains("mpegurl")) "playlist.m3u8" else "key.bin"
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&media_id=$mediaId"
@@ -596,19 +597,33 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
     private val running = AtomicBoolean(false)
     private var serverSocket: ServerSocket? = null
     val port: Int
-        get() = serverSocket?.localPort ?: 0
+        get() = serverSocket?.let {
+            if (it.isClosed) 0 else it.localPort
+        } ?: 0
 
     fun start() {
-        if (running.get()) return
-        serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
-        running.set(true)
-        executor.execute {
-            while (running.get()) {
-                try {
-                    val socket = serverSocket!!.accept()
-                    executor.execute { handleClient(socket) }
-                } catch (_: Exception) {}
+        if (running.get() && serverSocket?.isClosed == false) return
+        running.set(false)
+        try {
+            serverSocket?.close()
+        } catch (_: Exception) {}
+        try {
+            serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
+            running.set(true)
+            executor.execute {
+                while (running.get() && serverSocket?.isClosed == false) {
+                    try {
+                        val socket = serverSocket?.accept() ?: break
+                        executor.execute { handleClient(socket) }
+                    } catch (e: Exception) {
+                        if (serverSocket?.isClosed == true || !running.get()) {
+                            break
+                        }
+                    }
+                }
             }
+        } catch (e: Exception) {
+            running.set(false)
         }
     }
 
@@ -617,7 +632,6 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
         try {
             serverSocket?.close()
         } catch (_: Exception) {}
-        executor.shutdownNow()
     }
 
     private fun handleClient(socket: Socket) {
@@ -661,10 +675,12 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
         val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
             return
         }
 
         val content = response.body.string()
+        response.close()
         val lines = content.split(Regex("""\r?\n"""))
         val builder = StringBuilder(content.length * 2)
 
@@ -676,17 +692,17 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
             }
 
             if (trimmed.startsWith("#")) {
-                if (trimmed.startsWith("#EXT-X-KEY")) {
-                    val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
-                    uriRegex.find(trimmed)?.let { match ->
-                        val uriValue = match.groupValues[1]
-                        val resolvedUri = targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
-                        val proxiedUri = getProxyUrl(resolvedUri, mediaId)
-                        builder.append(trimmed.replace(uriValue, proxiedUri))
-                    } ?: builder.append(trimmed)
-                } else {
-                    builder.append(trimmed)
-                }
+                val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
+                uriRegex.find(trimmed)?.let { match ->
+                    val uriValue = match.groupValues[1]
+                    val resolvedUri = targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
+                    val proxiedUri = if (resolvedUri.contains(".m3u8") || resolvedUri.contains("key") || resolvedUri.contains("playlist")) {
+                        getProxyUrl(resolvedUri, mediaId)
+                    } else {
+                        resolvedUri
+                    }
+                    builder.append(trimmed.replace(uriValue, proxiedUri))
+                } ?: builder.append(trimmed)
             } else {
                 val resolvedUri = targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
                 if (resolvedUri.contains(".m3u8")) {
@@ -717,10 +733,12 @@ private class LocalProxyServer(private val client: okhttp3.OkHttpClient) {
         val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
             return
         }
 
         val keyText = response.body.string().trim()
+        response.close()
         val decryptedKey = decryptKey(keyText, mediaId)
 
         output.write("HTTP/1.1 200 OK\r\n".toByteArray())
