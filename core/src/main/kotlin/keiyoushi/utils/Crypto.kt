@@ -23,7 +23,23 @@ fun String.decodeHex(): ByteArray {
 
 fun String.decodeHexToString(): String = decodeHex().toString(Charsets.UTF_8)
 
-fun ByteArray.toHex(): String = joinToString(separator = "") { eachByte -> "%02x".format(eachByte) }
+private val HEX_CHARS = "0123456789abcdef".toCharArray()
+
+/**
+ * Encodes this [ByteArray] into a hexadecimal string.
+ *
+ * This implementation avoids `String.format` and string concatenation overhead
+ * for better performance by using a manual character array lookup and bitwise operations.
+ */
+fun ByteArray.toHex(): String {
+    val result = CharArray(size * 2)
+    for (i in indices) {
+        val v = this[i].toInt() and 0xFF
+        result[i * 2] = HEX_CHARS[v ushr 4]
+        result[i * 2 + 1] = HEX_CHARS[v and 0x0F]
+    }
+    return String(result)
+}
 
 fun String.toHex(): String = toByteArray().toHex()
 
