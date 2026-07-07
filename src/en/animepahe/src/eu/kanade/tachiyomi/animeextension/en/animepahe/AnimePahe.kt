@@ -364,10 +364,7 @@ class AnimePahe : Source() {
                 KwikExtractor(client, headers, cfUA).getStreamVideo(paheWinLink, quality)
                     .let(::listOf)
             }
-            mp4Videos.map { video ->
-                val cookies = video.headers?.get("Cookie") ?: ""
-                AnimePaheHlsServer.processMp4VideoList(client, listOf(video), cookies).first()
-            }
+            AnimePaheHlsServer.processMp4VideoList(client, mp4Videos)
         } else {
             emptyList()
         }
@@ -378,10 +375,7 @@ class AnimePahe : Source() {
                     .getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
                     .let(::listOf)
             }
-            hlsVideos.map { video ->
-                val cookies = video.headers?.get("Cookie") ?: ""
-                AnimePaheHlsServer.processVideoList(extractorClient, listOf(video), cookies).first()
-            }
+            AnimePaheHlsServer.processVideoList(extractorClient, hlsVideos)
         }
     }
 

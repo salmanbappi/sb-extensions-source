@@ -1,356 +1,220 @@
 package eu.kanade.tachiyomi.animeextension.en.animepahe
 
 import eu.kanade.tachiyomi.animesource.model.Video
+import fi.iki.elonen.NanoHTTPD
+import fi.iki.elonen.NanoHTTPD.Response.Status
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.nanohttpd.protocols.http.IHTTPSession
-import org.nanohttpd.protocols.http.NanoHTTPD
-import org.nanohttpd.protocols.http.response.Response
-import org.nanohttpd.protocols.http.response.Response.newChunkedResponse
-import org.nanohttpd.protocols.http.response.Response.newFixedLengthResponse
-import org.nanohttpd.protocols.http.response.Status
 import java.io.ByteArrayInputStream
 import java.io.FilterInputStream
 import java.io.IOException
 import java.net.URLEncoder
 import java.security.GeneralSecurityException
-import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 object AnimePaheHlsServer : NanoHTTPD(0) {
 
-    val port: Int
-        get() = super.getListeningPort()
-
-    @Volatile
-    private var isRunning = false
-
-    @Volatile
-    private var client: OkHttpClient? = null
-
-    @Volatile
-    private var mp4Client: OkHttpClient? = null
-
-    private val mp4Headers = ConcurrentHashMap<String, Headers>()
+    @Volatile private var hlsClient: OkHttpClient? = null
+    @Volatile private var mp4Client: OkHttpClient? = null
+    @Volatile private var running = false
 
     private val hlsAttributeRegex = Regex("""([A-Z0-9-]+)=("[^"]*"|[^,]*)""")
 
     private data class HlsKey(val url: String, val iv: String?)
 
-    override fun start() {
-        super.start()
-        isRunning = true
+    @Synchronized
+    private fun ensureStarted() {
+        if (!running) {
+            start(NanoHTTPD.SOCKET_READ_TIMEOUT, true)
+            running = true
+        }
     }
 
-    override fun stop() {
-        super.stop()
-        isRunning = false
-    }
-
-    fun processVideoList(client: OkHttpClient, videos: List<Video>, cookies: String): List<Video> {
-        this.client = client
+    fun processVideoList(client: OkHttpClient, videos: List<Video>): List<Video> {
+        hlsClient = client
         ensureStarted()
         return videos.map { video ->
             if (video.videoUrl.contains(".m3u8", ignoreCase = true)) {
-                video.copy(videoUrl = createLocalM3u8Url(video.videoUrl, cookies))
+                video.copy(videoUrl = createLocalUrl("/m3u8", video.videoUrl))
             } else {
                 video
             }
         }
     }
 
-    fun processMp4VideoList(client: OkHttpClient, videos: List<Video>, cookies: String): List<Video> {
+    fun processMp4VideoList(client: OkHttpClient, videos: List<Video>): List<Video> {
         mp4Client = client
         ensureStarted()
         return videos.map { video ->
-            val localUrl = createLocalMp4Url(video.videoUrl, cookies)
-            mp4Headers[video.videoUrl] = video.headers ?: Headers.Builder().build()
-            video.copy(
-                videoUrl = localUrl,
-                headers = (video.headers ?: Headers.Builder().build()).newBuilder()
-                    .apply {
-                        if (cookies.isNotBlank()) set("Cookie", cookies)
-                    }.build(),
-            )
+            video.copy(videoUrl = createLocalUrl("/mp4", video.videoUrl))
         }
     }
 
-    override fun handle(session: IHTTPSession): Response = when {
-        session.uri.startsWith("/m3u8") -> handleM3u8Request(session)
-        session.uri.startsWith("/segment") -> handleSegmentRequest(session)
-        session.uri.startsWith("/mp4") -> handleMp4Request(session)
+    override fun serve(session: IHTTPSession): Response = when {
+        session.uri.startsWith("/m3u8") -> handleM3u8(session)
+        session.uri.startsWith("/segment") -> handleSegment(session)
+        session.uri.startsWith("/mp4") -> handleMp4(session)
         else -> newFixedLengthResponse(Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
     }
 
-    private fun handleM3u8Request(session: IHTTPSession): Response {
-        val url = session.parameters["url"]?.first()
-            ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url parameter")
-        val cookies = session.parameters["cookies"]?.first() ?: ""
-
+    private fun handleM3u8(session: IHTTPSession): Response {
+        val url = session.parameters["url"]?.firstOrNull()
+            ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url")
         return try {
-            val headers = extractHeadersFromSession(session).newBuilder().apply {
-                if (cookies.isNotBlank()) set("Cookie", cookies)
-            }.build()
-            val playlist = fetchString(url, headers)
-            val content = rewritePlaylist(playlist, url, cookies)
-            newFixedLengthResponse(Status.OK, "application/vnd.apple.mpegurl", content)
+            val headers = relayHeaders(session)
+            val playlist = fetchString(requireHlsClient(), url, headers)
+            val rewritten = rewritePlaylist(playlist, url)
+            newFixedLengthResponse(Status.OK, "application/vnd.apple.mpegurl", rewritten)
         } catch (e: Exception) {
-            newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
+            newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, e.message ?: "Error")
         }
     }
 
-    private fun handleSegmentRequest(session: IHTTPSession): Response {
-        val url = session.parameters["url"]?.first()
-            ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url parameter")
-        val cookies = session.parameters["cookies"]?.first() ?: ""
-
+    private fun handleSegment(session: IHTTPSession): Response {
+        val url = session.parameters["url"]?.firstOrNull()
+            ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url")
         return try {
-            val headers = extractHeadersFromSession(session).newBuilder().apply {
-                if (cookies.isNotBlank()) set("Cookie", cookies)
-            }.build()
-            val keyUrl = session.parameters["key"]?.first()
-            val iv = session.parameters["iv"]?.first()
+            val headers = relayHeaders(session)
+            val keyUrl = session.parameters["key"]?.firstOrNull()
+            val iv = session.parameters["iv"]?.firstOrNull()
             val data = fetchSegment(url, headers, keyUrl, iv)
             newChunkedResponse(Status.OK, "video/mp2t", ByteArrayInputStream(data))
         } catch (e: Exception) {
-            newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
+            newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, e.message ?: "Error")
         }
     }
 
-    private fun handleMp4Request(session: IHTTPSession): Response {
-        val url = session.parameters["url"]?.first()
-            ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url parameter")
-        val cookies = session.parameters["cookies"]?.first() ?: ""
-
+    private fun handleMp4(session: IHTTPSession): Response {
+        val url = session.parameters["url"]?.firstOrNull()
+            ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url")
         return try {
-            val upstream = fetchMp4(url, session, cookies)
+            val req = Request.Builder().url(url).headers(relayHeaders(session)).apply {
+                session.headers["range"]?.let { header("Range", it) }
+            }.build()
+            val upstream = requireMp4Client().newCall(req).execute()
             val body = upstream.body
-            val contentLength = upstream.header("Content-Length")?.toLongOrNull() ?: -1L
             val contentType = upstream.header("Content-Type") ?: "video/mp4"
+            val contentLength = upstream.header("Content-Length")?.toLongOrNull() ?: -1L
             val status = Status.lookup(upstream.code) ?: Status.OK
             val stream = object : FilterInputStream(body.byteStream()) {
-                override fun close() {
-                    try {
-                        super.close()
-                    } finally {
-                        upstream.close()
-                    }
-                }
+                override fun close() { try { super.close() } finally { upstream.close() } }
             }
-
-            val localResponse = if (contentLength >= 0) {
-                newFixedLengthResponse(status, contentType, stream, contentLength)
-            } else {
-                newChunkedResponse(status, contentType, stream)
-            }
-            localResponse.apply {
-                upstream.header("Accept-Ranges")?.let { addHeader("Accept-Ranges", it) }
-                upstream.header("Content-Range")?.let { addHeader("Content-Range", it) }
-            }
+            val resp = if (contentLength >= 0) newFixedLengthResponse(status, contentType, stream, contentLength)
+            else newChunkedResponse(status, contentType, stream)
+            upstream.header("Accept-Ranges")?.let { resp.addHeader("Accept-Ranges", it) }
+            upstream.header("Content-Range")?.let { resp.addHeader("Content-Range", it) }
+            resp
         } catch (e: Exception) {
-            newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
+            newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, e.message ?: "Error")
         }
     }
 
-    @Synchronized
-    private fun ensureStarted() {
-        if (!isRunning) {
-            start()
-        }
-    }
-
-    private fun createLocalM3u8Url(m3u8Url: String, cookies: String): String {
-        val encodedUrl = URLEncoder.encode(m3u8Url, Charsets.UTF_8.name())
-        val encodedCookies = URLEncoder.encode(cookies, Charsets.UTF_8.name())
-        return "http://localhost:$port/m3u8?url=$encodedUrl&cookies=$encodedCookies"
-    }
-
-    private fun createLocalMp4Url(mp4Url: String, cookies: String): String {
-        val encodedUrl = URLEncoder.encode(mp4Url, Charsets.UTF_8.name())
-        val encodedCookies = URLEncoder.encode(cookies, Charsets.UTF_8.name())
-        return "http://localhost:$port/mp4?url=$encodedUrl&cookies=$encodedCookies"
-    }
-
-    private fun extractHeadersFromSession(session: IHTTPSession): Headers = Headers.Builder().apply {
+    private fun relayHeaders(session: IHTTPSession): Headers = Headers.Builder().apply {
         session.headers.forEach { (key, value) ->
             when (key.lowercase()) {
                 "user-agent", "referer", "origin", "accept", "accept-language",
-                "accept-encoding", "cache-control", "pragma",
+                "cookie", "pragma", "cache-control",
                 -> add(key, value)
             }
         }
     }.build()
 
-    private fun fetchMp4(url: String, session: IHTTPSession, cookies: String): okhttp3.Response {
-        val headers = Headers.Builder().apply {
-            mp4Headers[url]?.let { sourceHeaders ->
-                for (index in 0 until sourceHeaders.size) {
-                    add(sourceHeaders.name(index), sourceHeaders.value(index))
-                }
+    private fun createLocalUrl(path: String, originalUrl: String): String {
+        val encoded = URLEncoder.encode(originalUrl, "UTF-8")
+        return "http://localhost:$listeningPort$path?url=$encoded"
+    }
+
+    private fun createSegmentUrl(segmentUrl: String, key: HlsKey?, seq: Long): String {
+        val encoded = URLEncoder.encode(segmentUrl, "UTF-8")
+        return buildString {
+            append("http://localhost:$listeningPort/segment?url=$encoded")
+            if (key != null) {
+                append("&key=").append(URLEncoder.encode(key.url, "UTF-8"))
+                append("&iv=").append(URLEncoder.encode(key.iv ?: seq.toHlsIv(), "UTF-8"))
             }
-            if (cookies.isNotBlank()) set("Cookie", cookies)
-            session.headers["range"]?.let { set("Range", it) }
-        }.build()
-
-        val response = requireMp4Client().newCall(Request.Builder().url(url).headers(headers).build()).execute()
-        if (!response.isSuccessful) {
-            val code = response.code
-            response.close()
-            throw IOException("Failed to fetch MP4: $code")
-        }
-        return response
-    }
-
-    private fun fetchString(url: String, headers: Headers): String = requireClient().newCall(Request.Builder().url(url).headers(headers).build()).execute().use { response ->
-        if (!response.isSuccessful) {
-            throw IOException("Failed to fetch playlist: ${response.code}")
-        }
-        response.body.string()
-    }
-
-    private fun fetchSegment(
-        url: String,
-        headers: Headers,
-        keyUrl: String?,
-        iv: String?,
-    ): ByteArray {
-        val rawData = fetchBytes(url, headers)
-        return if (keyUrl.isNullOrBlank()) {
-            rawData
-        } else {
-            val ivHex = iv ?: throw IOException("Missing AES-128 IV for encrypted segment")
-            decryptAes128Cbc(rawData, fetchBytes(keyUrl, headers), ivHex)
         }
     }
 
-    private fun fetchBytes(url: String, headers: Headers): ByteArray = requireClient().newCall(Request.Builder().url(url).headers(headers).build()).execute().use { response ->
-        if (!response.isSuccessful) {
-            throw IOException("Failed to fetch resource: ${response.code}")
+    private fun fetchString(client: OkHttpClient, url: String, headers: Headers): String =
+        client.newCall(Request.Builder().url(url).headers(headers).build()).execute().use { r ->
+            if (!r.isSuccessful) throw IOException("Upstream ${r.code}")
+            r.body.string()
         }
-        response.body.bytes()
+
+    private fun fetchBytes(client: OkHttpClient, url: String, headers: Headers): ByteArray =
+        client.newCall(Request.Builder().url(url).headers(headers).build()).execute().use { r ->
+            if (!r.isSuccessful) throw IOException("Upstream ${r.code}")
+            r.body.bytes()
+        }
+
+    private fun fetchSegment(url: String, headers: Headers, keyUrl: String?, iv: String?): ByteArray {
+        val client = requireHlsClient()
+        val raw = fetchBytes(client, url, headers)
+        return if (keyUrl.isNullOrBlank()) raw
+        else decryptAes128(raw, fetchBytes(client, keyUrl, headers), iv ?: throw IOException("Missing IV"))
     }
 
-    private fun requireClient(): OkHttpClient = client ?: throw IOException("AnimePahe HLS server is not initialized")
-
-    private fun requireMp4Client(): OkHttpClient = mp4Client ?: throw IOException("AnimePahe MP4 server is not initialized")
-
-    private fun rewritePlaylist(content: String, originalUrl: String, cookies: String): String {
-        val baseHttpUrl = originalUrl.toHttpUrlOrNull()
-        val modifiedLines = mutableListOf<String>()
-        var mediaSequence = 0L
-        var segmentSequence = mediaSequence
-        var currentKey: HlsKey? = null
+    private fun rewritePlaylist(content: String, originalUrl: String): String {
+        val base = originalUrl.toHttpUrlOrNull()
+        val lines = mutableListOf<String>()
+        var seq = 0L
+        var segSeq = seq
+        var key: HlsKey? = null
 
         content.lines().forEach { line ->
             when {
                 line.startsWith("#EXT-X-MEDIA-SEQUENCE:") -> {
-                    mediaSequence = line.substringAfter(":").trim().toLongOrNull() ?: mediaSequence
-                    segmentSequence = mediaSequence
-                    modifiedLines.add(line)
+                    seq = line.substringAfter(":").trim().toLongOrNull() ?: seq
+                    segSeq = seq
+                    lines += line
                 }
-
                 line.startsWith("#EXT-X-KEY:") -> {
-                    val attributes = parseHlsAttributes(line)
-                    when (attributes["METHOD"]?.uppercase()) {
+                    val attrs = hlsAttributeRegex.findAll(line.substringAfter(":"))
+                        .associate { it.groupValues[1] to it.groupValues[2].trim('"') }
+                    when (attrs["METHOD"]?.uppercase()) {
                         "AES-128" -> {
-                            val keyUri = attributes["URI"]
-                            if (keyUri.isNullOrBlank()) {
-                                currentKey = null
-                                modifiedLines.add(line)
-                            } else {
-                                currentKey = HlsKey(
-                                    url = resolveHlsUrl(baseHttpUrl, keyUri),
-                                    iv = attributes["IV"]?.normalizeHlsIv(),
-                                )
-                            }
+                            val keyUri = attrs["URI"]
+                            key = if (keyUri.isNullOrBlank()) null
+                            else HlsKey(resolveUrl(base, keyUri), attrs["IV"]?.normalizeIv())
+                            // Don't emit the EXT-X-KEY line; decryption happens in the proxy
                         }
-
-                        "NONE" -> {
-                            currentKey = null
-                            modifiedLines.add(line)
-                        }
-
-                        else -> {
-                            currentKey = null
-                            modifiedLines.add(line)
-                        }
+                        else -> { key = null; lines += line }
                     }
                 }
-
-                line.startsWith("#") || line.isBlank() -> modifiedLines.add(line)
-
+                line.startsWith("#") || line.isBlank() -> lines += line
                 else -> {
-                    val resolvedUrl = resolveHlsUrl(baseHttpUrl, line)
-                    if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
-                        modifiedLines.add(createLocalM3u8Url(resolvedUrl, cookies))
-                    } else {
-                        modifiedLines.add(createLocalSegmentUrl(resolvedUrl, currentKey, segmentSequence, cookies))
-                        segmentSequence++
-                    }
+                    val resolved = resolveUrl(base, line)
+                    lines += if (resolved.contains(".m3u8", true)) createLocalUrl("/m3u8", resolved)
+                    else { val s = createSegmentUrl(resolved, key, segSeq++); s }
                 }
             }
         }
-
-        return modifiedLines.joinToString("\n")
+        return lines.joinToString("\n")
     }
 
-    private fun parseHlsAttributes(line: String): Map<String, String> = hlsAttributeRegex.findAll(line.substringAfter(":")).associate {
-        it.groupValues[1] to it.groupValues[2].trim('"')
-    }
+    private fun resolveUrl(base: HttpUrl?, uri: String): String = base?.resolve(uri)?.toString() ?: uri
 
-    private fun resolveHlsUrl(baseHttpUrl: HttpUrl?, uri: String): String = baseHttpUrl?.resolve(uri)?.toString() ?: uri
-
-    private fun createLocalSegmentUrl(segmentUrl: String, key: HlsKey?, sequence: Long, cookies: String): String {
-        val encodedUrl = URLEncoder.encode(segmentUrl, Charsets.UTF_8.name())
-        val encodedCookies = URLEncoder.encode(cookies, Charsets.UTF_8.name())
-        return buildString {
-            append("http://localhost:$port/segment?url=$encodedUrl&cookies=$encodedCookies")
-            if (key != null) {
-                append("&key=")
-                append(URLEncoder.encode(key.url, Charsets.UTF_8.name()))
-                append("&iv=")
-                append(URLEncoder.encode(key.iv ?: sequence.toHlsIv(), Charsets.UTF_8.name()))
-            }
-        }
-    }
-
-    private fun decryptAes128Cbc(data: ByteArray, key: ByteArray, iv: String): ByteArray {
-        if (key.size != 16) {
-            throw IOException("Invalid AES-128 key length: ${key.size}")
-        }
-
-        val normalizedIv = iv.normalizeHlsIv()
-        if (normalizedIv.length != 32) {
-            throw IOException("Invalid AES-128 IV length: ${normalizedIv.length}")
-        }
-
+    private fun decryptAes128(data: ByteArray, key: ByteArray, iv: String): ByteArray {
+        if (key.size != 16) throw IOException("Bad key length: ${key.size}")
+        val ivNorm = iv.normalizeIv()
         return try {
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                SecretKeySpec(key, "AES"),
-                IvParameterSpec(normalizedIv.hexToByteArray()),
-            )
-            cipher.doFinal(data)
+            Cipher.getInstance("AES/CBC/PKCS5Padding").also {
+                it.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(ivNorm.hexToBytes()))
+            }.doFinal(data)
         } catch (e: GeneralSecurityException) {
-            throw IOException("Failed to decrypt AES-128 segment", e)
-        } catch (e: NumberFormatException) {
-            throw IOException("Invalid AES-128 IV", e)
+            throw IOException("AES decrypt failed", e)
         }
     }
 
-    private fun Long.toHlsIv(): String = toString(16).padStart(32, '0')
+    private fun requireHlsClient() = hlsClient ?: throw IOException("HLS client not set")
+    private fun requireMp4Client() = mp4Client ?: throw IOException("MP4 client not set")
 
-    private fun String.normalizeHlsIv(): String = removePrefix("0x")
-        .removePrefix("0X")
-        .padStart(32, '0')
-
-    private fun String.hexToByteArray(): ByteArray = ByteArray(length / 2) { index ->
-        substring(index * 2, index * 2 + 2).toInt(16).toByte()
-    }
+    private fun Long.toHlsIv() = toString(16).padStart(32, '0')
+    private fun String.normalizeIv() = removePrefix("0x").removePrefix("0X").padStart(32, '0')
+    private fun String.hexToBytes() = ByteArray(length / 2) { substring(it * 2, it * 2 + 2).toInt(16).toByte() }
 }

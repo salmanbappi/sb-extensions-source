@@ -1,14 +1,14 @@
 ext {
     extName = 'AnimePahe'
     extClass = '.AnimePahe'
-    extVersionCode = 69
+    extVersionCode = 70
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation(project(":lib:unpacker"))
-    implementation("com.github.NanoHttpd.nanohttpd:nanohttpd:-SNAPSHOT")
+    implementation("com.github.NanoHttpd.nanohttpd:nanohttpd:nanohttpd-project-2.3.1")
     implementation(libs.jsunpacker) {
         exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
     }
