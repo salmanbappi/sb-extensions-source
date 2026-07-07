@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.animepahe
 
+import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.EpisodeDto
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.LatestAnimeDto
@@ -288,12 +289,18 @@ class AnimePahe : Source() {
         val animeId = url.queryParameter("anime_id")
         val episodeList = mutableListOf<SEpisode>()
         recursivePages(episodeList, response, session, animeId)
+        val showSiteEpisodeNumber = preferences.getBoolean(PREF_SHOW_SITE_NUMBER_KEY, PREF_SHOW_SITE_NUMBER_DEFAULT)
 
         return episodeList
             .mapIndexed { index, episode ->
+                val siteEpisodeNumber = episode.name.removePrefix("Episode ")
                 episode.apply {
                     episode_number = (index + 1).toFloat()
-                    name = "Episode ${index + 1}"
+                    name = if (showSiteEpisodeNumber && siteEpisodeNumber != (index + 1).toString()) {
+                        "Episode ${index + 1} ($siteEpisodeNumber)"
+                    } else {
+                        "Episode ${index + 1}"
+                    }
                 }
             }
             .reversed()
@@ -417,14 +424,6 @@ class AnimePahe : Source() {
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addListPreference(
-            key = PREF_QUALITY_KEY,
-            title = PREF_QUALITY_TITLE,
-            entries = PREF_QUALITY_ENTRIES,
-            entryValues = PREF_QUALITY_ENTRIES,
-            default = PREF_QUALITY_DEFAULT,
-            summary = "%s",
-        )
-        screen.addListPreference(
             key = PREF_DOMAIN_KEY,
             title = PREF_DOMAIN_TITLE,
             entries = PREF_DOMAIN_ENTRIES,
@@ -434,12 +433,26 @@ class AnimePahe : Source() {
             restartRequired = true,
         )
         screen.addListPreference(
+            key = PREF_QUALITY_KEY,
+            title = PREF_QUALITY_TITLE,
+            entries = PREF_QUALITY_ENTRIES,
+            entryValues = PREF_QUALITY_ENTRIES,
+            default = PREF_QUALITY_DEFAULT,
+            summary = "%s",
+        )
+        screen.addListPreference(
             key = PREF_SUB_KEY,
             title = PREF_SUB_TITLE,
             entries = PREF_SUB_ENTRIES,
             entryValues = PREF_SUB_VALUES,
             default = PREF_SUB_DEFAULT,
             summary = "%s",
+        )
+        screen.addSwitchPreference(
+            key = PREF_SHOW_SITE_NUMBER_KEY,
+            title = PREF_SHOW_SITE_NUMBER_TITLE,
+            summary = PREF_SHOW_SITE_NUMBER_SUMMARY,
+            default = PREF_SHOW_SITE_NUMBER_DEFAULT,
         )
         screen.addSwitchPreference(
             key = PREF_LINK_TYPE_KEY,
@@ -458,6 +471,14 @@ class AnimePahe : Source() {
             title = PREF_CF_UA_TITLE,
             summary = PREF_CF_UA_SUMMARY,
             default = PREF_CF_UA_DEFAULT,
+            onChange = { preference, newValue ->
+                if (newValue.isBlank()) {
+                    (preference as EditTextPreference).text = PREF_CF_UA_DEFAULT
+                    false
+                } else {
+                    true
+                }
+            },
         )
     }
 
@@ -505,10 +526,14 @@ class AnimePahe : Source() {
         ?: oldAnimeIdRegex.find(url)?.let { it.groupValues[1] }
 
     private val cfBypassUserAgent: String
-        get() = preferences.getString(PREF_CF_UA_KEY, PREF_CF_UA_DEFAULT)
-            ?.trim()
-            .takeIf { !it.isNullOrBlank() }
-            ?: PREF_CF_UA_DEFAULT
+        get() {
+            val stored = preferences.getString(PREF_CF_UA_KEY, PREF_CF_UA_DEFAULT)
+            return if (stored.isNullOrBlank()) {
+                PREF_CF_UA_DEFAULT
+            } else {
+                stored.trim()
+            }
+        }
 
     companion object {
         private val DATE_FORMATTER by lazy {
@@ -519,12 +544,12 @@ class AnimePahe : Source() {
         private val QUALITY_REGEX by lazy { Regex("""(\d+)""") }
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
-        private const val PREF_QUALITY_TITLE = "Preferred quality"
+        private const val PREF_QUALITY_TITLE = "Preferred Quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
         private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "360p")
 
         private const val PREF_DOMAIN_KEY = "preferred_domain"
-        private const val PREF_DOMAIN_TITLE = "Preferred domain (requires app restart)"
+        private const val PREF_DOMAIN_TITLE = "Preferred Domain (Requires App Restart)"
         private val PREF_DOMAIN_ENTRIES = listOf(
             "animepahe.pw",
             "animepahe.com",
@@ -534,30 +559,36 @@ class AnimePahe : Source() {
         private val PREF_DOMAIN_DEFAULT = PREF_DOMAIN_VALUES.first()
 
         private const val PREF_SUB_KEY = "preferred_sub"
-        private const val PREF_SUB_TITLE = "Prefer subs or dubs?"
+        private const val PREF_SUB_TITLE = "Preferred Type"
         private const val PREF_SUB_DEFAULT = "jpn"
-        private val PREF_SUB_ENTRIES = listOf("sub", "dub")
+        private val PREF_SUB_ENTRIES = listOf("Sub", "Dub")
         private val PREF_SUB_VALUES = listOf("jpn", "eng")
 
         private const val PREF_LINK_TYPE_KEY = "preferred_link_type"
-        private const val PREF_LINK_TYPE_TITLE = "Use HLS links"
-        private const val PREF_LINK_TYPE_DEFAULT = false
-        private val PREF_LINK_TYPE_SUMMARY = "Use HLS (.m3u8) streams instead of MP4. " +
-            "Disable (recommended) to use MP4 streams which bypass Cloudflare bot cookie restrictions on the HLS CDN."
+        private const val PREF_LINK_TYPE_TITLE = "Use HLS Links"
+        private const val PREF_LINK_TYPE_DEFAULT = true
+        private val PREF_LINK_TYPE_SUMMARY = """Enable this if you are having Cloudflare issues.
+        """.trimMargin()
 
         // Big slap to whoever misspelled `preferred`
         private const val PREF_AV1_KEY = "preferred_av1"
-        private const val PREF_AV1_TITLE = "Use AV1 codec"
+        private const val PREF_AV1_TITLE = "Use AV1 Codec"
         private const val PREF_AV1_DEFAULT = false
         private val PREF_AV1_SUMMARY = """Enable to use AV1 if available
             |Turn off to never select av1 as preferred codec
         """.trimMargin()
+
+        private const val PREF_SHOW_SITE_NUMBER_KEY = "pref_show_site_number"
+        private const val PREF_SHOW_SITE_NUMBER_TITLE = "Show Site Episode Number"
+        private const val PREF_SHOW_SITE_NUMBER_DEFAULT = false
+        private const val PREF_SHOW_SITE_NUMBER_SUMMARY = "Show the actual episode number from the site in the episode title"
+
         const val UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
         private const val PREF_CF_UA_KEY = "cf_bypass_ua"
         private const val PREF_CF_UA_TITLE = "Custom User-Agent"
         private const val PREF_CF_UA_DEFAULT = UA
         private val PREF_CF_UA_SUMMARY = """Custom User-Agent string for the Cloudflare WebView bypass.
-            |Leave blank to use the default.
+            |Leave blank to revert to the default.
         """.trimMargin()
     }
 }
