@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.all.seanime
 
 import androidx.preference.EditTextPreference
+import aniyomi.lib.m3u8server.M3u8Integration
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
@@ -358,6 +359,8 @@ class Seanime :
         ignoreUnknownKeys = true
         coerceInputValues = true
     }
+
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     private var cachedHeaders: okhttp3.Headers? = null
     private var lastPassword = ""
@@ -977,7 +980,13 @@ class Seanime :
                 val preferredQuality = preferences.getString(PREF_PREFERRED_QUALITY, DEFAULT_PREFERRED_QUALITY)!!
                 val preferredServer = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)!!
 
-                return allVideos.sortedWith(
+                val processedVideos = if (preferences.getBoolean(PREF_USE_LOCAL_PROXY, DEFAULT_USE_LOCAL_PROXY)) {
+                    m3u8Integration.processVideoList(allVideos)
+                } else {
+                    allVideos
+                }
+
+                return processedVideos.sortedWith(
                     compareByDescending<Video> { it.videoTitle.contains(preferredQuality, ignoreCase = true) }
                         .thenByDescending { preferredServer.isNotBlank() && it.videoTitle.contains(preferredServer, ignoreCase = true) },
                 )
@@ -1246,6 +1255,13 @@ class Seanime :
             summary = "Show episode thumbnails and descriptions if available"
             setDefaultValue(DEFAULT_SHOW_EPISODE_METADATA)
         }.also(screen::addPreference)
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_USE_LOCAL_PROXY
+            title = "[Online] Use Local Proxy"
+            summary = "Route HLS streams through a local proxy to automatically strip disguised PNG/image headers from video segments. Enable if playback fails or buffers due to image-disguised streams."
+            setDefaultValue(DEFAULT_USE_LOCAL_PROXY)
+        }.also(screen::addPreference)
     }
 
     companion object {
@@ -1278,6 +1294,9 @@ class Seanime :
 
         private const val PREF_SHOW_LIBRARY_IN_BROWSE = "pref_show_library_in_browse"
         private const val DEFAULT_SHOW_LIBRARY_IN_BROWSE = false
+
+        private const val PREF_USE_LOCAL_PROXY = "pref_use_local_proxy"
+        private const val DEFAULT_USE_LOCAL_PROXY = false
 
         private val GENRE_LIST = arrayOf(
             "Action", "Adventure", "Comedy", "Drama", "Ecchi", "Fantasy",
