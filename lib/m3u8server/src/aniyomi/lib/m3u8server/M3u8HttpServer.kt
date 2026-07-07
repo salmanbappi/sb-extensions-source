@@ -297,12 +297,15 @@ class M3u8HttpServer(
                 }
 
                 line.isNotBlank() && !line.startsWith("#") -> {
-                    // This is a segment URL, resolve against base URL
+                    // This is a segment or nested playlist URL, resolve against base URL
                     val resolvedUrl = baseHttpUrl?.resolve(line)?.toString() ?: line
                     val encodedUrl = URLEncoder.encode(resolvedUrl, Charsets.UTF_8.name())
-                    val localUrl = "http://localhost:$serverPort/segment?url=$encodedUrl"
+                    val isNestedM3u8 = resolvedUrl.contains(".m3u8", ignoreCase = true) ||
+                        resolvedUrl.contains("application/vnd.apple.mpegurl", ignoreCase = true)
+                    val endpoint = if (isNestedM3u8) "m3u8" else "segment"
+                    val localUrl = "http://localhost:$serverPort/$endpoint?url=$encodedUrl"
                     modifiedLines.add(localUrl)
-                    segmentCount++
+                    if (!isNestedM3u8) segmentCount++
                 }
 
                 else -> {
