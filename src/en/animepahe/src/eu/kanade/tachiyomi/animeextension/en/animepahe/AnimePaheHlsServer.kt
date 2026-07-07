@@ -21,13 +21,16 @@ import javax.crypto.spec.SecretKeySpec
 object AnimePaheHlsServer : NanoHTTPD(0) {
 
     @Volatile private var hlsClient: OkHttpClient? = null
+
     @Volatile private var mp4Client: OkHttpClient? = null
+
     @Volatile private var running = false
 
     private val hlsHeaders = ConcurrentHashMap<String, Pair<String, String>>()
     private val mp4Headers = ConcurrentHashMap<String, Headers>()
 
     @Volatile private var activeCookies = ""
+
     @Volatile private var activeUserAgent = ""
 
     private val hlsAttributeRegex = Regex("""([A-Z0-9-]+)=("[^"]*"|[^,]*)""")
@@ -126,10 +129,19 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
             val contentLength = upstream.header("Content-Length")?.toLongOrNull() ?: -1L
             val status = Status.lookup(upstream.code) ?: Status.OK
             val stream = object : FilterInputStream(body.byteStream()) {
-                override fun close() { try { super.close() } finally { upstream.close() } }
+                override fun close() {
+                    try {
+                        super.close()
+                    } finally {
+                        upstream.close()
+                    }
+                }
             }
-            val resp = if (contentLength >= 0) newFixedLengthResponse(status, contentType, stream, contentLength)
-            else newChunkedResponse(status, contentType, stream)
+            val resp = if (contentLength >= 0) {
+                newFixedLengthResponse(status, contentType, stream, contentLength)
+            } else {
+                newChunkedResponse(status, contentType, stream)
+            }
             upstream.header("Accept-Ranges")?.let { resp.addHeader("Accept-Ranges", it) }
             upstream.header("Content-Range")?.let { resp.addHeader("Content-Range", it) }
             resp
@@ -163,23 +175,24 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
         }
     }
 
-    private fun fetchString(client: OkHttpClient, url: String, headers: Headers): String =
-        client.newCall(Request.Builder().url(url).headers(headers).build()).execute().use { r ->
-            if (!r.isSuccessful) throw IOException("Upstream ${r.code}")
-            r.body.string()
-        }
+    private fun fetchString(client: OkHttpClient, url: String, headers: Headers): String = client.newCall(Request.Builder().url(url).headers(headers).build()).execute().use { r ->
+        if (!r.isSuccessful) throw IOException("Upstream ${r.code}")
+        r.body.string()
+    }
 
-    private fun fetchBytes(client: OkHttpClient, url: String, headers: Headers): ByteArray =
-        client.newCall(Request.Builder().url(url).headers(headers).build()).execute().use { r ->
-            if (!r.isSuccessful) throw IOException("Upstream ${r.code}")
-            r.body.bytes()
-        }
+    private fun fetchBytes(client: OkHttpClient, url: String, headers: Headers): ByteArray = client.newCall(Request.Builder().url(url).headers(headers).build()).execute().use { r ->
+        if (!r.isSuccessful) throw IOException("Upstream ${r.code}")
+        r.body.bytes()
+    }
 
     private fun fetchSegment(url: String, headers: Headers, keyUrl: String?, iv: String?): ByteArray {
         val client = requireHlsClient()
         val raw = fetchBytes(client, url, headers)
-        return if (keyUrl.isNullOrBlank()) raw
-        else decryptAes128(raw, fetchBytes(client, keyUrl, headers), iv ?: throw IOException("Missing IV"))
+        return if (keyUrl.isNullOrBlank()) {
+            raw
+        } else {
+            decryptAes128(raw, fetchBytes(client, keyUrl, headers), iv ?: throw IOException("Missing IV"))
+        }
     }
 
     private fun rewritePlaylist(content: String, originalUrl: String): String {
@@ -196,23 +209,37 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
                     segSeq = seq
                     lines += line
                 }
+
                 line.startsWith("#EXT-X-KEY:") -> {
                     val attrs = hlsAttributeRegex.findAll(line.substringAfter(":"))
                         .associate { it.groupValues[1] to it.groupValues[2].trim('"') }
                     when (attrs["METHOD"]?.uppercase()) {
                         "AES-128" -> {
                             val keyUri = attrs["URI"]
-                            key = if (keyUri.isNullOrBlank()) null
-                            else HlsKey(resolveUrl(base, keyUri), attrs["IV"]?.normalizeIv())
+                            key = if (keyUri.isNullOrBlank()) {
+                                null
+                            } else {
+                                HlsKey(resolveUrl(base, keyUri), attrs["IV"]?.normalizeIv())
+                            }
                         }
-                        else -> { key = null; lines += line }
+
+                        else -> {
+                            key = null
+                            lines += line
+                        }
                     }
                 }
+
                 line.startsWith("#") || line.isBlank() -> lines += line
+
                 else -> {
                     val resolved = resolveUrl(base, line)
-                    lines += if (resolved.contains(".m3u8", true)) createLocalUrl("/m3u8", resolved)
-                    else { val s = createSegmentUrl(resolved, key, segSeq++); s }
+                    lines += if (resolved.contains(".m3u8", true)) {
+                        createLocalUrl("/m3u8", resolved)
+                    } else {
+                        val s = createSegmentUrl(resolved, key, segSeq++)
+                        s
+                    }
                 }
             }
         }
