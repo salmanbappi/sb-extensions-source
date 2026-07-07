@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.animepahe
 
-import aniyomi.lib.m3u8server.M3u8HttpServer
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8HttpServer
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.EpisodeDto
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.LatestAnimeDto
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.ResponseDto
