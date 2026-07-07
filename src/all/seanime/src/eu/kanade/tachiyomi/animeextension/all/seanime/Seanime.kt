@@ -1,10 +1,10 @@
 package eu.kanade.tachiyomi.animeextension.all.seanime
 
 import androidx.preference.EditTextPreference
-import aniyomi.lib.m3u8server.M3u8Integration
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.UnmeteredSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
