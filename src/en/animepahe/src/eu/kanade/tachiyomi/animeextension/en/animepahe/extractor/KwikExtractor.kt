@@ -27,9 +27,7 @@ SOFTWARE.
 
 package eu.kanade.tachiyomi.animeextension.en.animepahe.extractor
 
-import android.webkit.CookieManager
 import dev.datlag.jsunpacker.JsUnpacker
-import eu.kanade.tachiyomi.animeextension.en.animepahe.AnimePahe
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -37,30 +35,36 @@ import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.useAsJsoup
+import okhttp3.CookieJar
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Response
 
 data class KwikContent(val cookies: String, val html: String, val finalUrl: String)
-data class HlsResult(val url: String, val cookies: String)
+private data class HlsStream(val url: String, val referer: String)
 
 class KwikExtractor(
     private val client: OkHttpClient,
     private val headers: Headers,
     private val cfBypassUserAgent: String? = null, // Added custom User-Agent parameter
 ) {
-    private val cookieManager by lazy { CookieManager.getInstance() }
-
     private val kwikParamsRegex by lazy { Regex("""\("(\w+)",\d+,"(\w+)",(\d+),(\d+),\d+\)""") }
     private val kwikDUrl by lazy { Regex("action=\"([^\"]+)\"") }
     private val kwikDToken by lazy { Regex("value=\"([^\"]+)\"") }
-    private val hlsSourceRegex by lazy { Regex("""https?://[^'\"\s]+?\.m3u8[^'\"\s]*""") }
 
-    // Clone the base client so interceptors, cookie jars, logging, etc. are preserved,
+    // MP4 extraction runs qualities in parallel; use explicit per-response cookies
+    // so one Kwik page does not overwrite another page's session in the app jar.
+    private val cookieFreeClient by lazy {
+        client.newBuilder()
+            .cookieJar(CookieJar.NO_COOKIES)
+            .build()
+    }
+
+    // Clone the base client so interceptors, logging, etc. are preserved,
     // and only override redirect behavior.
     private val noRedirectClient by lazy {
-        client.newBuilder()
+        cookieFreeClient.newBuilder()
             .followRedirects(false)
             .followSslRedirects(false)
             .build()
@@ -70,141 +74,58 @@ class KwikExtractor(
         headers.newBuilder()
             .set("Origin", "https://kwik.cx")
             .set("Referer", "https://kwik.cx/")
-            .apply {
-                if (!cfBypassUserAgent.isNullOrBlank()) {
-                    set("User-Agent", cfBypassUserAgent)
-                }
-            }
             .build()
     }
 
     suspend fun getHlsVideo(kwikUrl: String, referer: String, quality: String = ""): Video {
-        val result = getHlsStreamResult(kwikUrl, referer)
-        val videoUrl = result.url
-        // Use cookies returned directly from the bypass flow — CookieManager.getCookie() cannot
-        // retrieve partitioned (CHIPS) cookies that kwik.cx sets when loaded as a cross-site iframe
-        // under animepahe.pw, so we must use the cookies obtained from the WebView bypass which
-        // loads kwik.cx as top-level and therefore gets unpartitioned cookies.
-        val cookies = result.cookies.ifBlank {
-            cookieManager.getCookie(videoUrl) ?: cookieManager.getCookie("https://kwik.cx") ?: ""
-        }
-        val ua = cfBypassUserAgent ?: AnimePahe.UA
-        val headersWithCookies = kwikHeaders.newBuilder().apply {
-            if (cookies.isNotBlank()) set("Cookie", cookies)
-        }.build()
-
-        val headerField = buildString {
-            append("Referer: https://kwik.cx/")
-            if (cookies.isNotBlank()) append(",Cookie: $cookies")
-        }
+        val hlsStream = getHlsStream(kwikUrl, referer)
 
         return Video(
-            videoUrl = videoUrl,
+            videoUrl = hlsStream.url,
             videoTitle = quality,
-            headers = headersWithCookies,
-            mpvArgs = listOf(
-                "referrer" to "https://kwik.cx/",
-                "http-header-fields" to headerField,
-                "user-agent" to ua,
-            ),
+            headers = kwikHeaders.newBuilder()
+                .set("Referer", hlsStream.referer)
+                .build(),
         )
     }
 
-    suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String = getHlsStreamResult(kwikUrl, referer).url
+    suspend fun getHlsStreamUrl(kwikUrl: String, referer: String): String = getHlsStream(kwikUrl, referer).url
 
-    private suspend fun getHlsStreamResult(kwikUrl: String, referer: String): HlsResult {
-        // Use fetchKwikHtml so the embed page loads reliably via CF bypass if needed.
-        val (embedCookies, html) = fetchKwikHtml(kwikUrl)
-
-        // fetchKwikHtml returns empty cookies when the embed page loads without a CF challenge
-        // (plain OkHttp succeeds, cfResult=null → no cf_clearance in response headers).
-        // The HLS CDN (na6x.kwik.cx) is a SEPARATE CF zone that always requires cf_clearance.
-        // Strategy: merge embedCookies with whatever cf_clearance we can find, forcing a fresh
-        // WebView bypass on kwik.cx (root, not embed) only if none is stored yet.
-        val cfCookies = ensureKwikCfClearance(embedCookies)
-
-        val script = html.substringAfterLast("eval(function(", "")
-            .takeIf { it.isNotBlank() }
-            ?: run {
-                // Fallback: direct fetch with referer (may work without CF challenge)
-                val doc = client.newCall(GET(kwikUrl, headers.newBuilder().set("Referer", referer).build()))
-                    .awaitSuccess().useAsJsoup()
-                doc.selectFirst("script:containsData(eval\\(function)")?.data()
-                    ?.substringAfterLast("eval(function(")
-                    ?: throw KwikException.ExtractionException("JsUnpacker not found.")
-            }
-        val unpacked = JsUnpacker.unpackAndCombine("eval(function($script")
-            ?: throw KwikException.ExtractionException("JsUnpacker failed to unpack Kwik script.")
-        val url = hlsSourceRegex.find(unpacked)?.value
-            ?: throw KwikException.ExtractionException("HLS source URL not found in unpacked Kwik script.")
-        return HlsResult(url = url, cookies = cfCookies)
-    }
-
-    /**
-     * Ensures a valid cf_clearance cookie is present for kwik.cx CDN requests.
-     * [embedCookies] may be empty when the embed page loaded without a CF challenge.
-     * Priority: embedCookies (has cf_clearance) → CookieManager (prior WebView run) → force bypass.
-     */
-    private suspend fun ensureKwikCfClearance(embedCookies: String): String {
-        if (embedCookies.contains("cf_clearance")) return embedCookies
-
-        // Check CookieManager — populated when CloudflareBypass WebView ran kwik.cx as top-level
-        val stored = cookieManager.getCookie("https://kwik.cx") ?: ""
-        if (stored.contains("cf_clearance")) {
-            return if (embedCookies.isBlank()) stored else "$embedCookies; $stored"
+    private suspend fun getHlsStream(kwikUrl: String, referer: String): HlsStream = client.newCall(GET(kwikUrl, headers.newBuilder().set("Referer", referer).build()))
+        .awaitSuccess().use { response ->
+            val finalUrl = response.request.url.toString()
+            val eContent = response.useAsJsoup()
+            val script = eContent.selectFirst("script:containsData(eval\\(function)")?.data()
+                ?.substringAfterLast("eval(function(")
+                ?: throw KwikException.ExtractionException("JsUnpacker not found.")
+            val unpacked = JsUnpacker.unpackAndCombine("eval(function($script")
+                ?: throw KwikException.ExtractionException("JsUnpacker failed to unpack Kwik script.")
+            HlsStream(
+                url = unpacked.substringAfter("const source=\\'").substringBefore("\\';"),
+                referer = finalUrl,
+            )
         }
-
-        // Last resort: force a fresh bypass on kwik.cx root (not the embed) so CookieManager is seeded
-        val bypass = CloudflareBypass().getCookies("https://kwik.cx", cfBypassUserAgent)
-            ?: return embedCookies // Give up gracefully; video may still 403 but we tried.
-        return if (embedCookies.isBlank()) bypass.cookies else "$embedCookies; ${bypass.cookies}"
-    }
 
     suspend fun getStreamVideo(paheUrl: String, quality: String = ""): Video {
-        val (videoUrl, cookies) = getStreamUrlFromKwik(paheUrl)
-        val ua = cfBypassUserAgent ?: AnimePahe.UA
-        val headersWithCookies = kwikHeaders.newBuilder().apply {
-            if (cookies.isNotBlank()) set("Cookie", cookies)
-        }.build()
-
-        val headerField = buildString {
-            append("Referer: https://kwik.cx/")
-            if (cookies.isNotBlank()) append(",Cookie: $cookies")
-        }
+        val videoUrl = getStreamUrlFromKwik(paheUrl)
 
         return Video(
             videoUrl = videoUrl,
             videoTitle = quality,
-            headers = headersWithCookies,
-            mpvArgs = listOf(
-                "referrer" to "https://kwik.cx/",
-                "http-header-fields" to headerField,
-                "user-agent" to ua,
-            ),
+            headers = kwikHeaders,
         )
     }
 
-    /** Returns Pair(streamUrl, cookies) so callers can thread the CF cookies to the player. */
-    suspend fun getStreamUrlFromKwik(paheUrl: String): Pair<String, String> {
-        // Resolve pahe.win -> kwik.cx/f/token
-        val kwikFUrl = noRedirectClient.newCall(GET("$paheUrl/i", headers)).await().use { response ->
+    suspend fun getStreamUrlFromKwik(paheUrl: String): String {
+        val kwikUrl = noRedirectClient.newCall(GET("$paheUrl/i", headers)).await().use { response ->
             val location = response.header("location")
                 ?: throw KwikException.ExtractionException("Pahe redirect failed: No location header found.")
             "https://" + location.substringAfterLast("https://")
         }
 
-        // Primary path: WebView form submission. The WebView automatically sends ALL CF cookies
-        // including httpOnly cf_bm which OkHttp cannot access via CookieManager.
-        // cf_clearance (non-httpOnly) is then read from CookieManager for MPV headers.
-        val webViewUrl = CloudflareBypass().getKwikStreamUrl(kwikFUrl, cfBypassUserAgent)
-        if (webViewUrl != null) {
-            val cfCookies = cookieManager.getCookie("https://kwik.cx") ?: ""
-            return webViewUrl to cfCookies
-        }
+        var (fContentCookies, fContentString, fContentUrl) = fetchKwikHtml(kwikUrl)
 
-        // Fallback: OkHttp POST loop (works if CF challenge is not active)
-        var (fContentCookies, fContentString, fContentUrl) = fetchKwikHtml(kwikFUrl)
-
+        // Extract JS Parameters
         val match = kwikParamsRegex.find(fContentString)
             ?: throw KwikException.ExtractionException("Could not find decryption parameters in Kwik HTML.")
 
@@ -216,11 +137,12 @@ class KwikExtractor(
         val tok = kwikDToken.find(decrypted)?.groupValues?.get(1)
             ?: throw KwikException.ExtractionException("Failed to decrypt stream Token.")
 
+        // Extraction Loop
         var cloudFlareBypassResult: CloudFlareBypassResult? = null
         var kwikLocation: String? = null
         var code = 419
         var tries = 0
-        val tryLimit = 5
+        val tryLimit = 2
 
         while (code != 302 && tries < tryLimit) {
             tries++
@@ -238,10 +160,10 @@ class KwikExtractor(
             }
 
             // Cloudflare/Session Timeout Handling
-            if (code == 403 || code == 419) {
+            if ((code == 403 || code == 419) && tries < tryLimit) {
                 // Pass the custom User-Agent to the bypass
-                cloudFlareBypassResult = CloudflareBypass().getCookies(kwikFUrl, cfBypassUserAgent)
-                    ?: throw KwikException.CloudflareBlockedException("Cloudflare bypass failed to return result.")
+                cloudFlareBypassResult = CloudflareBypass().getCookies(kwikUrl, cfBypassUserAgent)
+                    ?: throw KwikException.CloudflareBlockedException("Failed to bypass Kwik Cloudflare. Try opening a Kwik video in WebView manually.")
 
                 // Prevent stacking multiple cf_clearance cookies
                 val cleanedCookies = fContentCookies.split("; ")
@@ -252,8 +174,7 @@ class KwikExtractor(
             }
         }
 
-        val location = kwikLocation ?: throw KwikException.ExtractionException("Failed to extract stream URI after $tries attempts.")
-        return location to fContentCookies
+        return kwikLocation ?: throw KwikException.ExtractionException("Failed to extract Kwik stream URI after $tries attempts. Try bypassing Kwik Cloudflare in WebView.")
     }
 
     private suspend fun fetchKwikHtml(kwikUrl: String): KwikContent {
@@ -271,10 +192,10 @@ class KwikExtractor(
                 }
                 .build()
 
-            // Use the base client directly so all interceptors are preserved.
+            // Use the cookie-free client so interceptors are preserved without sharing Kwik sessions.
             return try {
                 // try-catch the `Failed to bypass Cloudflare` exception
-                client.newCall(GET(kwikUrl, headers)).awaitSuccess().use { resp ->
+                cookieFreeClient.newCall(GET(kwikUrl, headers)).awaitSuccess().use { resp ->
                     val html = resp.bodyString()
                     if (html.contains("eval(function(")) {
                         val respCookies = resp.extractCookies()
@@ -295,11 +216,11 @@ class KwikExtractor(
 
         // 2. Try Cloudflare Bypass (Always fresh) with the custom User-Agent
         val cfResult = CloudflareBypass().getCookies(kwikUrl, cfBypassUserAgent)
-            ?: throw KwikException.CloudflareBlockedException("Bypass returned null result.")
+            ?: throw KwikException.CloudflareBlockedException("Failed to bypass Kwik Cloudflare. Try opening a Kwik video in WebView manually.")
 
         attemptKwikFetch(cfResult)?.let { return it }
 
-        throw KwikException.CloudflareBlockedException("Cloudflare challenge not solved.")
+        throw KwikException.CloudflareBlockedException("Failed to bypass Kwik Cloudflare. Try opening a Kwik video in WebView manually.")
     }
 
     private fun Response.extractCookies(): String = headers("set-cookie").joinToString("; ") { it.substringBefore(";") }
