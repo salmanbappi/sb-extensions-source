@@ -277,7 +277,7 @@ class M3u8HttpServer(
      */
     fun createLocalUrl(m3u8Url: String): String {
         val encodedUrl = URLEncoder.encode(m3u8Url, Charsets.UTF_8.name())
-        return "http://localhost:$port/m3u8?url=$encodedUrl"
+        return "http://127.0.0.1:$port/m3u8?url=$encodedUrl"
     }
 
     private fun modifyM3u8Content(content: String, originalUrl: String, serverPort: Int): String {
@@ -303,7 +303,7 @@ class M3u8HttpServer(
                     val isNestedM3u8 = resolvedUrl.contains(".m3u8", ignoreCase = true) ||
                         resolvedUrl.contains("application/vnd.apple.mpegurl", ignoreCase = true)
                     val endpoint = if (isNestedM3u8) "m3u8" else "segment"
-                    val localUrl = "http://localhost:$serverPort/$endpoint?url=$encodedUrl"
+                    val localUrl = "http://127.0.0.1:$serverPort/$endpoint?url=$encodedUrl"
                     modifiedLines.add(localUrl)
                     if (!isNestedM3u8) segmentCount++
                 }

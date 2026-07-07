@@ -52,7 +52,7 @@ class M3u8ServerManager(
     /**
      * Gets the server base URL
      */
-    fun getServerUrl(): String? = server?.let { "http://localhost:${it.port}" }
+    fun getServerUrl(): String? = server?.let { "http://127.0.0.1:${it.port}" }
 
     /**
      * Processes an M3U8 file through the server
