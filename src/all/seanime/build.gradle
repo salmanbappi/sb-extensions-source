@@ -1,8 +1,13 @@
 ext {
     extName = 'Seanime'
     extClass = '.Seanime'
-    extVersionCode = 25
+    extVersionCode = 26
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:m3u8server"))
+}
+
