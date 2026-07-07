@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.animepahe
 
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8HttpServer
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.EpisodeDto
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.LatestAnimeDto
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.ResponseDto
@@ -50,10 +49,6 @@ class AnimePahe : Source() {
         client.newBuilder().apply {
             interceptors().removeAll { it is DdosGuardInterceptor }
         }.build()
-    }
-
-    private val hlsServer by lazy {
-        M3u8HttpServer(extractorClient).also { it.start() }
     }
 
     override val name = "AnimePahe"
@@ -364,21 +359,28 @@ class AnimePahe : Source() {
         val cfUA = cfBypassUserAgent // Get the custom UA once
 
         val videos = if (!useHLS) {
-            links.parallelCatchingFlatMapBlocking { (_, paheWinLink, quality) ->
+            val mp4Videos = links.parallelCatchingFlatMapBlocking { (_, paheWinLink, quality) ->
                 if (paheWinLink.isNullOrBlank()) return@parallelCatchingFlatMapBlocking emptyList()
                 KwikExtractor(client, headers, cfUA).getStreamVideo(paheWinLink, quality)
                     .let(::listOf)
+            }
+            mp4Videos.map { video ->
+                val cookies = video.headers?.get("Cookie") ?: ""
+                AnimePaheHlsServer.processMp4VideoList(client, listOf(video), cookies).first()
             }
         } else {
             emptyList()
         }
 
         return videos.ifEmpty {
-            links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
-                val video = KwikExtractor(extractorClient, headers, cfUA)
+            val hlsVideos = links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
+                KwikExtractor(extractorClient, headers, cfUA)
                     .getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
-                val localUrl = hlsServer.createLocalUrl(video.videoUrl)
-                listOf(video.copy(videoUrl = localUrl))
+                    .let(::listOf)
+            }
+            hlsVideos.map { video ->
+                val cookies = video.headers?.get("Cookie") ?: ""
+                AnimePaheHlsServer.processVideoList(extractorClient, listOf(video), cookies).first()
             }
         }
     }
