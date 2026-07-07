@@ -75,7 +75,7 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
                 headers = (video.headers ?: Headers.Builder().build()).newBuilder()
                     .apply {
                         if (cookies.isNotBlank()) set("Cookie", cookies)
-                    }.build()
+                    }.build(),
             )
         }
     }
@@ -253,6 +253,7 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
                     segmentSequence = mediaSequence
                     modifiedLines.add(line)
                 }
+
                 line.startsWith("#EXT-X-KEY:") -> {
                     val attributes = parseHlsAttributes(line)
                     when (attributes["METHOD"]?.uppercase()) {
@@ -268,17 +269,21 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
                                 )
                             }
                         }
+
                         "NONE" -> {
                             currentKey = null
                             modifiedLines.add(line)
                         }
+
                         else -> {
                             currentKey = null
                             modifiedLines.add(line)
                         }
                     }
                 }
+
                 line.startsWith("#") || line.isBlank() -> modifiedLines.add(line)
+
                 else -> {
                     val resolvedUrl = resolveHlsUrl(baseHttpUrl, line)
                     if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
