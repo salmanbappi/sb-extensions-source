@@ -244,19 +244,26 @@ class M3u8HttpServer(
             val inputStream = response.body.byteStream()
             val outputStream = ByteArrayOutputStream()
 
-            // Read first 4KB to detect format
+            // Read first 4KB to detect format (ensuring we read 4KB or reach EOF)
             val buffer = ByteArray(4096)
-            val bytesRead = inputStream.read(buffer)
-            Log.d(tag, "Read $bytesRead bytes from segment for format detection")
+            var totalBytesRead = 0
+            while (totalBytesRead < buffer.size) {
+                val read = inputStream.read(buffer, totalBytesRead, buffer.size - totalBytesRead)
+                if (read == -1) break
+                totalBytesRead += read
+            }
+            Log.d(tag, "Read $totalBytesRead bytes from segment for format detection")
 
-            if (bytesRead > 0) {
-                val skipBytes = AutoDetector.detectSkipBytes(buffer.copyOf(bytesRead))
+            if (totalBytesRead > 0) {
+                val skipBytes = AutoDetector.detectSkipBytes(buffer.copyOf(totalBytesRead))
                 Log.d(tag, "AutoDetector determined skip bytes: $skipBytes")
 
                 // Write data from detected offset
-                val validBytes = bytesRead - skipBytes
-                outputStream.write(buffer, skipBytes, validBytes)
-                Log.d(tag, "Wrote $validBytes bytes from detected offset")
+                val validBytes = totalBytesRead - skipBytes
+                if (validBytes > 0) {
+                    outputStream.write(buffer, skipBytes, validBytes)
+                    Log.d(tag, "Wrote $validBytes bytes from detected offset")
+                }
 
                 // Copy remaining data
                 val remainingBytes = inputStream.copyTo(outputStream)
