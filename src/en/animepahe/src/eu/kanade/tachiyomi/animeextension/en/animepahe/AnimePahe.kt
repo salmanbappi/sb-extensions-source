@@ -30,6 +30,7 @@ import org.jsoup.nodes.Element
 import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 
@@ -43,6 +44,12 @@ class AnimePahe : Source() {
     override val client = network.client.newBuilder()
         .addInterceptor(interceptor)
         .build()
+
+    private val extractorClient by lazy {
+        client.newBuilder().apply {
+            interceptors().removeAll { it is DdosGuardInterceptor }
+        }.build()
+    }
 
     override val name = "AnimePahe"
 
@@ -254,21 +261,33 @@ class AnimePahe : Source() {
      * @see animeDetailsRequest
      */
     override fun episodeListRequest(anime: SAnime): Request {
-        val session = anime.getId()?.let { fetchSession(it) }
+        val animeId = anime.getId()
+        val session = animeId?.let { fetchSession(it) }
             ?: sessionIdRegex.find(anime.url)?.groupValues?.get(1)
             ?: throw IllegalStateException("Anime session not found")
-        return GET("$baseUrl/api?m=release&id=$session&sort=episode_asc&page=1")
+
+        val url = baseUrl.toHttpUrl().newBuilder().apply {
+            addPathSegment("api")
+            addQueryParameter("m", "release")
+            addQueryParameter("id", session)
+            addQueryParameter("sort", "episode_asc")
+            animeId?.let { addQueryParameter("anime_id", it) }
+            addQueryParameter("page", "1")
+        }.build()
+
+        return GET(url)
     }
 
     private val sessionIdRegex by lazy { Regex("""/anime/([\w-]+)""") }
-    private val animeSessionRegex by lazy { Regex("""&id=([\w-]+)&""") }
+    private val stableEpisodeRegex by lazy { Regex("""/play/anime/(\d+)/episode/([\d.]+)""") }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val url = response.request.url.toString()
-        val session = animeSessionRegex.find(url)?.groupValues?.get(1)
+        val url = response.request.url
+        val session = url.queryParameter("id")
             ?: throw IllegalStateException("Anime session not found in URL: $url")
+        val animeId = url.queryParameter("anime_id")
         val episodeList = mutableListOf<SEpisode>()
-        recursivePages(episodeList, response, session)
+        recursivePages(episodeList, response, session, animeId)
 
         return episodeList
             .mapIndexed { index, episode ->
@@ -280,11 +299,11 @@ class AnimePahe : Source() {
             .reversed()
     }
 
-    private fun parseEpisodePage(episodes: List<EpisodeDto>, animeSession: String): MutableList<SEpisode> = episodes.map { episode ->
+    private fun parseEpisodePage(episodes: List<EpisodeDto>, animeSession: String, animeId: String?): MutableList<SEpisode> = episodes.map { episode ->
         SEpisode.create().apply {
             date_upload = episode.createdAt.let { DATE_FORMATTER.tryParse(it) }
             val session = episode.session
-            setUrlWithoutDomain("/play/$animeSession/$session")
+            setUrlWithoutDomain(animeId?.let { "/play/anime/$it/episode/${episode.episodeNumber}" } ?: "/play/$animeSession/$session")
             val epNum = episode.episodeNumber
             episode_number = epNum
             val epName = if (floor(epNum) == ceil(epNum)) {
@@ -296,14 +315,14 @@ class AnimePahe : Source() {
         }
     }.toMutableList()
 
-    private fun recursivePages(episodeList: MutableList<SEpisode>, response: Response, animeSession: String) {
+    private fun recursivePages(episodeList: MutableList<SEpisode>, response: Response, animeSession: String, animeId: String?) {
         val episodesData = response.parseAs<ResponseDto<EpisodeDto>>()
         val page = episodesData.currentPage
         val hasNextPage = page < episodesData.lastPage
-        episodeList.addAll(parseEpisodePage(episodesData.items, animeSession))
+        episodeList.addAll(parseEpisodePage(episodesData.items, animeSession, animeId))
         if (hasNextPage) {
             nextPageRequest(response.request.url.toString(), page + 1).use { nextPage ->
-                recursivePages(episodeList, nextPage, animeSession)
+                recursivePages(episodeList, nextPage, animeSession, animeId)
             }
         }
     }
@@ -315,7 +334,16 @@ class AnimePahe : Source() {
 
     // ============================ Video Links =============================
 
-    override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, headers)
+    override fun videoListRequest(episode: SEpisode): Request {
+        val stableEpisode = stableEpisodeRegex.find(episode.url)
+            ?: return GET("$baseUrl${episode.url}", headers)
+
+        val animeId = stableEpisode.groupValues[1]
+        val episodeNumber = stableEpisode.groupValues[2].toFloat()
+        val animeSession = fetchSession(animeId)
+        val episodeSession = fetchEpisodeSession(animeSession, episodeNumber)
+        return GET("$baseUrl/play/$animeSession/$episodeSession", headers)
+    }
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
@@ -330,19 +358,19 @@ class AnimePahe : Source() {
         val useHLS = preferences.getBoolean(PREF_LINK_TYPE_KEY, PREF_LINK_TYPE_DEFAULT)
         val cfUA = cfBypassUserAgent // Get the custom UA once
 
-        return if (!useHLS) {
-            links.parallelCatchingFlatMapBlocking { linkData: Triple<String, String?, String> ->
-                val paheWinLink = linkData.second
-                val quality = linkData.third
+        val videos = if (!useHLS) {
+            links.parallelCatchingFlatMapBlocking { (_, paheWinLink, quality) ->
                 if (paheWinLink.isNullOrBlank()) return@parallelCatchingFlatMapBlocking emptyList()
                 KwikExtractor(client, headers, cfUA).getStreamVideo(paheWinLink, quality)
                     .let(::listOf)
             }
         } else {
-            links.parallelCatchingFlatMapBlocking { linkData: Triple<String, String?, String> ->
-                val kwikLink = linkData.first
-                val quality = linkData.third
-                KwikExtractor(client, headers, cfUA).getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
+            emptyList()
+        }
+
+        return videos.ifEmpty {
+            links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
+                KwikExtractor(extractorClient, headers, cfUA).getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
                     .let(::listOf)
             }
         }
@@ -350,17 +378,25 @@ class AnimePahe : Source() {
 
     override fun List<Video>.sortVideos(): List<Video> {
         val subPreference = preferences.getString(PREF_SUB_KEY, PREF_SUB_DEFAULT)!!
-        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+        val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
         val shouldBeAv1 = preferences.getBoolean(PREF_AV1_KEY, PREF_AV1_DEFAULT)
         val shouldEndWithEng = subPreference == "eng"
 
         return this.sortedWith(
-            compareBy(
-                { it.videoTitle.contains(quality) },
-                { Regex("""\beng\b""").containsMatchIn(it.videoTitle.lowercase()) == shouldEndWithEng },
-                { it.videoTitle.lowercase().contains("av1") == shouldBeAv1 },
-            ),
-        ).reversed()
+            compareByDescending<Video> { it.videoTitle.contains(preferredQuality) }
+                .thenByDescending {
+                    val quality = it.videoTitle
+                    QUALITY_REGEX_P.find(quality)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: QUALITY_REGEX.find(quality)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: 0
+                }
+                .thenByDescending {
+                    val quality = it.videoTitle.lowercase()
+                    val isDub = quality.contains("eng") || quality.contains("dub")
+                    if (shouldEndWithEng) isDub else !isDub
+                }
+                .thenByDescending { it.videoTitle.lowercase().contains("av1") == shouldBeAv1 },
+        )
     }
 
     // ============================== Filters ===============================
@@ -435,6 +471,24 @@ class AnimePahe : Source() {
         return sessionId
     }
 
+    private fun fetchEpisodeSession(animeSession: String, episodeNumber: Float): String {
+        var page = 1
+        while (true) {
+            val request = GET("$baseUrl/api?m=release&id=$animeSession&sort=episode_asc&page=$page")
+            val episodesData = client.newCall(request).execute().use { response ->
+                response.parseAs<ResponseDto<EpisodeDto>>()
+            }
+
+            episodesData.items.firstOrNull { abs(it.episodeNumber - episodeNumber) < 0.001f }
+                ?.let { return it.session }
+
+            if (page >= episodesData.lastPage) break
+            page++
+        }
+
+        throw IllegalStateException("Episode session not found")
+    }
+
     private fun parseStatus(statusString: String?): Int = when (statusString) {
         "Currently Airing" -> SAnime.ONGOING
         "Finished Airing" -> SAnime.COMPLETED
@@ -457,6 +511,9 @@ class AnimePahe : Source() {
         private val DATE_FORMATTER by lazy {
             SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH)
         }
+
+        private val QUALITY_REGEX_P by lazy { Regex("""(\d+)p""") }
+        private val QUALITY_REGEX by lazy { Regex("""(\d+)""") }
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_TITLE = "Preferred quality"
