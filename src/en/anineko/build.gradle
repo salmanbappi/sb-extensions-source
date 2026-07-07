@@ -1,7 +1,7 @@
 ext {
     extName = 'AniNeko'
     extClass = '.AniNeko'
-    extVersionCode = 5
+    extVersionCode = 6
 }
 
 apply from: "$rootDir/common.gradle"
@@ -14,4 +14,6 @@ dependencies {
     implementation(project(":lib:vidhide-extractor"))
     implementation(project(":lib:dood-extractor"))
     implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:m3u8server"))
 }
+
