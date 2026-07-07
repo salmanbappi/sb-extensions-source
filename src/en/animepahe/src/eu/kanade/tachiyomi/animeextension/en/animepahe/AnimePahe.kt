@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.animepahe
 
+import aniyomi.lib.m3u8server.M3u8HttpServer
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.EpisodeDto
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.LatestAnimeDto
@@ -49,6 +50,10 @@ class AnimePahe : Source() {
         client.newBuilder().apply {
             interceptors().removeAll { it is DdosGuardInterceptor }
         }.build()
+    }
+
+    private val hlsServer by lazy {
+        M3u8HttpServer(extractorClient).also { it.start() }
     }
 
     override val name = "AnimePahe"
@@ -370,8 +375,10 @@ class AnimePahe : Source() {
 
         return videos.ifEmpty {
             links.parallelCatchingFlatMapBlocking { (kwikLink, _, quality) ->
-                KwikExtractor(extractorClient, headers, cfUA).getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
-                    .let(::listOf)
+                val video = KwikExtractor(extractorClient, headers, cfUA)
+                    .getHlsVideo(kwikLink, referer = "$baseUrl/", quality = "$quality (HLS)")
+                val localUrl = hlsServer.createLocalUrl(video.videoUrl)
+                listOf(video.copy(videoUrl = localUrl))
             }
         }
     }
