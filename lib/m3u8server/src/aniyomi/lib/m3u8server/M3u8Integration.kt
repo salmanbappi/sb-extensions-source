@@ -32,11 +32,10 @@ class M3u8Integration(
      * @return Processed video with local URL
      */
     private fun processM3u8Video(originalVideo: Video): Video {
-        val processedUrl = serverManager.processM3u8Url(originalVideo.url)
+        val processedUrl = serverManager.processM3u8Url(originalVideo.videoUrl)
         return Video(
-            videoUrl = processedUrl ?: originalVideo.url,
-            url = originalVideo.url,
-            quality = originalVideo.quality,
+            videoUrl = processedUrl ?: originalVideo.videoUrl,
+            videoTitle = originalVideo.videoTitle,
             subtitleTracks = originalVideo.subtitleTracks,
             audioTracks = originalVideo.audioTracks,
             headers = originalVideo.headers,
@@ -52,7 +51,7 @@ class M3u8Integration(
     fun processVideoList(videos: List<Video>): List<Video> {
         initializeServer()
         return videos.map { video ->
-            if (isM3u8Url(video.url)) {
+            if (isM3u8Url(video.videoUrl)) {
                 processM3u8Video(video)
             } else {
                 video
