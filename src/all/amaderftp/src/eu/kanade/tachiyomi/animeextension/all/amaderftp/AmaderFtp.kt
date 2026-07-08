@@ -3,10 +3,10 @@ package eu.kanade.tachiyomi.animeextension.all.amaderftp
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
-import eu.kanade.tachiyomi.multisrc.jellyfin.Jellyfin
 import eu.kanade.tachiyomi.multisrc.jellyfin.ItemListDto
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import eu.kanade.tachiyomi.multisrc.jellyfin.Jellyfin
+import eu.kanade.tachiyomi.network.GET
+import extensions.utils.parseAs
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -14,8 +14,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import eu.kanade.tachiyomi.network.GET
-import extensions.utils.parseAs
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 
 class AmaderFtp : Jellyfin("Amader FTP") {
     override val defaultBaseUrl = "http://amaderftp.net:8096"
@@ -51,14 +51,17 @@ class AmaderFtp : Jellyfin("Amader FTP") {
             filters.forEach { filter ->
                 when (filter) {
                     is CategoryFilter -> if (filter.toValue().isNotBlank()) setQueryParameter("ParentId", filter.toValue())
+
                     is GenreFilter -> {
                         val genres = filter.state.filter { it.state }.map { it.id }
                         if (genres.isNotEmpty()) setQueryParameter("GenreIds", genres.joinToString(","))
                     }
+
                     is SortFilter -> {
                         setQueryParameter("SortBy", filter.toSortValue())
                         setQueryParameter("SortOrder", if (filter.isAscending()) "Ascending" else "Descending")
                     }
+
                     else -> {}
                 }
             }
