@@ -261,22 +261,22 @@ object ItemTypeSerializer : KSerializer<ItemType> {
             "size" to (size ?: ""),
             "sizeBytes" to (mediaSources?.firstOrNull()?.size?.toString() ?: ""),
             "runtime" to (runTime ?: ""),
-            "runtimeS" to (runtimeInSec?.toString() ?: "")
+            "runtimeS" to (runtimeInSec?.toString() ?: ""),
         )
         val sub = StringSubstitutor(values, "{", "}")
         name = sub.replace(episodeTemplate).trim().removeSuffix("-").removePrefix("-").trim()
         url = "$baseUrl/Users/$userId/Items/$id"
-        
+
         val extraInfo = buildList {
             if (size != null) add(size)
             if (runTime != null) add(runTime)
         }
         scanlator = extraInfo.joinToString(" • ")
-        
+
         premiereDate?.let { date_upload = parseDateTime(it) }
         indexNumber?.let { episode_number = it.toFloat() }
         if (type == ItemType.Movie) episode_number = 1F
-        
+
         if (showThumbnails) {
             preview_url = if (type == ItemType.Movie) {
                 backdropImageTags?.firstOrNull()?.getBackdropImageUrl(baseUrl, id)
@@ -366,7 +366,7 @@ fun buildAuthHeader(deviceInfo: Jellyfin.DeviceInfo, token: String? = null): Str
     return params.filterNot { it.second == null }.joinToString(
         separator = ", ",
         prefix = "MediaBrowser ",
-        transform = { "${it.first}=\"" + URLEncoder.encode(it.second!!.trim().replace("\n", " "), "UTF-8").replace("+", "%20") + "\"" }
+        transform = { "${it.first}=\"" + URLEncoder.encode(it.second!!.trim().replace("\n", " "), "UTF-8").replace("+", "%20") + "\"" },
     )
 }
 
@@ -374,7 +374,9 @@ abstract class Jellyfin(
     override val name: String,
     override val lang: String = "all",
     override val supportsLatest: Boolean = true,
-) : Source(), UnmeteredSource, ConfigurableAnimeSource {
+) : Source(),
+    UnmeteredSource,
+    ConfigurableAnimeSource {
 
     abstract val defaultBaseUrl: String
     open val defaultUsername: String = ""
@@ -474,10 +476,12 @@ abstract class Jellyfin(
             filters.forEach { filter ->
                 when (filter) {
                     is CategoryFilter -> if (filter.toValue().isNotBlank()) setQueryParameter("ParentId", filter.toValue())
+
                     is SortFilter -> {
                         setQueryParameter("SortBy", filter.toSortValue())
                         setQueryParameter("SortOrder", if (filter.isAscending()) "Ascending" else "Descending")
                     }
+
                     else -> {}
                 }
             }
@@ -560,7 +564,7 @@ abstract class Jellyfin(
                 } catch (_: Exception) {
                     false
                 }
-            }
+            },
         )
 
         if (hasCustomAuthSettings) {
