@@ -4,11 +4,9 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter.Sort.Selection
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
-import eu.kanade.tachiyomi.multisrc.jellyfin.Jellyfin
 import eu.kanade.tachiyomi.multisrc.jellyfin.ItemListDto
+import eu.kanade.tachiyomi.multisrc.jellyfin.Jellyfin
 import eu.kanade.tachiyomi.network.GET
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import extensions.utils.parseAs
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -17,6 +15,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 
 class RoarZone : Jellyfin("RoarZone") {
     override val defaultBaseUrl = "https://play.roarzone.net"
@@ -145,12 +145,16 @@ class RoarZone : Jellyfin("RoarZone") {
             filters.forEach { filter ->
                 when (filter) {
                     is TypeFilter -> setQueryParameter("IncludeItemTypes", filter.toValue())
+
                     is CategoryFilter -> if (filter.toValue().isNotBlank()) setQueryParameter("ParentId", filter.toValue())
+
                     is GenreFilter -> if (filter.toValue().isNotBlank()) setQueryParameter("GenreIds", filter.toValue())
+
                     is SortFilter -> {
                         setQueryParameter("SortBy", filter.toSortValue())
                         setQueryParameter("SortOrder", if (filter.isAscending()) "Ascending" else "Descending")
                     }
+
                     else -> {}
                 }
             }

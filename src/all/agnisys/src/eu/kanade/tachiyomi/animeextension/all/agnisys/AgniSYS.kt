@@ -7,10 +7,10 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.multisrc.jellyfin.Jellyfin
 import eu.kanade.tachiyomi.multisrc.jellyfin.ItemDto
 import eu.kanade.tachiyomi.multisrc.jellyfin.ItemListDto
 import eu.kanade.tachiyomi.multisrc.jellyfin.ItemType
+import eu.kanade.tachiyomi.multisrc.jellyfin.Jellyfin
 import eu.kanade.tachiyomi.multisrc.jellyfin.buildAuthHeader
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.parseAs
@@ -45,14 +45,17 @@ class AgniSYS : Jellyfin("AgniSYS") {
                         val genre = filter.selectedGenre()
                         if (genre != null) setQueryParameter("Genres", genre)
                     }
+
                     is SortFilter -> {
                         setQueryParameter("SortBy", filter.sortValue())
                         setQueryParameter("SortOrder", if (filter.isAscending()) "Ascending" else "Descending")
                     }
+
                     is YearFilter -> {
                         val year = filter.state.trim()
                         if (year.isNotBlank()) setQueryParameter("Years", year)
                     }
+
                     else -> {}
                 }
             }
