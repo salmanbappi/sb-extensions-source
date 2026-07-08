@@ -43,7 +43,7 @@ class FourKHDHub : Source() {
         if (!domainsFetched) {
             try {
                 val response = client.newCall(
-                    GET("https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json", headers)
+                    GET("https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json", headers),
                 ).execute()
                 val body = response.body.string()
                 response.close()
@@ -254,7 +254,9 @@ class FourKHDHub : Source() {
                         summary = tmdbEp?.overview
                         preview_url = if (showThumbnails && !tmdbEp?.stillPath.isNullOrEmpty()) {
                             "https://image.tmdb.org/t/p/original${tmdbEp!!.stillPath}"
-                        } else null
+                        } else {
+                            null
+                        }
                         date_upload = tmdbEp?.airDate ?: 0L
                     },
                 )
@@ -315,16 +317,14 @@ class FourKHDHub : Source() {
         val name: String?,
         val overview: String?,
         val stillPath: String?,
-        val airDate: Long
+        val airDate: Long,
     )
 
-    private fun cleanTitleForTmdb(title: String): String {
-        return title
-            .replace(Regex("""\(\d{4}\)"""), "")
-            .replace(Regex("""(?i)\b(season|series|s)\b\s*\d+"""), "")
-            .replace(Regex("""\s+"""), " ")
-            .trim()
-    }
+    private fun cleanTitleForTmdb(title: String): String = title
+        .replace(Regex("""\(\d{4}\)"""), "")
+        .replace(Regex("""(?i)\b(season|series|s)\b\s*\d+"""), "")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
 
     private fun fetchTmdbId(title: String, isMovie: Boolean): Int? {
         try {
@@ -563,13 +563,11 @@ class FourKHDHub : Source() {
         }
     }
 
-    private fun decodeBase64(value: String): String {
-        return try {
-            val decodedBytes = android.util.Base64.decode(value, android.util.Base64.DEFAULT)
-            String(decodedBytes)
-        } catch (e: Exception) {
-            ""
-        }
+    private fun decodeBase64(value: String): String = try {
+        val decodedBytes = android.util.Base64.decode(value, android.util.Base64.DEFAULT)
+        String(decodedBytes)
+    } catch (e: Exception) {
+        ""
     }
 
     private fun pen(value: String): String {
@@ -597,11 +595,17 @@ class FourKHDHub : Source() {
                     emptyList()
                 }
             }
+
             lower.contains("hubcloud") -> resolveHubCloud(url, suffix)
+
             lower.contains("hubdrive") -> resolveHubDrive(url, suffix)
+
             lower.contains("hubcdn") -> resolveHubCdn(url, suffix)
+
             lower.contains("hblinks") -> resolveHblinks(url, suffix)
+
             lower.contains("pixeldrain") || lower.contains("pixelserver") -> resolvePixelDrain(url, suffix)
+
             lower.contains("hdstream4u") || lower.contains("hubstream") -> {
                 try {
                     VidHideExtractor(client, headers).videosFromUrl(url) { quality ->
@@ -611,6 +615,7 @@ class FourKHDHub : Source() {
                     emptyList()
                 }
             }
+
             else -> {
                 if (lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".m3u8")) {
                     listOf(Video(videoUrl = url, videoTitle = "Direct Link$suffix", headers = headers))
@@ -667,9 +672,11 @@ class FourKHDHub : Source() {
                     label.contains("fsl server") || label.contains("fslv2") -> {
                         list.add(Video(videoUrl = link, videoTitle = "HubCloud (FSL)$labelExtras", headers = headers))
                     }
+
                     label.contains("download file") -> {
                         list.add(Video(videoUrl = link, videoTitle = "HubCloud (Download)$labelExtras", headers = headers))
                     }
+
                     label.contains("buzzserver") -> {
                         try {
                             val noRedirectClient = client.newBuilder()
@@ -687,20 +694,25 @@ class FourKHDHub : Source() {
                             // ignore
                         }
                     }
+
                     label.contains("pixeldra") || label.contains("pixelserver") || label.contains("pixel server") || label.contains("pixeldrain") -> {
                         val base = getBaseUrl(link)
                         val finalUrl = if (link.contains("download")) link else "$base/api/file/${link.substringAfterLast("/")}?download"
                         list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (Pixeldrain)$labelExtras", headers = headers))
                     }
+
                     label.contains("s3 server") -> {
                         list.add(Video(videoUrl = link, videoTitle = "HubCloud (S3 Server)$labelExtras", headers = headers))
                     }
+
                     label.contains("mega server") -> {
                         list.add(Video(videoUrl = link, videoTitle = "HubCloud (Mega Server)$labelExtras", headers = headers))
                     }
+
                     label.contains("pdl server") -> {
                         list.add(Video(videoUrl = link, videoTitle = "HubCloud (PDL Server)$labelExtras", headers = headers))
                     }
+
                     label.contains("10gbps") || label.contains("10 gbps") || label.contains("10gb") -> {
                         try {
                             val gpdlResp = client.newCall(GET(link, headers)).execute()
@@ -808,20 +820,16 @@ class FourKHDHub : Source() {
         return listOf(Video(videoUrl = finalUrl, videoTitle = "PixelDrain$suffix", headers = headers))
     }
 
-    private fun getIndexQuality(str: String): String {
-        return Regex("""(\d{3,4})[pP]""")
-            .find(str)
-            ?.groupValues
-            ?.getOrNull(1) ?: ""
-    }
+    private fun getIndexQuality(str: String): String = Regex("""(\d{3,4})[pP]""")
+        .find(str)
+        ?.groupValues
+        ?.getOrNull(1) ?: ""
 
-    private fun getBaseUrl(url: String): String {
-        return try {
-            val uri = java.net.URI(url)
-            "${uri.scheme}://${uri.host}"
-        } catch (e: Exception) {
-            ""
-        }
+    private fun getBaseUrl(url: String): String = try {
+        val uri = java.net.URI(url)
+        "${uri.scheme}://${uri.host}"
+    } catch (e: Exception) {
+        ""
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
@@ -857,7 +865,7 @@ class FourKHDHub : Source() {
             key = PREF_SHOW_THUMBNAILS_KEY,
             default = true,
             title = "Show episode thumbnails",
-            summary = "Fetch and display images in the episode list from TMDB."
+            summary = "Fetch and display images in the episode list from TMDB.",
         )
     }
 
