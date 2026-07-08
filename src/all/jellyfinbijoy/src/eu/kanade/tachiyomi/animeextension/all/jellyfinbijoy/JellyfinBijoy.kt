@@ -259,22 +259,22 @@ object ItemTypeSerializer : KSerializer<ItemType> {
             "size" to (size ?: ""),
             "sizeBytes" to (mediaSources?.firstOrNull()?.size?.toString() ?: ""),
             "runtime" to (runTime ?: ""),
-            "runtimeS" to (runtimeInSec?.toString() ?: "")
+            "runtimeS" to (runtimeInSec?.toString() ?: ""),
         )
         val sub = StringSubstitutor(values, "{", "}")
         name = sub.replace(episodeTemplate).trim().removeSuffix("-").removePrefix("-").trim()
         url = "$baseUrl/Users/$userId/Items/$id"
-        
+
         val extraInfo = buildList {
             if (size != null) add(size)
             if (runTime != null) add(runTime)
         }
         scanlator = extraInfo.joinToString(" • ")
-        
+
         premiereDate?.let { date_upload = parseDateTime(it) }
         indexNumber?.let { episode_number = it.toFloat() }
         if (type == ItemType.Movie) episode_number = 1F
-        
+
         if (showThumbnails) {
             preview_url = imageTags.primary?.getImageUrl(baseUrl, id)
         }
@@ -513,7 +513,7 @@ class JellyfinBijoy :
                 } catch (_: Exception) {
                     false
                 }
-            }
+            },
         )
 
         screen.addSwitchPreference(
