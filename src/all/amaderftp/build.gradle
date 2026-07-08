@@ -2,7 +2,7 @@ ext {
     extName = 'Amader FTP'
     extClass = '.AmaderFtp'
     themePkg = 'jellyfin'
-    overrideVersionCode = 1013
+    overrideVersionCode = 1014
     isNsfw = false
 }
 
