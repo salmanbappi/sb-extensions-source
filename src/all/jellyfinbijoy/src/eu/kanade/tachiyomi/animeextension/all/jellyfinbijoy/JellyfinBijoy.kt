@@ -16,6 +16,8 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
+import extensions.utils.addEditTextPreference
+import extensions.utils.addSwitchPreference
 import extensions.utils.delegate
 import extensions.utils.parseAs
 import extensions.utils.toRequestBody
@@ -93,7 +95,16 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     val originalTitle: String? = null,
     val sortName: String? = null,
     val indexNumber: Int? = null,
+    val parentIndexNumber: Int? = null,
     val premiereDate: String? = null,
+    val productionYear: Int? = null,
+    val communityRating: Float? = null,
+    val criticRating: Float? = null,
+    val officialRating: String? = null,
+    val productionLocations: List<String>? = null,
+    val tags: List<String>? = null,
+    val taglines: List<String>? = null,
+    val people: List<PersonDto>? = null,
     val runTimeTicks: Long? = null,
     val dateCreated: String? = null,
     val mediaSources: List<MediaDto>? = null,
@@ -101,15 +112,102 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     @Serializable data class ImageDto(val primary: String? = null)
 
     @Serializable class StudioDto(val name: String)
+
+    @Serializable data class PersonDto(val name: String, val type: String)
     fun toSAnime(baseUrl: String, userId: String): SAnime = SAnime.create().apply {
         val typeMap = mapOf(ItemType.Season to "seriesId,$seriesId", ItemType.Movie to "movie", ItemType.BoxSet to "boxSet", ItemType.Series to "series")
         url = baseUrl.toHttpUrl().newBuilder().addPathSegment("Users").addPathSegment(userId).addPathSegment("Items").addPathSegment(id).fragment(typeMap[type]).build().toString()
         thumbnail_url = imageTags.primary?.getImageUrl(baseUrl, id)
         title = name
-        // Optimization: Use Regex instead of Jsoup for faster list performance
-        description = overview?.replace("<br>", "\n")?.replace(Regex("<[^>]*>"), "")
+        description = buildString {
+            overview?.replace("<br>", "\n")?.replace(Regex("<[^>]*>"), "")?.let {
+                append(it)
+                append("\n\n")
+            }
+            productionYear?.let { append("📅 Year: $it\n") }
+            communityRating?.let { append("⭐ Rating: ${"%.1f".format(it)}\n") }
+            criticRating?.let { append("🍅 Critic Rating: ${"%.1f".format(it)}\n") }
+            officialRating?.let { append("🔞 Rating: $it\n") }
+            val studioNames = studios?.map { it.name }?.filter { it.isNotBlank() }
+            if (!studioNames.isNullOrEmpty()) {
+                append("🏢 Studio: ${studioNames.joinToString(", ")}\n")
+            }
+            val location = productionLocations?.firstOrNull()
+            if (!location.isNullOrBlank()) {
+                append("🌐 Country: $location\n")
+            }
+            val mediaSource = mediaSources?.firstOrNull()
+            if (mediaSource != null) {
+                mediaSource.container?.let { append("📦 Container: ${it.uppercase(Locale.ENGLISH)}\n") }
+                val streams = mediaSource.mediaStreams
+                if (streams != null) {
+                    val videoStreams = streams.filter { it.type.equals("Video", ignoreCase = true) }
+                    if (videoStreams.isNotEmpty()) {
+                        val videoInfo = videoStreams.joinToString(", ") { vs ->
+                            buildString {
+                                if (vs.width != null && vs.height != null) {
+                                    append("${vs.width}x${vs.height}")
+                                }
+                                vs.codec?.let {
+                                    if (isNotEmpty()) append(" ")
+                                    append(it.uppercase(Locale.ENGLISH))
+                                }
+                            }.trim()
+                        }
+                        if (videoInfo.isNotBlank()) {
+                            append("🎥 Video: $videoInfo\n")
+                        }
+                    }
+                    val audioStreams = streams.filter { it.type.equals("Audio", ignoreCase = true) }
+                    if (audioStreams.isNotEmpty()) {
+                        val audioInfo = audioStreams.joinToString(", ") { asStream ->
+                            buildString {
+                                val lang = asStream.language?.let { code ->
+                                    val locale = Locale(code)
+                                    locale.getDisplayLanguage(Locale.ENGLISH).takeIf { it != code } ?: code
+                                } ?: asStream.title
+                                if (!lang.isNullOrBlank()) {
+                                    append(lang.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ENGLISH) else it.toString() })
+                                }
+                                asStream.codec?.let {
+                                    if (isNotEmpty()) append(" (")
+                                    append(it.uppercase(Locale.ENGLISH))
+                                    if (isNotEmpty()) append(")")
+                                }
+                            }.trim()
+                        }
+                        if (audioInfo.isNotBlank()) {
+                            append("🔊 Audio: $audioInfo\n")
+                        }
+                    }
+                    val subtitleStreams = streams.filter { it.type.equals("Subtitle", ignoreCase = true) }
+                    if (subtitleStreams.isNotEmpty()) {
+                        val subInfo = subtitleStreams.mapNotNull {
+                            it.language?.let { code ->
+                                val locale = Locale(code)
+                                locale.getDisplayLanguage(Locale.ENGLISH).takeIf { it != code } ?: code
+                            } ?: it.title
+                        }.map { it.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ENGLISH) else it.toString() } }
+                            .distinct()
+                            .joinToString(", ")
+                        if (subInfo.isNotBlank()) {
+                            append("💬 Subtitles: $subInfo\n")
+                        }
+                    }
+                }
+            }
+            if (!tags.isNullOrEmpty()) {
+                append("\n🏷️ Tags: ${tags.joinToString(", ")}\n")
+            }
+            if (!taglines.isNullOrEmpty()) {
+                append("\n💬 ${taglines.joinToString("\n💬 ")}\n")
+            }
+        }.trim()
         genre = genres?.joinToString(", ")
-        author = studios?.joinToString(", ") { it.name }
+        val directors = people?.filter { it.type.equals("Director", ignoreCase = true) }?.map { it.name }
+        val writers = people?.filter { it.type.equals("Writer", ignoreCase = true) }?.map { it.name }
+        author = directors?.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: studios?.joinToString(", ") { it.name }
+        artist = writers?.takeIf { it.isNotEmpty() }?.joinToString(", ")
         status = if (type == ItemType.Movie) SAnime.COMPLETED else this@ItemDto.status.parseStatus()
         if (type == ItemType.Season) {
             if (locationType == "Virtual") {
@@ -126,27 +224,63 @@ object ItemTypeSerializer : KSerializer<ItemType> {
         "continuing" -> SAnime.ONGOING
         else -> SAnime.UNKNOWN
     }
-    fun toSEpisode(baseUrl: String, userId: String, prefix: String, epDetails: Set<String>, episodeTemplate: String): SEpisode = SEpisode.create().apply {
+    fun toSEpisode(
+        baseUrl: String,
+        userId: String,
+        showThumbnails: Boolean,
+        showSummary: Boolean,
+        episodeTemplate: String,
+    ): SEpisode = SEpisode.create().apply {
         val runtimeInSec = runTimeTicks?.div(10_000_000)
         val size = mediaSources?.firstOrNull()?.size?.formatBytes()
         val runTime = runtimeInSec?.formatSeconds()
         val epTitle = buildString {
-            append(prefix)
-            if (type != ItemType.Movie) append(this@ItemDto.name)
+            if (type != ItemType.Movie) {
+                append(this@ItemDto.name)
+            } else {
+                append(this@ItemDto.name)
+            }
         }
-        val values = mapOf("title" to epTitle, "originalTitle" to (originalTitle ?: ""), "sortTitle" to (sortName ?: ""), "type" to type.name, "typeShort" to type.name.replace("Episode", "Ep."), "seriesTitle" to (seriesName ?: ""), "seasonTitle" to (seasonName ?: ""), "number" to (indexNumber?.toString() ?: ""), "createdDate" to (dateCreated?.substringBefore("T") ?: ""), "releaseDate" to (premiereDate?.substringBefore("T") ?: ""), "size" to (size ?: ""), "sizeBytes" to (mediaSources?.firstOrNull()?.size?.toString() ?: ""), "runtime" to (runTime ?: ""), "runtimeS" to (runtimeInSec?.toString() ?: ""))
+        val values = mapOf(
+            "title" to epTitle,
+            "originalTitle" to (originalTitle ?: ""),
+            "sortTitle" to (sortName ?: ""),
+            "type" to type.name,
+            "typeShort" to type.name.replace("Episode", "Ep."),
+            "seriesTitle" to (seriesName ?: ""),
+            "seasonTitle" to (seasonName ?: ""),
+            "season" to (parentIndexNumber?.toString() ?: ""),
+            "seasonShort" to (parentIndexNumber?.let { "S$it " } ?: ""),
+            "seasonLong" to (parentIndexNumber?.let { "Season $it " } ?: ""),
+            "number" to (indexNumber?.toString() ?: ""),
+            "numberShort" to (indexNumber?.let { "Ep. $it" } ?: ""),
+            "createdDate" to (dateCreated?.substringBefore("T") ?: ""),
+            "releaseDate" to (premiereDate?.substringBefore("T") ?: ""),
+            "size" to (size ?: ""),
+            "sizeBytes" to (mediaSources?.firstOrNull()?.size?.toString() ?: ""),
+            "runtime" to (runTime ?: ""),
+            "runtimeS" to (runtimeInSec?.toString() ?: "")
+        )
         val sub = StringSubstitutor(values, "{", "}")
-        val extraInfo = buildList {
-            if (epDetails.contains("Overview") && overview != null && type == ItemType.Episode) add(overview)
-            if (epDetails.contains("Size") && size != null) add(size)
-            if (epDetails.contains("Runtime") && runTime != null) add(runTime)
-        }
         name = sub.replace(episodeTemplate).trim().removeSuffix("-").removePrefix("-").trim()
         url = "$baseUrl/Users/$userId/Items/$id"
+        
+        val extraInfo = buildList {
+            if (size != null) add(size)
+            if (runTime != null) add(runTime)
+        }
         scanlator = extraInfo.joinToString(" • ")
+        
         premiereDate?.let { date_upload = parseDateTime(it) }
         indexNumber?.let { episode_number = it.toFloat() }
         if (type == ItemType.Movie) episode_number = 1F
+        
+        if (showThumbnails) {
+            preview_url = imageTags.primary?.getImageUrl(baseUrl, id)
+        }
+        if (showSummary) {
+            summary = overview?.replace("<br>", "\n")?.replace(Regex("<[^>]*>"), "")
+        }
     }
     private fun Long.formatSeconds(): String {
         val minutes = this / 60
@@ -169,7 +303,24 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     @Serializable data class LoginSessionDto(val userId: String)
 }
 
-@Serializable data class MediaDto(val size: Long? = null, val id: String? = null)
+@Serializable data class MediaDto(
+    val size: Long? = null,
+    val id: String? = null,
+    val container: String? = null,
+    val mediaStreams: List<MediaStreamDto>? = null,
+)
+
+@Serializable data class MediaStreamDto(
+    val type: String? = null,
+    val codec: String? = null,
+    val displayTitle: String? = null,
+    val language: String? = null,
+    val title: String? = null,
+    val bitRate: Int? = null,
+    val channels: Int? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+)
 
 fun Long.formatBytes(): String = when {
     this >= 1_000_000_000L -> "%.2f GB".format(this / 1_000_000_000.0)
@@ -195,12 +346,8 @@ class JellyfinBijoy :
     override val supportsLatest = true
     override val id: Long = 73658291047123456L
 
-    private val prefs: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0)
-    }
-
     override val baseUrl: String
-        get() = prefs.getString(PREF_BASE_URL, "http://10.20.30.50")!!
+        get() = preferences.getString(PREF_BASE_URL, "http://10.20.30.50")!!
 
     override val json = Json {
         isLenient = true
@@ -209,8 +356,8 @@ class JellyfinBijoy :
     }
     private val deviceInfo by lazy { getDeviceInfo(Injekt.get<Application>()) }
 
-    private var accessToken: String by prefs.delegate("access_token", "")
-    private var userId: String by prefs.delegate("user_id", "")
+    private var accessToken: String by preferences.delegate("access_token", "")
+    private var userId: String by preferences.delegate("user_id", "")
 
     override val client = network.client.newBuilder()
         .dns(Dns.SYSTEM)
@@ -297,7 +444,9 @@ class JellyfinBijoy :
     }
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val item = client.newCall(GET(anime.url)).await().parseAs<ItemDto>(json)
+        val fields = "Genres,Studios,Overview,ProductionYear,CommunityRating,OfficialRating,MediaSources,Tags,Taglines,CriticRating,ProductionLocations,People"
+        val url = "${anime.url}?Fields=$fields"
+        val item = client.newCall(GET(url)).await().parseAs<ItemDto>(json)
         return item.toSAnime(baseUrl, userId)
     }
 
@@ -306,12 +455,26 @@ class JellyfinBijoy :
         val itemId = url.pathSegments.last()
         val frag = url.fragment ?: ""
         val epUrl = when {
-            frag.startsWith("series") -> "$baseUrl/Shows/$itemId/Episodes?Fields=DateCreated,OriginalTitle,SortName"
-            else -> anime.url
+            frag.startsWith("series") -> "$baseUrl/Shows/$itemId/Episodes?Fields=DateCreated,OriginalTitle,SortName,Overview,ParentIndexNumber"
+            else -> "$baseUrl/Users/$userId/Items/$itemId?Fields=DateCreated,OriginalTitle,SortName,Overview,MediaSources"
         }
         val resp = client.newCall(GET(epUrl)).await()
         val items = if (epUrl.contains("Episodes")) resp.parseAs<ItemListDto>(json).items else listOf(resp.parseAs<ItemDto>(json))
-        return items.map { it.toSEpisode(baseUrl, userId, "", emptySet(), "{number} - {title}") }.reversed()
+        val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
+        val showSummary = preferences.getBoolean(PREF_SHOW_SUMMARY_KEY, true)
+        val episodeTemplate = preferences.getString(PREF_EPISODE_NAME_TEMPLATE_KEY, PREF_EPISODE_NAME_TEMPLATE_DEFAULT)!!
+        return items.map { it.toSEpisode(baseUrl, userId, showThumbnails, showSummary, episodeTemplate) }.reversed()
+    }
+
+    fun relatedAnimeListRequest(anime: SAnime): okhttp3.Request {
+        val url = anime.url.toHttpUrl()
+        val itemId = url.pathSegments.last()
+        return GET("$baseUrl/Items/$itemId/Similar?UserId=$userId&Limit=12", headers)
+    }
+
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
+        val dto = response.parseAs<ItemListDto>(json)
+        return dto.items.map { it.toSAnime(baseUrl, userId) }
     }
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
@@ -333,26 +496,46 @@ class JellyfinBijoy :
 
     data class DeviceInfo(val clientName: String, val version: String, val id: String, val name: String)
     private fun getDeviceInfo(context: Application): DeviceInfo {
-        val deviceId = prefs.getString("device_id", null) ?: UUID.randomUUID().toString().replace("-", "").take(16).also { prefs.edit().putString("device_id", it).apply() }
+        val deviceId = preferences.getString("device_id", null) ?: UUID.randomUUID().toString().replace("-", "").take(16).also { preferences.edit().putString("device_id", it).apply() }
         return DeviceInfo("Aniyomi", "1.0.0", deviceId, Build.MODEL)
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        EditTextPreference(screen.context).apply {
-            key = PREF_BASE_URL
-            title = "Base URL"
-            summary = "Jellyfin Server URL (default: http://10.20.30.50)"
-            setDefaultValue("http://10.20.30.50")
-            setOnPreferenceChangeListener { _, newValue ->
+        screen.addEditTextPreference(
+            key = PREF_BASE_URL,
+            default = "http://10.20.30.50",
+            title = "Base URL",
+            summary = "Jellyfin Server URL (default: http://10.20.30.50)",
+            validate = {
                 try {
-                    val newUrl = (newValue as String).trim()
-                    newUrl.toHttpUrl() // Validate URL
+                    it.toHttpUrl()
                     true
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     false
                 }
             }
-        }.also(screen::addPreference)
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_SHOW_THUMBNAILS_KEY,
+            default = true,
+            title = "Show episode thumbnails",
+            summary = "Fetch and display thumbnail images in the episode list.",
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_SHOW_SUMMARY_KEY,
+            default = true,
+            title = "Show episode summaries",
+            summary = "Fetch and display summaries in the episode list.",
+        )
+
+        screen.addEditTextPreference(
+            key = PREF_EPISODE_NAME_TEMPLATE_KEY,
+            default = PREF_EPISODE_NAME_TEMPLATE_DEFAULT,
+            title = "Episode title format",
+            summary = "Format template for episode titles (default: {seasonShort}{numberShort} - {title})",
+        )
     }
 
     // Dynamic Filters
@@ -360,7 +543,7 @@ class JellyfinBijoy :
 
     private fun fetchCategories(): List<Pair<String, String>> {
         if (categoriesCache == null) {
-            val cachedJson = prefs.getString("pref_cached_categories", null)
+            val cachedJson = preferences.getString("pref_cached_categories", null)
             if (cachedJson != null) {
                 try {
                     val list = mutableListOf<Pair<String, String>>()
@@ -401,7 +584,7 @@ class JellyfinBijoy :
                             )
                         }
                     }
-                    prefs.edit().putString("pref_cached_categories", jsonArray.toString()).apply()
+                    preferences.edit().putString("pref_cached_categories", jsonArray.toString()).apply()
                 }
             }
         } catch (e: Exception) {
@@ -433,5 +616,9 @@ class JellyfinBijoy :
 
     companion object {
         private const val PREF_BASE_URL = "pref_base_url"
+        private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
+        private const val PREF_SHOW_SUMMARY_KEY = "pref_show_summary"
+        private const val PREF_EPISODE_NAME_TEMPLATE_KEY = "pref_episode_name_template"
+        private const val PREF_EPISODE_NAME_TEMPLATE_DEFAULT = "{seasonShort}{numberShort} - {title}"
     }
 }
