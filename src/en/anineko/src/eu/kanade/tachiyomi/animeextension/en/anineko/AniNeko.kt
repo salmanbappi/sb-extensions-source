@@ -558,9 +558,15 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
             val firstLine = reader.readLine() ?: return
             val parts = firstLine.split(" ")
             if (parts.size < 2) return
-            var path = parts[1]
-            if (path.startsWith("http://") || path.startsWith("https://")) {
-                path = Uri.parse(path).path ?: ""
+            val rawPath = parts[1]
+            val queryIndex = rawPath.indexOf('?')
+            val queryString = if (queryIndex != -1) rawPath.substring(queryIndex) else ""
+            val pathWithoutQuery = if (queryIndex != -1) rawPath.substring(0, queryIndex) else rawPath
+
+            val path = if (pathWithoutQuery.startsWith("http://") || pathWithoutQuery.startsWith("https://")) {
+                Uri.parse(pathWithoutQuery).path ?: ""
+            } else {
+                pathWithoutQuery
             }
 
             if (!path.startsWith("/proxy")) {
@@ -568,8 +574,6 @@ class LocalProxy(private val client: okhttp3.OkHttpClient) {
                 return
             }
 
-            val queryIndex = parts[1].indexOf('?')
-            val queryString = if (queryIndex != -1) parts[1].substring(queryIndex) else ""
             val httpUrl = ("http://127.0.0.1$path$queryString").toHttpUrl()
             val encodedUrl = httpUrl.queryParameter("url")
             val encodedHeaders = httpUrl.queryParameter("headers") ?: ""
