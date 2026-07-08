@@ -2,7 +2,7 @@ ext {
     extName = 'AgniSYS'
     extClass = '.AgniSYS'
     themePkg = 'jellyfin'
-    overrideVersionCode = 11007
+    overrideVersionCode = 11008
     isNsfw = false
 }
 
