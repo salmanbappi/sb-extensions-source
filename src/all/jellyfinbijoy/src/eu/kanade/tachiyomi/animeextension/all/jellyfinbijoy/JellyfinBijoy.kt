@@ -109,7 +109,25 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     val dateCreated: String? = null,
     val mediaSources: List<MediaDto>? = null,
 ) {
-    @Serializable data class ImageDto(val primary: String? = null)
+    @Serializable data class ImageDto(
+        val primary: String? = null,
+        val backdrop: String? = null,
+        val thumb: String? = null,
+    ) {
+        fun getLandscapeImageUrl(baseUrl: String, id: String): String? {
+            val tag = thumb ?: backdrop ?: primary ?: return null
+            val type = when {
+                thumb != null -> "Thumb"
+                backdrop != null -> "Backdrop"
+                else -> "Primary"
+            }
+            return baseUrl.toHttpUrl().newBuilder()
+                .addPathSegment("Items").addPathSegment(id)
+                .addPathSegment("Images").addPathSegment(type)
+                .addQueryParameter("tag", tag)
+                .build().toString()
+        }
+    }
 
     @Serializable class StudioDto(val name: String)
 
@@ -238,7 +256,7 @@ object ItemTypeSerializer : KSerializer<ItemType> {
             if (type != ItemType.Movie) {
                 append(this@ItemDto.name)
             } else {
-                append(this@ItemDto.name)
+                append("Movie")
             }
         }
         val values = mapOf(
@@ -249,11 +267,11 @@ object ItemTypeSerializer : KSerializer<ItemType> {
             "typeShort" to type.name.replace("Episode", "Ep."),
             "seriesTitle" to (seriesName ?: ""),
             "seasonTitle" to (seasonName ?: ""),
-            "season" to (parentIndexNumber?.toString() ?: ""),
-            "seasonShort" to (parentIndexNumber?.let { "S$it " } ?: ""),
-            "seasonLong" to (parentIndexNumber?.let { "Season $it " } ?: ""),
-            "number" to (indexNumber?.toString() ?: ""),
-            "numberShort" to (indexNumber?.let { "Ep. $it" } ?: ""),
+            "season" to (if (type == ItemType.Movie) "" else (parentIndexNumber?.toString() ?: "")),
+            "seasonShort" to (if (type == ItemType.Movie) "" else (parentIndexNumber?.let { "S$it " } ?: "")),
+            "seasonLong" to (if (type == ItemType.Movie) "" else (parentIndexNumber?.let { "Season $it " } ?: "")),
+            "number" to (if (type == ItemType.Movie) "" else (indexNumber?.toString() ?: "")),
+            "numberShort" to (if (type == ItemType.Movie) "" else (indexNumber?.let { "Ep. $it" } ?: "")),
             "createdDate" to (dateCreated?.substringBefore("T") ?: ""),
             "releaseDate" to (premiereDate?.substringBefore("T") ?: ""),
             "size" to (size ?: ""),
@@ -276,9 +294,13 @@ object ItemTypeSerializer : KSerializer<ItemType> {
         if (type == ItemType.Movie) episode_number = 1F
 
         if (showThumbnails) {
-            preview_url = imageTags.primary?.getImageUrl(baseUrl, id)
+            preview_url = if (type == ItemType.Movie) {
+                imageTags.getLandscapeImageUrl(baseUrl, id)
+            } else {
+                imageTags.primary?.getImageUrl(baseUrl, id)
+            }
         }
-        if (showSummary) {
+        if (showSummary && type != ItemType.Movie) {
             summary = overview?.replace("<br>", "\n")?.replace(Regex("<[^>]*>"), "")
         }
     }
