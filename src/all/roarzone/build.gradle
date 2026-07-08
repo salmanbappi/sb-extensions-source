@@ -2,7 +2,7 @@ ext {
     extName = 'RoarZone'
     extClass = '.RoarZone'
     themePkg = 'jellyfin'
-    overrideVersionCode = 1017
+    overrideVersionCode = 1018
     isNsfw = false
 }
 
