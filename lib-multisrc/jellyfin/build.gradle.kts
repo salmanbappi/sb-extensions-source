@@ -5,3 +5,8 @@ plugins {
 }
 
 baseVersionCode = 1
+
+dependencies {
+    implementation(project(":core"))
+    implementation(libs.commons.text)
+}
