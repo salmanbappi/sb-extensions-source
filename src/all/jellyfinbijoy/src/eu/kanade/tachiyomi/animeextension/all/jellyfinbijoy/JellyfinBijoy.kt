@@ -108,26 +108,9 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     val runTimeTicks: Long? = null,
     val dateCreated: String? = null,
     val mediaSources: List<MediaDto>? = null,
+    val backdropImageTags: List<String>? = null,
 ) {
-    @Serializable data class ImageDto(
-        val primary: String? = null,
-        val backdrop: String? = null,
-        val thumb: String? = null,
-    ) {
-        fun getLandscapeImageUrl(baseUrl: String, id: String): String? {
-            val tag = thumb ?: backdrop ?: primary ?: return null
-            val type = when {
-                thumb != null -> "Thumb"
-                backdrop != null -> "Backdrop"
-                else -> "Primary"
-            }
-            return baseUrl.toHttpUrl().newBuilder()
-                .addPathSegment("Items").addPathSegment(id)
-                .addPathSegment("Images").addPathSegment(type)
-                .addQueryParameter("tag", tag)
-                .build().toString()
-        }
-    }
+    @Serializable data class ImageDto(val primary: String? = null)
 
     @Serializable class StudioDto(val name: String)
 
@@ -295,7 +278,7 @@ object ItemTypeSerializer : KSerializer<ItemType> {
 
         if (showThumbnails) {
             preview_url = if (type == ItemType.Movie) {
-                imageTags.getLandscapeImageUrl(baseUrl, id)
+                backdropImageTags?.firstOrNull()?.getBackdropImageUrl(baseUrl, id)
             } else {
                 imageTags.primary?.getImageUrl(baseUrl, id)
             }
@@ -351,6 +334,7 @@ fun Long.formatBytes(): String = when {
     else -> "$this B"
 }
 fun String.getImageUrl(baseUrl: String, id: String): String = baseUrl.toHttpUrl().newBuilder().addPathSegment("Items").addPathSegment(id).addPathSegment("Images").addPathSegment("Primary").addQueryParameter("tag", this).build().toString()
+fun String.getBackdropImageUrl(baseUrl: String, id: String): String = baseUrl.toHttpUrl().newBuilder().addPathSegment("Items").addPathSegment(id).addPathSegment("Images").addPathSegment("Backdrop").addPathSegment("0").addQueryParameter("tag", this).build().toString()
 object PascalCaseToCamelCase : JsonNamingStrategy {
     override fun serialNameForJson(descriptor: SerialDescriptor, elementIndex: Int, serialName: String): String = serialName.replaceFirstChar { it.uppercase() }
 }
@@ -478,7 +462,7 @@ class JellyfinBijoy :
         val frag = url.fragment ?: ""
         val epUrl = when {
             frag.startsWith("series") -> "$baseUrl/Shows/$itemId/Episodes?Fields=DateCreated,OriginalTitle,SortName,Overview,ParentIndexNumber"
-            else -> "$baseUrl/Users/$userId/Items/$itemId?Fields=DateCreated,OriginalTitle,SortName,Overview,MediaSources"
+            else -> "$baseUrl/Users/$userId/Items/$itemId?Fields=DateCreated,OriginalTitle,SortName,Overview,MediaSources,BackdropImageTags"
         }
         val resp = client.newCall(GET(epUrl)).await()
         val items = if (epUrl.contains("Episodes")) resp.parseAs<ItemListDto>(json).items else listOf(resp.parseAs<ItemDto>(json))
