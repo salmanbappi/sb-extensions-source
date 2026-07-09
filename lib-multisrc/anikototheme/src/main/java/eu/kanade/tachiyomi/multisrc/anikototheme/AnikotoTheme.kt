@@ -1,19 +1,10 @@
 package eu.kanade.tachiyomi.multisrc.anikototheme
 
 import android.app.Application
-import android.graphics.Color
-import android.graphics.Typeface
-import android.text.SpannableString
-import android.text.style.ForegroundColorSpan
-import android.text.style.StyleSpan
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
-import androidx.preference.EditTextPreference
-import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
-import androidx.preference.Preference
-import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -26,6 +17,8 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimitHost
 import extensions.utils.Source
 import extensions.utils.addListPreference
+import extensions.utils.addSwitchPreference
+import extensions.utils.addEditTextPreference
 import extensions.utils.asJsoup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -772,192 +765,111 @@ abstract class AnikotoTheme : Source() {
         }
     }
 
-    // ---- Preferences ----
-
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+    // -    override fun setupPreferenceScreen(screen: PreferenceScreen) {
         try {
-            // ── Category 1: Playback ────────────────────────────────────────
-            PreferenceCategory(screen.context).apply {
-                title = "Playback"
-                screen.addPreference(this)
+            screen.addListPreference(
+                key = PREF_QUALITY,
+                default = PREF_QUALITY_DEFAULT,
+                title = "Playback: Preferred quality",
+                summary = "Sorts videos so this quality is on top. Currently: %s",
+                entries = listOf("1080p", "720p", "480p", "360p"),
+                entryValues = listOf("1080", PREF_QUALITY_DEFAULT, "480", "360"),
+            )
+            screen.addListPreference(
+                key = PREF_AUDIO,
+                default = PREF_AUDIO_DEFAULT,
+                title = "Playback: Preferred audio",
+                summary = "Sub, Dub, or Hardsub first. Currently: %s",
+                entries = listOf("Sub", "Dub", "Hardsub"),
+                entryValues = listOf(PREF_AUDIO_DEFAULT, "A-DUB", "H-SUB"),
+            )
+            screen.addListPreference(
+                key = PREF_TITLE_LANG,
+                default = PREF_TITLE_LANG_DEFAULT,
+                title = "Playback: Title language",
+                summary = "Show English or Japanese titles. Currently: %s",
+                entries = listOf("English", "Japanese"),
+                entryValues = listOf(PREF_TITLE_LANG_DEFAULT, "jp"),
+            )
+            screen.addListPreference(
+                key = PREF_BUFFER,
+                default = PREF_BUFFER_DEFAULT,
+                title = "Playback: Pre-fetch buffer",
+                summary = "How much to download ahead of playback. Currently: %s",
+                entries = listOf("10%", "20%", "30%", "50%", "100%"),
+                entryValues = listOf("10", "20", "30", "50", "100"),
+            )
+            screen.addListPreference(
+                key = PREF_SERVER,
+                default = PREF_SERVER_DEFAULT,
+                title = "Playback: Preferred video server",
+                summary = "Which video server to try first. Currently: %s",
+                entries = listOf("Auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream"),
+                entryValues = listOf("auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream"),
+            )
 
-                ListPreference(context).apply {
-                    key = PREF_QUALITY
-                    title = "Preferred quality"
-                    entries = arrayOf("1080p", "720p", "480p", "360p")
-                    entryValues = arrayOf("1080", "720", "480", "360")
-                    setDefaultValue(PREF_QUALITY_DEFAULT)
-                    summary = "Currently: %s"
-                }.also(::addPreference)
+            MultiSelectListPreference(screen.context).apply {
+                key = PREF_EXCLUDE_SERVERS_KEY
+                title = "Playback: Exclude Servers"
+                entries = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
+                entryValues = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
+                setDefaultValue(emptySet<String>())
+                summary = "Select servers to exclude from the video list"
+            }.also { screen.addPreference(it) }
 
-                ListPreference(context).apply {
-                    key = PREF_AUDIO
-                    title = "Preferred audio"
-                    entries = arrayOf("Sub", "Dub", "Hardsub")
-                    entryValues = arrayOf("SUB", "A-DUB", "H-SUB")
-                    setDefaultValue(PREF_AUDIO_DEFAULT)
-                    summary = "Currently: %s"
-                }.also(::addPreference)
+            MultiSelectListPreference(screen.context).apply {
+                key = PREF_EXCLUDE_AUDIO_KEY
+                title = "Playback: Exclude Audio"
+                entries = arrayOf("Sub", "Dub", "Hsub")
+                entryValues = arrayOf("SUB", "DUB", "HSUB")
+                setDefaultValue(emptySet<String>())
+                summary = "Select audio formats to exclude from the video list"
+            }.also { screen.addPreference(it) }
 
-                ListPreference(context).apply {
-                    key = PREF_TITLE_LANG
-                    title = "Title language"
-                    entries = arrayOf("English", "Japanese")
-                    entryValues = arrayOf("en", "jp")
-                    setDefaultValue(PREF_TITLE_LANG_DEFAULT)
-                    summary = "Currently: %s"
-                }.also(::addPreference)
-
-                ListPreference(context).apply {
-                    key = PREF_BUFFER
-                    title = "Pre-fetch buffer"
-                    entries = arrayOf("10%", "20%", "30%", "50%", "100%")
-                    entryValues = arrayOf("10", "20", "30", "50", "100")
-                    setDefaultValue(PREF_BUFFER_DEFAULT)
-                    summary = "Currently: %s"
-                }.also(::addPreference)
-
-                ListPreference(context).apply {
-                    key = PREF_SERVER
-                    title = "Preferred video server"
-                    entries = arrayOf("Auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
-                    entryValues = arrayOf("auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
-                    setDefaultValue(PREF_SERVER_DEFAULT)
-                    summary = "Currently: %s"
-                }.also(::addPreference)
-
-                MultiSelectListPreference(context).apply {
-                    key = PREF_EXCLUDE_SERVERS_KEY
-                    title = "Exclude Servers"
-                    entries = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
-                    entryValues = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
-                    setDefaultValue(emptySet<String>())
-                    summary = "Select servers to exclude from the video list"
-                }.also(::addPreference)
-
-                MultiSelectListPreference(context).apply {
-                    key = PREF_EXCLUDE_AUDIO_KEY
-                    title = "Exclude Audio"
-                    entries = arrayOf("Sub", "Dub", "Hsub")
-                    entryValues = arrayOf("SUB", "DUB", "HSUB")
-                    setDefaultValue(emptySet<String>())
-                    summary = "Select audio formats to exclude from the video list"
-                }.also(::addPreference)
-            }
-
-            // ── Category 2: Servers ─────────────────────────────────────────
             if (useMapper) {
-                PreferenceCategory(screen.context).apply {
-                    title = "Servers"
-                    screen.addPreference(this)
-
-                    SwitchPreferenceCompat(context).apply {
-                        key = PREF_ENABLE_KIWI_KEY
-                        title = "Enable Kiwi-Stream"
-                        summaryOn = "Fetching Kiwi-Stream from external sources"
-                        summaryOff = "Kiwi-Stream disabled"
-                        setDefaultValue(PREF_ENABLE_KIWI_DEFAULT)
-                    }.also(::addPreference)
-                }
+                screen.addSwitchPreference(
+                    key = PREF_ENABLE_KIWI_KEY,
+                    default = PREF_ENABLE_KIWI_DEFAULT,
+                    title = "Servers: Enable Kiwi-Stream",
+                    summary = "Fetching Kiwi-Stream from external sources",
+                )
             }
 
-            // ── Category 3: Episode metadata ───────────────────────────────
-            PreferenceCategory(screen.context).apply {
-                title = "Episode metadata"
-                screen.addPreference(this)
+            screen.addSwitchPreference(
+                key = PREF_LOAD_THUMBNAILS,
+                default = true,
+                title = "Metadata: Load episode thumbnails",
+                summary = "Fetching preview images from external sources",
+            )
+            screen.addSwitchPreference(
+                key = PREF_LOAD_TITLES,
+                default = true,
+                title = "Metadata: Load episode titles",
+                summary = "Fetching episode titles from external sources",
+            )
+            screen.addSwitchPreference(
+                key = PREF_LOAD_DESCRIPTIONS,
+                default = true,
+                title = "Metadata: Load episode descriptions",
+                summary = "Fetching episode descriptions from external sources",
+            )
 
-                SwitchPreferenceCompat(context).apply {
-                    key = PREF_LOAD_THUMBNAILS
-                    title = "Load episode thumbnails"
-                    summaryOn = "Fetching preview images from external sources"
-                    summaryOff = "Episode thumbnails disabled (faster episode list loading)"
-                    setDefaultValue(true)
-                }.also(::addPreference)
-
-                SwitchPreferenceCompat(context).apply {
-                    key = PREF_LOAD_TITLES
-                    title = "Load episode titles"
-                    summaryOn = "Fetching episode titles from external sources"
-                    summaryOff = "Using default episode numbers only"
-                    setDefaultValue(true)
-                }.also(::addPreference)
-
-                SwitchPreferenceCompat(context).apply {
-                    key = PREF_LOAD_DESCRIPTIONS
-                    title = "Load episode descriptions"
-                    summaryOn = "Fetching episode descriptions from external sources"
-                    summaryOff = "Episode descriptions disabled"
-                    setDefaultValue(true)
-                }.also(::addPreference)
-            }
-
-            // ── Category 4: Smart Search ──────────────────────
-            PreferenceCategory(screen.context).apply {
-                title = "Smart Search"
-                screen.addPreference(this)
-
-                SwitchPreferenceCompat(context).apply {
-                    key = PREF_SMART_SEARCH
-                    title = "Enable smart search"
-                    summaryOn = "AI resolves descriptive queries and corrects spelling"
-                    summaryOff = "Smart search disabled (normal keyword search only)"
-                    setDefaultValue(PREF_SMART_SEARCH_DEFAULT)
-                }.also(::addPreference)
-
-                EditTextPreference(context).apply {
-                    key = PREF_SMART_SEARCH_PHRASE
-                    title = "Activation phrase"
-                    dialogTitle = "Activation phrase"
-                    dialogMessage = "Type this at the start of your search to trigger AI.\n" +
-                        "Case-insensitive. Must be followed by a space.\n" +
-                        "Leave empty to use AI for all searches."
-                    setDefaultValue(PREF_SMART_SEARCH_PHRASE_DEFAULT)
-                    updatePhraseSummary(this, preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT) ?: PREF_SMART_SEARCH_PHRASE_DEFAULT)
-                    onPreferenceChangeListener = androidx.preference.Preference.OnPreferenceChangeListener { _, newValue ->
-                        updatePhraseSummary(this, newValue as? String ?: "")
-                        true
-                    }
-                }.also(::addPreference)
-
-                Preference(context).apply {
-                    title = "Details"
-                    val currentPhrase = (preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT) ?: PREF_SMART_SEARCH_PHRASE_DEFAULT).ifBlank { "(empty)" }
-                    val phraseDisplay = if (currentPhrase == "(empty)") "(empty — AI used for all)" else "\"$currentPhrase\""
-                    summary = "Type your activation phrase at the start of your search to trigger AI.\n" +
-                        "Leave empty to use AI for all searches.\n\n" +
-                        "Case-insensitive. Must be followed by a space.\n\n" +
-                        "Your phrase: $phraseDisplay\n\n" +
-                        "Examples:\n" +
-                        "• ${if (currentPhrase != "(empty)") currentPhrase else "?"} the anime with a russian girl\n" +
-                        "• ${if (currentPhrase != "(empty)") currentPhrase else "?"} narutp\n" +
-                        "• ${if (currentPhrase != "(empty)") currentPhrase else "?"} anime about a spy\n\n" +
-                        "Note: ~5-8s latency per AI search."
-                    isSelectable = false
-                }.also(::addPreference)
-            }
+            screen.addSwitchPreference(
+                key = PREF_SMART_SEARCH,
+                default = PREF_SMART_SEARCH_DEFAULT,
+                title = "Search: Enable smart search",
+                summary = "AI resolves descriptive queries and corrects spelling",
+            )
+            screen.addEditTextPreference(
+                key = PREF_SMART_SEARCH_PHRASE,
+                default = PREF_SMART_SEARCH_PHRASE_DEFAULT,
+                title = "Search: Smart search activation phrase",
+                summary = "Type this at the start of your search to trigger AI. Leave empty to use AI for all searches.",
+                dialogMessage = "Type this at the start of your search to trigger AI.\nCase-insensitive. Must be followed by a space.\nLeave empty to use AI for all searches."
+            )
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
         }
-    }
-
-    private fun updatePhraseSummary(pref: EditTextPreference, phrase: String?) {
-        val displayPhrase = phrase?.trim()?.ifBlank { "(empty — AI used for all)" } ?: "(empty — AI used for all)"
-        val text = "Currently: $displayPhrase"
-        val spannable = SpannableString(text)
-        val phraseStart = "Currently: ".length
-        val phraseEnd = text.length
-        spannable.setSpan(
-            ForegroundColorSpan(Color.parseColor("#dc2626")),
-            phraseStart, phraseEnd,
-            SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE,
-        )
-        spannable.setSpan(
-            StyleSpan(Typeface.BOLD),
-            phraseStart, phraseEnd,
-            SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE,
-        )
-        pref.summary = spannable
-    }
 
     // ---- Logging ----
 
