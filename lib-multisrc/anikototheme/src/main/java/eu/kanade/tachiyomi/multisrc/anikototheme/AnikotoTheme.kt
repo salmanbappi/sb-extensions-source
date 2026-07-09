@@ -765,7 +765,7 @@ abstract class AnikotoTheme : Source() {
         }
     }
 
-    // -    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
         try {
             screen.addListPreference(
                 key = PREF_QUALITY,
