@@ -315,13 +315,34 @@ class WebViewFetcher(
                             Log.d(logTag, "SmartSearch: onPageFinished: ${loadedUrl?.take(80) ?: "?"}")
                             val myGen = googleGenCounter.incrementAndGet()
 
-                            mainHandler.postDelayed({
-                                if (googleGenCounter.get() != myGen) {
-                                    Log.d(logTag, "SmartSearch: extraction gen $myGen stale (current=${googleGenCounter.get()}), skipping")
-                                    return@postDelayed
+                            // Check and bypass consent screen if needed
+                            view?.evaluateJavascript(
+                                "(function() {\n" +
+                                "    var btn = document.getElementById('L2AGLb') || \n" +
+                                "              document.querySelector('button[aria-label=\"Accept all\"]') || \n" +
+                                "              document.querySelector('form[action*=\"consent\"] button') ||\n" +
+                                "              document.querySelector('input[value=\"I agree\"]');\n" +
+                                "    if (btn) {\n" +
+                                "        btn.click();\n" +
+                                "        return true;\n" +
+                                "    }\n" +
+                                "    return false;\n" +
+                                "})()"
+                            ) { result ->
+                                val bypassed = result == "true"
+                                if (bypassed) {
+                                    Log.i(logTag, "SmartSearch: bypassed Google consent screen, waiting for redirect")
+                                    return@evaluateJavascript
                                 }
-                                doExtract(view, myGen)
-                            }, 1500)
+
+                                mainHandler.postDelayed({
+                                    if (googleGenCounter.get() != myGen) {
+                                        Log.d(logTag, "SmartSearch: extraction gen $myGen stale (current=${googleGenCounter.get()}), skipping")
+                                        return@postDelayed
+                                    }
+                                    doExtract(view, myGen)
+                                }, 1500)
+                            }
                         }
 
                         private fun doExtract(view: WebView?, myGen: Int) {

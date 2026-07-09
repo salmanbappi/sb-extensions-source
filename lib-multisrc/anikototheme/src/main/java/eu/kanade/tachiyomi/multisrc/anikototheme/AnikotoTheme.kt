@@ -4,7 +4,12 @@ import android.app.Application
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
+import androidx.preference.EditTextPreference
+import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
+import androidx.preference.Preference
+import androidx.preference.PreferenceCategory
+import androidx.preference.PreferenceGroup
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -767,103 +772,129 @@ abstract class AnikotoTheme : Source() {
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         try {
-            screen.addListPreference(
+            val context = screen.context
+
+            // 1. Playback category
+            val playbackCat = PreferenceCategory(context).apply {
+                title = "Playback"
+            }
+            screen.addPreference(playbackCat)
+
+            playbackCat.addListPreference(
                 key = PREF_QUALITY,
                 default = PREF_QUALITY_DEFAULT,
-                title = "Playback: Preferred quality",
+                title = "Preferred quality",
                 summary = "Sorts videos so this quality is on top. Currently: %s",
                 entries = listOf("1080p", "720p", "480p", "360p"),
                 entryValues = listOf("1080", PREF_QUALITY_DEFAULT, "480", "360"),
             )
-            screen.addListPreference(
+            playbackCat.addListPreference(
                 key = PREF_AUDIO,
                 default = PREF_AUDIO_DEFAULT,
-                title = "Playback: Preferred audio",
+                title = "Preferred audio",
                 summary = "Sub, Dub, or Hardsub first. Currently: %s",
                 entries = listOf("Sub", "Dub", "Hardsub"),
                 entryValues = listOf(PREF_AUDIO_DEFAULT, "A-DUB", "H-SUB"),
             )
-            screen.addListPreference(
-                key = PREF_TITLE_LANG,
-                default = PREF_TITLE_LANG_DEFAULT,
-                title = "Playback: Title language",
-                summary = "Show English or Japanese titles. Currently: %s",
-                entries = listOf("English", "Japanese"),
-                entryValues = listOf(PREF_TITLE_LANG_DEFAULT, "jp"),
-            )
-            screen.addListPreference(
-                key = PREF_BUFFER,
-                default = PREF_BUFFER_DEFAULT,
-                title = "Playback: Pre-fetch buffer",
-                summary = "How much to download ahead of playback. Currently: %s",
-                entries = listOf("10%", "20%", "30%", "50%", "100%"),
-                entryValues = listOf("10", "20", "30", "50", "100"),
-            )
-            screen.addListPreference(
+            playbackCat.addListPreference(
                 key = PREF_SERVER,
                 default = PREF_SERVER_DEFAULT,
-                title = "Playback: Preferred video server",
+                title = "Preferred video server",
                 summary = "Which video server to try first. Currently: %s",
                 entries = listOf("Auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream"),
                 entryValues = listOf("auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream"),
             )
+            playbackCat.addListPreference(
+                key = PREF_BUFFER,
+                default = PREF_BUFFER_DEFAULT,
+                title = "Pre-fetch buffer",
+                summary = "How much to download ahead of playback. Currently: %s",
+                entries = listOf("10%", "20%", "30%", "50%", "100%"),
+                entryValues = listOf("10", "20", "30", "50", "100"),
+            )
 
-            MultiSelectListPreference(screen.context).apply {
+            // 2. Exclude Content category
+            val filtersCat = PreferenceCategory(context).apply {
+                title = "Exclude Content"
+            }
+            screen.addPreference(filtersCat)
+
+            MultiSelectListPreference(context).apply {
                 key = PREF_EXCLUDE_SERVERS_KEY
-                title = "Playback: Exclude Servers"
+                title = "Exclude Servers"
                 entries = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
                 entryValues = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
                 setDefaultValue(emptySet<String>())
                 summary = "Select servers to exclude from the video list"
-            }.also { screen.addPreference(it) }
+            }.also { filtersCat.addPreference(it) }
 
-            MultiSelectListPreference(screen.context).apply {
+            MultiSelectListPreference(context).apply {
                 key = PREF_EXCLUDE_AUDIO_KEY
-                title = "Playback: Exclude Audio"
+                title = "Exclude Audio"
                 entries = arrayOf("Sub", "Dub", "Hsub")
                 entryValues = arrayOf("SUB", "DUB", "HSUB")
                 setDefaultValue(emptySet<String>())
                 summary = "Select audio formats to exclude from the video list"
-            }.also { screen.addPreference(it) }
+            }.also { filtersCat.addPreference(it) }
 
             if (useMapper) {
-                screen.addSwitchPreference(
+                filtersCat.addSwitchPreference(
                     key = PREF_ENABLE_KIWI_KEY,
                     default = PREF_ENABLE_KIWI_DEFAULT,
-                    title = "Servers: Enable Kiwi-Stream",
-                    summary = "Fetching Kiwi-Stream from external sources",
+                    title = "Enable Kiwi-Stream",
+                    summary = "Fetch Kiwi-Stream from external sources",
                 )
             }
 
-            screen.addSwitchPreference(
+            // 3. Episode Metadata category
+            val metadataCat = PreferenceCategory(context).apply {
+                title = "Episode Metadata"
+            }
+            screen.addPreference(metadataCat)
+
+            metadataCat.addListPreference(
+                key = PREF_TITLE_LANG,
+                default = PREF_TITLE_LANG_DEFAULT,
+                title = "Title language",
+                summary = "Show English or Japanese titles. Currently: %s",
+                entries = listOf("English", "Japanese"),
+                entryValues = listOf(PREF_TITLE_LANG_DEFAULT, "jp"),
+            )
+            metadataCat.addSwitchPreference(
                 key = PREF_LOAD_THUMBNAILS,
                 default = true,
-                title = "Metadata: Load episode thumbnails",
-                summary = "Fetching preview images from external sources",
+                title = "Load episode thumbnails",
+                summary = "Fetch preview images from external sources",
             )
-            screen.addSwitchPreference(
+            metadataCat.addSwitchPreference(
                 key = PREF_LOAD_TITLES,
                 default = true,
-                title = "Metadata: Load episode titles",
-                summary = "Fetching episode titles from external sources",
+                title = "Load episode titles",
+                summary = "Fetch episode titles from external sources",
             )
-            screen.addSwitchPreference(
+            metadataCat.addSwitchPreference(
                 key = PREF_LOAD_DESCRIPTIONS,
                 default = true,
-                title = "Metadata: Load episode descriptions",
-                summary = "Fetching episode descriptions from external sources",
+                title = "Load episode descriptions",
+                summary = "Fetch episode descriptions from external sources",
             )
 
-            screen.addSwitchPreference(
+            // 4. Smart Search category
+            val searchCat = PreferenceCategory(context).apply {
+                title = "Smart Search"
+            }
+            screen.addPreference(searchCat)
+
+            searchCat.addSwitchPreference(
                 key = PREF_SMART_SEARCH,
                 default = PREF_SMART_SEARCH_DEFAULT,
-                title = "Search: Enable smart search",
+                title = "Enable smart search",
                 summary = "AI resolves descriptive queries and corrects spelling",
             )
-            screen.addEditTextPreference(
+            searchCat.addEditTextPreference(
                 key = PREF_SMART_SEARCH_PHRASE,
                 default = PREF_SMART_SEARCH_PHRASE_DEFAULT,
-                title = "Search: Smart search activation phrase",
+                title = "Smart search activation phrase",
                 summary = "Type this at the start of your search to trigger AI. Leave empty to use AI for all searches.",
                 dialogMessage = "Type this at the start of your search to trigger AI.\nCase-insensitive. Must be followed by a space.\nLeave empty to use AI for all searches.",
             )
@@ -938,3 +969,52 @@ data class HosterTask(
     val source: String,
     val slug: String,
 )
+
+private fun PreferenceGroup.addListPreference(
+    key: String,
+    default: String,
+    title: String,
+    summary: String,
+    entries: List<String>,
+    entryValues: List<String>,
+) {
+    ListPreference(context).apply {
+        this.key = key
+        this.title = title
+        this.summary = summary
+        this.entries = entries.toTypedArray()
+        this.entryValues = entryValues.toTypedArray()
+        setDefaultValue(default)
+    }.also(::addPreference)
+}
+
+private fun PreferenceGroup.addSwitchPreference(
+    key: String,
+    default: Boolean,
+    title: String,
+    summary: String,
+) {
+    SwitchPreferenceCompat(context).apply {
+        this.key = key
+        this.title = title
+        this.summary = summary
+        setDefaultValue(default)
+    }.also(::addPreference)
+}
+
+private fun PreferenceGroup.addEditTextPreference(
+    key: String,
+    default: String,
+    title: String,
+    summary: String,
+    dialogMessage: String? = null,
+) {
+    EditTextPreference(context).apply {
+        this.key = key
+        this.title = title
+        this.summary = summary
+        this.dialogTitle = title
+        this.dialogMessage = dialogMessage
+        setDefaultValue(default)
+    }.also(::addPreference)
+}

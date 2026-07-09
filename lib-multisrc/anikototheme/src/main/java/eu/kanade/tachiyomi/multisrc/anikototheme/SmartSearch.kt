@@ -87,16 +87,97 @@ class SmartSearch(
         return title
     }
 
-    private fun buildPrompt(query: String): String = "$query anime. " +
-        "[Respond with only the English anime title, nothing else. " +
-        "If the query describes an anime, give the title of the anime being described. " +
-        "If the query has spelling mistakes, correct them and give the proper title. " +
-        "If the query mentions a genre or theme, give one popular anime from that genre. " +
-        "If the query is vague, give the most likely anime match. " +
-        "Always respond with exactly one anime title, no explanations, no lists.]"
+    private fun buildPrompt(query: String): String {
+        return if (query.contains("anime", ignoreCase = true)) {
+            query.trim()
+        } else {
+            "${query.trim()} anime"
+        }
+    }
+
+    private fun cleanGoogleResultTitle(raw: String): String {
+        var t = raw.trim()
+        t = t.removeSurrounding("\"").removeSurrounding("'").removeSurrounding("“").removeSurrounding("”")
+        
+        val suffixes = listOf(
+            " - Wikipedia", " | Wikipedia",
+            " - IMDb", " | IMDb",
+            " | Netflix", " - Netflix",
+            " | Crunchyroll", " - Crunchyroll",
+            " - MyAnimeList.net", " | MyAnimeList.net",
+            " (Anime) - MyAnimeList.net",
+            " (Manga) - MyAnimeList.net",
+            " | Anime-Planet", " - Anime-Planet",
+            " - Anime News Network", " | Anime News Network",
+            " - Fandom", " | Fandom",
+            " - AniList", " | AniList"
+        )
+        
+        for (suffix in suffixes) {
+            if (t.endsWith(suffix, ignoreCase = true)) {
+                t = t.substring(0, t.length - suffix.length).trim()
+            }
+        }
+        
+        t = t.replace(Regex("""\s*\(\s*(?:TV\s+)?(?:Series|Mini\s+Series|Anime|Manga|Movie|TV|OVA|ONA).*\)$""", RegexOption.IGNORE_CASE), "")
+        t = t.replace(Regex("""\s*\(\s*\d{4}\s*\)$"""), "")
+        t = t.replace(Regex("""\s*\([^)]+\)$"""), "")
+        return t.trim()
+    }
 
     private fun extractAnimeTitle(text: String): String? {
-        // Strategy 1: "is titled [X]"
+        val lines = text.lines()
+
+        // Strategy 1: Search Result Suffix Matching (Highly Reliable)
+        val siteSuffixes = listOf(
+            " - Wikipedia",
+            " - IMDb",
+            " - MyAnimeList.net",
+            " | Crunchyroll",
+            " | Netflix",
+            " | Anime-Planet"
+        )
+        for (line in lines) {
+            val trimmed = line.trim()
+            for (suffix in siteSuffixes) {
+                if (trimmed.endsWith(suffix, ignoreCase = true)) {
+                    val rawTitle = trimmed.substring(0, trimmed.length - suffix.length).trim()
+                    val cleanedTitle = cleanGoogleResultTitle(rawTitle)
+                    if (cleanedTitle.isNotEmpty()) {
+                        val wordCount = cleanedTitle.split(Regex("\\s+")).filter { it.isNotEmpty() }.size
+                        Log.d(tag, "SmartSearch: Strategy 1 (Result Suffix) match: \"$trimmed\" -> \"$cleanedTitle\" ($wordCount words)")
+                        if (wordCount in 1..12) return cleanedTitle
+                    }
+                }
+            }
+        }
+
+        // Strategy 2: Breadcrumb/URL follower title extraction
+        for (i in 0 until lines.size - 1) {
+            val line = lines[i].trim()
+            if (line.contains("›") || line.contains("http://") || line.contains("https://") || line.contains("www.")) {
+                for (j in 1..2) {
+                    if (i + j < lines.size) {
+                        val nextLine = lines[i + j].trim()
+                        if (nextLine.isNotEmpty() && 
+                            nextLine.length in 5..80 &&
+                            !nextLine.contains("›") && 
+                            !nextLine.contains("http") &&
+                            !nextLine.contains("Translate this page") &&
+                            !nextLine.contains("Similar") &&
+                            nextLine.firstOrNull()?.isUpperCase() == true
+                        ) {
+                            val cleaned = cleanGoogleResultTitle(nextLine)
+                            val wordCount = cleaned.split(Regex("\\s+")).filter { it.isNotEmpty() }.size
+                            Log.d(tag, "SmartSearch: Strategy 2 (Breadcrumb follower) match: \"$nextLine\" -> \"$cleaned\" ($wordCount words)")
+                            if (wordCount in 1..12) return cleaned
+                        }
+                    }
+                }
+            }
+        }
+
+        // Strategy 3: "is titled [X]" (From AI Overview or snippets)
         val titledPattern = Regex(
             """(?:is\s+titled|is\s+called|is\s+named|is\s+known\s+as)\s+([A-Z][^\n.!?]{2,80}?)(?:\s*[.\n!?]|$)""",
         )
@@ -104,32 +185,27 @@ class SmartSearch(
             val raw = match.groupValues[1].trim()
             val title = stripParenthetical(raw)
             val wordCount = title.split(Regex("\\s+")).filter { it.isNotEmpty() }.size
-            Log.d(tag, "SmartSearch: strategy1 match: \"$raw\" → \"$title\" ($wordCount words)")
+            Log.d(tag, "SmartSearch: Strategy 3 (titled) match: \"$raw\" → \"$title\" ($wordCount words)")
             if (wordCount in 2..12) return title
         }
 
-        // Strategy 2: Quoted text
+        // Strategy 4: Quoted text (From AI Overview or snippets)
         val quotedPattern = Regex("""["“'‘]([^"”'’]{2,80})["”'’]""")
         for (match in quotedPattern.findAll(text)) {
             val raw = match.groupValues[1].trim()
-            if (raw.contains("(") && raw.endsWith(")")) {
-                Log.d(tag, "SmartSearch: strategy2 skip (parenthetical): \"$raw\"")
-                continue
-            }
+            if (raw.contains("(") && raw.endsWith(")")) continue
             val title = stripParenthetical(raw)
             val wordCount = title.split(Regex("\\s+")).filter { it.isNotEmpty() }.size
-            Log.d(tag, "SmartSearch: strategy2 match: \"$raw\" → \"$title\" ($wordCount words)")
+            Log.d(tag, "SmartSearch: Strategy 4 (quoted) match: \"$raw\" → \"$title\" ($wordCount words)")
             if (wordCount in 2..12) return title
         }
 
-        // Strategy 3: First capitalized multi-word phrase after "Search Results"
-        val lines = text.lines()
+        // Strategy 5: First capitalized multi-word phrase after "Search Results" or "AI Overview"
         var inResults = false
         val uiWords = setOf(
             "Sign", "AI", "All", "Images", "Videos", "News", "Books", "Finance",
             "Search", "Results", "Mode", "sites", "Learn",
         )
-
         for (line in lines) {
             if ("Search Results" in line || "AI Overview" in line) {
                 inResults = true
@@ -161,12 +237,12 @@ class SmartSearch(
 
             if (phrase.size in 2..12) {
                 val title = stripParenthetical(phrase.joinToString(" "))
-                Log.d(tag, "SmartSearch: strategy3 match: \"${phrase.joinToString(" ")}\" → \"$title\"")
+                Log.d(tag, "SmartSearch: Strategy 5 (first phrase) match: \"${phrase.joinToString(" ")}\" → \"$title\"")
                 return title
             }
         }
 
-        Log.d(tag, "SmartSearch: all 3 strategies failed")
+        Log.d(tag, "SmartSearch: all 5 strategies failed")
         return null
     }
 
