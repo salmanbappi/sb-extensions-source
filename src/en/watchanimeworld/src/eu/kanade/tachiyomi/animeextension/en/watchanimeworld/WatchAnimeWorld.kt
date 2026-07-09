@@ -5,8 +5,8 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
-import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.model.Track
+import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
@@ -81,12 +81,10 @@ class WatchAnimeWorld : Source() {
 
     // =============================== Search ===============================
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return if (query.isNotBlank()) {
-            GET("$baseUrl/page/$page/?s=$query", headers)
-        } else {
-            popularAnimeRequest(page)
-        }
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
+        GET("$baseUrl/page/$page/?s=$query", headers)
+    } else {
+        popularAnimeRequest(page)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
@@ -117,7 +115,7 @@ class WatchAnimeWorld : Source() {
                     url = urlPath
                     name = "Movie"
                     episode_number = 1f
-                }
+                },
             )
         }
 
@@ -168,7 +166,7 @@ class WatchAnimeWorld : Source() {
                 url = link.attr("abs:href").substringAfter(baseUrl)
                 name = if (titleText.isNotBlank()) titleText else "Episode $episodeNum"
                 episode_number = episodeNum
-                
+
                 val img = article.selectFirst("img")
                 val imgUrl = img?.attr("abs:data-src")?.takeIf { it.isNotBlank() }
                     ?: img?.attr("abs:src") ?: ""
@@ -199,13 +197,13 @@ class WatchAnimeWorld : Source() {
                     val link = server.link ?: return@parallelCatchingFlatMapBlocking emptyList()
                     try {
                         val serverResponse = client.newCall(
-                            GET(link, headers.newBuilder().set("Referer", episodeUrl).build())
+                            GET(link, headers.newBuilder().set("Referer", episodeUrl).build()),
                         ).execute()
                         val serverHtml = serverResponse.bodyString()
-                        
+
                         val m3u8Matches = M3U8_REGEX.findAll(serverHtml).map { it.value }.toList()
                         val distinctM3u8s = m3u8Matches.distinct()
-                        
+
                         distinctM3u8s.flatMap { m3u8Url ->
                             val lang = server.language ?: "Unknown"
                             if (m3u8Url.contains("master.m3u8") || m3u8Url.contains("playlist.m3u8")) {
@@ -215,15 +213,15 @@ class WatchAnimeWorld : Source() {
                                         referer = link,
                                         masterHeaders = headers.newBuilder().set("Referer", link).build(),
                                         videoHeaders = headers.newBuilder().set("Referer", link).build(),
-                                        videoNameGen = { quality -> "$lang - $quality" }
+                                        videoNameGen = { quality -> "$lang - $quality" },
                                     )
                                 } catch (e: Exception) {
                                     listOf(
                                         Video(
                                             videoUrl = m3u8Url,
                                             videoTitle = "$lang - Auto",
-                                            headers = headers.newBuilder().set("Referer", link).build()
-                                        )
+                                            headers = headers.newBuilder().set("Referer", link).build(),
+                                        ),
                                     )
                                 }
                             } else {
@@ -231,8 +229,8 @@ class WatchAnimeWorld : Source() {
                                     Video(
                                         videoUrl = m3u8Url,
                                         videoTitle = "$lang - Auto",
-                                        headers = headers.newBuilder().set("Referer", link).build()
-                                    )
+                                        headers = headers.newBuilder().set("Referer", link).build(),
+                                    ),
                                 )
                             }
                         }
@@ -261,7 +259,7 @@ class WatchAnimeWorld : Source() {
                         .add("data", videoId)
                         .add("do", "getVideo")
                         .build()
-                    
+
                     val zephyrHeaders = headers.newBuilder()
                         .set("Referer", "https://play.zephyrflick.top/")
                         .set("Origin", "https://play.zephyrflick.top")
@@ -273,7 +271,7 @@ class WatchAnimeWorld : Source() {
                             .url("https://play.zephyrflick.top/player/index.php")
                             .post(formBody)
                             .headers(zephyrHeaders)
-                            .build()
+                            .build(),
                     ).execute()
 
                     val zephyrData = json.decodeFromString<ZephyrResponse>(zephyrResponse.bodyString())
@@ -284,7 +282,7 @@ class WatchAnimeWorld : Source() {
                         val subtitles = mutableListOf<Track>()
                         try {
                             val playerPageResponse = client.newCall(
-                                GET(iframeUrl, zephyrHeaders)
+                                GET(iframeUrl, zephyrHeaders),
                             ).execute()
                             val playerHtml = playerPageResponse.bodyString()
                             val subtitleMatch = SUBTITLE_REGEX.find(playerHtml)
@@ -316,7 +314,7 @@ class WatchAnimeWorld : Source() {
                                     masterHeaders = streamHeaders,
                                     videoHeaders = streamHeaders,
                                     videoNameGen = { quality -> "Zephyrflick - $quality" },
-                                    subtitleList = subtitles
+                                    subtitleList = subtitles,
                                 )
                                 videos.addAll(hlsVideos)
                             } catch (e: Exception) {
@@ -325,8 +323,8 @@ class WatchAnimeWorld : Source() {
                                         videoUrl = streamUrl,
                                         videoTitle = "Zephyrflick - Auto",
                                         headers = streamHeaders,
-                                        subtitleTracks = subtitles
-                                    )
+                                        subtitleTracks = subtitles,
+                                    ),
                                 )
                             }
                         } else {
@@ -335,8 +333,8 @@ class WatchAnimeWorld : Source() {
                                     videoUrl = streamUrl,
                                     videoTitle = "Zephyrflick - Auto",
                                     headers = streamHeaders,
-                                    subtitleTracks = subtitles
-                                )
+                                    subtitleTracks = subtitles,
+                                ),
                             )
                         }
                     }
@@ -356,7 +354,7 @@ class WatchAnimeWorld : Source() {
                 .thenByDescending { it.quality.contains("1080p") }
                 .thenByDescending { it.quality.contains("720p") }
                 .thenByDescending { it.quality.contains("480p") }
-                .thenByDescending { it.quality.contains("Auto") }
+                .thenByDescending { it.quality.contains("Auto") },
         )
     }
 
@@ -381,32 +379,30 @@ class WatchAnimeWorld : Source() {
 
     // ============================ Utilities ===============================
 
-    private fun parseAnimeFromElement(element: Element): SAnime {
-        return SAnime.create().apply {
-            val titleElement = element.selectFirst(".entry-title, h2, h3")
-            title = titleElement?.text()?.trim() ?: ""
+    private fun parseAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
+        val titleElement = element.selectFirst(".entry-title, h2, h3")
+        title = titleElement?.text()?.trim() ?: ""
 
-            val linkElement = element.selectFirst("a.lnk-blk, a")
-            val linkUrl = linkElement?.attr("abs:href") ?: ""
-            val relativeUrl = linkUrl.substringAfter(baseUrl)
+        val linkElement = element.selectFirst("a.lnk-blk, a")
+        val linkUrl = linkElement?.attr("abs:href") ?: ""
+        val relativeUrl = linkUrl.substringAfter(baseUrl)
 
-            if (relativeUrl.contains("/episode/")) {
-                val slug = relativeUrl.trim('/').substringAfterLast('/')
-                val match = EPISODE_SLUG_REGEX.find(slug)
-                if (match != null) {
-                    val animeSlug = match.groupValues[1]
-                    url = "/series/$animeSlug/"
-                } else {
-                    url = relativeUrl
-                }
+        if (relativeUrl.contains("/episode/")) {
+            val slug = relativeUrl.trim('/').substringAfterLast('/')
+            val match = EPISODE_SLUG_REGEX.find(slug)
+            if (match != null) {
+                val animeSlug = match.groupValues[1]
+                url = "/series/$animeSlug/"
             } else {
                 url = relativeUrl
             }
-
-            val imgElement = element.selectFirst("img")
-            thumbnail_url = imgElement?.attr("abs:data-src")?.takeIf { it.isNotBlank() }
-                ?: imgElement?.attr("abs:src") ?: ""
+        } else {
+            url = relativeUrl
         }
+
+        val imgElement = element.selectFirst("img")
+        thumbnail_url = imgElement?.attr("abs:data-src")?.takeIf { it.isNotBlank() }
+            ?: imgElement?.attr("abs:src") ?: ""
     }
 
     companion object {
