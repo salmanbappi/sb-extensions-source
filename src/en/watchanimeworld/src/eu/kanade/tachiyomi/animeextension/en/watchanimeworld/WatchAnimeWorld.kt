@@ -76,9 +76,15 @@ class WatchAnimeWorld : Source() {
 
     // ============================== Latest ================================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/episode/page/$page/", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/?post_type=episodes&paged=$page", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
+
+    // =========================== Anime Details ============================
+
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, headers)
+
+    override fun episodeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
 
     // =============================== Search ===============================
 
@@ -182,6 +188,7 @@ class WatchAnimeWorld : Source() {
 
     override fun videoListParse(response: Response): List<Video> {
         val html = response.bodyString()
+        val doc = org.jsoup.Jsoup.parse(html, response.request.url.toString())
         val videos = mutableListOf<Video>()
         val episodeUrl = response.request.url.toString()
 
@@ -246,7 +253,6 @@ class WatchAnimeWorld : Source() {
         }
 
         // 2. Extract Zephyrflick player sources
-        val doc = response.asJsoup()
         val zephyrIframes = doc.select("iframe").mapNotNull {
             it.attr("data-src").takeIf { s -> s.isNotBlank() } ?: it.attr("src").takeIf { s -> s.isNotBlank() }
         }.filter { "zephyrflick" in it }
