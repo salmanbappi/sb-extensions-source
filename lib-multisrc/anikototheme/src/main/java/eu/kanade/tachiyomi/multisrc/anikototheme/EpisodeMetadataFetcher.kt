@@ -270,9 +270,7 @@ class EpisodeMetadataFetcher(
 
     // ── HTTP helpers ──────────────────────────────────────────────────────────
 
-    private fun isCloudflareHost(url: String): Boolean {
-        return url.contains("anilist.co") || url.contains("kitsu.app")
-    }
+    private fun isCloudflareHost(url: String): Boolean = url.contains("anilist.co") || url.contains("kitsu.app")
 
     private fun fetchString(url: String): String? {
         // For Cloudflare-protected hosts, try WebView first
@@ -329,9 +327,7 @@ class EpisodeMetadataFetcher(
         }
     }
 
-    private fun stripHtml(text: String): String {
-        return text.replace(Regex("<[^>]+>"), "").trim()
-    }
+    private fun stripHtml(text: String): String = text.replace(Regex("<[^>]+>"), "").trim()
 
     // ── DTOs ──────────────────────────────────────────────────────────────────
 

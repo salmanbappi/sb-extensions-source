@@ -41,11 +41,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 abstract class AnikotoTheme : Source() {
 
@@ -156,7 +156,6 @@ abstract class AnikotoTheme : Source() {
     private val smartSearchPhrase: String
         get() = preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT)
             ?: PREF_SMART_SEARCH_PHRASE_DEFAULT
-
 
     // ---- Headers ----
 
@@ -950,12 +949,12 @@ abstract class AnikotoTheme : Source() {
         spannable.setSpan(
             ForegroundColorSpan(Color.parseColor("#dc2626")),
             phraseStart, phraseEnd,
-            SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+            SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE,
         )
         spannable.setSpan(
             StyleSpan(Typeface.BOLD),
             phraseStart, phraseEnd,
-            SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+            SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE,
         )
         pref.summary = spannable
     }
