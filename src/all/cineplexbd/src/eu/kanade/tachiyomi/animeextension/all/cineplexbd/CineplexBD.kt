@@ -152,7 +152,7 @@ class CineplexBD : Source() {
             else -> "/view.php?id=$id"
         }
 
-        val titleEl = element.selectFirst("span.truncate, div.text-sm, div.cp-title, h2, .card-title, .title")
+        val titleEl = element.selectFirst(".truncate, div.text-sm, div.cp-title, h2, .card-title, .title")
         val posterImg = element.selectFirst("img.poster, .tvCard img, img[class*='poster'], img[src*='uploads/']")
         title = titleEl?.text() ?: posterImg?.attr("alt") ?: "Unknown Title"
 
@@ -615,6 +615,19 @@ class CineplexBD : Source() {
             return listOf(Video(videoUrl = finalUrl, videoTitle = quality))
         }
         return emptyList()
+    }
+
+    // ================= Relation/Suggestions =================
+    fun relatedAnimeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
+
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
+        val doc = response.asJsoup()
+        val elements = doc.select(".slider-track a[href*='view.php'], .slider-track a[href*='watch.php'], .slider-track a[href*='tview.php']")
+            .takeIf { it.isNotEmpty() }
+            ?: doc.select("a[href*='view.php'], a[href*='watch.php'], a[href*='tview.php']")
+        return elements.map { parseAnimeItem(it) }
+            .distinctBy { it.url }
+            .filter { it.title != "Unknown Title" }
     }
 
     override fun getFilterList() = AnimeFilterList(
