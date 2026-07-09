@@ -1,0 +1,11 @@
+--- core/src/main/kotlin/keiyoushi/utils/Crypto.kt
++++ core/src/main/kotlin/keiyoushi/utils/Crypto.kt
+@@ -25,6 +25,8 @@
+
+ private val HEX_CHARS = "0123456789abcdef".toCharArray()
+
++// Performance optimization: Using a manual char array and bitwise operations instead of String.format
++// and joinToString avoids massive object allocation overhead and is significantly faster for large arrays.
+ fun ByteArray.toHex(): String {
+     val result = CharArray(size * 2)
+     for (i in indices) {

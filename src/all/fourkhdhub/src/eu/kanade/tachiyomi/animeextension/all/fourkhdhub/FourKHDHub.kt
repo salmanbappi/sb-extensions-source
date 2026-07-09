@@ -518,7 +518,7 @@ class FourKHDHub : Source() {
         }
     }
 
-    private val REDIRECT_REGEX = Regex("""s\('o','([A-Za-z0-9+/=]+)'|ck\('_wp_http_\d+','([^']+)'""")
+    private val redirectRegex = Regex("""s\('o','([A-Za-z0-9+/=]+)'|ck\('_wp_http_\d+','([^']+)'""")
 
     private suspend fun getRedirectLinks(url: String): String = withContext(Dispatchers.IO) {
         try {
@@ -527,7 +527,7 @@ class FourKHDHub : Source() {
             response.close()
 
             val combined = StringBuilder(128)
-            for (m in REDIRECT_REGEX.findAll(html)) {
+            for (m in redirectRegex.findAll(html)) {
                 val g1 = m.groups[1]?.value
                 val g2 = m.groups[2]?.value
                 if (g1 != null) {
