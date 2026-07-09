@@ -16,9 +16,9 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimitHost
 import extensions.utils.Source
+import extensions.utils.addEditTextPreference
 import extensions.utils.addListPreference
 import extensions.utils.addSwitchPreference
-import extensions.utils.addEditTextPreference
 import extensions.utils.asJsoup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -865,7 +865,7 @@ abstract class AnikotoTheme : Source() {
                 default = PREF_SMART_SEARCH_PHRASE_DEFAULT,
                 title = "Search: Smart search activation phrase",
                 summary = "Type this at the start of your search to trigger AI. Leave empty to use AI for all searches.",
-                dialogMessage = "Type this at the start of your search to trigger AI.\nCase-insensitive. Must be followed by a space.\nLeave empty to use AI for all searches."
+                dialogMessage = "Type this at the start of your search to trigger AI.\nCase-insensitive. Must be followed by a space.\nLeave empty to use AI for all searches.",
             )
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
