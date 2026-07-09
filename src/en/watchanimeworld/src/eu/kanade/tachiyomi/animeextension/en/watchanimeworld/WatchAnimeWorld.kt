@@ -59,6 +59,10 @@ class WatchAnimeWorld : Source() {
         PlaylistUtils(client, headers)
     }
 
+    private val abyssExtractor by lazy {
+        AbyssExtractor(client, headers, playlistUtils)
+    }
+
     // ============================== Popular ===============================
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/series/page/$page/", headers)
@@ -197,17 +201,27 @@ class WatchAnimeWorld : Source() {
 
                 val serverVideos = servers.parallelCatchingFlatMapBlocking { server ->
                     val link = server.link ?: return@parallelCatchingFlatMapBlocking emptyList()
+                    val lang = server.language ?: "Unknown"
                     try {
                         val serverResponse = client.newCall(
-                            GET(link, headers.newBuilder().set("Referer", episodeUrl).build())
+                            GET(link, headers.newBuilder().set("Referer", episodeUrl).build()),
                         ).execute()
+                        val finalUrl = serverResponse.request.url.toString()
                         val serverHtml = serverResponse.bodyString()
-                        
-                        val m3u8Matches = M3U8_REGEX.findAll(serverHtml).map { it.value }.toList()
-                        val distinctM3u8s = m3u8Matches.distinct()
-                        
-                        distinctM3u8s.flatMap { m3u8Url ->
-                            val lang = server.language ?: "Unknown"
+
+                        // Check for abyssplayer.com embed in the resolved page
+                        val abyssEmbedUrl = ABYSS_EMBED_REGEX.find(serverHtml)?.groupValues?.get(1)
+                        if (abyssEmbedUrl != null) {
+                            return@parallelCatchingFlatMapBlocking abyssExtractor.videosFromEmbed(
+                                embedUrl = abyssEmbedUrl,
+                                referer = finalUrl,
+                                serverName = lang,
+                            )
+                        }
+
+                        // Fallback: scrape m3u8 links directly
+                        val m3u8Matches = M3U8_REGEX.findAll(serverHtml).map { it.value }.toList().distinct()
+                        m3u8Matches.flatMap { m3u8Url ->
                             if (m3u8Url.contains("master.m3u8") || m3u8Url.contains("playlist.m3u8")) {
                                 try {
                                     playlistUtils.extractFromHls(
@@ -215,15 +229,15 @@ class WatchAnimeWorld : Source() {
                                         referer = link,
                                         masterHeaders = headers.newBuilder().set("Referer", link).build(),
                                         videoHeaders = headers.newBuilder().set("Referer", link).build(),
-                                        videoNameGen = { quality -> "$lang - $quality" }
+                                        videoNameGen = { quality -> "$lang - $quality" },
                                     )
-                                } catch (e: Exception) {
+                                } catch (_: Exception) {
                                     listOf(
                                         Video(
                                             videoUrl = m3u8Url,
                                             videoTitle = "$lang - Auto",
-                                            headers = headers.newBuilder().set("Referer", link).build()
-                                        )
+                                            headers = headers.newBuilder().set("Referer", link).build(),
+                                        ),
                                     )
                                 }
                             } else {
@@ -231,12 +245,12 @@ class WatchAnimeWorld : Source() {
                                     Video(
                                         videoUrl = m3u8Url,
                                         videoTitle = "$lang - Auto",
-                                        headers = headers.newBuilder().set("Referer", link).build()
-                                    )
+                                        headers = headers.newBuilder().set("Referer", link).build(),
+                                    ),
                                 )
                             }
                         }
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         emptyList()
                     }
                 }
@@ -246,8 +260,20 @@ class WatchAnimeWorld : Source() {
             }
         }
 
-        // 2. Extract Zephyrflick player sources
+        // 2. Extract Abyss Player sources (abyssplayer.com)
         val doc = response.asJsoup()
+        val abyssIframes = doc.select("iframe").mapNotNull {
+            it.attr("data-src").takeIf { s -> s.isNotBlank() } ?: it.attr("src").takeIf { s -> s.isNotBlank() }
+        }.filter { "abyssplayer.com" in it }
+
+        abyssIframes.forEachIndexed { idx, embedUrl ->
+            try {
+                val serverLabel = "Server ${idx + 1}"
+                videos.addAll(abyssExtractor.videosFromEmbed(embedUrl, episodeUrl, serverLabel))
+            } catch (_: Exception) {}
+        }
+
+        // 3. Extract Zephyrflick player sources
         val zephyrIframes = doc.select("iframe").mapNotNull {
             it.attr("data-src").takeIf { s -> s.isNotBlank() } ?: it.attr("src").takeIf { s -> s.isNotBlank() }
         }.filter { "zephyrflick" in it }
@@ -413,6 +439,7 @@ class WatchAnimeWorld : Source() {
         private val EPISODE_NUM_REGEX by lazy { Regex("""(\d+)x(\d+)""") }
         private val PLAYER1_REGEX by lazy { Regex("""/api/player1\.php\?data=([A-Za-z0-9+/=]+)""") }
         private val M3U8_REGEX by lazy { Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""", RegexOption.IGNORE_CASE) }
+        private val ABYSS_EMBED_REGEX by lazy { Regex("""(https://abyssplayer\.com/embed/[^\s"'<>]+)""") }
         private val ZEPHYR_HASH_REGEX by lazy { Regex("""/video/([a-f0-9]+)""") }
         private val SUBTITLE_REGEX by lazy { Regex("""var playerjsSubtitle = "([^"]+)"""") }
         private val SUBTITLE_LINE_REGEX by lazy { Regex("""\[([^\]]+)\](.+)""") }
