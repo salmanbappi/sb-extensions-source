@@ -1,0 +1,12 @@
+ext {
+    extName = 'WatchAnimeWorld'
+    extClass = '.WatchAnimeWorld'
+    extVersionCode = 1
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(':lib:cloudflare-interceptor'))
+    implementation(project(':lib:playlist-utils'))
+}
