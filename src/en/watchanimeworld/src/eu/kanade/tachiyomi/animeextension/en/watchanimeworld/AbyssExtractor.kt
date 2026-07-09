@@ -226,8 +226,10 @@ class AbyssExtractor(
         val patched = when {
             html.contains("</head>", ignoreCase = true) ->
                 html.replace("</head>", "$injectedScript</head>", ignoreCase = true)
+
             html.contains("<body", ignoreCase = true) ->
                 html.replace(Regex("(<body[^>]*>)"), "$1$injectedScript")
+
             else -> injectedScript + html
         }
 
