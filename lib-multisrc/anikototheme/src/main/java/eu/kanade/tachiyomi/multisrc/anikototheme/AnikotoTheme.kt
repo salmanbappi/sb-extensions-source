@@ -112,7 +112,7 @@ abstract class AnikotoTheme : Source() {
             .build()
     }
 
-    private val webViewFetcher by lazy { WebViewFetcher() }
+    private val webViewFetcher by lazy { WebViewFetcher(Injekt.get<Application>()) }
     private val extractors by lazy { AnikotoExtractors(client, json, webViewFetcher) }
     private val metadataFetcher by lazy { EpisodeMetadataFetcher(client, json, webViewFetcher) }
     private val smartSearch by lazy { SmartSearch(webViewFetcher) }
@@ -875,6 +875,7 @@ abstract class AnikotoTheme : Source() {
     // ---- Logging ----
 
     private fun logi(msg: String) = Log.i(TAG, msg)
+    private fun logw(msg: String) = Log.w(TAG, msg)
     private fun loge(msg: String, e: Throwable? = null) {
         if (e != null) Log.e(TAG, msg, e) else Log.e(TAG, msg)
     }
