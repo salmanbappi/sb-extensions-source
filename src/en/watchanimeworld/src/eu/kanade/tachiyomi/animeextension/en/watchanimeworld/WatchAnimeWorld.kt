@@ -14,6 +14,7 @@ import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSwitchPreference
+import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
@@ -348,13 +349,13 @@ class WatchAnimeWorld : Source() {
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
         return sortedWith(
-            compareByDescending<Video> { it.quality.contains(quality) }
-                .thenByDescending { it.quality.contains("1080p") }
-                .thenByDescending { it.quality.contains("720p") }
-                .thenByDescending { it.quality.contains("480p") }
-                .thenByDescending { it.quality.contains("Auto") },
+            compareByDescending<Video> { it.videoTitle.contains(prefQuality) }
+                .thenByDescending { it.videoTitle.contains("1080p") }
+                .thenByDescending { it.videoTitle.contains("720p") }
+                .thenByDescending { it.videoTitle.contains("480p") }
+                .thenByDescending { it.videoTitle.contains("Auto") },
         )
     }
 
