@@ -870,6 +870,7 @@ abstract class AnikotoTheme : Source() {
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
         }
+    }
 
     // ---- Logging ----
 
