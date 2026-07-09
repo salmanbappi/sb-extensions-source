@@ -22,7 +22,7 @@ class WebViewFetcher(
     private val context: Context,
     private val originUrl: String = "https://megaplay.buzz/",
 ) {
-    private val TAG = "WebViewFetcher"
+    private val logTag = "WebViewFetcher"
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var webView: WebView? = null
     @Volatile private var webViewReady = false
@@ -74,7 +74,7 @@ class WebViewFetcher(
 
         @JavascriptInterface
         fun onError(id: String, error: String) {
-            Log.e(TAG, "JS error for request $id: $error")
+            Log.e(logTag, "JS error for request $id: $error")
             pendingRequests[id]?.let { state ->
                 state.error = error
                 state.latch.countDown()
@@ -95,17 +95,17 @@ class WebViewFetcher(
                                 settings.blockNetworkImage = true
                                 webViewClient = object : WebViewClient() {
                                     override fun onPageFinished(view: WebView?, url: String?) {
-                                        Log.i(TAG, "warmUp page loaded: $url")
+                                        Log.i(logTag, "warmUp page loaded: $url")
                                         webViewReady = true
                                     }
                                 }
                                 addJavascriptInterface(JSInterface(), "Android")
                             }
-                            Log.i(TAG, "warmUp loading origin: $originUrl")
+                            Log.i(logTag, "warmUp loading origin: $originUrl")
                             webView?.loadUrl(originUrl)
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "warmUp WebView creation failed", e)
+                        Log.e(logTag, "warmUp WebView creation failed", e)
                         webViewReady = true
                     }
                 }
@@ -113,9 +113,9 @@ class WebViewFetcher(
                 while (!webViewReady && System.currentTimeMillis() < deadline) {
                     Thread.sleep(200)
                 }
-                Log.i(TAG, "warmUp ${if (webViewReady) "complete" else "timed out"}")
+                Log.i(logTag, "warmUp ${if (webViewReady) "complete" else "timed out"}")
             } catch (e: Exception) {
-                Log.e(TAG, "warmUp failed", e)
+                Log.e(logTag, "warmUp failed", e)
             }
         }.start()
     }
@@ -133,16 +133,16 @@ class WebViewFetcher(
                         settings.blockNetworkImage = true
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, url: String?) {
-                                Log.i(TAG, "origin page loaded: $url")
+                                Log.i(logTag, "origin page loaded: $url")
                                 webViewReady = true
                             }
                         }
                         addJavascriptInterface(JSInterface(), "Android")
                     }
-                    Log.i(TAG, "loading origin: $originUrl")
+                    Log.i(logTag, "loading origin: $originUrl")
                     webView?.loadUrl(originUrl)
                 } catch (e: Exception) {
-                    Log.e(TAG, "failed to create WebView", e)
+                    Log.e(logTag, "failed to create WebView", e)
                     webViewReady = true
                 }
             }
@@ -151,7 +151,7 @@ class WebViewFetcher(
                 Thread.sleep(200)
             }
             if (!webViewReady) {
-                Log.e(TAG, "timeout waiting for origin page load")
+                Log.e(logTag, "timeout waiting for origin page load")
             }
         }
     }
@@ -162,7 +162,7 @@ class WebViewFetcher(
         val state = TextRequestState()
         pendingRequests[id] = state
         val startTime = System.currentTimeMillis()
-        Log.d(TAG, "fetchText id=$id url=${url.take(80)}")
+        Log.d(logTag, "fetchText id=$id url=${url.take(80)}")
 
         synchronized(fetchLock) {
             mainHandler.post {
@@ -176,7 +176,7 @@ class WebViewFetcher(
         pendingRequests.remove(id)
         state.error?.let { throw RuntimeException("WebViewFetcher: $it") }
         val elapsed = System.currentTimeMillis() - startTime
-        Log.i(TAG, "fetchText id=$id DONE in ${elapsed}ms")
+        Log.i(logTag, "fetchText id=$id DONE in ${elapsed}ms")
         return state.textResult ?: throw RuntimeException("WebViewFetcher: no text result")
     }
 
@@ -186,7 +186,7 @@ class WebViewFetcher(
         val state = TextRequestState()
         pendingRequests[id] = state
         val startTime = System.currentTimeMillis()
-        Log.d(TAG, "postJson id=$id url=${url.take(60)}")
+        Log.d(logTag, "postJson id=$id url=${url.take(60)}")
 
         synchronized(fetchLock) {
             mainHandler.post {
@@ -200,7 +200,7 @@ class WebViewFetcher(
         pendingRequests.remove(id)
         state.error?.let { throw RuntimeException("WebViewFetcher: $it") }
         val elapsed = System.currentTimeMillis() - startTime
-        Log.i(TAG, "postJson id=$id DONE in ${elapsed}ms")
+        Log.i(logTag, "postJson id=$id DONE in ${elapsed}ms")
         return state.textResult ?: throw RuntimeException("WebViewFetcher: no postJson result")
     }
 
@@ -210,7 +210,7 @@ class WebViewFetcher(
         val state = ByteRequestState()
         pendingRequests[id] = state
         val startTime = System.currentTimeMillis()
-        Log.d(TAG, "fetchBytes id=$id url=${url.take(80)}")
+        Log.d(logTag, "fetchBytes id=$id url=${url.take(80)}")
 
         synchronized(fetchLock) {
             mainHandler.post {
@@ -227,7 +227,7 @@ class WebViewFetcher(
             if (state.chunks.isEmpty()) throw RuntimeException("WebViewFetcher: no bytes received")
             val result = if (state.chunks.size == 1) state.chunks[0] else state.chunks.reduce { acc, chunk -> acc + chunk }
             val elapsed = System.currentTimeMillis() - startTime
-            Log.i(TAG, "fetchBytes id=$id DONE in ${elapsed}ms size=${result.size}")
+            Log.i(logTag, "fetchBytes id=$id DONE in ${elapsed}ms size=${result.size}")
             return result
         }
     }
@@ -250,12 +250,12 @@ class WebViewFetcher(
 
     fun warmUpGoogleWebView() {
         if (googleWebView != null && googleWebViewReady) return
-        Log.i(TAG, "SmartSearch: warmUpGoogleWebView — pre-creating Google WebView")
+        Log.i(logTag, "SmartSearch: warmUpGoogleWebView — pre-creating Google WebView")
         Thread {
             try {
                 ensureGoogleWebView()
             } catch (e: Exception) {
-                Log.e(TAG, "SmartSearch: warmUpGoogleWebView failed", e)
+                Log.e(logTag, "SmartSearch: warmUpGoogleWebView failed", e)
             }
         }.start()
     }
@@ -265,7 +265,7 @@ class WebViewFetcher(
         if (googleWebView != null && googleWebViewReady) return
         synchronized(googleLock) {
             if (googleWebView != null && googleWebViewReady) return
-            Log.d(TAG, "SmartSearch: creating Google WebView")
+            Log.d(logTag, "SmartSearch: creating Google WebView")
             mainHandler.post {
                 try {
                     googleWebView = WebView(context).apply {
@@ -275,9 +275,9 @@ class WebViewFetcher(
                         settings.userAgentString = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
                     }
                     googleWebViewReady = true
-                    Log.i(TAG, "SmartSearch: Google WebView created and ready")
+                    Log.i(logTag, "SmartSearch: Google WebView created and ready")
                 } catch (e: Exception) {
-                    Log.e(TAG, "SmartSearch: failed to create Google WebView", e)
+                    Log.e(logTag, "SmartSearch: failed to create Google WebView", e)
                     googleWebViewReady = true
                 }
             }
@@ -291,12 +291,12 @@ class WebViewFetcher(
     fun fetchRenderedText(url: String, timeoutMs: Long = 20_000): String {
         ensureGoogleWebView()
         if (googleWebView == null) {
-            Log.e(TAG, "SmartSearch: fetchRenderedText — Google WebView not available")
+            Log.e(logTag, "SmartSearch: fetchRenderedText — Google WebView not available")
             return ""
         }
 
         val startTime = System.currentTimeMillis()
-        Log.i(TAG, "SmartSearch: scraping ${url.take(100)}")
+        Log.i(logTag, "SmartSearch: scraping ${url.take(100)}")
 
         val latch = CountDownLatch(1)
         val resultHolder = arrayOfNulls<String>(1)
@@ -307,12 +307,12 @@ class WebViewFetcher(
                 try {
                     googleWebView?.webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, loadedUrl: String?) {
-                            Log.d(TAG, "SmartSearch: onPageFinished: ${loadedUrl?.take(80) ?: "?"}")
+                            Log.d(logTag, "SmartSearch: onPageFinished: ${loadedUrl?.take(80) ?: "?"}")
                             val myGen = googleGenCounter.incrementAndGet()
 
                             mainHandler.postDelayed({
                                 if (googleGenCounter.get() != myGen) {
-                                    Log.d(TAG, "SmartSearch: extraction gen $myGen stale (current=${googleGenCounter.get()}), skipping")
+                                    Log.d(logTag, "SmartSearch: extraction gen $myGen stale (current=${googleGenCounter.get()}), skipping")
                                     return@postDelayed
                                 }
                                 doExtract(view, myGen)
@@ -325,17 +325,17 @@ class WebViewFetcher(
                                 if (googleGenCounter.get() != myGen) return@evaluateJavascript
 
                                 val text = parseJsStringResult(result)
-                                Log.d(TAG, "SmartSearch: extracted ${text.length} chars (first 200: ${text.take(200)})")
+                                Log.d(logTag, "SmartSearch: extracted ${text.length} chars (first 200: ${text.take(200)})")
 
                                 if (text.length < 200 && !retryUsed.get()) {
-                                    Log.d(TAG, "SmartSearch: content short (${text.length} < 200), retrying in 2s")
+                                    Log.d(logTag, "SmartSearch: content short (${text.length} < 200), retrying in 2s")
                                     retryUsed.set(true)
                                     mainHandler.postDelayed({
                                         if (googleGenCounter.get() != myGen) return@postDelayed
                                         view?.evaluateJavascript("(function(){ return document.body.innerText; })()") { result2 ->
                                             if (googleGenCounter.get() != myGen) return@evaluateJavascript
                                             val text2 = parseJsStringResult(result2)
-                                            Log.d(TAG, "SmartSearch: retry extracted ${text2.length} chars")
+                                            Log.d(logTag, "SmartSearch: retry extracted ${text2.length} chars")
                                             resultHolder[0] = text2
                                             latch.countDown()
                                         }
@@ -351,20 +351,20 @@ class WebViewFetcher(
                     googleGenCounter.set(0)
                     googleWebView?.loadUrl(url)
                 } catch (e: Exception) {
-                    Log.e(TAG, "SmartSearch: failed to load URL", e)
+                    Log.e(logTag, "SmartSearch: failed to load URL", e)
                     latch.countDown()
                 }
             }
 
             if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
-                Log.e(TAG, "SmartSearch: scrape timeout after ${timeoutMs}ms")
+                Log.e(logTag, "SmartSearch: scrape timeout after ${timeoutMs}ms")
                 return ""
             }
         }
 
         val elapsed = System.currentTimeMillis() - startTime
         val text = resultHolder[0] ?: ""
-        Log.i(TAG, "SmartSearch: scrape DONE in ${elapsed}ms, ${text.length} chars")
+        Log.i(logTag, "SmartSearch: scrape DONE in ${elapsed}ms, ${text.length} chars")
         return text
     }
 
@@ -374,7 +374,7 @@ class WebViewFetcher(
             try { googleWebView?.destroy() } catch (_: Exception) {}
             googleWebView = null
         }
-        Log.d(TAG, "SmartSearch: Google WebView destroyed")
+        Log.d(logTag, "SmartSearch: Google WebView destroyed")
     }
 
     private fun parseJsStringResult(result: String?): String {
