@@ -24,7 +24,9 @@ class WebViewFetcher(
 ) {
     private val tag = "WebViewFetcher"
     private val mainHandler = Handler(Looper.getMainLooper())
+
     @Volatile private var webView: WebView? = null
+
     @Volatile private var webViewReady = false
     private val atomicId = AtomicLong(0)
     private val pendingRequests = ConcurrentHashMap<String, RequestState>()
@@ -235,7 +237,9 @@ class WebViewFetcher(
     fun destroy() {
         webViewReady = false
         mainHandler.post {
-            try { webView?.destroy() } catch (_: Exception) {}
+            try {
+                webView?.destroy()
+            } catch (_: Exception) {}
             webView = null
         }
         pendingRequests.clear()
@@ -244,6 +248,7 @@ class WebViewFetcher(
 
     // ── Google AI Search WebView (Smart Search) ──
     @Volatile private var googleWebView: WebView? = null
+
     @Volatile private var googleWebViewReady = false
     private val googleLock = Any()
     private val googleGenCounter = AtomicInteger(0)
@@ -371,7 +376,9 @@ class WebViewFetcher(
     fun destroyGoogleWebView() {
         googleWebViewReady = false
         mainHandler.post {
-            try { googleWebView?.destroy() } catch (_: Exception) {}
+            try {
+                googleWebView?.destroy()
+            } catch (_: Exception) {}
             googleWebView = null
         }
         Log.d(tag, "SmartSearch: Google WebView destroyed")
@@ -459,7 +466,5 @@ class WebViewFetcher(
         """.trimIndent()
     }
 
-    private fun escapeJsString(s: String): String {
-        return s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
-    }
+    private fun escapeJsString(s: String): String = s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
 }

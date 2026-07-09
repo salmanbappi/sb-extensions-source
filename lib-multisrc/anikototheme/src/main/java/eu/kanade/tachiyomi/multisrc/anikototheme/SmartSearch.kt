@@ -87,20 +87,18 @@ class SmartSearch(
         return title
     }
 
-    private fun buildPrompt(query: String): String {
-        return "$query anime. " +
-            "[Respond with only the English anime title, nothing else. " +
-            "If the query describes an anime, give the title of the anime being described. " +
-            "If the query has spelling mistakes, correct them and give the proper title. " +
-            "If the query mentions a genre or theme, give one popular anime from that genre. " +
-            "If the query is vague, give the most likely anime match. " +
-            "Always respond with exactly one anime title, no explanations, no lists.]"
-    }
+    private fun buildPrompt(query: String): String = "$query anime. " +
+        "[Respond with only the English anime title, nothing else. " +
+        "If the query describes an anime, give the title of the anime being described. " +
+        "If the query has spelling mistakes, correct them and give the proper title. " +
+        "If the query mentions a genre or theme, give one popular anime from that genre. " +
+        "If the query is vague, give the most likely anime match. " +
+        "Always respond with exactly one anime title, no explanations, no lists.]"
 
     private fun extractAnimeTitle(text: String): String? {
         // Strategy 1: "is titled [X]"
         val titledPattern = Regex(
-            """(?:is\s+titled|is\s+called|is\s+named|is\s+known\s+as)\s+([A-Z][^\n.!?]{2,80}?)(?:\s*[.\n!?]|$)"""
+            """(?:is\s+titled|is\s+called|is\s+named|is\s+known\s+as)\s+([A-Z][^\n.!?]{2,80}?)(?:\s*[.\n!?]|$)""",
         )
         for (match in titledPattern.findAll(text)) {
             val raw = match.groupValues[1].trim()
@@ -127,8 +125,10 @@ class SmartSearch(
         // Strategy 3: First capitalized multi-word phrase after "Search Results"
         val lines = text.lines()
         var inResults = false
-        val uiWords = setOf("Sign", "AI", "All", "Images", "Videos", "News", "Books", "Finance",
-            "Search", "Results", "Mode", "sites", "Learn")
+        val uiWords = setOf(
+            "Sign", "AI", "All", "Images", "Videos", "News", "Books", "Finance",
+            "Search", "Results", "Mode", "sites", "Learn",
+        )
 
         for (line in lines) {
             if ("Search Results" in line || "AI Overview" in line) {
