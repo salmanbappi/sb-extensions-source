@@ -87,18 +87,16 @@ class SmartSearch(
         return title
     }
 
-    private fun buildPrompt(query: String): String {
-        return if (query.contains("anime", ignoreCase = true)) {
-            query.trim()
-        } else {
-            "${query.trim()} anime"
-        }
+    private fun buildPrompt(query: String): String = if (query.contains("anime", ignoreCase = true)) {
+        query.trim()
+    } else {
+        "${query.trim()} anime"
     }
 
     private fun cleanGoogleResultTitle(raw: String): String {
         var t = raw.trim()
         t = t.removeSurrounding("\"").removeSurrounding("'").removeSurrounding("“").removeSurrounding("”")
-        
+
         val suffixes = listOf(
             " - Wikipedia", " | Wikipedia",
             " - IMDb", " | IMDb",
@@ -110,15 +108,15 @@ class SmartSearch(
             " | Anime-Planet", " - Anime-Planet",
             " - Anime News Network", " | Anime News Network",
             " - Fandom", " | Fandom",
-            " - AniList", " | AniList"
+            " - AniList", " | AniList",
         )
-        
+
         for (suffix in suffixes) {
             if (t.endsWith(suffix, ignoreCase = true)) {
                 t = t.substring(0, t.length - suffix.length).trim()
             }
         }
-        
+
         t = t.replace(Regex("""\s*\(\s*(?:TV\s+)?(?:Series|Mini\s+Series|Anime|Manga|Movie|TV|OVA|ONA).*\)$""", RegexOption.IGNORE_CASE), "")
         t = t.replace(Regex("""\s*\(\s*\d{4}\s*\)$"""), "")
         t = t.replace(Regex("""\s*\([^)]+\)$"""), "")
@@ -135,7 +133,7 @@ class SmartSearch(
             " - MyAnimeList.net",
             " | Crunchyroll",
             " | Netflix",
-            " | Anime-Planet"
+            " | Anime-Planet",
         )
         for (line in lines) {
             val trimmed = line.trim()
@@ -159,9 +157,9 @@ class SmartSearch(
                 for (j in 1..2) {
                     if (i + j < lines.size) {
                         val nextLine = lines[i + j].trim()
-                        if (nextLine.isNotEmpty() && 
+                        if (nextLine.isNotEmpty() &&
                             nextLine.length in 5..80 &&
-                            !nextLine.contains("›") && 
+                            !nextLine.contains("›") &&
                             !nextLine.contains("http") &&
                             !nextLine.contains("Translate this page") &&
                             !nextLine.contains("Similar") &&

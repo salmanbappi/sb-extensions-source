@@ -318,16 +318,16 @@ class WebViewFetcher(
                             // Check and bypass consent screen if needed
                             view?.evaluateJavascript(
                                 "(function() {\n" +
-                                "    var btn = document.getElementById('L2AGLb') || \n" +
-                                "              document.querySelector('button[aria-label=\"Accept all\"]') || \n" +
-                                "              document.querySelector('form[action*=\"consent\"] button') ||\n" +
-                                "              document.querySelector('input[value=\"I agree\"]');\n" +
-                                "    if (btn) {\n" +
-                                "        btn.click();\n" +
-                                "        return true;\n" +
-                                "    }\n" +
-                                "    return false;\n" +
-                                "})()"
+                                    "    var btn = document.getElementById('L2AGLb') || \n" +
+                                    "              document.querySelector('button[aria-label=\"Accept all\"]') || \n" +
+                                    "              document.querySelector('form[action*=\"consent\"] button') ||\n" +
+                                    "              document.querySelector('input[value=\"I agree\"]');\n" +
+                                    "    if (btn) {\n" +
+                                    "        btn.click();\n" +
+                                    "        return true;\n" +
+                                    "    }\n" +
+                                    "    return false;\n" +
+                                    "})()",
                             ) { result ->
                                 val bypassed = result == "true"
                                 if (bypassed) {
