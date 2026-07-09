@@ -1,315 +1,446 @@
 package eu.kanade.tachiyomi.multisrc.anikototheme
 
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
-import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
+/**
+ * Fetches episode metadata (thumbnails + descriptions + titles) from multiple sources.
+ */
 class EpisodeMetadataFetcher(
     private val client: OkHttpClient,
     private val json: Json,
     private val webViewFetcher: WebViewFetcher? = null,
 ) {
-    companion object {
-        private const val TAG = "EpisodeMetadataFetcher"
-        private const val BROWSER_UA =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
     data class EpisodeMetadata(
-        val title: String? = null,
-        val description: String? = null,
-        val thumbnailUrl: String? = null,
-        val airdate: String? = null,
+        val title: String?,
+        val description: String?,
+        val thumbnailUrl: String?,
+        val airdate: String?,
     )
 
-    // In-memory cache keyed by malId
-    private val cache = mutableMapOf<String, Map<Int, EpisodeMetadata>>()
+    private data class CachedData(
+        val episodes: Map<Int, EpisodeMetadata>,
+        val bannerUrl: String?,
+    )
 
-    private val apiHeaders: Headers = Headers.Builder()
+    private val cache = mutableMapOf<String, CachedData>()
+    private val anilistStreamingCache = mutableMapOf<String, List<AniListStreamingEpisode>>()
+    private val anilistBannerCache = mutableMapOf<String, String?>()
+    private val apiHeaders = Headers.Builder()
         .set("User-Agent", BROWSER_UA)
-        .set("Accept", "application/json")
+        .set("Accept", "application/json, application/vnd.api+json, text/html, */*")
         .build()
 
-    private val kitsuHeaders: Headers = Headers.Builder()
-        .set("User-Agent", BROWSER_UA)
-        .set("Accept", "application/vnd.api+json")
-        .build()
-
+    private fun logd(msg: String) = Log.d(TAG, msg)
     private fun logi(msg: String) = Log.i(TAG, msg)
+    private fun logw(msg: String, e: Throwable? = null) {
+        if (e != null) Log.w(TAG, msg, e) else Log.w(TAG, msg)
+    }
     private fun loge(msg: String, e: Throwable? = null) {
         if (e != null) Log.e(TAG, msg, e) else Log.e(TAG, msg)
     }
 
-    private fun isCloudflareHost(url: String): Boolean = url.contains("anikage.com") || url.contains("anilist.co") || url.contains("kitsu.io")
+    /**
+     * Fetch episode metadata for an anime.
+     *
+     * @param malId The MyAnimeList anime ID
+     * @param fallbackThumbnailUrl The anime's cover image URL
+     * @return Map<episodeNumber, EpisodeMetadata>. Empty on any error.
+     */
+    suspend fun fetch(malId: String, fallbackThumbnailUrl: String?): Map<Int, EpisodeMetadata> {
+        if (malId.isBlank()) return emptyMap()
 
-    private fun fetchString(url: String, headers: Headers = apiHeaders): String? = try {
-        if (isCloudflareHost(url) && webViewFetcher != null) {
-            webViewFetcher.fetchText(url)
-        } else {
-            val response = client.newCall(Request.Builder().url(url).headers(headers).build()).execute()
-            if (response.isSuccessful) {
-                response.body.string()
-            } else {
-                if (isCloudflareHost(url) && webViewFetcher != null) {
-                    webViewFetcher.fetchText(url)
-                } else {
-                    null
-                }
-            }
+        synchronized(cache) {
+            cache[malId]?.let { return applyFallbackThumbnail(it.episodes, it.bannerUrl, fallbackThumbnailUrl) }
         }
-    } catch (e: Exception) {
-        if (isCloudflareHost(url) && webViewFetcher != null) {
+
+        return withContext(Dispatchers.IO) {
             try {
-                webViewFetcher.fetchText(url)
-            } catch (e2: Exception) {
-                null
+                val startTime = System.currentTimeMillis()
+                logd("fetching for malId=$malId")
+
+                // Fetch all sources: Jikan (titles) + Anikage (primary) + Kitsu (fallback) + AniList (thumbnails)
+                val jikanEps = fetchJikanEpisodes(malId)
+                val anilistId = fetchAniListId(malId)
+                val anikageEps = if (anilistId != null) fetchAnikageEpisodes(anilistId) else emptyMap()
+                val kitsuEps = fetchKitsuEpisodes(malId)
+                val anilistStreaming = anilistStreamingCache[malId] ?: emptyList()
+                val bannerUrl = anilistBannerCache[malId]
+
+                // Merge with priority:
+                // Thumbnail: Anikage → AniList → Kitsu → banner
+                // Title:     Jikan → Anikage → Kitsu
+                // Synopsis:  Anikage → Kitsu
+                val merged = mergeEpisodes(anikageEps, kitsuEps, anilistStreaming, jikanEps)
+
+                val cached = CachedData(merged, bannerUrl)
+                synchronized(cache) { cache[malId] = cached }
+
+                val result = applyFallbackThumbnail(merged, bannerUrl, fallbackThumbnailUrl)
+                val elapsed = System.currentTimeMillis() - startTime
+                logi("fetched ${result.size} episodes for malId=$malId in ${elapsed}ms (jikan=${jikanEps.size}, anikage=${anikageEps.size}, kitsu=${kitsuEps.size}, banner=${bannerUrl != null})")
+                result
+            } catch (e: Exception) {
+                logw("failed for malId=$malId — ${e.message}. Episodes will load without enrichment.")
+                synchronized(cache) { cache[malId] = CachedData(emptyMap(), null) }
+                emptyMap()
             }
-        } else {
-            loge("fetchString FAILED: $url", e)
-            null
         }
     }
 
-    private fun postJson(url: String, body: String): String? = try {
-        if (isCloudflareHost(url) && webViewFetcher != null) {
-            webViewFetcher.postJson(url, body)
-        } else {
-            val reqBody = body.toRequestBody("application/json".toMediaType())
-            val response = client.newCall(
-                Request.Builder().url(url).post(reqBody)
-                    .header("Content-Type", "application/json")
-                    .header("User-Agent", BROWSER_UA)
-                    .build(),
-            ).execute()
-            if (response.isSuccessful) {
-                response.body.string()
-            } else {
-                if (isCloudflareHost(url) && webViewFetcher != null) {
-                    webViewFetcher.postJson(url, body)
-                } else {
-                    null
-                }
-            }
-        }
-    } catch (e: Exception) {
-        if (isCloudflareHost(url) && webViewFetcher != null) {
-            try {
-                webViewFetcher.postJson(url, body)
-            } catch (e2: Exception) {
-                null
-            }
-        } else {
-            loge("postJson FAILED: $url", e)
-            null
-        }
-    }
-
-    private fun stripHtml(text: String): String = text.replace(Regex("<[^>]+>"), "").trim()
-
-    /** Fetches metadata for all episodes of an anime identified by MAL ID.
-     *  Returns map of episode number → EpisodeMetadata.
-     *  Results are cached per malId. */
-    suspend fun fetch(malId: String, fallbackThumbnailUrl: String? = null): Map<Int, EpisodeMetadata> {
-        cache[malId]?.let { return it }
-
-        logi("fetch: malId=$malId")
-        val jikan = fetchJikanEpisodes(malId)
-        val anilistId = fetchAniListId(malId)
-        val anikage = if (anilistId != null) fetchAnikageEpisodes(anilistId) else emptyMap()
-        val kitsu = fetchKitsuEpisodes(malId)
-        val bannerUrl = if (anilistId != null) fetchAniListBanner(anilistId) else null
-
-        val merged = mergeEpisodes(jikan, anikage, kitsu, emptyList(), emptyMap())
-        val result = applyFallbackThumbnail(merged, bannerUrl, fallbackThumbnailUrl)
-        logi("fetch: malId=$malId → ${result.size} episodes")
-        cache[malId] = result
-        return result
-    }
-
+    /** Apply fallback thumbnail: episode thumbnail → banner → anime cover. */
     private fun applyFallbackThumbnail(
         episodes: Map<Int, EpisodeMetadata>,
         bannerUrl: String?,
         animeCoverUrl: String?,
     ): Map<Int, EpisodeMetadata> {
-        val fallback = bannerUrl ?: animeCoverUrl ?: return episodes
+        if (episodes.isEmpty()) return episodes
         return episodes.mapValues { (_, meta) ->
-            if (meta.thumbnailUrl.isNullOrEmpty()) meta.copy(thumbnailUrl = fallback) else meta
+            val thumb = meta.thumbnailUrl ?: bannerUrl ?: animeCoverUrl
+            meta.copy(thumbnailUrl = thumb)
         }
     }
 
+    /** Merge all sources with priority:
+     *  Thumbnail: Anikage → AniList → Kitsu → banner
+     *  Title:     Jikan → Anikage → Kitsu
+     *  Synopsis:  Anikage → Kitsu
+     */
     private fun mergeEpisodes(
-        jikan: Map<Int, JikanEpisode>,
         anikage: Map<Int, EpisodeMetadata>,
         kitsu: Map<Int, EpisodeMetadata>,
         anilistStreaming: List<AniListStreamingEpisode>,
-        anilistStreamingByNum: Map<Int, AniListStreamingEpisode>,
+        jikan: Map<Int, JikanEpisode>,
     ): Map<Int, EpisodeMetadata> {
-        val allNums = (jikan.keys + anikage.keys + kitsu.keys).toSet()
-        return allNums.associateWith { num ->
-            val j = jikan[num]
-            val a = anikage[num]
+        // AniList streamingEpisodes are ordered (index+1 = episode number)
+        val anilistByNum = anilistStreaming.mapIndexedNotNull { idx, ep ->
+            (idx + 1) to ep
+        }.toMap()
+
+        val allKeys = anikage.keys + kitsu.keys + anilistByNum.keys + jikan.keys
+        return allKeys.associateWith { num ->
+            val ak = anikage[num]
+            val al = anilistByNum[num]
             val k = kitsu[num]
-            val title = a?.title?.takeIf { it.isNotBlank() }
-                ?: k?.title?.takeIf { it.isNotBlank() }
-                ?: j?.title?.takeIf { it.isNotBlank() }
-            val description = a?.description?.takeIf { it.isNotBlank() }
-                ?: k?.description?.takeIf { it.isNotBlank() }
-                ?: j?.synopsis?.takeIf { it.isNotBlank() }
-            val thumbnailUrl = k?.thumbnailUrl?.takeIf { it.isNotBlank() }
-                ?: a?.thumbnailUrl?.takeIf { it.isNotBlank() }
-            val airdate = j?.aired?.takeIf { it.isNotBlank() }
-            EpisodeMetadata(title, description, thumbnailUrl, airdate)
+            val jk = jikan[num]
+            EpisodeMetadata(
+                // Title: Jikan → Anikage → Kitsu
+                title = jk?.title ?: ak?.title ?: k?.title,
+                // Synopsis: Anikage → Kitsu
+                description = ak?.description ?: k?.description,
+                // Thumbnail: Anikage → AniList → Kitsu
+                thumbnailUrl = ak?.thumbnailUrl ?: al?.thumbnail ?: k?.thumbnailUrl,
+                airdate = jk?.aired ?: ak?.airdate ?: k?.airdate,
+            )
         }
     }
 
-    private fun fetchAniListId(malId: String): String? = try {
-        val query = """{"query":"query { Media(idMal: $malId, type: ANIME) { id bannerImage } }"}"""
-        val body = postJson("https://graphql.anilist.co", query) ?: return null
-        val data = json.parseToJsonElement(body).jsonObject["data"]?.jsonObject
-            ?.get("Media")?.jsonObject ?: return null
-        data["id"]?.jsonPrimitive?.content
-    } catch (e: Exception) {
-        loge("fetchAniListId FAILED", e)
-        null
+    // ── AniList: MAL ID → AniList ID + banner ─────────────────────────────────
+
+    private fun fetchAniListId(malId: String): String? {
+        val query = "query { Media(idMal: $malId, type: ANIME) { id bannerImage streamingEpisodes { title thumbnail } } }"
+        val body = """{"query":"$query"}"""
+        val respBody = postJson("https://graphql.anilist.co", body) ?: return null
+        return try {
+            val resp = json.decodeFromString(AniListMediaResponse.serializer(), respBody)
+            val media = resp.data?.media
+            val id = media?.id
+            logd("AniList ID for malId=$malId → $id (streamingEpisodes=${media?.streamingEpisodes?.size ?: 0})")
+
+            // Cache the streamingEpisodes + banner for later use
+            if (id != null) {
+                val streamingThumbs = media?.streamingEpisodes ?: emptyList()
+                anilistStreamingCache[malId] = streamingThumbs
+                anilistBannerCache[malId] = media?.bannerImage
+            }
+
+            id?.toString()
+        } catch (e: Exception) {
+            logd("AniList ID parse failed — ${e.message}")
+            null
+        }
     }
 
-    private fun fetchAniListBanner(anilistId: String): String? = try {
-        val query = """{"query":"query { Media(id: $anilistId, type: ANIME) { bannerImage } }"}"""
-        val body = postJson("https://graphql.anilist.co", query) ?: return null
-        val data = json.parseToJsonElement(body).jsonObject["data"]?.jsonObject
-            ?.get("Media")?.jsonObject ?: return null
-        data["bannerImage"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-    } catch (e: Exception) {
-        null
-    }
+    // ── Anikage.cc (TheTVDB) — primary source ────────────────────────────────
 
-    internal fun fetchAnikageEpisodes(anilistId: String): Map<Int, EpisodeMetadata> = try {
-        val body = fetchString("https://anikage.cc/api/media/anime/$anilistId/episodes") ?: return emptyMap()
-        val episodes = json.decodeFromString<List<AnikageEpisode>>(body)
-        episodes.mapNotNull { ep ->
-            val num = ep.number ?: return@mapNotNull null
-            num to EpisodeMetadata(
+    private fun fetchAnikageEpisodes(anilistId: String): Map<Int, EpisodeMetadata> {
+        val url = "https://anikage.cc/api/media/anime/$anilistId/episodes"
+        val body = fetchString(url) ?: return emptyMap()
+        // Anikage returns a JSON array directly
+        val episodes = try {
+            json.decodeFromString(kotlinx.serialization.builtins.ListSerializer(AnikageEpisode.serializer()), body)
+        } catch (e: Exception) {
+            logd("Anikage parse failed — ${e.message}")
+            return emptyMap()
+        }
+        val result = mutableMapOf<Int, EpisodeMetadata>()
+        for (ep in episodes) {
+            val num = ep.number ?: continue
+            result[num] = EpisodeMetadata(
                 title = ep.title?.takeIf { it.isNotBlank() },
                 description = ep.description?.takeIf { it.isNotBlank() }?.let { stripHtml(it) },
-                thumbnailUrl = ep.img?.takeIf { it.startsWith("http") },
-                airdate = ep.airDate,
+                thumbnailUrl = ep.img?.takeIf { it.isNotBlank() },
+                airdate = ep.airDate?.takeIf { it.isNotBlank() },
             )
-        }.toMap()
-    } catch (e: Exception) {
-        loge("fetchAnikageEpisodes FAILED anilistId=$anilistId", e)
-        emptyMap()
+        }
+        logd("Anikage returned ${result.size} episodes")
+        return result
     }
 
-    internal fun fetchJikanEpisodes(malId: String): Map<Int, JikanEpisode> = try {
-        val body = fetchString("https://api.jikan.moe/v4/anime/$malId/episodes") ?: return emptyMap()
-        val resp = json.decodeFromString<JikanEpisodesResponse>(body)
-        resp.data.associateBy { it.malId }
-    } catch (e: Exception) {
-        loge("fetchJikanEpisodes FAILED malId=$malId", e)
-        emptyMap()
-    }
+    // ── Kitsu — fallback source ──────────────────────────────────────────────
 
-    private fun fetchKitsuId(malId: String): String? = try {
-        val body = fetchString(
-            "https://kitsu.app/api/edge/mappings?filter[externalSite]=myanimelist/anime&filter[externalId]=$malId&include=item",
-            kitsuHeaders,
-        ) ?: return null
-        val resp = json.decodeFromString<KitsuMappingResponse>(body)
-        resp.included.firstOrNull()?.id
-    } catch (e: Exception) {
-        null
-    }
-
-    internal fun fetchKitsuEpisodes(malId: String): Map<Int, EpisodeMetadata> = try {
+    private fun fetchKitsuEpisodes(malId: String): Map<Int, EpisodeMetadata> {
         val kitsuId = fetchKitsuId(malId) ?: return emptyMap()
         val result = mutableMapOf<Int, EpisodeMetadata>()
-        var url: String? = "https://kitsu.app/api/edge/anime/$kitsuId/episodes?page[limit]=20&sort=number"
-        while (url != null) {
-            val body = fetchString(url, kitsuHeaders) ?: break
-            val resp = json.decodeFromString<KitsuEpisodesResponse>(body)
-            for (ep in resp.data) {
-                val num = ep.attributes.number ?: continue
-                result[num] = EpisodeMetadata(
-                    title = ep.attributes.canonicalTitle?.takeIf { it.isNotBlank() },
-                    description = ep.attributes.synopsis?.takeIf { it.isNotBlank() },
-                    thumbnailUrl = ep.attributes.thumbnail?.original?.takeIf { it.startsWith("http") },
+        var nextUrl: String? = "https://kitsu.app/api/edge/anime/$kitsuId/episodes?page[limit]=20&sort=number"
+        var pageCount = 0
+        val maxPages = 10
+
+        while (nextUrl != null && pageCount < maxPages) {
+            pageCount++
+            val body = fetchString(nextUrl) ?: break
+            val response = try {
+                json.decodeFromString(KitsuEpisodesResponse.serializer(), body)
+            } catch (e: Exception) {
+                break
+            }
+            for (ep in response.data) {
+                val attrs = ep.attributes ?: continue
+                val number = attrs.number ?: continue
+                val thumbUrl = attrs.thumbnail?.original
+                result[number] = EpisodeMetadata(
+                    title = attrs.canonicalTitle?.takeIf { it.isNotBlank() },
+                    description = attrs.description?.takeIf { it.isNotBlank() }?.let { stripHtml(it) },
+                    thumbnailUrl = thumbUrl?.takeIf { it.isNotBlank() },
+                    airdate = attrs.airdate?.takeIf { it.isNotBlank() },
                 )
             }
-            url = resp.links.next
+            nextUrl = response.links?.next
         }
-        result
-    } catch (e: Exception) {
-        loge("fetchKitsuEpisodes FAILED malId=$malId", e)
-        emptyMap()
+        logd("Kitsu returned ${result.size} episodes")
+        return result
     }
 
-    // ---- Data classes ----
+    private fun fetchKitsuId(malId: String): String? {
+        val url = "https://kitsu.app/api/edge/mappings" +
+            "?filter[externalSite]=myanimelist/anime" +
+            "&filter[externalId]=$malId" +
+            "&include=item"
+        val body = fetchString(url) ?: return null
+        val response = try {
+            json.decodeFromString(KitsuMappingResponse.serializer(), body)
+        } catch (e: Exception) {
+            return null
+        }
+        val anime = response.included?.firstOrNull { it.type == "anime" }
+        return anime?.id
+    }
+
+    // ── Jikan (MyAnimeList) — episode titles + air dates ─────────────────────
+
+    private fun fetchJikanEpisodes(malId: String): Map<Int, JikanEpisode> {
+        val url = "https://api.jikan.moe/v4/anime/$malId/episodes"
+        val body = fetchString(url) ?: return emptyMap()
+        val response = try {
+            json.decodeFromString(JikanEpisodesResponse.serializer(), body)
+        } catch (e: Exception) {
+            logd("Jikan parse failed — ${e.message}")
+            return emptyMap()
+        }
+        val result = mutableMapOf<Int, JikanEpisode>()
+        for (ep in response.data) {
+            val num = ep.malId ?: continue
+            result[num] = JikanEpisode(
+                title = ep.title?.takeIf { it.isNotBlank() },
+                aired = ep.aired?.takeIf { it.isNotBlank() },
+            )
+        }
+        logd("Jikan returned ${result.size} episodes")
+        return result
+    }
+
+    // ── HTTP helpers ──────────────────────────────────────────────────────────
+
+    private fun isCloudflareHost(url: String): Boolean {
+        return url.contains("anilist.co") || url.contains("kitsu.app")
+    }
+
+    private fun fetchString(url: String): String? {
+        // For Cloudflare-protected hosts, try WebView first
+        if (isCloudflareHost(url) && webViewFetcher != null) {
+            return try {
+                logd("using WebView for ${url.take(60)}")
+                webViewFetcher.fetchText(url)
+            } catch (e: Exception) {
+                logd("WebView fetch failed for ${url.take(60)} — ${e.message}")
+                null
+            }
+        }
+        return try {
+            val req = Request.Builder().url(url).headers(apiHeaders).build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    logd("HTTP ${resp.code} for ${url.take(80)}")
+                    return null
+                }
+                resp.body.string()
+            }
+        } catch (e: Exception) {
+            logd("fetch failed for ${url.take(60)} — ${e.message}")
+            null
+        }
+    }
+
+    private fun postJson(url: String, jsonBody: String): String? {
+        if (isCloudflareHost(url) && webViewFetcher != null) {
+            return try {
+                logd("using WebView POST for ${url.take(60)}")
+                webViewFetcher.postJson(url, jsonBody)
+            } catch (e: Exception) {
+                logd("WebView POST failed — ${e.message}")
+                null
+            }
+        }
+        return try {
+            val body = okhttp3.RequestBody.create(
+                "application/json; charset=utf-8".toMediaTypeOrNull(),
+                jsonBody,
+            )
+            val req = Request.Builder().url(url).headers(apiHeaders).post(body).build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    logd("POST HTTP ${resp.code} for ${url.take(60)}")
+                    return null
+                }
+                resp.body.string()
+            }
+        } catch (e: Exception) {
+            logd("POST failed for ${url.take(60)} — ${e.message}")
+            null
+        }
+    }
+
+    private fun stripHtml(text: String): String {
+        return text.replace(Regex("<[^>]+>"), "").trim()
+    }
+
+    // ── DTOs ──────────────────────────────────────────────────────────────────
+
+    // AniList
+    @Serializable
+    private data class AniListMediaResponse(
+        val data: AniListMediaData? = null,
+    )
 
     @Serializable
-    data class AniListStreamingEpisode(
+    private data class AniListMediaData(
+        @SerialName("Media") val media: AniListMedia? = null,
+    )
+
+    @Serializable
+    private data class AniListMedia(
+        val id: Int? = null,
+        @SerialName("bannerImage") val bannerImage: String? = null,
+        @SerialName("streamingEpisodes") val streamingEpisodes: List<AniListStreamingEpisode>? = null,
+    )
+
+    @Serializable
+    private data class AniListStreamingEpisode(
         val title: String? = null,
         val thumbnail: String? = null,
     )
 
+    // Anikage.cc (TheTVDB)
     @Serializable
-    data class AnikageEpisode(
+    private data class AnikageEpisode(
         val number: Int? = null,
         val title: String? = null,
         val description: String? = null,
         val img: String? = null,
-        @SerialName("air_date") val airDate: String? = null,
+        @SerialName("airDate") val airDate: String? = null,
+    )
+
+    // Kitsu (JSON:API)
+    @Serializable
+    private data class KitsuMappingResponse(
+        val data: List<KitsuMappingData> = emptyList(),
+        val included: List<KitsuAnime>? = null,
     )
 
     @Serializable
-    data class JikanEpisodesResponse(val data: List<JikanEpisode> = emptyList())
+    private data class KitsuMappingData(
+        val id: String,
+        val type: String,
+    )
 
     @Serializable
-    data class JikanEpisode(
-        @SerialName("mal_id") val malId: Int = 0,
+    private data class KitsuAnime(
+        val id: String,
+        val type: String,
+    )
+
+    @Serializable
+    private data class KitsuEpisodesResponse(
+        val data: List<KitsuEpisode> = emptyList(),
+        val links: KitsuLinks? = null,
+    )
+
+    @Serializable
+    private data class KitsuEpisode(
+        val id: String,
+        val type: String,
+        val attributes: KitsuEpisodeAttributes? = null,
+    )
+
+    @Serializable
+    private data class KitsuEpisodeAttributes(
+        val number: Int? = null,
+        @SerialName("canonicalTitle") val canonicalTitle: String? = null,
+        val description: String? = null,
+        val thumbnail: KitsuImage? = null,
+        val airdate: String? = null,
+    )
+
+    @Serializable
+    private data class KitsuImage(
+        val original: String? = null,
+    )
+
+    @Serializable
+    private data class KitsuLinks(
+        val next: String? = null,
+    )
+
+    // Jikan (MyAnimeList)
+    @Serializable
+    private data class JikanEpisode(
         val title: String? = null,
-        val synopsis: String? = null,
         val aired: String? = null,
     )
 
     @Serializable
-    data class KitsuMappingResponse(
-        val data: List<JsonObject> = emptyList(),
-        val included: List<KitsuAnime> = emptyList(),
+    private data class JikanEpisodesResponse(
+        val data: List<JikanEpisodeData> = emptyList(),
     )
 
     @Serializable
-    data class KitsuAnime(val id: String? = null)
-
-    @Serializable
-    data class KitsuEpisodesResponse(
-        val data: List<KitsuEpisode> = emptyList(),
-        val links: KitsuLinks = KitsuLinks(),
+    private data class JikanEpisodeData(
+        @SerialName("mal_id") val malId: Int? = null,
+        val title: String? = null,
+        val aired: String? = null,
     )
 
-    @Serializable
-    data class KitsuEpisode(val attributes: KitsuEpisodeAttributes = KitsuEpisodeAttributes())
-
-    @Serializable
-    data class KitsuEpisodeAttributes(
-        val number: Int? = null,
-        val canonicalTitle: String? = null,
-        val synopsis: String? = null,
-        val thumbnail: KitsuImage? = null,
-    )
-
-    @Serializable
-    data class KitsuImage(val original: String? = null)
-
-    @Serializable
-    data class KitsuLinks(val next: String? = null)
+    companion object {
+        private const val TAG = "EpisodeMetadataFetcher"
+        private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 }
