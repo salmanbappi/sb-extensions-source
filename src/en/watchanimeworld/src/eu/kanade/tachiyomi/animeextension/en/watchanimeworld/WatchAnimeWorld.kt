@@ -145,7 +145,7 @@ class WatchAnimeWorld : Source() {
                     try {
                         val ajaxResponse = client.newCall(GET(ajaxUrl, headers)).execute()
                         val ajaxHtml = ajaxResponse.bodyString()
-                        val ajaxDoc = org.jsoup.Jsoup.parseBodyFragment(ajaxHtml)
+                        val ajaxDoc = org.jsoup.Jsoup.parse(ajaxHtml, baseUrl)
                         parseEpisodesFromHtml(ajaxDoc)
                     } catch (e: Exception) {
                         emptyList()
@@ -160,7 +160,12 @@ class WatchAnimeWorld : Source() {
 
     private fun parseEpisodesFromHtml(document: Document): List<SEpisode> {
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
-        return document.select("#episode_by_temp li, li").mapNotNull { li ->
+        val listItems = if (document.selectFirst("#episode_by_temp") != null) {
+            document.select("#episode_by_temp li")
+        } else {
+            document.select("li")
+        }
+        return listItems.mapNotNull { li ->
             val article = li.selectFirst("article.episodes") ?: return@mapNotNull null
             val link = article.selectFirst("a.lnk-blk") ?: return@mapNotNull null
             val numEpi = article.selectFirst("span.num-epi")?.text()?.trim() ?: ""
@@ -172,10 +177,14 @@ class WatchAnimeWorld : Source() {
             val seasonVal = match?.groupValues?.get(1)?.toIntOrNull()
             val epVal = match?.groupValues?.get(2)?.toIntOrNull()
 
+            val epInt = epVal ?: episodeNum.toInt()
+            val isWhole = epVal != null || episodeNum == epInt.toFloat()
+            val epPad = if (isWhole) epInt.toString().padStart(2, '0') else episodeNum.toString()
+
             val displayTitle = when {
                 titleText.isNotBlank() && !titleText.contains(numEpi, ignoreCase = true) -> titleText
-                seasonVal != null && epVal != null -> "Season $seasonVal - Episode $epVal"
-                else -> "Episode $episodeNum"
+                seasonVal != null -> "S$seasonVal - Ep. $epPad"
+                else -> "Ep. $epPad"
             }
 
             SEpisode.create().apply {
@@ -188,7 +197,12 @@ class WatchAnimeWorld : Source() {
                     ?: img?.attr("abs:src")?.takeIf { it.isNotBlank() }
                     ?: img?.attr("data-src")?.takeIf { it.isNotBlank() }
                     ?: img?.attr("src") ?: ""
-                preview_url = if (showThumbnails && imgUrl.isNotBlank()) imgUrl else null
+                val finalImgUrl = if (imgUrl.isNotBlank()) {
+                    "https://images.weserv.nl/?url=" + imgUrl.substringAfter("https://").substringAfter("http://")
+                } else {
+                    ""
+                }
+                preview_url = if (showThumbnails && finalImgUrl.isNotBlank()) finalImgUrl else null
             }
         }
     }
@@ -283,20 +297,38 @@ class WatchAnimeWorld : Source() {
             if (zephyrMatch != null) {
                 try {
                     val videoId = zephyrMatch.groupValues[1]
-                    val formBody = okhttp3.FormBody.Builder()
-                        .add("data", videoId)
-                        .add("do", "getVideo")
+                    val iframeHeaders = headers.newBuilder()
+                        .set("Referer", episodeUrl)
                         .build()
 
-                    val zephyrHeaders = headers.newBuilder()
-                        .set("Referer", "https://play.zephyrflick.top/")
+                    val iframeResponse = client.newCall(
+                        okhttp3.Request.Builder()
+                            .url(iframeUrl)
+                            .headers(iframeHeaders)
+                            .build()
+                    ).execute()
+
+                    val iframeHtml = iframeResponse.bodyString()
+                    val cookies = iframeResponse.headers("Set-Cookie")
+                    val cookieHeader = cookies.joinToString("; ") { it.substringBefore(";") }
+
+                    val formBody = okhttp3.FormBody.Builder()
+                        .add("hash", videoId)
+                        .add("r", episodeUrl)
+                        .build()
+
+                    val zephyrHeadersBuilder = headers.newBuilder()
+                        .set("Referer", iframeUrl)
                         .set("Origin", "https://play.zephyrflick.top")
                         .set("X-Requested-With", "XMLHttpRequest")
-                        .build()
+                    if (cookieHeader.isNotEmpty()) {
+                        zephyrHeadersBuilder.set("Cookie", cookieHeader)
+                    }
+                    val zephyrHeaders = zephyrHeadersBuilder.build()
 
                     val zephyrResponse = client.newCall(
                         okhttp3.Request.Builder()
-                            .url("https://play.zephyrflick.top/player/index.php")
+                            .url("https://play.zephyrflick.top/player/index.php?data=$videoId&do=getVideo")
                             .post(formBody)
                             .headers(zephyrHeaders)
                             .build(),
@@ -309,11 +341,7 @@ class WatchAnimeWorld : Source() {
                         // Extract subtitles if present
                         val subtitles = mutableListOf<Track>()
                         try {
-                            val playerPageResponse = client.newCall(
-                                GET(iframeUrl, zephyrHeaders),
-                            ).execute()
-                            val playerHtml = playerPageResponse.bodyString()
-                            val subtitleMatch = SUBTITLE_REGEX.find(playerHtml)
+                            val subtitleMatch = SUBTITLE_REGEX.find(iframeHtml)
                             if (subtitleMatch != null) {
                                 val subtitleData = subtitleMatch.groupValues[1]
                                 subtitleData.split("\n").map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->

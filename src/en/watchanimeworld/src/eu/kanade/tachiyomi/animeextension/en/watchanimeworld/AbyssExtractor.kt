@@ -21,7 +21,7 @@ class AbyssExtractor(
     fun videosFromUrl(url: String, referer: String? = null): List<Video> {
         var targetUrl = url
 
-        // Normalize host (short.icu and embedplayabyss.top to abysscdn.com)
+        // Normalize host (short.icu and embedplayabyss.top to abyssplayer.com)
         if (targetUrl.contains("short.icu") || targetUrl.contains("embedplayabyss.top") || targetUrl.contains("abysscdn.com") || targetUrl.contains("abyssplayer.com")) {
             val id = when {
                 targetUrl.contains("v=") -> targetUrl.substringAfter("v=").substringBefore("&")
@@ -29,7 +29,7 @@ class AbyssExtractor(
                 else -> targetUrl.substringAfterLast("/").substringBefore("?").substringBefore("#")
             }
             if (id.isNotEmpty() && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }) {
-                targetUrl = "https://abysscdn.com/?v=$id"
+                targetUrl = "https://abyssplayer.com/?v=$id"
             }
         }
 
@@ -468,7 +468,7 @@ class AbyssExtractor(
             // HLS fallback by ID
             val hlsId = hls.optString("id", "")
             if (videoList.isEmpty() && hlsId.isNotEmpty()) {
-                val fallbackUrl = "https://abysscdn.com/#hls/$hlsId/master.m3u8"
+                val fallbackUrl = "https://abyssplayer.com/#hls/$hlsId/master.m3u8"
                 try {
                     val hlsVideos = playlistUtils.extractFromHls(
                         playlistUrl = fallbackUrl,
