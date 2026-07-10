@@ -163,7 +163,7 @@ class WatchAnimeWorld : Source() {
                 } else {
                     1
                 }
-            }.thenByDescending { it.episode_number }
+            }.thenByDescending { it.episode_number },
         )
     }
 
