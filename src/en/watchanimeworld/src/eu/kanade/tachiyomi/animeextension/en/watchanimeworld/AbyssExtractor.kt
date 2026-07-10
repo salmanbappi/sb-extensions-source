@@ -18,7 +18,7 @@ class AbyssExtractor(
     private val client: OkHttpClient,
     private val playlistUtils: PlaylistUtils,
 ) {
-    fun videosFromUrl(url: String, referer: String? = null): List<Video> {
+    fun videosFromUrl(url: String, referer: String? = null, prefix: String = ""): List<Video> {
         var targetUrl = url
 
         // Normalize host (short.icu and embedplayabyss.top to abyssplayer.com)
@@ -51,12 +51,8 @@ class AbyssExtractor(
         val finalUrl = response.request.url.toString()
         val html = response.body?.string() ?: return emptyList()
 
-        // Update referer if redirected
-        val finalReferer = if (finalUrl != targetUrl) {
-            finalUrl.toHttpUrl().newBuilder().encodedPath("/").build().toString()
-        } else {
-            baseReferer
-        }
+        // Update referer to always use the player domain
+        val finalReferer = finalUrl.toHttpUrl().newBuilder().encodedPath("/").build().toString()
 
         val datas = extractDatasPayload(html)
         if (datas != null) {
@@ -289,7 +285,7 @@ class AbyssExtractor(
                         videoList.add(
                             Video(
                                 videoUrl = direct.replace("\\/", "/"),
-                                videoTitle = "Abyss - $label (MP4)",
+                                videoTitle = "${prefix}Abyss - $label (MP4)",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
                             ),
@@ -306,7 +302,7 @@ class AbyssExtractor(
                             videoList.add(
                                 Video(
                                     videoUrl = combined,
-                                    videoTitle = "Abyss - $label (MP4)",
+                                    videoTitle = "${prefix}Abyss - $label (MP4)",
                                     headers = streamHeaders,
                                     subtitleTracks = subtitles,
                                 ),
@@ -335,7 +331,7 @@ class AbyssExtractor(
                                 videoList.add(
                                     Video(
                                         videoUrl = finalUrl,
-                                        videoTitle = "Abyss - $label (MP4)",
+                                        videoTitle = "${prefix}Abyss - $label (MP4)",
                                         headers = streamHeaders,
                                         subtitleTracks = subtitles,
                                     ),
@@ -368,7 +364,7 @@ class AbyssExtractor(
                         referer = referer,
                         masterHeaders = streamHeaders,
                         videoHeaders = streamHeaders,
-                        videoNameGen = { quality -> if (hlsLabel.isNotEmpty()) "Abyss - $hlsLabel ($quality)" else "Abyss ($quality)" },
+                        videoNameGen = { quality -> if (hlsLabel.isNotEmpty()) "${prefix}Abyss - $hlsLabel ($quality)" else "${prefix}Abyss ($quality)" },
                         subtitleList = subtitles,
                     )
                     if (hlsVideos.isNotEmpty()) {
@@ -377,7 +373,7 @@ class AbyssExtractor(
                         videoList.add(
                             Video(
                                 videoUrl = hlsUrl,
-                                videoTitle = if (hlsLabel.isNotEmpty()) "Abyss - $hlsLabel (Auto)" else "Abyss - Auto",
+                                videoTitle = if (hlsLabel.isNotEmpty()) "${prefix}Abyss - $hlsLabel (Auto)" else "${prefix}Abyss - Auto",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
                             ),
@@ -387,7 +383,7 @@ class AbyssExtractor(
                     videoList.add(
                         Video(
                             videoUrl = hlsUrl,
-                            videoTitle = if (hlsLabel.isNotEmpty()) "Abyss - $hlsLabel (Auto)" else "Abyss - Auto",
+                            videoTitle = if (hlsLabel.isNotEmpty()) "${prefix}Abyss - $hlsLabel (Auto)" else "${prefix}Abyss - Auto",
                             headers = streamHeaders,
                             subtitleTracks = subtitles,
                         ),
@@ -414,7 +410,7 @@ class AbyssExtractor(
                                     referer = referer,
                                     masterHeaders = streamHeaders,
                                     videoHeaders = streamHeaders,
-                                    videoNameGen = { quality -> "Abyss - $label ($quality)" },
+                                    videoNameGen = { quality -> "${prefix}Abyss - $label ($quality)" },
                                     subtitleList = subtitles,
                                 )
                                 if (hlsVideos.isNotEmpty()) {
@@ -423,7 +419,7 @@ class AbyssExtractor(
                                     videoList.add(
                                         Video(
                                             videoUrl = f.replace("\\/", "/"),
-                                            videoTitle = "Abyss - $label (Auto)",
+                                            videoTitle = "${prefix}Abyss - $label (Auto)",
                                             headers = streamHeaders,
                                             subtitleTracks = subtitles,
                                         ),
@@ -433,7 +429,7 @@ class AbyssExtractor(
                                 videoList.add(
                                     Video(
                                         videoUrl = f.replace("\\/", "/"),
-                                        videoTitle = "Abyss - $label (Auto)",
+                                        videoTitle = "${prefix}Abyss - $label (Auto)",
                                         headers = streamHeaders,
                                         subtitleTracks = subtitles,
                                     ),
@@ -454,7 +450,7 @@ class AbyssExtractor(
                         referer = referer,
                         masterHeaders = streamHeaders,
                         videoHeaders = streamHeaders,
-                        videoNameGen = { quality -> "Abyss ($quality)" },
+                        videoNameGen = { quality -> "${prefix}Abyss ($quality)" },
                         subtitleList = subtitles,
                     )
                     if (hlsVideos.isNotEmpty()) {
@@ -463,7 +459,7 @@ class AbyssExtractor(
                         videoList.add(
                             Video(
                                 videoUrl = fallbackUrl,
-                                videoTitle = "Abyss - Auto",
+                                videoTitle = "${prefix}Abyss - Auto",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
                             ),
@@ -473,7 +469,7 @@ class AbyssExtractor(
                     videoList.add(
                         Video(
                             videoUrl = fallbackUrl,
-                            videoTitle = "Abyss - Auto",
+                            videoTitle = "${prefix}Abyss - Auto",
                             headers = streamHeaders,
                             subtitleTracks = subtitles,
                         ),

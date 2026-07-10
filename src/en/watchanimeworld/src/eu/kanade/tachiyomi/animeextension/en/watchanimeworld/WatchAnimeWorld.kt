@@ -245,7 +245,7 @@ class WatchAnimeWorld : Source() {
                             "short.ink" in link || "abyss" in lang.lowercase() || "hydrax" in lang.lowercase()
                         ) {
                             return@parallelCatchingFlatMapBlocking AbyssExtractor(client, playlistUtils)
-                                .videosFromUrl(link, referer = episodeUrl)
+                                .videosFromUrl(link, referer = episodeUrl, prefix = "$lang - ")
                         }
 
                         val serverResponse = client.newCall(
