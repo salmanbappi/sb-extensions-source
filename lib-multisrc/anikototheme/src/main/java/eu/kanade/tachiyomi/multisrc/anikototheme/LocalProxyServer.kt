@@ -27,7 +27,10 @@ class LocalProxyServer(
 ) {
     companion object {
         private const val IDLE_TIMEOUT_MS = 600000L
-        private const val MAX_CACHE_ENTRIES = 200
+        private const val MAX_CACHE_ENTRIES = 24
+        private const val MAX_CACHE_BYTES = 48 * 1024 * 1024
+        private const val MAX_SEGMENT_CACHE_BYTES = 8 * 1024 * 1024
+        private const val MAX_CONCURRENT_PREFETCHES = 2
         private const val SOCKET_READ_TIMEOUT_MS = 120000
         private const val TAG = "AnikotoProxy"
         private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -46,10 +49,20 @@ class LocalProxyServer(
         isDaemon = true
     }
 
-    private val segmentCache = ConcurrentHashMap<String, ByteArray>()
+    private data class CachedSegment(
+        val data: ByteArray,
+        val offset: Int,
+    ) {
+        val size: Int
+            get() = data.size - offset
+    }
+
+    private val segmentCache = ConcurrentHashMap<String, CachedSegment>()
     private val cacheOrder = Collections.synchronizedList(mutableListOf<String>())
+    private val cacheBytes = AtomicLong(0L)
     private val fetching = ConcurrentHashMap<String, Boolean>()
     private val prefetchGeneration = AtomicLong(0L)
+    private val activePrefetches = AtomicLong(0L)
 
     private var serverSocket: ServerSocket? = null
     private var acceptThread: Thread? = null
@@ -121,8 +134,10 @@ class LocalProxyServer(
             runCatching { executor.shutdownNow() }
             segmentCache.clear()
             cacheOrder.clear()
+            cacheBytes.set(0L)
             fetching.clear()
             prefetchGeneration.incrementAndGet()
+            activePrefetches.set(0L)
         }
     }
 
@@ -260,7 +275,7 @@ class LocalProxyServer(
         val cached = segmentCache[cacheKey]
         if (cached != null) {
             logi("CACHE HIT: $cacheKey (${cached.size} bytes)")
-            sendBytes(output, "video/MP2T", cached)
+            sendBytes(output, "video/MP2T", cached.data, cached.offset)
             triggerPrefetch(stream, variant, audioType, quality, index)
             return
         }
@@ -275,7 +290,7 @@ class LocalProxyServer(
             val waitedBytes = segmentCache[cacheKey]
             if (waitedBytes != null) {
                 logi("FETCH WAIT SUCCEEDED: $cacheKey (${waitedBytes.size} bytes)")
-                sendBytes(output, "video/MP2T", waitedBytes)
+                sendBytes(output, "video/MP2T", waitedBytes.data, waitedBytes.offset)
                 triggerPrefetch(stream, variant, audioType, quality, index)
                 return
             }
@@ -288,16 +303,17 @@ class LocalProxyServer(
             val streamIndex = pl.streams.indexOf(stream)
             val fetchHeaders = headersForStream(streamIndex)
             val segBytes = fetchSegment(seg.url, fetchHeaders, retry = true)
-            val stripped = stripPngHeader(segBytes)
-            val firstByte = if (stripped.isNotEmpty()) stripped[0] else 0.toByte()
+            val offset = detectSegmentOffset(segBytes)
+            val servedSize = segBytes.size - offset
+            val firstByte = if (servedSize > 0) segBytes[offset] else 0.toByte()
             val isTsSync = firstByte == 0x47.toByte()
-            logi("STRIPPED: $cacheKey ${segBytes.size}→${stripped.size} bytes, first=0x${String.format("%02x", firstByte)}, tsSync=$isTsSync")
-            if (!isTsSync && stripped.isNotEmpty()) {
-                val hexStr = stripped.take(8).joinToString("") { String.format("%02x", it) }
+            logi("STRIPPED: $cacheKey ${segBytes.size}→${servedSize} bytes, first=0x${String.format("%02x", firstByte)}, tsSync=$isTsSync")
+            if (!isTsSync && servedSize > 0) {
+                val hexStr = segBytes.copyOfRange(offset, min(offset + 8, segBytes.size)).joinToString("") { String.format("%02x", it) }
                 logw("WARNING: segment $cacheKey doesn't start with 0x47! First 8 bytes: $hexStr")
             }
-            cacheSegment(cacheKey, stripped)
-            sendBytes(output, "video/MP2T", stripped)
+            cacheSegment(cacheKey, segBytes, offset)
+            sendBytes(output, "video/MP2T", segBytes, offset)
             triggerPrefetch(stream, variant, audioType, quality, index)
         } catch (e: Exception) {
             loge("Segment fetch failed ($cacheKey): ${e.message}")
@@ -375,6 +391,10 @@ class LocalProxyServer(
         currentIndex: Int,
     ) {
         if (prefetchCount <= 0) return
+        if (cacheBytes.get() >= (MAX_CACHE_BYTES * 3L) / 4L) {
+            logi("PREFETCH SKIPPED: cache near budget (${cacheBytes.get()}/$MAX_CACHE_BYTES bytes)")
+            return
+        }
         val gen = prefetchGeneration.get()
         val totalSegs = variant.segments.size
         val prefetchAhead = max((prefetchCount * totalSegs) / 100, 1)
@@ -385,7 +405,7 @@ class LocalProxyServer(
             val key = "$audioType/$quality/$i"
             if (!segmentCache.containsKey(key) && fetching[key] != true) {
                 submitted++
-                if (submitted <= 5) {
+                if (submitted <= MAX_CONCURRENT_PREFETCHES) {
                     executor.execute {
                         triggerPrefetchTask(gen, key, variant, i)
                     }
@@ -402,6 +422,11 @@ class LocalProxyServer(
             return
         }
         if (segmentCache.containsKey(key) || fetching[key] == true) return
+        val inFlight = activePrefetches.incrementAndGet()
+        if (inFlight > MAX_CONCURRENT_PREFETCHES) {
+            activePrefetches.decrementAndGet()
+            return
+        }
         fetching[key] = true
         try {
             if (prefetchGeneration.get() != gen) return
@@ -413,13 +438,14 @@ class LocalProxyServer(
             val fetchHeaders = headersForStream(streamIndex)
             logi("PREFETCH: $key → ${seg.url.take(60)}...")
             val bytes = fetchSegment(seg.url, fetchHeaders, retry = false)
-            val stripped = stripPngHeader(bytes)
-            cacheSegment(key, stripped)
-            logi("PREFETCH DONE: $key (${stripped.size} bytes)")
+            val offset = detectSegmentOffset(bytes)
+            cacheSegment(key, bytes, offset)
+            logi("PREFETCH DONE: $key (${bytes.size - offset} bytes)")
         } catch (e: Exception) {
             logw("PREFETCH FAILED: $key — ${e.message}")
         } finally {
             fetching.remove(key)
+            activePrefetches.decrementAndGet()
         }
     }
 
@@ -459,25 +485,49 @@ class LocalProxyServer(
         return tracks
     }
 
-    private fun cacheSegment(key: String, data: ByteArray) {
-        if (segmentCache.size >= MAX_CACHE_ENTRIES) {
-            synchronized(cacheOrder) {
-                if (cacheOrder.isNotEmpty()) {
-                    segmentCache.remove(cacheOrder.removeAt(0))
+    private fun cacheSegment(key: String, data: ByteArray, offset: Int) {
+        val cached = CachedSegment(data, offset)
+        if (cached.size <= 0) return
+        if (cached.size > MAX_SEGMENT_CACHE_BYTES) {
+            logi("CACHE SKIP: $key segment too large (${cached.size} bytes)")
+            return
+        }
+
+        synchronized(cacheOrder) {
+            val existing = segmentCache.remove(key)
+            if (existing != null) {
+                cacheBytes.addAndGet(-existing.size.toLong())
+                cacheOrder.remove(key)
+            }
+
+            while (
+                cacheOrder.isNotEmpty() &&
+                (segmentCache.size >= MAX_CACHE_ENTRIES || cacheBytes.get() + cached.size > MAX_CACHE_BYTES)
+            ) {
+                val evictedKey = cacheOrder.removeAt(0)
+                val evicted = segmentCache.remove(evictedKey)
+                if (evicted != null) {
+                    cacheBytes.addAndGet(-evicted.size.toLong())
                 }
             }
-        }
-        segmentCache[key] = data
-        synchronized(cacheOrder) {
-            cacheOrder.remove(key)
+
+            if (cacheBytes.get() + cached.size > MAX_CACHE_BYTES) {
+                logi("CACHE SKIP: $key cache budget exceeded (${cacheBytes.get()}+${
+                    cached.size
+                } > $MAX_CACHE_BYTES)")
+                return
+            }
+
+            segmentCache[key] = cached
             cacheOrder.add(key)
+            cacheBytes.addAndGet(cached.size.toLong())
         }
     }
 
-    private fun stripPngHeader(data: ByteArray): ByteArray {
-        if (data.size < 8) return data
+    private fun detectSegmentOffset(data: ByteArray): Int {
+        if (data.size < 8) return 0
         val isPng = data[0] == (-119).toByte() && data[1] == 80.toByte() && data[2] == 78.toByte() && data[3] == 71.toByte()
-        if (!isPng) return data
+        if (!isPng) return 0
         var videoStart = -1
         val length = data.size - 4
         for (i in 0 until length) {
@@ -486,15 +536,17 @@ class LocalProxyServer(
                 break
             }
         }
-        if (videoStart < 0 || videoStart >= data.size) return data
-        val tsData = data.copyOfRange(videoStart, data.size)
-        val iMin = min(tsData.size - 188, 400)
+        if (videoStart < 0 || videoStart >= data.size) return 0
+        val tsLength = data.size - videoStart
+        if (tsLength < 188) return videoStart
+        val iMin = min(tsLength - 188, 400)
         for (offset in 0 until iMin) {
-            if (tsData[offset] == 0x47.toByte() && tsData[offset + 188] == 0x47.toByte()) {
-                return tsData.copyOfRange(offset, tsData.size)
+            val actualOffset = videoStart + offset
+            if (data[actualOffset] == 0x47.toByte() && data[actualOffset + 188] == 0x47.toByte()) {
+                return actualOffset
             }
         }
-        return tsData
+        return videoStart
     }
 
     private fun readLine(input: InputStream): String? {
@@ -527,11 +579,12 @@ class LocalProxyServer(
         }
     }
 
-    private fun sendBytes(output: OutputStream, contentType: String, body: ByteArray) {
-        val header = "HTTP/1.1 200 OK\r\nContent-Type: $contentType\r\nContent-Length: ${body.size}\r\nConnection: close\r\nAccept-Ranges: bytes\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
+    private fun sendBytes(output: OutputStream, contentType: String, body: ByteArray, offset: Int = 0) {
+        val length = body.size - offset
+        val header = "HTTP/1.1 200 OK\r\nContent-Type: $contentType\r\nContent-Length: $length\r\nConnection: close\r\nAccept-Ranges: bytes\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
         try {
             output.write(header.toByteArray(Charsets.UTF_8))
-            output.write(body)
+            output.write(body, offset, length)
             output.flush()
         } catch (e: Exception) {
             logw("sendBytes failed: ${e.message}")
