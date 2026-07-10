@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
@@ -13,6 +14,7 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
@@ -218,12 +220,14 @@ class WatchAnimeWorld : Source() {
 
     // ============================ Video Links =============================
 
-    override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, headers)
+    override fun videoListRequest(episode: SEpisode): Request = error("Not used")
+    override fun videoListParse(response: Response): List<Video> = error("Not used")
 
-    override fun videoListParse(response: Response): List<Video> {
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val response = client.newCall(GET(baseUrl + episode.url, headers)).execute()
         val html = response.bodyString()
         val doc = org.jsoup.Jsoup.parse(html, response.request.url.toString())
-        val videos = mutableListOf<Video>()
+        val hosters = mutableListOf<Hoster>()
         val episodeUrl = response.request.url.toString()
 
         // 1. Extract /api/player1.php?data= encoded server list
@@ -235,65 +239,22 @@ class WatchAnimeWorld : Source() {
                 val decodedStr = String(decodedBytes, Charsets.UTF_8)
                 val servers = json.decodeFromString<List<ServerItem>>(decodedStr)
 
-                val serverVideos = servers.parallelCatchingFlatMapBlocking { server ->
-                    val link = server.link ?: return@parallelCatchingFlatMapBlocking emptyList()
+                servers.forEach { server ->
+                    val link = server.link ?: return@forEach
                     val lang = server.language ?: "Unknown"
-                    try {
-                        if (
-                            "abysscdn.com" in link || "hydraxcdn.biz" in link || "short.icu" in link ||
+                    val isAbyss = "abysscdn.com" in link || "hydraxcdn.biz" in link || "short.icu" in link ||
                             "embedplayabyss.top" in link || "abyssplayer.com" in link || "playabyss.top" in link ||
                             "short.ink" in link || "abyss" in lang.lowercase() || "hydrax" in lang.lowercase()
-                        ) {
-                            return@parallelCatchingFlatMapBlocking AbyssExtractor(client, playlistUtils)
-                                .videosFromUrl(link, referer = episodeUrl, prefix = "$lang - ")
-                        }
-
-                        val serverResponse = client.newCall(
-                            GET(link, headers.newBuilder().set("Referer", episodeUrl).build()),
-                        ).execute()
-                        val serverHtml = serverResponse.bodyString()
-
-                        val m3u8Matches = M3U8_REGEX.findAll(serverHtml).map { it.value }.toList()
-                        val distinctM3u8s = m3u8Matches.distinct()
-
-                        distinctM3u8s.flatMap { m3u8Url ->
-                            val lang = server.language ?: "Unknown"
-                            if (m3u8Url.contains("master.m3u8") || m3u8Url.contains("playlist.m3u8")) {
-                                try {
-                                    playlistUtils.extractFromHls(
-                                        playlistUrl = m3u8Url,
-                                        referer = link,
-                                        masterHeaders = headers.newBuilder().set("Referer", link).build(),
-                                        videoHeaders = headers.newBuilder().set("Referer", link).build(),
-                                        videoNameGen = { quality -> "$lang - $quality" },
-                                    )
-                                } catch (e: Exception) {
-                                    listOf(
-                                        Video(
-                                            videoUrl = m3u8Url,
-                                            videoTitle = "$lang - Auto",
-                                            headers = headers.newBuilder().set("Referer", link).build(),
-                                        ),
-                                    )
-                                }
-                            } else {
-                                listOf(
-                                    Video(
-                                        videoUrl = m3u8Url,
-                                        videoTitle = "$lang - Auto",
-                                        headers = headers.newBuilder().set("Referer", link).build(),
-                                    ),
-                                )
-                            }
-                        }
-                    } catch (e: Exception) {
-                        emptyList()
-                    }
+                    val serverName = if (isAbyss) "Abyss ($lang)" else "Server ($lang)"
+                    val type = if (isAbyss) "abyss" else "m3u8"
+                    hosters.add(
+                        Hoster(
+                            hosterName = serverName,
+                            hosterUrl = "$type|$lang|$link|$episodeUrl"
+                        )
+                    )
                 }
-                videos.addAll(serverVideos)
-            } catch (e: Exception) {
-                // Ignore decoding/parsing errors
-            }
+            } catch (_: Exception) {}
         }
 
         // 2. Extract Zephyrflick player sources
@@ -301,125 +262,203 @@ class WatchAnimeWorld : Source() {
             it.attr("data-src").takeIf { s -> s.isNotBlank() } ?: it.attr("src").takeIf { s -> s.isNotBlank() }
         }.filter { "zephyrflick" in it }
 
-        zephyrIframes.forEach { iframeUrl ->
-            val zephyrMatch = ZEPHYR_HASH_REGEX.find(iframeUrl)
-            if (zephyrMatch != null) {
-                try {
-                    val videoId = zephyrMatch.groupValues[1]
-                    val iframeHeaders = headers.newBuilder()
-                        .set("Referer", episodeUrl)
-                        .build()
-
-                    val iframeResponse = client.newCall(
-                        okhttp3.Request.Builder()
-                            .url(iframeUrl)
-                            .headers(iframeHeaders)
-                            .build(),
-                    ).execute()
-
-                    val iframeHtml = iframeResponse.bodyString()
-                    val cookies = iframeResponse.headers("Set-Cookie")
-                    val cookieHeader = cookies.joinToString("; ") { it.substringBefore(";") }
-
-                    val formBody = okhttp3.FormBody.Builder()
-                        .add("hash", videoId)
-                        .add("r", episodeUrl)
-                        .build()
-
-                    val zephyrHeadersBuilder = headers.newBuilder()
-                        .set("Referer", iframeUrl)
-                        .set("Origin", "https://play.zephyrflick.top")
-                        .set("X-Requested-With", "XMLHttpRequest")
-                    if (cookieHeader.isNotEmpty()) {
-                        zephyrHeadersBuilder.set("Cookie", cookieHeader)
-                    }
-                    val zephyrHeaders = zephyrHeadersBuilder.build()
-
-                    val zephyrResponse = client.newCall(
-                        okhttp3.Request.Builder()
-                            .url("https://play.zephyrflick.top/player/index.php?data=$videoId&do=getVideo")
-                            .post(formBody)
-                            .headers(zephyrHeaders)
-                            .build(),
-                    ).execute()
-
-                    val zephyrData = json.decodeFromString<ZephyrResponse>(zephyrResponse.bodyString())
-                    val streamUrl = zephyrData.videoSource
-
-                    if (!streamUrl.isNullOrEmpty()) {
-                        // Extract subtitles if present
-                        val subtitles = mutableListOf<Track>()
-                        try {
-                            val subtitleMatch = SUBTITLE_REGEX.find(iframeHtml)
-                            if (subtitleMatch != null) {
-                                val subtitleData = subtitleMatch.groupValues[1]
-                                subtitleData.split("\n").map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
-                                    val partsMatch = SUBTITLE_LINE_REGEX.find(line)
-                                    if (partsMatch != null) {
-                                        val langName = partsMatch.groupValues[1]
-                                        val subUrl = partsMatch.groupValues[2].trim()
-                                        subtitles.add(Track(subUrl, langName))
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
-                            // Ignore
-                        }
-
-                        val streamHeaders = headers.newBuilder()
-                            .set("Referer", "https://play.zephyrflick.top/")
-                            .set("Origin", "https://play.zephyrflick.top")
-                            .build()
-
-                        if (streamUrl.contains(".m3u8")) {
-                            try {
-                                val hlsVideos = playlistUtils.extractFromHls(
-                                    playlistUrl = streamUrl,
-                                    referer = "https://play.zephyrflick.top/",
-                                    masterHeaders = streamHeaders,
-                                    videoHeaders = streamHeaders,
-                                    videoNameGen = { quality -> "Zephyrflick - $quality" },
-                                    subtitleList = subtitles,
-                                )
-                                videos.addAll(hlsVideos)
-                            } catch (e: Exception) {
-                                videos.add(
-                                    Video(
-                                        videoUrl = streamUrl,
-                                        videoTitle = "Zephyrflick - Auto",
-                                        headers = streamHeaders,
-                                        subtitleTracks = subtitles,
-                                    ),
-                                )
-                            }
-                        } else {
-                            videos.add(
-                                Video(
-                                    videoUrl = streamUrl,
-                                    videoTitle = "Zephyrflick - Auto",
-                                    headers = streamHeaders,
-                                    subtitleTracks = subtitles,
-                                ),
-                            )
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Ignore zephyrflick resolution errors
-                }
-            }
+        zephyrIframes.forEachIndexed { index, iframeUrl ->
+            val suffix = if (zephyrIframes.size > 1) " ${index + 1}" else ""
+            hosters.add(
+                Hoster(
+                    hosterName = "Zephyrflick$suffix",
+                    hosterUrl = "zephyrflick|Unknown|$iframeUrl|$episodeUrl"
+                )
+            )
         }
 
-        return videos
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+        val excludedTypes = preferences.getStringSet(PREF_EXCLUDE_TYPE_KEY, emptySet()) ?: emptySet()
+
+        return hosters.filter { hoster ->
+            val nameLower = hoster.hosterName.lowercase()
+            val matchesExclude = excludedServers.any { nameLower.contains(it.lowercase()) }
+            val matchesType = excludedTypes.any { nameLower.contains(it.lowercase()) }
+            !matchesExclude && !matchesType
+        }.distinctBy { it.hosterName }
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val parts = hoster.hosterUrl.split("|")
+        if (parts.size < 4) return emptyList()
+
+        val type = parts[0]
+        val lang = parts[1]
+        val link = parts[2]
+        val episodeUrl = parts[3]
+
+        return try {
+            when (type) {
+                "abyss" -> {
+                    AbyssExtractor(client, playlistUtils)
+                        .videosFromUrl(link, referer = episodeUrl, prefix = "$lang - ")
+                }
+                "zephyrflick" -> {
+                    extractZephyrflick(link, episodeUrl, lang)
+                }
+                "m3u8" -> {
+                    extractM3u8(link, episodeUrl, lang)
+                }
+                else -> emptyList()
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun extractM3u8(link: String, episodeUrl: String, lang: String): List<Video> {
+        val serverResponse = client.newCall(
+            GET(link, headers.newBuilder().set("Referer", episodeUrl).build()),
+        ).execute()
+        val serverHtml = serverResponse.bodyString()
+
+        val m3u8Matches = M3U8_REGEX.findAll(serverHtml).map { it.value }.toList()
+        val distinctM3u8s = m3u8Matches.distinct()
+
+        return distinctM3u8s.flatMap { m3u8Url ->
+            if (m3u8Url.contains("master.m3u8") || m3u8Url.contains("playlist.m3u8")) {
+                try {
+                    playlistUtils.extractFromHls(
+                        playlistUrl = m3u8Url,
+                        referer = link,
+                        masterHeaders = headers.newBuilder().set("Referer", link).build(),
+                        videoHeaders = headers.newBuilder().set("Referer", link).build(),
+                        videoNameGen = { quality -> "$lang - $quality" },
+                    )
+                } catch (e: Exception) {
+                    listOf(
+                        Video(
+                            videoUrl = m3u8Url,
+                            videoTitle = "$lang - Auto",
+                            headers = headers.newBuilder().set("Referer", link).build(),
+                        ),
+                    )
+                }
+            } else {
+                listOf(
+                    Video(
+                        videoUrl = m3u8Url,
+                        videoTitle = "$lang - Auto",
+                        headers = headers.newBuilder().set("Referer", link).build(),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun extractZephyrflick(iframeUrl: String, episodeUrl: String, lang: String): List<Video> {
+        val zephyrMatch = ZEPHYR_HASH_REGEX.find(iframeUrl) ?: return emptyList()
+        val videoId = zephyrMatch.groupValues[1]
+        val iframeHeaders = headers.newBuilder()
+            .set("Referer", episodeUrl)
+            .build()
+
+        val iframeResponse = client.newCall(
+            okhttp3.Request.Builder()
+                .url(iframeUrl)
+                .headers(iframeHeaders)
+                .build(),
+        ).execute()
+
+        val iframeHtml = iframeResponse.bodyString()
+        val cookies = iframeResponse.headers("Set-Cookie")
+        val cookieHeader = cookies.joinToString("; ") { it.substringBefore(";") }
+
+        val formBody = okhttp3.FormBody.Builder()
+            .add("hash", videoId)
+            .add("r", episodeUrl)
+            .build()
+
+        val zephyrHeadersBuilder = headers.newBuilder()
+            .set("Referer", iframeUrl)
+            .set("Origin", "https://play.zephyrflick.top")
+            .set("X-Requested-With", "XMLHttpRequest")
+        if (cookieHeader.isNotEmpty()) {
+            zephyrHeadersBuilder.set("Cookie", cookieHeader)
+        }
+        val zephyrHeaders = zephyrHeadersBuilder.build()
+
+        val zephyrResponse = client.newCall(
+            okhttp3.Request.Builder()
+                .url("https://play.zephyrflick.top/player/index.php?data=$videoId&do=getVideo")
+                .post(formBody)
+                .headers(zephyrHeaders)
+                .build(),
+        ).execute()
+
+        val zephyrData = json.decodeFromString<ZephyrResponse>(zephyrResponse.bodyString())
+        val streamUrl = zephyrData.videoSource ?: return emptyList()
+
+        val subtitles = mutableListOf<Track>()
+        try {
+            val subtitleMatch = SUBTITLE_REGEX.find(iframeHtml)
+            if (subtitleMatch != null) {
+                val subtitleData = subtitleMatch.groupValues[1]
+                subtitleData.split("\n").map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
+                    val partsMatch = SUBTITLE_LINE_REGEX.find(line)
+                    if (partsMatch != null) {
+                        val langName = partsMatch.groupValues[1]
+                        val subUrl = partsMatch.groupValues[2].trim()
+                        subtitles.add(Track(subUrl, langName))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+
+        val streamHeaders = headers.newBuilder()
+            .set("Referer", "https://play.zephyrflick.top/")
+            .set("Origin", "https://play.zephyrflick.top")
+            .build()
+
+        return if (streamUrl.contains(".m3u8")) {
+            try {
+                playlistUtils.extractFromHls(
+                    playlistUrl = streamUrl,
+                    referer = "https://play.zephyrflick.top/",
+                    masterHeaders = streamHeaders,
+                    videoHeaders = streamHeaders,
+                    videoNameGen = { quality -> "Zephyrflick - $quality" },
+                    subtitleList = subtitles,
+                )
+            } catch (e: Exception) {
+                listOf(
+                    Video(
+                        videoUrl = streamUrl,
+                        videoTitle = "Zephyrflick - Auto",
+                        headers = streamHeaders,
+                        subtitleTracks = subtitles,
+                    ),
+                )
+            }
+        } else {
+            listOf(
+                Video(
+                    videoUrl = streamUrl,
+                    videoTitle = "Zephyrflick - Auto",
+                    headers = streamHeaders,
+                    subtitleTracks = subtitles,
+                ),
+            )
+        }
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val server = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val lang = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
+
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefQuality) }
-                .thenByDescending { it.videoTitle.contains("1080p") }
-                .thenByDescending { it.videoTitle.contains("720p") }
-                .thenByDescending { it.videoTitle.contains("480p") }
-                .thenByDescending { it.videoTitle.contains("Auto") },
+            compareByDescending<Video> { it.videoTitle.contains(lang, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(server, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) }
+                .thenByDescending { it.resolution ?: 0 }
         )
     }
 
@@ -427,12 +466,44 @@ class WatchAnimeWorld : Source() {
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addListPreference(
+            key = PREF_TYPE_KEY,
+            title = PREF_TYPE_TITLE,
+            entries = PREF_TYPE_ENTRIES,
+            entryValues = PREF_TYPE_VALUES,
+            default = PREF_TYPE_DEFAULT,
+            summary = "%s",
+        )
+        screen.addListPreference(
+            key = PREF_SERVER_KEY,
+            title = PREF_SERVER_TITLE,
+            entries = PREF_SERVER_ENTRIES,
+            entryValues = PREF_SERVER_VALUES,
+            default = PREF_SERVER_DEFAULT,
+            summary = "%s",
+        )
+        screen.addListPreference(
             key = PREF_QUALITY_KEY,
             title = PREF_QUALITY_TITLE,
             entries = PREF_QUALITY_ENTRIES,
             entryValues = PREF_QUALITY_ENTRIES,
             default = PREF_QUALITY_DEFAULT,
             summary = "%s",
+        )
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_SERVERS_KEY,
+            title = "Exclude Servers",
+            summary = "Select servers to exclude from the video list",
+            entries = listOf("Abyss", "Zephyrflick", "Server"),
+            entryValues = listOf("Abyss", "Zephyrflick", "Server"),
+            default = emptySet(),
+        )
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_TYPE_KEY,
+            title = "Exclude Types (Languages)",
+            summary = "Select audio languages to exclude from the video list",
+            entries = listOf("Hindi", "English", "Japanese"),
+            entryValues = listOf("Hindi", "English", "Japanese"),
+            default = emptySet(),
         )
         screen.addSwitchPreference(
             key = PREF_SHOW_THUMBNAILS_KEY,
@@ -479,10 +550,25 @@ class WatchAnimeWorld : Source() {
         private val SUBTITLE_LINE_REGEX by lazy { Regex("""\[([^\]]+)\](.+)""") }
         private val EPISODE_SLUG_REGEX by lazy { Regex("""^(.+?)-(\d+)(?:x|-)(\d+)$""", RegexOption.IGNORE_CASE) }
 
+        private const val PREF_TYPE_KEY = "preferred_type"
+        private const val PREF_TYPE_TITLE = "Preferred Audio Language"
+        private const val PREF_TYPE_DEFAULT = "English"
+        private val PREF_TYPE_ENTRIES = listOf("Hindi", "English", "Japanese")
+        private val PREF_TYPE_VALUES = listOf("Hindi", "English", "Japanese")
+
+        private const val PREF_SERVER_KEY = "preferred_server"
+        private const val PREF_SERVER_TITLE = "Preferred Server"
+        private const val PREF_SERVER_DEFAULT = "Abyss"
+        private val PREF_SERVER_ENTRIES = listOf("Abyss", "Zephyrflick", "Server")
+        private val PREF_SERVER_VALUES = listOf("Abyss", "Zephyrflick", "Server")
+
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_TITLE = "Preferred quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
         private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "480p", "360p")
+
+        private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
+        private const val PREF_EXCLUDE_TYPE_KEY = "pref_exclude_type"
 
         private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
         private const val PREF_SHOW_THUMBNAILS_TITLE = "Show episode thumbnails"

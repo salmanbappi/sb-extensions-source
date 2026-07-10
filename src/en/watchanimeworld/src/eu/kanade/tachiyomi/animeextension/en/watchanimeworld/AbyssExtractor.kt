@@ -259,6 +259,7 @@ class AbyssExtractor(
     ): List<Video> {
         val videoList = mutableListOf<Video>()
         val streamHeaders = Headers.Builder()
+            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .set("Referer", referer)
             .set("Origin", referer.toHttpUrl().newBuilder().encodedPath("/").build().toString().trimEnd('/'))
             .build()
@@ -287,7 +288,7 @@ class AbyssExtractor(
                     if (direct.isNotEmpty()) {
                         videoList.add(
                             Video(
-                                videoUrl = direct.replace("\\/", "/"),
+                                videoUrl = "${direct.replace("\\/", "/")}#video.mp4",
                                 videoTitle = "${prefix}Abyss - $label (MP4)",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
@@ -304,7 +305,7 @@ class AbyssExtractor(
                             val combined = "${urlVal.trimEnd('/')}/${pathVal.trimStart('/')}".replace("\\/", "/")
                             videoList.add(
                                 Video(
-                                    videoUrl = combined,
+                                    videoUrl = "$combined#video.mp4",
                                     videoTitle = "${prefix}Abyss - $label (MP4)",
                                     headers = streamHeaders,
                                     subtitleTracks = subtitles,
