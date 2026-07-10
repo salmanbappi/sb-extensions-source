@@ -19,6 +19,7 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
+import keiyoushi.utils.toHex
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -163,13 +164,13 @@ class MovieBox : Source() {
     private val deviceId by lazy {
         val bytes = ByteArray(16)
         SecureRandom().nextBytes(bytes)
-        bytes.joinToString("") { "%02x".format(it) }
+        bytes.toHex()
     }
 
     private fun String.md5(): String = toByteArray().md5()
 
     private fun ByteArray.md5(): String = MessageDigest.getInstance("MD5").digest(this)
-        .joinToString("") { "%02x".format(it) }
+        .toHex()
 
     private fun buildCanonicalString(
         method: String,
@@ -207,7 +208,7 @@ class MovieBox : Source() {
     }
 
     private fun md5ByteArray(input: ByteArray): String = MessageDigest.getInstance("MD5").digest(input)
-        .joinToString("") { "%02x".format(it) }
+        .toHex()
 
     private fun generateXTrSignature(
         method: String,
