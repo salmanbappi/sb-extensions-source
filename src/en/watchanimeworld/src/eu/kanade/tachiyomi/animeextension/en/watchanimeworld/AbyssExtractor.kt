@@ -18,7 +18,10 @@ class AbyssExtractor(
     private val client: OkHttpClient,
     private val playlistUtils: PlaylistUtils,
 ) {
+    private var prefix: String = ""
+
     fun videosFromUrl(url: String, referer: String? = null, prefix: String = ""): List<Video> {
+        this.prefix = prefix
         var targetUrl = url
 
         // Normalize host (short.icu and embedplayabyss.top to abyssplayer.com)
