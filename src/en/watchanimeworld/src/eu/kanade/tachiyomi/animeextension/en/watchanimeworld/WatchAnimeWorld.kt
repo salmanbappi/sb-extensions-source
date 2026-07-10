@@ -3,9 +3,9 @@ package eu.kanade.tachiyomi.animeextension.en.watchanimeworld
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
-import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
@@ -243,15 +243,15 @@ class WatchAnimeWorld : Source() {
                     val link = server.link ?: return@forEach
                     val lang = server.language ?: "Unknown"
                     val isAbyss = "abysscdn.com" in link || "hydraxcdn.biz" in link || "short.icu" in link ||
-                            "embedplayabyss.top" in link || "abyssplayer.com" in link || "playabyss.top" in link ||
-                            "short.ink" in link || "abyss" in lang.lowercase() || "hydrax" in lang.lowercase()
+                        "embedplayabyss.top" in link || "abyssplayer.com" in link || "playabyss.top" in link ||
+                        "short.ink" in link || "abyss" in lang.lowercase() || "hydrax" in lang.lowercase()
                     val serverName = if (isAbyss) "Abyss ($lang)" else "Server ($lang)"
                     val type = if (isAbyss) "abyss" else "m3u8"
                     hosters.add(
                         Hoster(
                             hosterName = serverName,
-                            hosterUrl = "$type|$lang|$link|$episodeUrl"
-                        )
+                            hosterUrl = "$type|$lang|$link|$episodeUrl",
+                        ),
                     )
                 }
             } catch (_: Exception) {}
@@ -267,8 +267,8 @@ class WatchAnimeWorld : Source() {
             hosters.add(
                 Hoster(
                     hosterName = "Zephyrflick$suffix",
-                    hosterUrl = "zephyrflick|Unknown|$iframeUrl|$episodeUrl"
-                )
+                    hosterUrl = "zephyrflick|Unknown|$iframeUrl|$episodeUrl",
+                ),
             )
         }
 
@@ -298,12 +298,15 @@ class WatchAnimeWorld : Source() {
                     AbyssExtractor(client, playlistUtils)
                         .videosFromUrl(link, referer = episodeUrl, prefix = "$lang - ")
                 }
+
                 "zephyrflick" -> {
                     extractZephyrflick(link, episodeUrl, lang)
                 }
+
                 "m3u8" -> {
                     extractM3u8(link, episodeUrl, lang)
                 }
+
                 else -> emptyList()
             }
         } catch (e: Exception) {
@@ -458,7 +461,7 @@ class WatchAnimeWorld : Source() {
             compareByDescending<Video> { it.videoTitle.contains(lang, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(server, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) }
-                .thenByDescending { it.resolution ?: 0 }
+                .thenByDescending { it.resolution ?: 0 },
         )
     }
 
