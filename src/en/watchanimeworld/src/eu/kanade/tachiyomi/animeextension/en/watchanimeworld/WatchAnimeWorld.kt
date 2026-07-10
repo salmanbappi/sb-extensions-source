@@ -98,20 +98,18 @@ class WatchAnimeWorld : Source() {
 
     // =============================== Search ===============================
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return if (query.isNotBlank()) {
-            GET("$baseUrl/page/$page/?s=$query", headers)
-        } else {
-            val genre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.getSelectedValue() ?: ""
-            val language = filters.filterIsInstance<LanguageFilter>().firstOrNull()?.getSelectedValue() ?: ""
-            val network = filters.filterIsInstance<NetworkFilter>().firstOrNull()?.getSelectedValue() ?: ""
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
+        GET("$baseUrl/page/$page/?s=$query", headers)
+    } else {
+        val genre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.getSelectedValue() ?: ""
+        val language = filters.filterIsInstance<LanguageFilter>().firstOrNull()?.getSelectedValue() ?: ""
+        val network = filters.filterIsInstance<NetworkFilter>().firstOrNull()?.getSelectedValue() ?: ""
 
-            when {
-                genre.isNotEmpty() -> GET("$baseUrl/category/genre/$genre/page/$page/", headers)
-                language.isNotEmpty() -> GET("$baseUrl/category/language/$language/page/$page/", headers)
-                network.isNotEmpty() -> GET("$baseUrl/category/network/$network/page/$page/", headers)
-                else -> popularAnimeRequest(page)
-            }
+        when {
+            genre.isNotEmpty() -> GET("$baseUrl/category/genre/$genre/page/$page/", headers)
+            language.isNotEmpty() -> GET("$baseUrl/category/language/$language/page/$page/", headers)
+            network.isNotEmpty() -> GET("$baseUrl/category/network/$network/page/$page/", headers)
+            else -> popularAnimeRequest(page)
         }
     }
 
@@ -124,24 +122,27 @@ class WatchAnimeWorld : Source() {
         NetworkFilter(),
     )
 
-    private class GenreFilter : AnimeFilter.Select<String>(
-        "Genre",
-        GENRES.map { it.first }.toTypedArray(),
-    ) {
+    private class GenreFilter :
+        AnimeFilter.Select<String>(
+            "Genre",
+            GENRES.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue(): String = GENRES[state].second
     }
 
-    private class LanguageFilter : AnimeFilter.Select<String>(
-        "Audio Language",
-        LANGUAGES.map { it.first }.toTypedArray(),
-    ) {
+    private class LanguageFilter :
+        AnimeFilter.Select<String>(
+            "Audio Language",
+            LANGUAGES.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue(): String = LANGUAGES[state].second
     }
 
-    private class NetworkFilter : AnimeFilter.Select<String>(
-        "Network",
-        NETWORKS.map { it.first }.toTypedArray(),
-    ) {
+    private class NetworkFilter :
+        AnimeFilter.Select<String>(
+            "Network",
+            NETWORKS.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue(): String = NETWORKS[state].second
     }
 
