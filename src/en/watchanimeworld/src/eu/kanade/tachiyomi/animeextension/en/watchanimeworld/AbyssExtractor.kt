@@ -401,7 +401,7 @@ class AbyssExtractor(
                                 videoTitle = if (hlsLabel.isNotEmpty()) "Abyss - $hlsLabel (Auto)" else "Abyss - Auto",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
-                            )
+                            ),
                         )
                     }
                 } catch (_: Exception) {
@@ -411,7 +411,7 @@ class AbyssExtractor(
                             videoTitle = if (hlsLabel.isNotEmpty()) "Abyss - $hlsLabel (Auto)" else "Abyss - Auto",
                             headers = streamHeaders,
                             subtitleTracks = subtitles,
-                        )
+                        ),
                     )
                 }
             } else {
@@ -447,7 +447,7 @@ class AbyssExtractor(
                                             videoTitle = "Abyss - $label (Auto)",
                                             headers = streamHeaders,
                                             subtitleTracks = subtitles,
-                                        )
+                                        ),
                                     )
                                 }
                             } catch (_: Exception) {
@@ -457,7 +457,7 @@ class AbyssExtractor(
                                         videoTitle = "Abyss - $label (Auto)",
                                         headers = streamHeaders,
                                         subtitleTracks = subtitles,
-                                    )
+                                    ),
                                 )
                             }
                         }
@@ -487,7 +487,7 @@ class AbyssExtractor(
                                 videoTitle = "Abyss - Auto",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
-                            )
+                            ),
                         )
                     }
                 } catch (_: Exception) {
@@ -497,7 +497,7 @@ class AbyssExtractor(
                             videoTitle = "Abyss - Auto",
                             headers = streamHeaders,
                             subtitleTracks = subtitles,
-                        )
+                        ),
                     )
                 }
             }
