@@ -155,7 +155,16 @@ class WatchAnimeWorld : Source() {
             }
         }
 
-        return episodes.sortedBy { it.episode_number }
+        return episodes.sortedWith(
+            compareByDescending<SEpisode> { ep ->
+                val name = ep.name
+                if (name.startsWith("S")) {
+                    name.substringAfter("S").substringBefore(" ").toIntOrNull() ?: 1
+                } else {
+                    1
+                }
+            }.thenByDescending { it.episode_number }
+        )
     }
 
     private fun parseEpisodesFromHtml(document: Document): List<SEpisode> {
