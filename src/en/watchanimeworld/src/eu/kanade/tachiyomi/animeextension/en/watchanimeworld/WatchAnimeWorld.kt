@@ -169,14 +169,25 @@ class WatchAnimeWorld : Source() {
             val match = EPISODE_NUM_REGEX.find(numEpi)
             val episodeNum = match?.groupValues?.get(2)?.toFloatOrNull() ?: 0f
 
+            val seasonVal = match?.groupValues?.get(1)?.toIntOrNull()
+            val epVal = match?.groupValues?.get(2)?.toIntOrNull()
+
+            val displayTitle = when {
+                titleText.isNotBlank() && !titleText.contains(numEpi, ignoreCase = true) -> titleText
+                seasonVal != null && epVal != null -> "Season $seasonVal - Episode $epVal"
+                else -> "Episode $episodeNum"
+            }
+
             SEpisode.create().apply {
                 url = link.attr("abs:href").substringAfter(baseUrl)
-                name = if (titleText.isNotBlank()) titleText else "Episode $episodeNum"
+                name = displayTitle
                 episode_number = episodeNum
 
                 val img = article.selectFirst("img")
                 val imgUrl = img?.attr("abs:data-src")?.takeIf { it.isNotBlank() }
-                    ?: img?.attr("abs:src") ?: ""
+                    ?: img?.attr("abs:src")?.takeIf { it.isNotBlank() }
+                    ?: img?.attr("data-src")?.takeIf { it.isNotBlank() }
+                    ?: img?.attr("src") ?: ""
                 preview_url = if (showThumbnails && imgUrl.isNotBlank()) imgUrl else null
             }
         }

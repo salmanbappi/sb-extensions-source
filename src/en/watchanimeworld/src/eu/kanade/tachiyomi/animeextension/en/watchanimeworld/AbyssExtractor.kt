@@ -22,10 +22,14 @@ class AbyssExtractor(
         var targetUrl = url
 
         // Normalize host (short.icu and embedplayabyss.top to abysscdn.com)
-        if (targetUrl.contains("short.icu") || targetUrl.contains("embedplayabyss.top")) {
-            val vidMatch = Regex("""[?/]v=([0-9a-zA-Z_-]+)""").find(targetUrl)
-            if (vidMatch != null) {
-                targetUrl = "https://abysscdn.com/?v=${vidMatch.groupValues[1]}"
+        if (targetUrl.contains("short.icu") || targetUrl.contains("embedplayabyss.top") || targetUrl.contains("abysscdn.com") || targetUrl.contains("abyssplayer.com")) {
+            val id = when {
+                targetUrl.contains("v=") -> targetUrl.substringAfter("v=").substringBefore("&")
+                targetUrl.contains("/embed/") -> targetUrl.substringAfter("/embed/").substringBefore("?").substringBefore("/")
+                else -> targetUrl.substringAfterLast("/").substringBefore("?").substringBefore("#")
+            }
+            if (id.isNotEmpty() && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }) {
+                targetUrl = "https://abysscdn.com/?v=$id"
             }
         }
 
@@ -380,17 +384,36 @@ class AbyssExtractor(
 
             if (hlsUrl != null) {
                 try {
-                    videoList.addAll(
-                        playlistUtils.extractFromHls(
-                            playlistUrl = hlsUrl,
-                            referer = referer,
-                            masterHeaders = streamHeaders,
-                            videoHeaders = streamHeaders,
-                            videoNameGen = { quality -> if (hlsLabel.isNotEmpty()) "Abyss - $hlsLabel ($quality)" else "Abyss ($quality)" },
-                            subtitleList = subtitles,
-                        ),
+                    val hlsVideos = playlistUtils.extractFromHls(
+                        playlistUrl = hlsUrl,
+                        referer = referer,
+                        masterHeaders = streamHeaders,
+                        videoHeaders = streamHeaders,
+                        videoNameGen = { quality -> if (hlsLabel.isNotEmpty()) "Abyss - $hlsLabel ($quality)" else "Abyss ($quality)" },
+                        subtitleList = subtitles,
                     )
-                } catch (_: Exception) {}
+                    if (hlsVideos.isNotEmpty()) {
+                        videoList.addAll(hlsVideos)
+                    } else {
+                        videoList.add(
+                            Video(
+                                videoUrl = hlsUrl,
+                                videoTitle = if (hlsLabel.isNotEmpty()) "Abyss - $hlsLabel (Auto)" else "Abyss - Auto",
+                                headers = streamHeaders,
+                                subtitleTracks = subtitles,
+                            )
+                        )
+                    }
+                } catch (_: Exception) {
+                    videoList.add(
+                        Video(
+                            videoUrl = hlsUrl,
+                            videoTitle = if (hlsLabel.isNotEmpty()) "Abyss - $hlsLabel (Auto)" else "Abyss - Auto",
+                            headers = streamHeaders,
+                            subtitleTracks = subtitles,
+                        )
+                    )
+                }
             } else {
                 val hlsSources = hls.optJSONArray("sources")
                 if (hlsSources != null) {
@@ -407,17 +430,36 @@ class AbyssExtractor(
                         if (f != null) {
                             val label = hs.optString("label", "Video")
                             try {
-                                videoList.addAll(
-                                    playlistUtils.extractFromHls(
-                                        playlistUrl = f.replace("\\/", "/"),
-                                        referer = referer,
-                                        masterHeaders = streamHeaders,
-                                        videoHeaders = streamHeaders,
-                                        videoNameGen = { quality -> "Abyss - $label ($quality)" },
-                                        subtitleList = subtitles,
-                                    ),
+                                val hlsVideos = playlistUtils.extractFromHls(
+                                    playlistUrl = f.replace("\\/", "/"),
+                                    referer = referer,
+                                    masterHeaders = streamHeaders,
+                                    videoHeaders = streamHeaders,
+                                    videoNameGen = { quality -> "Abyss - $label ($quality)" },
+                                    subtitleList = subtitles,
                                 )
-                            } catch (_: Exception) {}
+                                if (hlsVideos.isNotEmpty()) {
+                                    videoList.addAll(hlsVideos)
+                                } else {
+                                    videoList.add(
+                                        Video(
+                                            videoUrl = f.replace("\\/", "/"),
+                                            videoTitle = "Abyss - $label (Auto)",
+                                            headers = streamHeaders,
+                                            subtitleTracks = subtitles,
+                                        )
+                                    )
+                                }
+                            } catch (_: Exception) {
+                                videoList.add(
+                                    Video(
+                                        videoUrl = f.replace("\\/", "/"),
+                                        videoTitle = "Abyss - $label (Auto)",
+                                        headers = streamHeaders,
+                                        subtitleTracks = subtitles,
+                                    )
+                                )
+                            }
                         }
                     }
                 }
@@ -428,17 +470,36 @@ class AbyssExtractor(
             if (videoList.isEmpty() && hlsId.isNotEmpty()) {
                 val fallbackUrl = "https://abysscdn.com/#hls/$hlsId/master.m3u8"
                 try {
-                    videoList.addAll(
-                        playlistUtils.extractFromHls(
-                            playlistUrl = fallbackUrl,
-                            referer = referer,
-                            masterHeaders = streamHeaders,
-                            videoHeaders = streamHeaders,
-                            videoNameGen = { quality -> "Abyss ($quality)" },
-                            subtitleList = subtitles,
-                        ),
+                    val hlsVideos = playlistUtils.extractFromHls(
+                        playlistUrl = fallbackUrl,
+                        referer = referer,
+                        masterHeaders = streamHeaders,
+                        videoHeaders = streamHeaders,
+                        videoNameGen = { quality -> "Abyss ($quality)" },
+                        subtitleList = subtitles,
                     )
-                } catch (_: Exception) {}
+                    if (hlsVideos.isNotEmpty()) {
+                        videoList.addAll(hlsVideos)
+                    } else {
+                        videoList.add(
+                            Video(
+                                videoUrl = fallbackUrl,
+                                videoTitle = "Abyss - Auto",
+                                headers = streamHeaders,
+                                subtitleTracks = subtitles,
+                            )
+                        )
+                    }
+                } catch (_: Exception) {
+                    videoList.add(
+                        Video(
+                            videoUrl = fallbackUrl,
+                            videoTitle = "Abyss - Auto",
+                            headers = streamHeaders,
+                            subtitleTracks = subtitles,
+                        )
+                    )
+                }
             }
         }
 
