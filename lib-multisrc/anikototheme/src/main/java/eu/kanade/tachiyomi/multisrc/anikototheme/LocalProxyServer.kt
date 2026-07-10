@@ -307,7 +307,7 @@ class LocalProxyServer(
             val servedSize = segBytes.size - offset
             val firstByte = if (servedSize > 0) segBytes[offset] else 0.toByte()
             val isTsSync = firstByte == 0x47.toByte()
-            logi("STRIPPED: $cacheKey ${segBytes.size}→${servedSize} bytes, first=0x${String.format("%02x", firstByte)}, tsSync=$isTsSync")
+            logi("STRIPPED: $cacheKey ${segBytes.size}→$servedSize bytes, first=0x${String.format("%02x", firstByte)}, tsSync=$isTsSync")
             if (!isTsSync && servedSize > 0) {
                 val hexStr = segBytes.copyOfRange(offset, min(offset + 8, segBytes.size)).joinToString("") { String.format("%02x", it) }
                 logw("WARNING: segment $cacheKey doesn't start with 0x47! First 8 bytes: $hexStr")
@@ -512,9 +512,11 @@ class LocalProxyServer(
             }
 
             if (cacheBytes.get() + cached.size > MAX_CACHE_BYTES) {
-                logi("CACHE SKIP: $key cache budget exceeded (${cacheBytes.get()}+${
-                    cached.size
-                } > $MAX_CACHE_BYTES)")
+                logi(
+                    "CACHE SKIP: $key cache budget exceeded (${cacheBytes.get()}+${
+                        cached.size
+                    } > $MAX_CACHE_BYTES)",
+                )
                 return
             }
 
