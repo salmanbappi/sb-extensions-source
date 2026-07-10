@@ -203,7 +203,17 @@ class WatchAnimeWorld : Source() {
 
                 val serverVideos = servers.parallelCatchingFlatMapBlocking { server ->
                     val link = server.link ?: return@parallelCatchingFlatMapBlocking emptyList()
+                    val lang = server.language ?: "Unknown"
                     try {
+                        if (
+                            "abysscdn.com" in link || "hydraxcdn.biz" in link || "short.icu" in link ||
+                            "embedplayabyss.top" in link || "abyssplayer.com" in link || "playabyss.top" in link ||
+                            "short.ink" in link || "abyss" in lang.lowercase() || "hydrax" in lang.lowercase()
+                        ) {
+                            return@parallelCatchingFlatMapBlocking AbyssExtractor(client, playlistUtils)
+                                .videosFromUrl(link, referer = episodeUrl)
+                        }
+
                         val serverResponse = client.newCall(
                             GET(link, headers.newBuilder().set("Referer", episodeUrl).build()),
                         ).execute()
