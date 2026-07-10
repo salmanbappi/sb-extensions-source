@@ -72,7 +72,15 @@ class WatchAnimeWorld : Source() {
             parseAnimeFromElement(element)
         }.distinctBy { it.url }
 
-        val hasNextPage = document.selectFirst(".pagination a.next, .pagination .nav-links a.next, a.next") != null
+        val url = response.request.url.toString()
+        val page = url.substringAfter("/page/").substringBefore("/").toIntOrNull()
+            ?: url.substringAfter("paged=").substringBefore("&").toIntOrNull()
+            ?: 1
+
+        val hasNextPage = document.select(".pagination a, .nav-links a, a.next").any {
+            val href = it.attr("href")
+            href.contains("/page/${page + 1}") || href.contains("paged=${page + 1}")
+        }
         return AnimesPage(animeList, hasNextPage)
     }
 
@@ -90,13 +98,52 @@ class WatchAnimeWorld : Source() {
 
     // =============================== Search ===============================
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
-        GET("$baseUrl/page/$page/?s=$query", headers)
-    } else {
-        popularAnimeRequest(page)
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        return if (query.isNotBlank()) {
+            GET("$baseUrl/page/$page/?s=$query", headers)
+        } else {
+            val genre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val language = filters.filterIsInstance<LanguageFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val network = filters.filterIsInstance<NetworkFilter>().firstOrNull()?.getSelectedValue() ?: ""
+
+            when {
+                genre.isNotEmpty() -> GET("$baseUrl/category/genre/$genre/page/$page/", headers)
+                language.isNotEmpty() -> GET("$baseUrl/category/language/$language/page/$page/", headers)
+                network.isNotEmpty() -> GET("$baseUrl/category/network/$network/page/$page/", headers)
+                else -> popularAnimeRequest(page)
+            }
+        }
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
+
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        AnimeFilter.Header("Filters are ignored on text search"),
+        GenreFilter(),
+        LanguageFilter(),
+        NetworkFilter(),
+    )
+
+    private class GenreFilter : AnimeFilter.Select<String>(
+        "Genre",
+        GENRES.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue(): String = GENRES[state].second
+    }
+
+    private class LanguageFilter : AnimeFilter.Select<String>(
+        "Audio Language",
+        LANGUAGES.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue(): String = LANGUAGES[state].second
+    }
+
+    private class NetworkFilter : AnimeFilter.Select<String>(
+        "Network",
+        NETWORKS.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue(): String = NETWORKS[state].second
+    }
 
     // =========================== Anime Details ============================
 
@@ -496,8 +543,8 @@ class WatchAnimeWorld : Source() {
             key = PREF_EXCLUDE_SERVERS_KEY,
             title = "Exclude Servers",
             summary = "Select servers to exclude from the video list",
-            entries = listOf("Abyss", "Zephyrflick", "Server"),
-            entryValues = listOf("Abyss", "Zephyrflick", "Server"),
+            entries = listOf("Abyss", "Zephyrflick"),
+            entryValues = listOf("Abyss", "Zephyrflick"),
             default = emptySet(),
         )
         screen.addSetPreference(
@@ -553,6 +600,26 @@ class WatchAnimeWorld : Source() {
         private val SUBTITLE_LINE_REGEX by lazy { Regex("""\[([^\]]+)\](.+)""") }
         private val EPISODE_SLUG_REGEX by lazy { Regex("""^(.+?)-(\d+)(?:x|-)(\d+)$""", RegexOption.IGNORE_CASE) }
 
+        private val GENRES = listOf(
+            Pair("All", ""),
+            Pair("Adventure", "adventure"),
+            Pair("Drama", "drama"),
+            Pair("Historical", "historical"),
+            Pair("Romance", "romance"),
+        )
+
+        private val LANGUAGES = listOf(
+            Pair("All", ""),
+            Pair("English", "english"),
+            Pair("Hindi", "hindi"),
+            Pair("Japanese", "japanese"),
+        )
+
+        private val NETWORKS = listOf(
+            Pair("All", ""),
+            Pair("Netflix", "netflix"),
+        )
+
         private const val PREF_TYPE_KEY = "preferred_type"
         private const val PREF_TYPE_TITLE = "Preferred Audio Language"
         private const val PREF_TYPE_DEFAULT = "English"
@@ -562,8 +629,8 @@ class WatchAnimeWorld : Source() {
         private const val PREF_SERVER_KEY = "preferred_server"
         private const val PREF_SERVER_TITLE = "Preferred Server"
         private const val PREF_SERVER_DEFAULT = "Abyss"
-        private val PREF_SERVER_ENTRIES = listOf("Abyss", "Zephyrflick", "Server")
-        private val PREF_SERVER_VALUES = listOf("Abyss", "Zephyrflick", "Server")
+        private val PREF_SERVER_ENTRIES = listOf("Abyss", "Zephyrflick")
+        private val PREF_SERVER_VALUES = listOf("Abyss", "Zephyrflick")
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_TITLE = "Preferred quality"
