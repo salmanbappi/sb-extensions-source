@@ -123,16 +123,16 @@ class AbyssExtractor(
             return null
         }
 
-        // Try to parse raw bytes as UTF-8 JSON
-        val utf8Str = rawBytes.toString(Charsets.UTF_8)
+        // Parse raw bytes as ISO-8859-1 (Latin-1) JSON to preserve binary bytes in the string fields!
+        val latin1Str = rawBytes.toString(Charsets.ISO_8859_1)
         try {
-            if (utf8Str.trim().startsWith("{")) {
-                return JSONObject(utf8Str)
+            if (latin1Str.trim().startsWith("{")) {
+                return JSONObject(latin1Str)
             }
         } catch (_: Exception) {}
 
         // Fallback parsing (Latin-1 decoding + custom checks)
-        val decodedStr = rawBytes.toString(Charsets.ISO_8859_1)
+        val decodedStr = latin1Str
         val payload = JSONObject()
 
         // Slug
@@ -225,29 +225,8 @@ class AbyssExtractor(
     }
 
     private fun deriveKey(seed: String): ByteArray {
-        var cleaned = seed
-        val firstDot = cleaned.indexOf('.')
-        if (firstDot != -1) {
-            cleaned = cleaned.substring(0, firstDot) + cleaned.substring(firstDot + 1)
-        }
-        cleaned = cleaned.replace(":", "").replace("-", "")
-        val isAllDigits = cleaned.isNotEmpty() && cleaned.all { it.isDigit() }
-
-        val digestSource = if (isAllDigits) {
-            ByteArray(seed.length) { i ->
-                val ch = seed[i]
-                if (ch.isDigit()) {
-                    ch.toString().toInt().toByte()
-                } else {
-                    (ch.code and 0xFF).toByte()
-                }
-            }
-        } else {
-            seed.toByteArray(Charsets.UTF_8)
-        }
-
         val md5 = MessageDigest.getInstance("MD5")
-        val hash = md5.digest(digestSource)
+        val hash = md5.digest(seed.toByteArray(Charsets.UTF_8))
         val hexString = hash.joinToString("") { String.format("%02x", it) }
         return hexString.toByteArray(Charsets.UTF_8)
     }
