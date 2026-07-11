@@ -9,18 +9,17 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.json.JSONObject
-import java.security.MessageDigest
-import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
 import org.nanohttpd.protocols.http.IHTTPSession
-
 import org.nanohttpd.protocols.http.NanoHTTPD
 import org.nanohttpd.protocols.http.response.Response
 import org.nanohttpd.protocols.http.response.Response.newFixedLengthResponse
 import org.nanohttpd.protocols.http.response.Status
-import java.util.concurrent.ConcurrentHashMap
+import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class AbyssExtractor(
 
@@ -398,7 +397,6 @@ class AbyssExtractor(
                             ),
                         )
                     }
-
                 }
             }
         }
@@ -732,7 +730,7 @@ class LocalProxyServer(
             if (rangeHeader != null) Status.PARTIAL_CONTENT else Status.OK,
             "video/mp4",
             ProxyInputStream(client, streamHeaders, data.parts, decryptedHeader, reqStart, reqEnd),
-            contentLength
+            contentLength,
         )
         response.addHeader("Accept-Ranges", "bytes")
         if (rangeHeader != null) {
@@ -846,4 +844,3 @@ class ProxyInputStream(
         super.close()
     }
 }
-
