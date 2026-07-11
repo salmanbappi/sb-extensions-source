@@ -643,19 +643,9 @@ data class AbyssVideoData(
         }
     }
 
-    private fun cleanSeed(seed: String): String {
-        var cleaned = seed
-        val firstDot = cleaned.indexOf('.')
-        if (firstDot != -1) {
-            cleaned = cleaned.substring(0, firstDot) + cleaned.substring(firstDot + 1)
-        }
-        return cleaned.replace(":", "").replace("-", "")
-    }
-
     private fun aesDecryptCTR(dataBytes: ByteArray, seed: String): ByteArray {
-        val cleaned = cleanSeed(seed)
         val md5 = MessageDigest.getInstance("MD5")
-        val hash = md5.digest(cleaned.toByteArray(Charsets.UTF_8))
+        val hash = md5.digest(seed.toByteArray(Charsets.UTF_8))
         val hexString = hash.joinToString("") { String.format("%02x", it) }
         val key = hexString.toByteArray(Charsets.UTF_8)
         val iv = key.copyOfRange(0, 16)
@@ -757,45 +747,9 @@ class ProxyInputStream(
     private var activeStreamEnd = -1L
 
     override fun read(): Int {
-        if (currentPos > endPos) return -1
-
-        if (decryptedHeader != null && currentPos < 65536) {
-            val byte = decryptedHeader[currentPos.toInt()].toInt() and 0xFF
-            currentPos++
-            return byte
-        }
-
-        val part = parts.find { currentPos >= it.virtualStart && currentPos < it.virtualEnd }
-            ?: return -1
-
-        if (activeStream == null || currentPos > activeStreamEnd) {
-            activeStream?.close()
-            activeStream = null
-
-            val partEnd = minOf(part.virtualEnd - 1, endPos)
-            val physStart = part.physicalOffset + (currentPos - part.virtualStart)
-            val physEnd = part.physicalOffset + (partEnd - part.virtualStart)
-
-            val request = okhttp3.Request.Builder()
-                .url(part.url)
-                .headers(headers)
-                .header("Range", "bytes=$physStart-$physEnd")
-                .build()
-
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                response.close()
-                throw java.io.IOException("CDN request failed: ${response.code}")
-            }
-            activeStream = response.body?.byteStream()
-            activeStreamEnd = partEnd
-        }
-
-        val byte = activeStream?.read() ?: -1
-        if (byte != -1) {
-            currentPos++
-        }
-        return byte
+        val b = ByteArray(1)
+        val n = read(b, 0, 1)
+        return if (n <= 0) -1 else b[0].toInt() and 0xFF
     }
 
     override fun read(b: ByteArray, off: Int, len: Int): Int {
@@ -808,36 +762,43 @@ class ProxyInputStream(
             return toRead
         }
 
-        val part = parts.find { currentPos >= it.virtualStart && currentPos < it.virtualEnd }
-            ?: return -1
+        var bytesRead = -1
+        while (bytesRead == -1 && currentPos <= endPos) {
+            val part = parts.find { currentPos >= it.virtualStart && currentPos < it.virtualEnd }
+                ?: break
 
-        if (activeStream == null || currentPos > activeStreamEnd) {
-            activeStream?.close()
-            activeStream = null
+            if (activeStream == null || currentPos > activeStreamEnd) {
+                activeStream?.close()
+                activeStream = null
 
-            val partEnd = minOf(part.virtualEnd - 1, endPos)
-            val physStart = part.physicalOffset + (currentPos - part.virtualStart)
-            val physEnd = part.physicalOffset + (partEnd - part.virtualStart)
+                val partEnd = minOf(part.virtualEnd - 1, endPos)
+                val physStart = part.physicalOffset + (currentPos - part.virtualStart)
+                val physEnd = part.physicalOffset + (partEnd - part.virtualStart)
 
-            val request = okhttp3.Request.Builder()
-                .url(part.url)
-                .headers(headers)
-                .header("Range", "bytes=$physStart-$physEnd")
-                .build()
+                val request = okhttp3.Request.Builder()
+                    .url(part.url)
+                    .headers(headers)
+                    .header("Range", "bytes=$physStart-$physEnd")
+                    .build()
 
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                response.close()
-                throw java.io.IOException("CDN request failed: ${response.code}")
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    response.close()
+                    throw java.io.IOException("CDN request failed: ${response.code}")
+                }
+                activeStream = response.body?.byteStream()
+                activeStreamEnd = partEnd
             }
-            activeStream = response.body?.byteStream()
-            activeStreamEnd = partEnd
-        }
 
-        val maxLen = minOf(len.toLong(), activeStreamEnd - currentPos + 1).toInt()
-        val bytesRead = activeStream?.read(b, off, maxLen) ?: -1
-        if (bytesRead > 0) {
-            currentPos += bytesRead
+            val maxLen = minOf(len.toLong(), activeStreamEnd - currentPos + 1).toInt()
+            bytesRead = activeStream?.read(b, off, maxLen) ?: -1
+            if (bytesRead > 0) {
+                currentPos += bytesRead
+            } else {
+                activeStream?.close()
+                activeStream = null
+                bytesRead = -1
+            }
         }
         return bytesRead
     }
