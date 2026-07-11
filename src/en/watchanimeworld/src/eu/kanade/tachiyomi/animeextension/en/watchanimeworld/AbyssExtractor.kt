@@ -9,14 +9,7 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.json.JSONObject
-import org.nanohttpd.protocols.http.IHTTPSession
-import org.nanohttpd.protocols.http.NanoHTTPD
-import org.nanohttpd.protocols.http.response.Response
-import org.nanohttpd.protocols.http.response.Response.newFixedLengthResponse
-import org.nanohttpd.protocols.http.response.Status
 import java.security.MessageDigest
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -232,8 +225,29 @@ class AbyssExtractor(
     }
 
     private fun deriveKey(seed: String): ByteArray {
+        var cleaned = seed
+        val firstDot = cleaned.indexOf('.')
+        if (firstDot != -1) {
+            cleaned = cleaned.substring(0, firstDot) + cleaned.substring(firstDot + 1)
+        }
+        cleaned = cleaned.replace(":", "").replace("-", "")
+        val isAllDigits = cleaned.isNotEmpty() && cleaned.all { it.isDigit() }
+
+        val digestSource = if (isAllDigits) {
+            ByteArray(seed.length) { i ->
+                val ch = seed[i]
+                if (ch.isDigit()) {
+                    ch.toString().toInt().toByte()
+                } else {
+                    (ch.code and 0xFF).toByte()
+                }
+            }
+        } else {
+            seed.toByteArray(Charsets.UTF_8)
+        }
+
         val md5 = MessageDigest.getInstance("MD5")
-        val hash = md5.digest(seed.toByteArray(Charsets.UTF_8))
+        val hash = md5.digest(digestSource)
         val hexString = hash.joinToString("") { String.format("%02x", it) }
         return hexString.toByteArray(Charsets.UTF_8)
     }
@@ -304,25 +318,25 @@ class AbyssExtractor(
                         continue
                     }
 
-                    // Handle other MP4 sources through local proxy decryption
-                    val sizeValue = size.toLongOrNull() ?: 0L
-                    val partSizeValue = src.optLong("partSize", 0L)
-
-                    val fristDatas = mediaPayload.optJSONArray("fristDatas")
-                        ?: mediaPayload.optJSONArray("fristdata")
-                    var firstPart: JSONObject? = null
-                    if (fristDatas != null) {
-                        for (k in 0 until fristDatas.length()) {
-                            val fd = fristDatas.optJSONObject(k) ?: continue
-                            if (fd.optString("res_id") == resId) {
-                                firstPart = fd
-                                break
-                            }
-                        }
+                    // Direct URL/Path fallback (but not for watch pages where segments are used)
+                    val urlVal = src.optString("url")
+                    val pathVal = src.optString("path")
+                    if (urlVal.isNotEmpty() && pathVal.isNotEmpty() && !urlVal.contains("sssrr.org")) {
+                        val combined = "${urlVal.trimEnd('/')}/${pathVal.trimStart('/')}".replace("\\/", "/")
+                        videoList.add(
+                            Video(
+                                videoUrl = combined,
+                                videoTitle = "${prefix}Abyss - $label (MP4)",
+                                headers = streamHeaders,
+                                subtitleTracks = subtitles,
+                            ),
+                        )
+                        continue
                     }
 
-                    var domain: String? = null
-                    if (domains != null) {
+                    // Sora token URL
+                    if (size.isNotEmpty() && resId.isNotEmpty() && sub.isNotEmpty() && domains != null) {
+                        var domain: String? = null
                         for (j in 0 until domains.length()) {
                             val d = domains.optString(j, "")
                             if (d.isNotEmpty() && d.contains(sub)) {
@@ -330,72 +344,23 @@ class AbyssExtractor(
                                 break
                             }
                         }
-                    }
 
-                    var mainUrl = ""
-                    val urlVal = src.optString("url")
-                    val pathVal = src.optString("path")
-                    if (urlVal.isNotEmpty() && pathVal.isNotEmpty()) {
-                        mainUrl = "${urlVal.trimEnd('/')}/${pathVal.trimStart('/')}".replace("\\/", "/")
-                    } else if (firstPart != null && domain != null) {
-                        val fdUrl = firstPart.optString("url")
-                        if (fdUrl.isNotEmpty()) {
-                            val fdPath = fdUrl.substringAfter("://").substringAfter("/")
-                            val basePath = fdPath.substringBeforeLast(".fd")
-                            val normDomain = if (domain.startsWith("http")) domain else "https://$domain"
-                            mainUrl = "${normDomain.trimEnd('/')}/$basePath"
-                        }
-                    }
-
-                    if (sizeValue > 0L && mainUrl.isNotEmpty()) {
-                        val id = UUID.randomUUID().toString()
-                        val partsList = mutableListOf<VideoPart>()
-                        val fdUrl = firstPart?.optString("url") ?: ""
-                        val fdSize = firstPart?.optLong("partSize", 0L) ?: 0L
-
-                        if (fdSize > 0L && fdUrl.isNotEmpty()) {
-                            partsList.add(VideoPart(fdUrl, 0, fdSize, 0))
-                        }
-
-                        val startOffset = if (fdSize > 0L) fdSize else 0L
-                        if (partSizeValue <= 0L) {
-                            partsList.add(VideoPart(mainUrl, startOffset, sizeValue, startOffset))
-                        } else {
-                            var virtualOffset = 0L
-                            var partIndex = 0
-                            while (virtualOffset < sizeValue) {
-                                val nextOffset = minOf(virtualOffset + partSizeValue, sizeValue)
-                                val partUrl = if (partIndex == 0) mainUrl else "$mainUrl$partIndex"
-                                if (partIndex == 0) {
-                                    if (startOffset < nextOffset) {
-                                        partsList.add(VideoPart(partUrl, startOffset, nextOffset, startOffset))
-                                    }
-                                } else {
-                                    partsList.add(VideoPart(partUrl, virtualOffset, nextOffset, 0))
-                                }
-                                virtualOffset = nextOffset
-                                partIndex++
+                        if (domain != null) {
+                            val pathValue = "/mp4/$md5Id/$resId/$size?v=$slug"
+                            val token = buildSoraToken(pathValue, size)
+                            if (token != null) {
+                                val norm = if (domain.startsWith("http")) domain else "https://$domain"
+                                val finalUrl = "${norm.trimEnd('/')}/sora/$size/$token"
+                                videoList.add(
+                                    Video(
+                                        videoUrl = finalUrl,
+                                        videoTitle = "${prefix}Abyss - $label (Sora)",
+                                        headers = streamHeaders,
+                                        subtitleTracks = subtitles,
+                                    ),
+                                )
                             }
                         }
-
-                        val videoData = AbyssVideoData(
-                            size = sizeValue,
-                            firstPartUrl = if (fdSize > 0L) fdUrl else "",
-                            firstPartSize = fdSize,
-                            parts = partsList,
-                        )
-                        AbyssProxy.mediaCache[id] = videoData
-
-                        val port = AbyssProxy.getPort(client)
-                        val proxyUrl = "http://127.0.0.1:$port/play?id=$id"
-                        videoList.add(
-                            Video(
-                                videoUrl = proxyUrl,
-                                videoTitle = "${prefix}Abyss - $label (MP4)",
-                                headers = streamHeaders,
-                                subtitleTracks = subtitles,
-                            ),
-                        )
                     }
                 }
             }
@@ -585,226 +550,5 @@ class AbyssExtractor(
         private val legacyRegex = Regex("""[\w\$]+='([A-Za-z0-9+/=RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW]{30,})_'""")
         private val domainRegex = Regex("""['"]domain['"]\s*:\s*['"]([^'"]+)['"]""")
         private val idRegex = Regex("""['"]id['"]\s*:\s*['"]([^'"]+)['"]""")
-    }
-}
-
-object AbyssProxy {
-    private var server: LocalProxyServer? = null
-    val mediaCache = ConcurrentHashMap<String, AbyssVideoData>()
-
-    fun getPort(client: OkHttpClient): Int {
-        synchronized(this) {
-            if (server == null) {
-                server = LocalProxyServer(client).apply { start() }
-            }
-            return server!!.port
-        }
-    }
-}
-
-data class AbyssVideoData(
-    val size: Long,
-    val firstPartUrl: String,
-    val firstPartSize: Long,
-    val parts: List<VideoPart>,
-) {
-    @Volatile
-    private var decryptedHeader: ByteArray? = null
-
-    fun getOrFetchDecryptedHeader(client: OkHttpClient): ByteArray {
-        decryptedHeader?.let { return it }
-        synchronized(this) {
-            decryptedHeader?.let { return it }
-
-            val headerSize = minOf(firstPartSize, 65536L).toInt()
-            val request = okhttp3.Request.Builder()
-                .url(firstPartUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .header("Referer", "https://abyssplayer.com/")
-                .header("Range", "bytes=0-${headerSize - 1}")
-                .build()
-
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                response.close()
-                throw java.io.IOException("Failed to fetch header: ${response.code}")
-            }
-            val bodyBytes = response.body?.bytes() ?: throw java.io.IOException("Empty header body")
-
-            val seed = firstPartUrl.substringAfterLast("/")
-            val decrypted = try {
-                aesDecryptCTR(bodyBytes, seed)
-            } catch (e: Exception) {
-                bodyBytes
-            }
-
-            decryptedHeader = decrypted
-            return decrypted
-        }
-    }
-
-    private fun aesDecryptCTR(dataBytes: ByteArray, seed: String): ByteArray {
-        val md5 = MessageDigest.getInstance("MD5")
-        val hash = md5.digest(seed.toByteArray(Charsets.UTF_8))
-        val hexString = hash.joinToString("") { String.format("%02x", it) }
-        val key = hexString.toByteArray(Charsets.UTF_8)
-        val iv = key.copyOfRange(0, 16)
-
-        val secretKey = SecretKeySpec(key, "AES")
-        val ivParameterSpec = IvParameterSpec(iv)
-        val cipher = Cipher.getInstance("AES/CTR/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, secretKey, ivParameterSpec)
-        return cipher.doFinal(dataBytes)
-    }
-}
-
-class VideoPart(
-    val url: String,
-    val virtualStart: Long,
-    val virtualEnd: Long,
-    val physicalOffset: Long,
-)
-
-class LocalProxyServer(
-    private val client: OkHttpClient,
-) : NanoHTTPD(0) {
-
-    val port: Int
-        get() = super.getListeningPort()
-
-    override fun handle(session: IHTTPSession): Response {
-        val uri = session.uri
-        if (uri != "/play") {
-            return newFixedLengthResponse(Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
-        }
-
-        val id = session.parameters["id"]?.firstOrNull()
-            ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing id")
-
-        val data = AbyssProxy.mediaCache[id]
-            ?: return newFixedLengthResponse(Status.NOT_FOUND, MIME_PLAINTEXT, "Video data not found")
-
-        val rangeHeader = session.headers["range"]
-        var reqStart = 0L
-        var reqEnd = data.size - 1
-
-        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
-            val rangeStr = rangeHeader.substring(6)
-            val dashIdx = rangeStr.indexOf('-')
-            if (dashIdx != -1) {
-                val startStr = rangeStr.substring(0, dashIdx)
-                val endStr = rangeStr.substring(dashIdx + 1)
-                if (startStr.isNotEmpty()) reqStart = startStr.toLong()
-                if (endStr.isNotEmpty()) reqEnd = endStr.toLong()
-            }
-        }
-
-        if (reqEnd >= data.size) reqEnd = data.size - 1
-        if (reqStart > reqEnd) reqStart = reqEnd
-
-        val contentLength = reqEnd - reqStart + 1
-
-        val decryptedHeader = if (data.firstPartUrl.isNotEmpty()) {
-            try {
-                data.getOrFetchDecryptedHeader(client)
-            } catch (e: Exception) {
-                null
-            }
-        } else {
-            null
-        }
-
-        val streamHeaders = Headers.Builder()
-            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .set("Referer", "https://abyssplayer.com/")
-            .build()
-
-        val response = newFixedLengthResponse(
-            if (rangeHeader != null) Status.PARTIAL_CONTENT else Status.OK,
-            "video/mp4",
-            ProxyInputStream(client, streamHeaders, data.parts, decryptedHeader, reqStart, reqEnd),
-            contentLength,
-        )
-        response.addHeader("Accept-Ranges", "bytes")
-        if (rangeHeader != null) {
-            response.addHeader("Content-Range", "bytes $reqStart-$reqEnd/${data.size}")
-        }
-        response.addHeader("Access-Control-Allow-Origin", "*")
-        return response
-    }
-}
-
-class ProxyInputStream(
-    private val client: OkHttpClient,
-    private val headers: Headers,
-    private val parts: List<VideoPart>,
-    private val decryptedHeader: ByteArray?,
-    private var currentPos: Long,
-    private val endPos: Long,
-) : java.io.InputStream() {
-
-    private var activeStream: java.io.InputStream? = null
-    private var activeStreamEnd = -1L
-
-    override fun read(): Int {
-        val b = ByteArray(1)
-        val n = read(b, 0, 1)
-        return if (n <= 0) -1 else b[0].toInt() and 0xFF
-    }
-
-    override fun read(b: ByteArray, off: Int, len: Int): Int {
-        if (currentPos > endPos) return -1
-
-        if (decryptedHeader != null && currentPos < 65536) {
-            val toRead = minOf(len.toLong(), 65536 - currentPos, endPos - currentPos + 1).toInt()
-            System.arraycopy(decryptedHeader, currentPos.toInt(), b, off, toRead)
-            currentPos += toRead
-            return toRead
-        }
-
-        var bytesRead = -1
-        while (bytesRead == -1 && currentPos <= endPos) {
-            val part = parts.find { currentPos >= it.virtualStart && currentPos < it.virtualEnd }
-                ?: break
-
-            if (activeStream == null || currentPos > activeStreamEnd) {
-                activeStream?.close()
-                activeStream = null
-
-                val partEnd = minOf(part.virtualEnd - 1, endPos)
-                val physStart = part.physicalOffset + (currentPos - part.virtualStart)
-                val physEnd = part.physicalOffset + (partEnd - part.virtualStart)
-
-                val request = okhttp3.Request.Builder()
-                    .url(part.url)
-                    .headers(headers)
-                    .header("Range", "bytes=$physStart-$physEnd")
-                    .build()
-
-                val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    response.close()
-                    throw java.io.IOException("CDN request failed: ${response.code}")
-                }
-                activeStream = response.body?.byteStream()
-                activeStreamEnd = partEnd
-            }
-
-            val maxLen = minOf(len.toLong(), activeStreamEnd - currentPos + 1).toInt()
-            bytesRead = activeStream?.read(b, off, maxLen) ?: -1
-            if (bytesRead > 0) {
-                currentPos += bytesRead
-            } else {
-                activeStream?.close()
-                activeStream = null
-                bytesRead = -1
-            }
-        }
-        return bytesRead
-    }
-
-    override fun close() {
-        activeStream?.close()
-        super.close()
     }
 }
