@@ -679,6 +679,10 @@ class LocalProxyServer(
     private val client: OkHttpClient,
 ) : NanoHTTPD(0) {
 
+    val port: Int
+        get() = super.getListeningPort()
+
+
     override fun handle(session: IHTTPSession): Response {
         val uri = session.uri
         if (uri != "/play") {
