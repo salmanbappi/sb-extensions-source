@@ -1,7 +1,7 @@
 ext {
     extName = 'WatchAnimeWorld'
     extClass = '.WatchAnimeWorld'
-    extVersionCode = 16
+    extVersionCode = 17
 }
 
 apply from: "$rootDir/common.gradle"
@@ -9,8 +9,6 @@ apply from: "$rootDir/common.gradle"
 dependencies {
     implementation(project(':lib:cloudflare-interceptor'))
     implementation(project(':lib:playlist-utils'))
-    implementation(project(':lib:m3u8server'))
-    implementation("com.github.NanoHttpd.nanohttpd:nanohttpd:-SNAPSHOT")
 }
 
 
