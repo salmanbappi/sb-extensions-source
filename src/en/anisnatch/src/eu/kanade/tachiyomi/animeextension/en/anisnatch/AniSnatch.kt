@@ -11,21 +11,19 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.booleanOrNull
-import eu.kanade.tachiyomi.animesource.model.Track
 import keiyoushi.utils.addSwitchPreference
-import java.text.SimpleDateFormat
-import java.util.Locale
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -35,6 +33,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import uy.kohesive.injekt.injectLazy
 import java.io.ByteArrayInputStream
+import java.text.SimpleDateFormat
+import java.util.Locale
 import java.util.zip.GZIPInputStream
 
 class AniSnatch :
@@ -528,13 +528,11 @@ class AniSnatch :
 
     // ─── Episodes ─────────────────────────────────────────────────────────────
 
-    private fun parseDate(dateStr: String): Long {
-        return runCatching {
-            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH).parse(dateStr)?.time
-                ?: SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).parse(dateStr)?.time
-                ?: 0L
-        }.getOrDefault(0L)
-    }
+    private fun parseDate(dateStr: String): Long = runCatching {
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH).parse(dateStr)?.time
+            ?: SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).parse(dateStr)?.time
+            ?: 0L
+    }.getOrDefault(0L)
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val animeId = anime.url.toIntOrNull() ?: return emptyList()
@@ -552,38 +550,38 @@ class AniSnatch :
             listArray.mapNotNull { element ->
                 val epObj = element.jsonObject
                 val epNum = epObj["number"]?.jsonPrimitive?.content?.toFloatOrNull() ?: return@mapNotNull null
-                
+
                 SEpisode.create().apply {
                     url = "$animeId|${epNum.toInt()}"
                     episode_number = epNum
-                    
+
                     val title = epObj["title"]?.jsonPrimitive?.content
                     name = if (!title.isNullOrBlank()) {
                         "Episode ${epNum.toInt()}: $title"
                     } else {
                         "Episode ${epNum.toInt()}"
                     }
-                    
+
                     val desc = epObj["description"]?.jsonPrimitive?.content
                     if (!desc.isNullOrBlank()) {
                         summary = desc
                     }
-                    
+
                     val img = epObj["image"]?.jsonPrimitive?.content
                     if (showThumbnails && !img.isNullOrBlank()) {
                         preview_url = img
                     }
-                    
+
                     val dateStr = epObj["airDate"]?.jsonPrimitive?.content
                     if (!dateStr.isNullOrBlank()) {
                         date_upload = parseDate(dateStr)
                     }
-                    
+
                     val subVal = epObj["sub"]?.jsonPrimitive
                     val dubVal = epObj["dub"]?.jsonPrimitive
                     val hasSub = subVal?.booleanOrNull ?: (subVal?.content?.toIntOrNull() ?: 0 > 0)
                     val hasDub = dubVal?.booleanOrNull ?: (dubVal?.content?.toIntOrNull() ?: 0 > 0)
-                    
+
                     scanlator = when {
                         hasSub && hasDub -> "Sub, Dub"
                         hasDub -> "Dub"
@@ -678,131 +676,130 @@ class AniSnatch :
                     resolveVideoPage(source, audioPrefix, serverName)
                 }
             }
+
             else -> {
                 resolveVideoPage(source, audioPrefix, serverName)
             }
         }
     }
 
-    private fun resolveVideoPage(source: String, audioPrefix: String, serverName: String): List<Video> {
-        return try {
-            val videoUrl = "$baseUrl/video/$source"
-            val pageResp = client.newCall(
-                okhttp3.Request.Builder()
-                    .url(videoUrl)
-                    .headers(headers.newBuilder().set("Referer", "$baseUrl/").build())
-                    .build(),
-            ).execute()
-            val html = pageResp.body.string()
+    private fun resolveVideoPage(source: String, audioPrefix: String, serverName: String): List<Video> = try {
+        val videoUrl = "$baseUrl/video/$source"
+        val pageResp = client.newCall(
+            okhttp3.Request.Builder()
+                .url(videoUrl)
+                .headers(headers.newBuilder().set("Referer", "$baseUrl/").build())
+                .build(),
+        ).execute()
+        val html = pageResp.body.string()
 
-            val videos = mutableListOf<Video>()
-            val subtitleTracks = mutableListOf<Track>()
+        val videos = mutableListOf<Video>()
+        val subtitleTracks = mutableListOf<Track>()
 
-            // Extract subtitles if present
-            try {
-                if (html.contains("subtitles:")) {
-                    val subsJson = html.substringAfter("subtitles:").substringBefore("]").trim() + "]"
-                    val subsArr = json.parseToJsonElement(subsJson).jsonArray
-                    for (sub in subsArr) {
-                        val file = sub.jsonObject["file"]?.jsonPrimitive?.content ?: continue
-                        val label = sub.jsonObject["label"]?.jsonPrimitive?.content ?: "English"
-                        subtitleTracks.add(Track(file, label))
-                    }
+        // Extract subtitles if present
+        try {
+            if (html.contains("subtitles:")) {
+                val subsJson = html.substringAfter("subtitles:").substringBefore("]").trim() + "]"
+                val subsArr = json.parseToJsonElement(subsJson).jsonArray
+                for (sub in subsArr) {
+                    val file = sub.jsonObject["file"]?.jsonPrimitive?.content ?: continue
+                    val label = sub.jsonObject["label"]?.jsonPrimitive?.content ?: "English"
+                    subtitleTracks.add(Track(file, label))
                 }
-            } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
 
-            // Extract video sources
-            if (html.contains("srcs:")) {
-                val srcsJson = html.substringAfter("srcs:").substringBefore(", thumbnails").trim()
-                val jsonArr = json.parseToJsonElement(srcsJson).jsonArray
-                for (item in jsonArr) {
-                    val url = item.jsonObject["url"]?.jsonPrimitive?.content ?: continue
-                    val label = item.jsonObject["label"]?.jsonPrimitive?.content ?: "HD"
-                    val type = item.jsonObject["type"]?.jsonPrimitive?.content ?: "hls"
-                    
-                    val refHeaders = headers.newBuilder()
-                        .set("Referer", videoUrl)
-                        .build()
+        // Extract video sources
+        if (html.contains("srcs:")) {
+            val srcsJson = html.substringAfter("srcs:").substringBefore(", thumbnails").trim()
+            val jsonArr = json.parseToJsonElement(srcsJson).jsonArray
+            for (item in jsonArr) {
+                val url = item.jsonObject["url"]?.jsonPrimitive?.content ?: continue
+                val label = item.jsonObject["label"]?.jsonPrimitive?.content ?: "HD"
+                val type = item.jsonObject["type"]?.jsonPrimitive?.content ?: "hls"
 
-                    if (type == "hls") {
-                        val hlsVideos = m3u8Integration.processVideoList(
-                            listOf(
-                                Video(
-                                    videoUrl = url,
-                                    videoTitle = "$audioPrefix - $serverName - $label",
-                                    headers = refHeaders,
-                                    subtitleTracks = subtitleTracks,
-                                )
-                            )
-                        )
-                        videos.addAll(hlsVideos)
-                    } else {
-                        videos.add(
+                val refHeaders = headers.newBuilder()
+                    .set("Referer", videoUrl)
+                    .build()
+
+                if (type == "hls") {
+                    val hlsVideos = m3u8Integration.processVideoList(
+                        listOf(
                             Video(
                                 videoUrl = url,
                                 videoTitle = "$audioPrefix - $serverName - $label",
                                 headers = refHeaders,
                                 subtitleTracks = subtitleTracks,
-                            )
-                        )
-                    }
+                            ),
+                        ),
+                    )
+                    videos.addAll(hlsVideos)
+                } else {
+                    videos.add(
+                        Video(
+                            videoUrl = url,
+                            videoTitle = "$audioPrefix - $serverName - $label",
+                            headers = refHeaders,
+                            subtitleTracks = subtitleTracks,
+                        ),
+                    )
                 }
-            } else if (html.contains("src:")) {
-                val srcJson = html.substringAfter("src:").substringBefore(", thumbnails").trim()
-                val jsonObj = json.parseToJsonElement(srcJson).jsonObject
-                val url = jsonObj["url"]?.jsonPrimitive?.content
-                val type = jsonObj["type"]?.jsonPrimitive?.content ?: "hls"
-                if (!url.isNullOrBlank()) {
-                    val refHeaders = headers.newBuilder()
-                        .set("Referer", videoUrl)
-                        .build()
+            }
+        } else if (html.contains("src:")) {
+            val srcJson = html.substringAfter("src:").substringBefore(", thumbnails").trim()
+            val jsonObj = json.parseToJsonElement(srcJson).jsonObject
+            val url = jsonObj["url"]?.jsonPrimitive?.content
+            val type = jsonObj["type"]?.jsonPrimitive?.content ?: "hls"
+            if (!url.isNullOrBlank()) {
+                val refHeaders = headers.newBuilder()
+                    .set("Referer", videoUrl)
+                    .build()
 
-                    if (type == "hls") {
-                        val hlsVideos = m3u8Integration.processVideoList(
-                            listOf(
-                                Video(
-                                    videoUrl = url,
-                                    videoTitle = "$audioPrefix - $serverName",
-                                    headers = refHeaders,
-                                    subtitleTracks = subtitleTracks,
-                                )
-                            )
-                        )
-                        videos.addAll(hlsVideos)
-                    } else {
-                        videos.add(
+                if (type == "hls") {
+                    val hlsVideos = m3u8Integration.processVideoList(
+                        listOf(
                             Video(
                                 videoUrl = url,
                                 videoTitle = "$audioPrefix - $serverName",
                                 headers = refHeaders,
                                 subtitleTracks = subtitleTracks,
-                            )
-                        )
-                    }
-                }
-            } else {
-                // Fallback: search for m3u8 URL anywhere in page
-                val m3u8Regex = Regex("""["']?(https?://[^"'s]+.m3u8[^"'s]*)["']?"""")
-                val m3u8Url = m3u8Regex.find(html)?.groupValues?.get(1)
-                if (!m3u8Url.isNullOrBlank()) {
-                    val hlsVideos = m3u8Integration.processVideoList(
-                        listOf(
-                            Video(
-                                videoUrl = m3u8Url,
-                                videoTitle = "$audioPrefix - $serverName",
-                                headers = headers.newBuilder().set("Referer", videoUrl).build(),
-                                subtitleTracks = subtitleTracks,
-                            )
-                        )
+                            ),
+                        ),
                     )
                     videos.addAll(hlsVideos)
+                } else {
+                    videos.add(
+                        Video(
+                            videoUrl = url,
+                            videoTitle = "$audioPrefix - $serverName",
+                            headers = refHeaders,
+                            subtitleTracks = subtitleTracks,
+                        ),
+                    )
                 }
             }
-
-            videos
-        } catch (e: Exception) {
-            emptyList()
+        } else {
+            // Fallback: search for m3u8 URL anywhere in page
+            val m3u8Regex = Regex("""["']?(https?://[^"'s]+.m3u8[^"'s]*)["']?"""")
+            val m3u8Url = m3u8Regex.find(html)?.groupValues?.get(1)
+            if (!m3u8Url.isNullOrBlank()) {
+                val hlsVideos = m3u8Integration.processVideoList(
+                    listOf(
+                        Video(
+                            videoUrl = m3u8Url,
+                            videoTitle = "$audioPrefix - $serverName",
+                            headers = headers.newBuilder().set("Referer", videoUrl).build(),
+                            subtitleTracks = subtitleTracks,
+                        ),
+                    ),
+                )
+                videos.addAll(hlsVideos)
+            }
         }
+
+        videos
+    } catch (e: Exception) {
+        emptyList()
     }
 
     private fun resolveVibePlayer(playerUrl: String, audioPrefix: String, serverName: String): List<Video> {
