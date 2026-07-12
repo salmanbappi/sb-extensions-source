@@ -43,7 +43,7 @@ class AniSnatch :
 
     companion object {
         // SMC cipher alphabet (62 alphanumeric chars, shift-by-5 substitution cipher)
-        private const val SMC_ALPHABET = "0ghijklHIJenopLQR1Tmy4cdAK6XYBstu923rvwSabGU7CfzDEMN5qx8OPFWVZ"
+        private const val SMC_ALPHABET = "nopLQR1Tmy4cdAK6XYBstu923rvwSabGU7CfzDEMN5qx8OPFWVZ0ghijklHIJe"
         private const val SMC_LEN = 62
 
         // "AniSnatch" marker bytes that precede encrypted payload in response
@@ -163,11 +163,7 @@ class AniSnatch :
                 if (pos == -1) {
                     sb.append(ch)
                 } else {
-                    val newPos = if (enc) {
-                        if (pos + 5 > SMC_LEN - 1) 5 - (SMC_LEN - 1 - pos) else pos + 5
-                    } else {
-                        if (pos - 5 < 0) SMC_LEN - 1 + pos - 4 else pos - 5
-                    }
+                    val newPos = if (enc) (pos + 5) % SMC_LEN else (pos - 5 + SMC_LEN) % SMC_LEN
                     sb.append(SMC_ALPHABET[newPos])
                 }
             }
@@ -201,29 +197,20 @@ class AniSnatch :
 
     private fun accurateTime(): Long = System.currentTimeMillis() / 1000L + 60L
 
-    /** Build the encrypted POST payload matching str2ArrayEnc(json) */
     private fun buildPayload(json: String): Pair<String, String> {
         val encoded = str2enc(json)
-        // Chunk data into 25-char pieces
-        val dataChunks = encoded.chunked(25)
+        val chunks = encoded.chunked(25)
+
+        // Pair original index with chunk, then shuffle them
+        val items = chunks.mapIndexed { idx, chunk -> idx to chunk }.shuffled()
 
         val timeFuture = accurateTime() + 500
         val tokenStr = str2enc(timeFuture.toString())
         val authenticator = str2aci(tokenStr)
 
         val payload = buildJsonObject {
-            put(
-                "data",
-                JsonArray(
-                    dataChunks.mapIndexed { idx, chunk ->
-                        buildJsonObject {
-                            put("id", JsonPrimitive(idx))
-                            put("chunk", JsonPrimitive(chunk))
-                        }
-                    },
-                ),
-            )
-            put("key", JsonArray(listOf(JsonPrimitive(0))))
+            put("data", JsonArray(items.map { JsonPrimitive(it.second) }))
+            put("key", JsonArray(items.map { JsonPrimitive(it.first) }))
             put("token", JsonPrimitive(tokenStr))
             put("authenticator", JsonPrimitive(authenticator))
         }
