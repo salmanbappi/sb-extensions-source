@@ -354,6 +354,61 @@ class AniSnatch : Source(), ConfigurableAnimeSource {
         LanguageFilter(),
     )
 
+    override fun List<Video>.sortVideos(): List<Video> {
+        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val prefType = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
+        return sortedWith(
+            compareByDescending<Video> { it.videoTitle.contains(prefType, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefServer, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+                .thenByDescending { it.resolution ?: 0 },
+        )
+    }
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        screen.addListPreference(
+            key = PREF_TYPE_KEY,
+            title = "Preferred Type",
+            default = PREF_TYPE_DEFAULT,
+            summary = "%s",
+            entries = listOf("Sub", "Dub", "Soft-Sub"),
+            entryValues = listOf("sub", "dub", "soft-sub"),
+        )
+        screen.addListPreference(
+            key = PREF_SERVER_KEY,
+            title = "Preferred Server",
+            default = PREF_SERVER_DEFAULT,
+            summary = "%s",
+            entries = listOf("AniVibe", "NekoVibe", "Kwik", "Megaplay", "Vidwish"),
+            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "Megaplay", "Vidwish"),
+        )
+        screen.addListPreference(
+            key = PREF_QUALITY_KEY,
+            title = "Preferred Quality",
+            default = PREF_QUALITY_DEFAULT,
+            summary = "%s",
+            entries = listOf("1080p", "720p", "480p", "360p"),
+            entryValues = listOf("1080", "720", "480", "360"),
+        )
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_SERVERS_KEY,
+            title = "Exclude Servers",
+            summary = "Select servers to hide from the video list",
+            entries = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish"),
+            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish"),
+            default = emptySet(),
+        )
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_TYPE_KEY,
+            title = "Exclude Types",
+            summary = "Select audio/release types to hide",
+            entries = listOf("SUB", "DUB", "SOFT-SUB"),
+            entryValues = listOf("SUB", "DUB", "SOFT-SUB"),
+            default = emptySet(),
+        )
+    }
+
     // ─── Filter classes ───────────────────────────────────────────────────────
 
     private class SortFilter : AnimeFilter.Select<String>(
@@ -627,62 +682,5 @@ class AniSnatch : Source(), ConfigurableAnimeSource {
         } catch (e: Exception) {
             emptyList()
         }
-    }
-
-    override fun List<Video>.sortVideos(): List<Video> {
-        val prefQuality = this@AniSnatch.preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-        val prefServer = this@AniSnatch.preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
-        val prefType = this@AniSnatch.preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
-        return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefType, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefServer, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
-                .thenByDescending { it.resolution ?: 0 },
-        )
-    }
-
-    // ─── Preferences ──────────────────────────────────────────────────────────
-
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        screen.addListPreference(
-            key = PREF_TYPE_KEY,
-            title = "Preferred Type",
-            default = PREF_TYPE_DEFAULT,
-            summary = "%s",
-            entries = listOf("Sub", "Dub", "Soft-Sub"),
-            entryValues = listOf("sub", "dub", "soft-sub"),
-        )
-        screen.addListPreference(
-            key = PREF_SERVER_KEY,
-            title = "Preferred Server",
-            default = PREF_SERVER_DEFAULT,
-            summary = "%s",
-            entries = listOf("AniVibe", "NekoVibe", "Kwik", "Megaplay", "Vidwish"),
-            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "Megaplay", "Vidwish"),
-        )
-        screen.addListPreference(
-            key = PREF_QUALITY_KEY,
-            title = "Preferred Quality",
-            default = PREF_QUALITY_DEFAULT,
-            summary = "%s",
-            entries = listOf("1080p", "720p", "480p", "360p"),
-            entryValues = listOf("1080", "720", "480", "360"),
-        )
-        screen.addSetPreference(
-            key = PREF_EXCLUDE_SERVERS_KEY,
-            title = "Exclude Servers",
-            summary = "Select servers to hide from the video list",
-            entries = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish"),
-            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish"),
-            default = emptySet(),
-        )
-        screen.addSetPreference(
-            key = PREF_EXCLUDE_TYPE_KEY,
-            title = "Exclude Types",
-            summary = "Select audio/release types to hide",
-            entries = listOf("SUB", "DUB", "SOFT-SUB"),
-            entryValues = listOf("SUB", "DUB", "SOFT-SUB"),
-            default = emptySet(),
-        )
     }
 }
