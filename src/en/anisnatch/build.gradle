@@ -1,7 +1,7 @@
 ext {
     extName = 'AniSnatch'
     extClass = '.AniSnatch'
-    extVersionCode = 9
+    extVersionCode = 10
 }
 
 apply from: "$rootDir/common.gradle"
@@ -15,5 +15,7 @@ android {
 dependencies {
     implementation(project(":lib:streamwish-extractor"))
     implementation(project(":lib:m3u8server"))
-    implementation(libs.jsunpacker)
+    implementation(libs.jsunpacker) {
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+    }
 }
