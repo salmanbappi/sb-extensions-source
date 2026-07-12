@@ -68,10 +68,19 @@ class AgniSYS : Jellyfin("AgniSYS") {
                 }
             }
         }.build()
-        return parseItemsPage(url, page)
+        return parseItemsPageLocal(url, page)
     }
 
-    override suspend fun parseItemsPage(url: HttpUrl, page: Int): AnimesPage {
+    override suspend fun getLatestUpdates(page: Int): AnimesPage {
+        val startIndex = (page - 1) * 20
+        val url = getItemsUrl(startIndex).newBuilder().apply {
+            setQueryParameter("SortBy", "DateCreated,SortName")
+            setQueryParameter("SortOrder", "Descending")
+        }.build()
+        return parseItemsPageLocal(url, page)
+    }
+
+    private suspend fun parseItemsPageLocal(url: HttpUrl, page: Int): AnimesPage {
         val newUrl = url.newBuilder().apply {
             val existingFields = url.queryParameter("Fields")
             val fields = if (existingFields.isNullOrEmpty()) "Path" else "$existingFields,Path"
