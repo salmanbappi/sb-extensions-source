@@ -2,198 +2,454 @@ package eu.kanade.tachiyomi.animeextension.en.anisnatch
 
 import android.util.Base64
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
-import eu.kanade.tachiyomi.multisrc.anikototheme.AnikotoTheme
-import eu.kanade.tachiyomi.multisrc.anikototheme.EpisodeListResponse
-import eu.kanade.tachiyomi.multisrc.anikototheme.EpisodeMeta
-import eu.kanade.tachiyomi.multisrc.anikototheme.EpisodeMetadataFetcher
-import eu.kanade.tachiyomi.multisrc.anikototheme.GenreFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.LanguageFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.RatingFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.SeasonFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.SortFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.SourceFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.StatusFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.TypeFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.YearFilter
-import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
-import extensions.utils.addListPreference
-import extensions.utils.addSwitchPreference
-import okhttp3.HttpUrl.Companion.toHttpUrl
-import org.jsoup.Jsoup
-import java.net.URLEncoder
+import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
+import eu.kanade.tachiyomi.network.POST
+import extensions.utils.Source
+import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSetPreference
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import uy.kohesive.injekt.injectLazy
+import java.io.ByteArrayInputStream
+import java.util.zip.GZIPInputStream
 
-class AniSnatch : AnikotoTheme() {
+class AniSnatch : Source() {
 
     override val name = "AniSnatch"
     override val baseUrl = "https://anisnatch.top"
     override val lang = "en"
 
-    // AniSnatch uses the same AnikotoTheme VRF key as the default RC4 "simple-hash"
-    // Override with site-specific key if needed after live testing
-    override fun getVrf(animeId: String): String {
-        val key = "simple-hash"
-        val s = IntArray(256) { it }
-        var a = 0
-        for (n in 0..255) {
-            a = (s[n] + a + key[n % key.length].code) % 256
-            val tmp = s[n]
-            s[n] = s[a]
-            s[a] = tmp
-        }
-        val out = StringBuilder(animeId.length)
-        var n2 = 0
-        var a2 = 0
-        for (r in animeId.indices) {
-            n2 = (n2 + 1) % 256
-            a2 = (s[n2] + a2) % 256
-            val tmp2 = s[n2]
-            s[n2] = s[a2]
-            s[a2] = tmp2
-            val k = s[(s[n2] + s[a2]) % 256]
-            out.append((animeId[r].code xor k).toChar())
-        }
-        val bytes = out.toString().toByteArray(Charsets.ISO_8859_1)
-        val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-        return URLEncoder.encode(b64, "UTF-8")
-    }
+    private val json: Json by injectLazy()
 
-    private val myMetadataFetcher by lazy { EpisodeMetadataFetcher(client, json, null) }
-
-    private val loadThumbnails: Boolean
-        get() = preferences.getBoolean(PREF_LOAD_THUMBNAILS_KEY, true)
-
-    private val loadTitles: Boolean
-        get() = preferences.getBoolean(PREF_LOAD_TITLES_KEY, true)
-
-    private val loadDescriptions: Boolean
-        get() = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, true)
+    // ─── Crypto constants ─────────────────────────────────────────────────────
 
     companion object {
-        private val epRegex = Regex("/ep-\\d+$")
-        private val mangaIdRegex = Regex("""mangaId\s*=\s*(\d+)""")
-        private const val PREF_LOAD_THUMBNAILS_KEY = "pref_load_thumbnails"
-        private const val PREF_LOAD_TITLES_KEY = "pref_load_titles"
-        private const val PREF_LOAD_DESCRIPTIONS_KEY = "pref_load_descriptions"
+        // SMC cipher alphabet (62 alphanumeric chars, shift-by-5 substitution cipher)
+        private const val SMC_ALPHABET = "0ghijklHIJenopLQR1Tmy4cdAK6XYBstu923rvwSabGU7CfzDEMN5qx8OPFWVZ"
+        private const val SMC_LEN = 62
+
+        // "AniSnatch" marker bytes that precede encrypted payload in response
+        private val MARKER = byteArrayOf(65, 110, 105, 83, 110, 97, 116, 99, 104)
+
+        // Filter data — cached in companion object per skill rules
+        val GENRES = listOf(
+            Pair("All", ""),
+            Pair("Action", "Action"),
+            Pair("Adventure", "Adventure"),
+            Pair("Cars", "Cars"),
+            Pair("Comedy", "Comedy"),
+            Pair("Dementia", "Dementia"),
+            Pair("Demons", "Demons"),
+            Pair("Drama", "Drama"),
+            Pair("Ecchi", "Ecchi"),
+            Pair("Fantasy", "Fantasy"),
+            Pair("Game", "Game"),
+            Pair("Harem", "Harem"),
+            Pair("Historical", "Historical"),
+            Pair("Horror", "Horror"),
+            Pair("Isekai", "Isekai"),
+            Pair("Josei", "Josei"),
+            Pair("Kids", "Kids"),
+            Pair("Magic", "Magic"),
+            Pair("Martial Arts", "Martial Arts"),
+            Pair("Mecha", "Mecha"),
+            Pair("Military", "Military"),
+            Pair("Music", "Music"),
+            Pair("Mystery", "Mystery"),
+            Pair("Parody", "Parody"),
+            Pair("Police", "Police"),
+            Pair("Psychological", "Psychological"),
+            Pair("Romance", "Romance"),
+            Pair("Samurai", "Samurai"),
+            Pair("School", "School"),
+            Pair("Sci-Fi", "Sci-Fi"),
+            Pair("Seinen", "Seinen"),
+            Pair("Shoujo", "Shoujo"),
+            Pair("Shounen", "Shounen"),
+            Pair("Slice of Life", "Slice of Life"),
+            Pair("Space", "Space"),
+            Pair("Sports", "Sports"),
+            Pair("Super Power", "Super Power"),
+            Pair("Supernatural", "Supernatural"),
+            Pair("Thriller", "Thriller"),
+            Pair("Vampire", "Vampire"),
+        )
+
+        val TYPES = listOf(
+            Pair("All", ""),
+            Pair("TV", "TV"),
+            Pair("Movie", "Movie"),
+            Pair("OVA", "OVA"),
+            Pair("ONA", "ONA"),
+            Pair("Special", "Special"),
+            Pair("Music", "Music"),
+        )
+
+        val STATUS = listOf(
+            Pair("All", ""),
+            Pair("Currently Airing", "Currently Airing"),
+            Pair("Finished Airing", "Finished Airing"),
+            Pair("Not yet aired", "Not yet aired"),
+        )
+
+        val SORT = listOf(
+            Pair("Default", "default"),
+            Pair("Recently Added", "recently_added"),
+            Pair("Title A-Z", "title_az"),
+            Pair("Score", "score"),
+            Pair("Most Watched", "most_watched"),
+        )
+
+        val SEASONS = listOf(
+            Pair("All", ""),
+            Pair("Winter", "winter"),
+            Pair("Spring", "spring"),
+            Pair("Summer", "summer"),
+            Pair("Fall", "fall"),
+        )
+
+        val RATED = listOf(
+            Pair("All", ""),
+            Pair("G", "G - All Ages"),
+            Pair("PG", "PG - Children"),
+            Pair("PG-13", "PG-13 - Teens 13 or older"),
+            Pair("R", "R - 17+"),
+            Pair("R+", "R+ - Mild Nudity"),
+        )
+
+        val LANGUAGE = listOf(
+            Pair("All", ""),
+            Pair("Sub", "sub"),
+            Pair("Dub", "dub"),
+        )
+
+        // Preference keys
+        private const val PREF_QUALITY_KEY = "pref_quality"
+        private const val PREF_QUALITY_DEFAULT = "1080"
+        private const val PREF_SERVER_KEY = "pref_server"
+        private const val PREF_SERVER_DEFAULT = "AniVibe"
+        private const val PREF_TYPE_KEY = "pref_type"
+        private const val PREF_TYPE_DEFAULT = "sub"
+        private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
+        private const val PREF_EXCLUDE_TYPE_KEY = "pref_exclude_type"
     }
 
-    // ── Browse ────────────────────────────────────────────────────────────────
+    // ─── SMC Cipher ───────────────────────────────────────────────────────────
+
+    private fun smcShift(input: String, enc: Boolean, passes: Int): String {
+        var result = input
+        repeat(passes) {
+            val sb = StringBuilder(result.length)
+            for (ch in result) {
+                val pos = SMC_ALPHABET.indexOf(ch)
+                if (pos == -1) {
+                    sb.append(ch)
+                } else {
+                    val newPos = if (enc) {
+                        if (pos + 5 > SMC_LEN - 1) 5 - (SMC_LEN - 1 - pos) else pos + 5
+                    } else {
+                        if (pos - 5 < 0) SMC_LEN - 1 + pos - 4 else pos - 5
+                    }
+                    sb.append(SMC_ALPHABET[newPos])
+                }
+            }
+            result = sb.reverse().toString()
+        }
+        return result
+    }
+
+    /** Encode a string: base64 → hex → SMC encrypt until marker present in result */
+    private fun str2enc(input: String): String {
+        val hexStr = Base64.encodeToString(input.toByteArray(), Base64.NO_WRAP).bin2hex()
+        // Try passes 1..10 for first encryption
+        val f1 = (System.currentTimeMillis() % 10 + 1).toInt()
+        val smc1 = smcShift(hexStr, enc = true, passes = f1)
+        val combined = "$smc1strSMCconvert$f1"
+        // Find minimum passes such that result does NOT contain "strSMCconv" (strUNIQconvert enc mode)
+        for (v in 1..10) {
+            val h = smcShift(combined, enc = true, passes = v)
+            if (!h.contains("strSMCconv")) return h
+        }
+        return smcShift(combined, enc = true, passes = 1)
+    }
+
+    private fun String.bin2hex(): String {
+        val sb = StringBuilder()
+        for (ch in this) sb.append(ch.code.toString(16).padStart(2, '0'))
+        return sb.toString()
+    }
+
+    private fun str2aci(token: String): String {
+        return token.sumOf { it.code }.toString()
+    }
+
+    private fun accurateTime(): Long = System.currentTimeMillis() / 1000L + 60L
+
+    /** Build the encrypted POST payload matching str2ArrayEnc(json) */
+    private fun buildPayload(json: String): Pair<String, String> {
+        val encoded = str2enc(json)
+        // Chunk data into 25-char pieces
+        val dataChunks = encoded.chunked(25)
+
+        val timeFuture = accurateTime() + 500
+        val tokenStr = str2enc(timeFuture.toString())
+        val authenticator = str2aci(tokenStr)
+
+        val payload = buildJsonObject {
+            put("data", JsonArray(dataChunks.mapIndexed { idx, chunk ->
+                buildJsonObject {
+                    put("id", JsonPrimitive(idx))
+                    put("chunk", JsonPrimitive(chunk))
+                }
+            }))
+            put("key", JsonArray(listOf(JsonPrimitive(0))))
+            put("token", JsonPrimitive(tokenStr))
+            put("authenticator", JsonPrimitive(authenticator))
+        }
+        return Pair(payload.toString(), authenticator)
+    }
+
+    /** Decrypt the binary API response using XOR + gzip */
+    private fun decryptResponse(bytes: ByteArray, authenticator: String): ByteArray? {
+        // Find "AniSnatch" marker
+        var markerIdx = -1
+        outer@ for (i in 0..bytes.size - MARKER.size) {
+            for (j in MARKER.indices) {
+                if (bytes[i + j] != MARKER[j]) continue@outer
+            }
+            markerIdx = i
+            break
+        }
+        if (markerIdx == -1) return null
+
+        val encrypted = bytes.copyOfRange(markerIdx + MARKER.size, bytes.size)
+        val keyBytes = authenticator.toByteArray()
+        val decrypted = ByteArray(encrypted.size) { i ->
+            (encrypted[i].toInt() xor keyBytes[i % keyBytes.size].toInt()).toByte()
+        }
+        return GZIPInputStream(ByteArrayInputStream(decrypted)).readBytes()
+    }
+
+    /** Execute a POST request to an api/* endpoint and return parsed JSON */
+    private fun apiPost(endpoint: String, body: Map<String, Any>): JsonObject? {
+        val jsonBody = buildJsonObject {
+            for ((k, v) in body) {
+                when (v) {
+                    is String -> put(k, v)
+                    is Int -> put(k, v)
+                    is Long -> put(k, v)
+                }
+            }
+        }.toString()
+
+        val (payloadJson, authenticator) = buildPayload(jsonBody)
+        val timestamp = accurateTime()
+        val url = "$baseUrl/$endpoint/$timestamp"
+
+        val request = POST(
+            url,
+            headers = headers.newBuilder()
+                .set("Content-Type", "application/json")
+                .set("Accept", "*/*")
+                .build(),
+            body = payloadJson.toRequestBody("application/json".toMediaType()),
+        )
+
+        return try {
+            val response = client.newCall(request).execute()
+            val bytes = response.body.bytes()
+            val decrypted = decryptResponse(bytes, authenticator) ?: return null
+            Json.parseToJsonElement(String(decrypted, Charsets.UTF_8)).jsonObject
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ─── Anime mapping ────────────────────────────────────────────────────────
+
+    private fun JsonObject.toSAnime(): SAnime {
+        val id = this["id"]?.jsonPrimitive?.content ?: ""
+        val title = this["title_en"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            ?: this["title"]?.jsonPrimitive?.content ?: "Unknown"
+        val picture = this["picture"]?.jsonPrimitive?.content ?: ""
+        return SAnime.create().apply {
+            url = id
+            this.title = title
+            thumbnail_url = picture
+        }
+    }
+
+    // ─── Browse ───────────────────────────────────────────────────────────────
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/most-viewed?page=$page", headers)).execute()
-        return parseAnimePage(response.asJsoup())
+        val data = apiPost("api/home", emptyMap()) ?: return AnimesPage(emptyList(), false)
+        val trending = data["data"]?.jsonObject?.get("trending")?.jsonArray ?: return AnimesPage(emptyList(), false)
+        val animes = trending.map { it.jsonObject.toSAnime() }
+        return AnimesPage(animes, false)
     }
 
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/latest-updated?page=$page", headers)).execute()
-        return parseAnimePage(response.asJsoup())
+        val data = apiPost("api/home", emptyMap()) ?: return AnimesPage(emptyList(), false)
+        val airing = data["data"]?.jsonObject?.get("airing")?.jsonArray ?: return AnimesPage(emptyList(), false)
+        val animes = airing.map { it.jsonObject.toSAnime() }
+        return AnimesPage(animes, false)
     }
+
+    // ─── Search & Filter ──────────────────────────────────────────────────────
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        val urlBuilder = "$baseUrl/filter".toHttpUrl().newBuilder()
-        if (query.isNotBlank()) urlBuilder.addQueryParameter("keyword", query)
-        for (filter in filters) {
-            when (filter) {
-                is SortFilter -> filter.toQuery()?.let { urlBuilder.addQueryParameter("sort", it) }
-                is GenreFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("genre[]", it) }
-                is TypeFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("term_type[]", it) }
-                is StatusFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("status[]", it) }
-                is LanguageFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("language[]", it) }
-                is SeasonFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("season[]", it) }
-                is YearFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("year[]", it) }
-                is RatingFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("rating[]", it) }
-                is SourceFilter -> filter.toQueries().forEach { urlBuilder.addQueryParameter("source[]", it) }
-                else -> {}
-            }
+        return if (query.isNotBlank()) {
+            // Text search via api/search
+            val data = apiPost("api/search", mapOf("keyword" to query, "page" to page)) ?: return AnimesPage(emptyList(), false)
+            val animeArr = data["data"]?.jsonObject?.get("anime")?.jsonArray ?: return AnimesPage(emptyList(), false)
+            val totalPages = data["totalPages"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
+            AnimesPage(animeArr.map { it.jsonObject.toSAnime() }, page < totalPages)
+        } else {
+            // Filter search via api/filter
+            val genre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val type = filters.filterIsInstance<TypeFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val status = filters.filterIsInstance<StatusFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val sort = filters.filterIsInstance<SortFilter>().firstOrNull()?.getSelectedValue() ?: "default"
+            val season = filters.filterIsInstance<SeasonFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val rated = filters.filterIsInstance<RatedFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val language = filters.filterIsInstance<LanguageFilter>().firstOrNull()?.getSelectedValue() ?: ""
+
+            val queryParts = mutableListOf("sort=$sort")
+            if (genre.isNotBlank()) queryParts.add("genresActive=$genre")
+            if (type.isNotBlank()) queryParts.add("type=$type")
+            if (status.isNotBlank()) queryParts.add("status=$status")
+            if (season.isNotBlank()) queryParts.add("season=$season")
+            if (rated.isNotBlank()) queryParts.add("rated=$rated")
+            if (language.isNotBlank()) queryParts.add("language=$language")
+            val queryStr = queryParts.joinToString("&")
+
+            val data = apiPost("api/filter", mapOf("query" to queryStr, "page" to page)) ?: return AnimesPage(emptyList(), false)
+            val animeArr = data["data"]?.jsonObject?.get("anime")?.jsonArray ?: return AnimesPage(emptyList(), false)
+            val totalPages = data["totalPages"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
+            AnimesPage(animeArr.map { it.jsonObject.toSAnime() }, page < totalPages)
         }
-        urlBuilder.addQueryParameter("page", page.toString())
-        val response = client.newCall(GET(urlBuilder.build().toString(), headers)).execute()
-        return parseAnimePage(response.asJsoup())
     }
 
-    private fun parseAnimePage(doc: org.jsoup.nodes.Document): AnimesPage {
-        val elements = doc.select("div.ani.items > div.item, div.items > div.item, div.item")
-        val animes = elements.mapNotNull { el ->
-            val linkEl = el.selectFirst("div.name a") ?: el.selectFirst("a.poster") ?: return@mapNotNull null
-            var href = linkEl.attr("href")
-            if (href.startsWith("http")) href = href.substringAfter(baseUrl)
-            val slug = href.replace(epRegex, "").trimStart('/')
-            val titleText = linkEl.text().trim()
-                .ifEmpty { el.selectFirst("img")?.attr("alt")?.trim() ?: "Unknown" }
-            val thumb = el.selectFirst("img")?.absUrl("data-src")?.ifEmpty { null }
-                ?: el.selectFirst("img")?.absUrl("src")
-            SAnime.create().apply {
-                url = slug
-                title = titleText
-                thumbnail_url = thumb
-            }
-        }.distinctBy { it.url }
-        val hasNext = doc.select("a[rel=next], li.page-item.next:not(.disabled)").isNotEmpty()
-        return AnimesPage(animes, hasNext)
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        AnimeFilter.Header("Text search ignores filters below"),
+        SortFilter(),
+        GenreFilter(),
+        TypeFilter(),
+        StatusFilter(),
+        SeasonFilter(),
+        RatedFilter(),
+        LanguageFilter(),
+    )
+
+    // ─── Filter classes ───────────────────────────────────────────────────────
+
+    private class SortFilter : AnimeFilter.Select<String>(
+        "Sort By",
+        SORT.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue() = SORT[state].second
     }
 
-    // ── Details ───────────────────────────────────────────────────────────────
+    private class GenreFilter : AnimeFilter.Select<String>(
+        "Genre",
+        GENRES.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue() = GENRES[state].second
+    }
+
+    private class TypeFilter : AnimeFilter.Select<String>(
+        "Type",
+        TYPES.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue() = TYPES[state].second
+    }
+
+    private class StatusFilter : AnimeFilter.Select<String>(
+        "Status",
+        STATUS.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue() = STATUS[state].second
+    }
+
+    private class SeasonFilter : AnimeFilter.Select<String>(
+        "Season",
+        SEASONS.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue() = SEASONS[state].second
+    }
+
+    private class RatedFilter : AnimeFilter.Select<String>(
+        "Rating",
+        RATED.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue() = RATED[state].second
+    }
+
+    private class LanguageFilter : AnimeFilter.Select<String>(
+        "Language",
+        LANGUAGE.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue() = LANGUAGE[state].second
+    }
+
+    // ─── Details ──────────────────────────────────────────────────────────────
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val path = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
-        val doc = client.newCall(GET("$baseUrl/watch$path/ep-1", headers)).execute().asJsoup()
+        val animeId = anime.url.toIntOrNull() ?: return anime
+        val data = apiPost("api/anime", mapOf("id" to animeId)) ?: return anime
+        val info = data["data"]?.jsonObject?.get("anime")?.jsonObject ?: return anime
 
-        val titleText = doc.selectFirst("h1.title, h2.title")?.text()?.trim() ?: anime.title
-        val thumbnail = doc.selectFirst("#w-info .poster img, div.poster img")?.absUrl("src")
-
-        val descFull = doc.selectFirst(".description .full div, .synopsis .content")?.text()?.trim()
-        val descShort = doc.selectFirst(".description .short div, .synopsis p")?.text()?.trim()
-        val synopsis = descFull ?: descShort ?: ""
-
-        val metaMap = mutableMapOf<String, String>()
-        doc.select(".bmeta > div, .meta > div").forEach { el ->
-            val label = el.selectFirst("div")?.text()?.removeSuffix(":")?.trim() ?: ""
-            val value = el.selectFirst("span")?.text()?.trim() ?: ""
-            if (label.isNotEmpty() && value.isNotEmpty()) metaMap[label] = value
-        }
-
-        val genresText = doc.select(".bmeta div:contains(Genre) span a, .meta div:contains(Genre) span a")
-            .eachText().joinToString(", ")
-        val studiosText = doc.select(".bmeta div:contains(Studios) span a, .bmeta div:contains(Studio) span a")
-            .eachText().joinToString(", ")
-        val statusText = metaMap["Status"] ?: metaMap["Aired"] ?: ""
-
-        // Score injection per skill
-        val scoreRaw = metaMap["MAL"]?.toDoubleOrNull() ?: metaMap["Score"]?.toDoubleOrNull()
-        val scoreStr = formatScore(scoreRaw)
-
-        val desc = buildString {
-            if (scoreStr != null) {
-                append(scoreStr)
-                append("\n\n")
-            }
-            if (synopsis.isNotEmpty()) append(synopsis)
-            metaMap["Type"]?.takeIf { it.isNotBlank() }?.let { append("\nType: $it") }
-            metaMap["Premiered"]?.takeIf { it.isNotBlank() }?.let { append("\nPremiered: $it") }
-            metaMap["Duration"]?.takeIf { it.isNotBlank() }?.let { append("\nDuration: $it") }
-            if (studiosText.isNotBlank()) append("\nStudio: $studiosText")
-        }
+        val title = info["title_en"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            ?: info["title"]?.jsonPrimitive?.content ?: anime.title
+        val picture = info["picture"]?.jsonPrimitive?.content ?: ""
+        val synopsis = info["description"]?.jsonPrimitive?.content?.trim() ?: ""
+        val genresRaw = info["genres"]?.jsonPrimitive?.content ?: ""
+        val statusRaw = info["status"]?.jsonPrimitive?.content ?: ""
+        val typeRaw = info["type"]?.jsonPrimitive?.content ?: ""
+        val score = info["score"]?.jsonPrimitive?.content?.toDoubleOrNull()
+        val studio = info["studios"]?.jsonPrimitive?.content
+            ?: info["studio"]?.jsonPrimitive?.content ?: ""
 
         val animeStatus = when {
-            statusText.contains("Currently Airing", ignoreCase = true) -> SAnime.ONGOING
-            statusText.contains("Finished Airing", ignoreCase = true) -> SAnime.COMPLETED
-            statusText.contains("Not yet aired", ignoreCase = true) -> SAnime.LICENSED
+            statusRaw.contains("Currently Airing", ignoreCase = true) -> SAnime.ONGOING
+            statusRaw.contains("Finished Airing", ignoreCase = true) -> SAnime.COMPLETED
+            statusRaw.contains("Not yet aired", ignoreCase = true) -> SAnime.LICENSED
             else -> SAnime.UNKNOWN
+        }
+
+        val scoreStr = formatScore(score)
+        val desc = buildString {
+            if (scoreStr != null) { append(scoreStr); append("\n\n") }
+            if (synopsis.isNotBlank()) append(synopsis)
+            if (typeRaw.isNotBlank()) append("\nType: $typeRaw")
+            if (statusRaw.isNotBlank()) append("\nStatus: $statusRaw")
+            if (studio.isNotBlank()) append("\nStudio: $studio")
         }
 
         return SAnime.create().apply {
             url = anime.url
-            title = titleText
-            thumbnail_url = thumbnail
+            this.title = title
+            thumbnail_url = picture.ifBlank { anime.thumbnail_url }
             description = desc
-            genre = genresText
+            genre = genresRaw
             status = animeStatus
-            author = if (studiosText.isNotBlank()) studiosText else null
-            artist = author
+            author = studio.ifBlank { null }
             initialized = true
         }
     }
@@ -201,140 +457,232 @@ class AniSnatch : AnikotoTheme() {
     private fun formatScore(score: Double?): String? {
         if (score == null || score <= 0.0) return null
         val full = (score / 2).toInt().coerceIn(0, 5)
-        val stars = "★".repeat(full) + "☆".repeat(5 - full)
-        return "$stars ${"%.2f".format(score)}"
+        return "${"★".repeat(full)}${"☆".repeat(5 - full)} ${"%.2f".format(score)}"
     }
 
-    // ── Episodes ──────────────────────────────────────────────────────────────
+    // ─── Episodes ─────────────────────────────────────────────────────────────
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val slug = anime.url
-        val path = if (slug.startsWith("/")) slug else "/$slug"
-        val detailDoc = client.newCall(GET("$baseUrl/watch$path/ep-1", headers)).execute().asJsoup()
+        val animeId = anime.url.toIntOrNull() ?: return emptyList()
+        val data = apiPost("api/anime", mapOf("id" to animeId)) ?: return emptyList()
+        val info = data["data"]?.jsonObject?.get("anime")?.jsonObject ?: return emptyList()
 
-        val animeId = detailDoc.selectFirst("#watch-page, #watch-main, .watch-wrap")?.attr("data-id")
-            ?: mangaIdRegex.find(detailDoc.html())?.groupValues?.get(1)
-            ?: detailDoc.selectFirst(".favourite[data-id], [data-id]")?.attr("data-id")
-            ?: return emptyList()
+        val lastEp = info["lastep"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+        if (lastEp == 0) return emptyList()
 
-        if (animeId.isEmpty()) return emptyList()
-
-        val vrf = getVrf(animeId)
-        val ajaxUrl = "$baseUrl/ajax/episode/list/$animeId?vrf=$vrf&style=default"
-        val ajaxHeaders = headers.newBuilder()
-            .set("X-Requested-With", "XMLHttpRequest")
-            .set("Accept", "application/json, text/javascript, */*; q=0.01")
-            .set("Referer", "$baseUrl/watch$path/ep-1")
-            .build()
-        val ajaxResponse = client.newCall(GET(ajaxUrl, ajaxHeaders)).execute()
-        val ajaxJson = json.decodeFromString<EpisodeListResponse>(ajaxResponse.body.string())
-
-        if (ajaxJson.status != 200 || ajaxJson.result.isEmpty()) return emptyList()
-
-        val epDoc = Jsoup.parse(ajaxJson.result)
-        val elements = epDoc.select("ul.ep-range a, .ep-range a, .range a, a[data-ids]")
-
-        val episodes = elements.mapNotNull { element ->
-            val num = element.attr("data-num").ifEmpty { element.text().trim() }
-            if (num.isEmpty()) return@mapNotNull null
-            val malId = element.attr("data-mal")
-            val timestamp = element.attr("data-timestamp")
-            val dataIds = element.attr("data-ids")
-            val hasSub = element.attr("data-sub") == "1"
-            val hasDub = element.attr("data-dub") == "1"
-            var title = element.attr("title").trim()
-            if (title.isBlank()) title = "Episode $num"
-
-            val meta = EpisodeMeta(slug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
+        val episodes = (1..lastEp).map { ep ->
             SEpisode.create().apply {
-                url = meta.encode()
-                name = title
-                episode_number = num.toFloatOrNull() ?: 0.0f
-                date_upload = (timestamp.toLongOrNull() ?: 0L) * 1000L
-                val scanlatorList = mutableListOf<String>()
-                if (hasSub) scanlatorList.add("Sub")
-                if (hasDub) scanlatorList.add("Dub")
-                scanlator = if (scanlatorList.isEmpty()) "Raw" else scanlatorList.joinToString(" / ")
+                url = "$animeId|$ep"
+                name = "Episode $ep"
+                episode_number = ep.toFloat()
+                scanlator = buildString {
+                    val dub = info["dub"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+                    append("Sub")
+                    if (dub == 1) append(" / Dub")
+                }
             }
         }.reversed()
 
-        return enrichEpisodesWithMetadata(episodes, detailDoc)
+        return episodes
     }
 
-    private suspend fun enrichEpisodesWithMetadata(
-        episodes: List<SEpisode>,
-        detailDoc: org.jsoup.nodes.Document,
-    ): List<SEpisode> {
-        if (!loadThumbnails && !loadTitles && !loadDescriptions) return episodes
+    // ─── Video ────────────────────────────────────────────────────────────────
 
-        val firstMeta = episodes.firstOrNull()?.let {
-            runCatching { EpisodeMeta.decode(it.url) }.getOrNull()
+    private val streamWishExtractor by lazy { StreamWishExtractor(client, headers) }
+
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val parts = episode.url.split("|")
+        val animeId = parts.getOrNull(0)?.toIntOrNull() ?: return emptyList()
+        val epNum = parts.getOrNull(1)?.toIntOrNull() ?: return emptyList()
+
+        val data = apiPost("api/loadSVs", mapOf("id" to animeId, "ep" to epNum)) ?: return emptyList()
+        val serverObj = data["server"]?.jsonObject ?: return emptyList()
+
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+        val excludedTypes = preferences.getStringSet(PREF_EXCLUDE_TYPE_KEY, emptySet()) ?: emptySet()
+
+        val hosters = mutableListOf<Hoster>()
+
+        for ((audioType, serversEl) in serverObj) {
+            val audioLabel = when (audioType) {
+                "sub" -> "SUB"
+                "dub" -> "DUB"
+                "soft-sub" -> "SOFT-SUB"
+                else -> audioType.uppercase()
+            }
+            if (excludedTypes.any { it.equals(audioLabel, ignoreCase = true) }) continue
+
+            val serverList = serversEl.jsonArray
+            for (serverEl in serverList) {
+                val serverInfo = serverEl.jsonObject
+                val title = serverInfo["title"]?.jsonPrimitive?.content ?: continue
+                val source = serverInfo["source"]?.jsonPrimitive?.content ?: continue
+                if (excludedServers.any { it.equals(title, ignoreCase = true) }) continue
+
+                hosters.add(
+                    Hoster(
+                        hosterName = "$audioLabel - $title",
+                        hosterUrl = source,
+                    ),
+                )
+            }
         }
-        val malId = firstMeta?.malId?.takeIf { it.isNotBlank() } ?: return episodes
 
-        val animeCoverUrl = detailDoc.selectFirst("#w-info .poster img, div.poster img")?.absUrl("src")
+        return hosters
+    }
 
-        return try {
-            val metadataMap = myMetadataFetcher.fetch(malId, animeCoverUrl)
-            if (metadataMap.isEmpty()) return episodes
-            episodes.map { episode ->
-                val epNum = episode.episode_number.toInt()
-                val episodeMeta = metadataMap[epNum] ?: return@map episode
-                episode.apply {
-                    if (loadThumbnails && !episodeMeta.thumbnailUrl.isNullOrEmpty()) {
-                        preview_url = episodeMeta.thumbnailUrl
-                    }
-                    if (loadDescriptions && !episodeMeta.description.isNullOrEmpty()) {
-                        summary = episodeMeta.description
-                    }
-                    if (loadTitles && !episodeMeta.title.isNullOrBlank()) {
-                        val epNumStr = if (episode_number % 1 == 0f) {
-                            episode_number.toInt().toString()
-                        } else {
-                            episode_number.toString()
-                        }
-                        name = "Episode $epNumStr: ${episodeMeta.title}"
-                    }
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val source = hoster.hosterUrl
+        val audioPrefix = hoster.hosterName.split(" - ").firstOrNull() ?: hoster.hosterName
+        val serverName = hoster.hosterName.substringAfter(" - ")
+
+        // source format: type/data/animeId-epNum
+        val sourceParts = source.split("/")
+        val sourceType = sourceParts.getOrNull(0) ?: return emptyList()
+        val sourceData = sourceParts.getOrNull(1) ?: return emptyList()
+
+        return when (sourceType.lowercase()) {
+            "vibeplayer" -> {
+                // data is base64-encoded player URL, optionally followed by sub= param after second /
+                val playerUrl = try {
+                    String(Base64.decode(sourceData, Base64.DEFAULT), Charsets.UTF_8)
+                } catch (e: Exception) {
+                    return emptyList()
                 }
+                resolveVibePlayer(playerUrl, audioPrefix, serverName)
+            }
+            "kwik" -> {
+                // data is base64-encoded JSON of quality→kwik URLs
+                val kwikJson = try {
+                    String(Base64.decode(sourceData.replace("%3D", "="), Base64.DEFAULT), Charsets.UTF_8)
+                } catch (e: Exception) {
+                    return emptyList()
+                }
+                resolveKwik(kwikJson, audioPrefix, serverName)
+            }
+            "megaplay", "vidwish" -> {
+                // These are StreamWish-compatible embed servers
+                val embedId = sourceData
+                val embedUrl = "https://megaplay.buzz/stream/$embedId"
+                streamWishExtractor.videosFromUrl(embedUrl) { "$audioPrefix - $serverName - $it" }
+            }
+            else -> emptyList()
+        }
+    }
+
+    private fun resolveVibePlayer(playerUrl: String, audioPrefix: String, serverName: String): List<Video> {
+        return try {
+            val pageResp = client.newCall(
+                okhttp3.Request.Builder()
+                    .url(playerUrl)
+                    .header("Referer", "$baseUrl/")
+                    .header("User-Agent", "Mozilla/5.0")
+                    .build(),
+            ).execute()
+            val html = pageResp.body.string()
+
+            // Look for m3u8 URL in page source
+            val m3u8Regex = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""")
+            val m3u8Url = m3u8Regex.find(html)?.groupValues?.get(1) ?: return emptyList()
+
+            listOf(
+                Video(
+                    videoUrl = m3u8Url,
+                    videoTitle = "$audioPrefix - $serverName",
+                    headers = headers.newBuilder()
+                        .set("Referer", playerUrl)
+                        .set("Origin", playerUrl.substringBefore("/", playerUrl).let { proto ->
+                            val host = playerUrl.substringAfter("://").substringBefore("/")
+                            "$proto//$host"
+                        })
+                        .build(),
+                ),
+            )
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun resolveKwik(kwikJson: String, audioPrefix: String, serverName: String): List<Video> {
+        return try {
+            val obj = Json.parseToJsonElement(kwikJson).jsonObject
+            obj.entries.mapNotNull { (quality, urlEl) ->
+                val kwikUrl = urlEl.jsonPrimitive.content
+                if (kwikUrl.isBlank()) return@mapNotNull null
+                // Kwik requires fetching the redirect to get the final m3u8
+                val resp = client.newCall(
+                    okhttp3.Request.Builder()
+                        .url(kwikUrl)
+                        .header("Referer", "https://kwik.cx/")
+                        .header("User-Agent", "Mozilla/5.0")
+                        .build(),
+                ).execute()
+                val m3u8 = resp.request.url.toString()
+                Video(
+                    videoUrl = m3u8,
+                    videoTitle = "$audioPrefix - $serverName - ${quality}p",
+                    resolution = quality.toIntOrNull(),
+                    headers = headers.newBuilder()
+                        .set("Referer", "https://kwik.cx/")
+                        .build(),
+                )
             }
         } catch (e: Exception) {
-            episodes
+            emptyList()
         }
     }
 
-    override fun getEpisodeUrl(episode: SEpisode): String {
-        val path = EpisodeMeta.extractUrlPath(episode.url)
-        return baseUrl + path
+    override fun List<Video>.sortVideos(): List<Video> {
+        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val prefType = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
+        return sortedWith(
+            compareByDescending<Video> { it.videoTitle.contains(prefType, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefServer, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+                .thenByDescending { it.resolution ?: 0 },
+        )
     }
 
-    // ── Preferences ───────────────────────────────────────────────────────────
+    // ─── Preferences ──────────────────────────────────────────────────────────
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        try {
-            // Delegate to AnikotoTheme base preferences (quality, audio, server, buffer, etc.)
-            super.setupPreferenceScreen(screen)
-
-            // Episode metadata extras
-            screen.addSwitchPreference(
-                key = PREF_LOAD_THUMBNAILS_KEY,
-                default = true,
-                title = "Metadata: Load episode thumbnails",
-                summary = "Fetch preview images for episodes from external sources",
-            )
-            screen.addSwitchPreference(
-                key = PREF_LOAD_TITLES_KEY,
-                default = true,
-                title = "Metadata: Load episode titles",
-                summary = "Fetch episode titles from external sources",
-            )
-            screen.addSwitchPreference(
-                key = PREF_LOAD_DESCRIPTIONS_KEY,
-                default = true,
-                title = "Metadata: Load episode descriptions",
-                summary = "Fetch episode descriptions from external sources",
-            )
-        } catch (e: Exception) {
-            // Ignore pref screen errors
-        }
+        screen.addListPreference(
+            key = PREF_TYPE_KEY,
+            title = "Preferred Type",
+            default = PREF_TYPE_DEFAULT,
+            entries = listOf("Sub", "Dub", "Soft-Sub"),
+            entryValues = listOf("sub", "dub", "soft-sub"),
+        )
+        screen.addListPreference(
+            key = PREF_SERVER_KEY,
+            title = "Preferred Server",
+            default = PREF_SERVER_DEFAULT,
+            entries = listOf("AniVibe", "NekoVibe", "Kwik", "Megaplay", "Vidwish"),
+            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "Megaplay", "Vidwish"),
+        )
+        screen.addListPreference(
+            key = PREF_QUALITY_KEY,
+            title = "Preferred Quality",
+            default = PREF_QUALITY_DEFAULT,
+            entries = listOf("1080p", "720p", "480p", "360p"),
+            entryValues = listOf("1080", "720", "480", "360"),
+        )
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_SERVERS_KEY,
+            title = "Exclude Servers",
+            summary = "Select servers to hide from the video list",
+            entries = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish"),
+            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish"),
+            default = emptySet(),
+        )
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_TYPE_KEY,
+            title = "Exclude Types",
+            summary = "Select audio/release types to hide",
+            entries = listOf("SUB", "DUB", "SOFT-SUB"),
+            entryValues = listOf("SUB", "DUB", "SOFT-SUB"),
+            default = emptySet(),
+        )
     }
 }
