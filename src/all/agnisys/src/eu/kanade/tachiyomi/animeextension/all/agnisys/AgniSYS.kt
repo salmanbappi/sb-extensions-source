@@ -14,6 +14,14 @@ import eu.kanade.tachiyomi.multisrc.jellyfin.Jellyfin
 import eu.kanade.tachiyomi.multisrc.jellyfin.buildAuthHeader
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.parseAs
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -61,6 +69,37 @@ class AgniSYS : Jellyfin("AgniSYS") {
             }
         }.build()
         return parseItemsPage(url, page)
+    }
+
+    override suspend fun parseItemsPage(url: HttpUrl, page: Int): AnimesPage {
+        val newUrl = url.newBuilder().apply {
+            val existingFields = url.queryParameter("Fields")
+            val fields = if (existingFields.isNullOrEmpty()) "Path" else "$existingFields,Path"
+            setQueryParameter("Fields", fields)
+        }.build()
+
+        val body = client.newCall(GET(newUrl)).execute().use { it.body.string() }
+        val jsonElement = json.parseToJsonElement(body).jsonObject
+        val itemsArray = jsonElement["Items"]?.jsonArray ?: emptyList()
+
+        val filteredItems = itemsArray.filterNot { item ->
+            val path = item.jsonObject["Path"]?.jsonPrimitive?.contentOrNull ?: ""
+            val segments = path.split(Regex("[\\\\/]"))
+            segments.any { segment ->
+                segment.equals("Tutorials", ignoreCase = true) ||
+                    segment.equals("Song", ignoreCase = true) ||
+                    segment.equals("Playlists", ignoreCase = true)
+            }
+        }
+
+        val filteredJson = buildJsonObject {
+            put("Items", JsonArray(filteredItems))
+            put("TotalRecordCount", jsonElement["TotalRecordCount"] ?: JsonPrimitive(0))
+        }
+
+        val items = json.decodeFromJsonElement<ItemListDto>(filteredJson)
+        val animeList = items.items.map { it.toSAnime(baseUrl, userId) }
+        return AnimesPage(animeList, 20 * page < items.totalRecordCount)
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
