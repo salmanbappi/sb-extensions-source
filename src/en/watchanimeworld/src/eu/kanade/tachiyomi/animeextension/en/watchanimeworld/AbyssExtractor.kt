@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import keiyoushi.utils.toHex
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -248,7 +249,7 @@ class AbyssExtractor(
 
         val md5 = MessageDigest.getInstance("MD5")
         val hash = md5.digest(digestSource)
-        val hexString = hash.joinToString("") { String.format("%02x", it) }
+        val hexString = hash.toHex()
         return hexString.toByteArray(Charsets.UTF_8)
     }
 
