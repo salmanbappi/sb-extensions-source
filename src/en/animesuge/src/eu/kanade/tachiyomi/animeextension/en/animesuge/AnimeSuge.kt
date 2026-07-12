@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.en.animesuge
 
 import android.util.Base64
+import androidx.preference.MultiSelectListPreference
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -15,8 +17,6 @@ import eu.kanade.tachiyomi.multisrc.anikototheme.RatingFilter
 import eu.kanade.tachiyomi.multisrc.anikototheme.SeasonFilter
 import eu.kanade.tachiyomi.multisrc.anikototheme.SortFilter
 import eu.kanade.tachiyomi.multisrc.anikototheme.SourceFilter
-import androidx.preference.MultiSelectListPreference
-import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.multisrc.anikototheme.StatusFilter
 import eu.kanade.tachiyomi.multisrc.anikototheme.TypeFilter
 import eu.kanade.tachiyomi.multisrc.anikototheme.YearFilter
