@@ -248,7 +248,7 @@ class AniSnatch : Source(), ConfigurableAnimeSource {
         return GZIPInputStream(ByteArrayInputStream(decrypted)).readBytes()
     }
 
-    /** Execute a POST request to an api/* endpoint and return parsed JSON */
+    /** Execute a POST request to an api endpoint and return parsed JSON */
     private fun apiPost(endpoint: String, body: Map<String, Any>): JsonObject? {
         val jsonBody = buildJsonObject {
             for ((k, v) in body) {
