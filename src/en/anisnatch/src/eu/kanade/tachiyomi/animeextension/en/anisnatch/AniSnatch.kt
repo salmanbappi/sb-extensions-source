@@ -2,6 +2,8 @@ package eu.kanade.tachiyomi.animeextension.en.anisnatch
 
 import android.util.Base64
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
+import dev.datlag.jsunpacker.JsUnpacker
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -26,8 +28,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
-import aniyomi.lib.m3u8server.M3u8Integration
-import dev.datlag.jsunpacker.JsUnpacker
 import uy.kohesive.injekt.injectLazy
 import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
@@ -670,37 +670,37 @@ class AniSnatch :
             obj.entries.mapNotNull { (quality, urlEl) ->
                 val kwikUrl = urlEl.jsonPrimitive.content
                 if (kwikUrl.isBlank()) return@mapNotNull null
-                
+
                 val reqHeaders = headers.newBuilder()
                     .set("Referer", "https://anisnatch.top/")
                     .build()
-                
+
                 val resp = client.newCall(
                     okhttp3.Request.Builder()
                         .url(kwikUrl)
                         .headers(reqHeaders)
                         .build(),
                 ).execute()
-                
+
                 if (!resp.isSuccessful) return@mapNotNull null
                 val body = resp.body.string()
-                
+
                 val document = org.jsoup.Jsoup.parse(body)
                 val script = document.selectFirst("script:containsData(eval\\(function)")?.data()
                     ?.substringAfterLast("eval(function(")
                     ?: return@mapNotNull null
-                
+
                 val unpacked = JsUnpacker.unpackAndCombine("eval(function($script")
                     ?: return@mapNotNull null
-                
+
                 val m3u8Url = if (unpacked.contains("const source=\\'")) {
                     unpacked.substringAfter("const source=\\'").substringBefore("\\'")
                 } else {
                     unpacked.substringAfter("const source='").substringBefore("'")
                 }
-                
+
                 if (m3u8Url.isBlank()) return@mapNotNull null
-                
+
                 Video(
                     videoUrl = m3u8Url,
                     videoTitle = "$audioPrefix - $serverName - ${quality}p",
