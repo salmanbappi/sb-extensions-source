@@ -6,18 +6,18 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.multisrc.anikototheme.AnikotoTheme
+import eu.kanade.tachiyomi.multisrc.anikototheme.EpisodeListResponse
 import eu.kanade.tachiyomi.multisrc.anikototheme.EpisodeMeta
 import eu.kanade.tachiyomi.multisrc.anikototheme.EpisodeMetadataFetcher
-import eu.kanade.tachiyomi.multisrc.anikototheme.EpisodeListResponse
-import eu.kanade.tachiyomi.multisrc.anikototheme.SortFilter
 import eu.kanade.tachiyomi.multisrc.anikototheme.GenreFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.TypeFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.StatusFilter
 import eu.kanade.tachiyomi.multisrc.anikototheme.LanguageFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.SeasonFilter
-import eu.kanade.tachiyomi.multisrc.anikototheme.YearFilter
 import eu.kanade.tachiyomi.multisrc.anikototheme.RatingFilter
+import eu.kanade.tachiyomi.multisrc.anikototheme.SeasonFilter
+import eu.kanade.tachiyomi.multisrc.anikototheme.SortFilter
 import eu.kanade.tachiyomi.multisrc.anikototheme.SourceFilter
+import eu.kanade.tachiyomi.multisrc.anikototheme.StatusFilter
+import eu.kanade.tachiyomi.multisrc.anikototheme.TypeFilter
+import eu.kanade.tachiyomi.multisrc.anikototheme.YearFilter
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -55,14 +55,19 @@ class AnimeSuge : AnikotoTheme() {
         var j = 0
         for (i in 0..255) {
             j = (j + s[i] + (key[i % key.size].toInt() and 0xFF)) and 0xFF
-            val tmp = s[i]; s[i] = s[j]; s[j] = tmp
+            val tmp = s[i]
+            s[i] = s[j]
+            s[j] = tmp
         }
-        var i = 0; j = 0
+        var i = 0
+        j = 0
         val out = ByteArray(input.size)
         for (x in input.indices) {
             i = (i + 1) and 0xFF
             j = (j + s[i]) and 0xFF
-            val tmp = s[i]; s[i] = s[j]; s[j] = tmp
+            val tmp = s[i]
+            s[i] = s[j]
+            s[j] = tmp
             out[x] = ((input[x].toInt() and 0xFF) xor s[(s[i] + s[j]) and 0xFF]).toByte()
         }
         return out
@@ -73,8 +78,14 @@ class AnimeSuge : AnikotoTheme() {
         for (r in t.indices) {
             var s = t[r].code
             when (r % 8) {
-                0 -> s -= 3; 1 -> s += 3; 2 -> s -= 4; 3 -> s += 2
-                4 -> s -= 2; 5 -> s += 5; 6 -> s += 4; 7 -> s += 5
+                0 -> s -= 3
+                1 -> s += 3
+                2 -> s -= 4
+                3 -> s += 2
+                4 -> s -= 2
+                5 -> s += 5
+                6 -> s += 4
+                7 -> s += 5
             }
             result[r] = s.toByte()
         }
