@@ -18,6 +18,11 @@ import extensions.utils.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import eu.kanade.tachiyomi.animesource.model.Track
+import keiyoushi.utils.addSwitchPreference
+import java.text.SimpleDateFormat
+import java.util.Locale
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -152,6 +157,7 @@ class AniSnatch :
         const val PREF_TYPE_DEFAULT = "sub"
         const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
         const val PREF_EXCLUDE_TYPE_KEY = "pref_exclude_type"
+        const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
     }
 
     // ─── SMC Cipher ───────────────────────────────────────────────────────────
@@ -372,8 +378,8 @@ class AniSnatch :
             title = "Preferred Server",
             default = PREF_SERVER_DEFAULT,
             summary = "%s",
-            entries = listOf("AniVibe", "NekoVibe", "Kwik", "Megaplay", "Vidwish"),
-            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "Megaplay", "Vidwish"),
+            entries = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish", "Swift", "AniCdn"),
+            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish", "Swift", "AniCdn"),
         )
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
@@ -387,8 +393,8 @@ class AniSnatch :
             key = PREF_EXCLUDE_SERVERS_KEY,
             title = "Exclude Servers",
             summary = "Select servers to hide from the video list",
-            entries = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish"),
-            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish"),
+            entries = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish", "Swift", "AniCdn"),
+            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish", "Swift", "AniCdn"),
             default = emptySet(),
         )
         screen.addSetPreference(
@@ -398,6 +404,12 @@ class AniSnatch :
             entries = listOf("SUB", "DUB", "SOFT-SUB"),
             entryValues = listOf("SUB", "DUB", "SOFT-SUB"),
             default = emptySet(),
+        )
+        screen.addSwitchPreference(
+            key = PREF_SHOW_THUMBNAILS_KEY,
+            title = "Show episode thumbnails",
+            summary = "Fetch and display thumbnail images in the episode list.",
+            default = true,
         )
     }
 
@@ -516,28 +528,86 @@ class AniSnatch :
 
     // ─── Episodes ─────────────────────────────────────────────────────────────
 
+    private fun parseDate(dateStr: String): Long {
+        return runCatching {
+            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH).parse(dateStr)?.time
+                ?: SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).parse(dateStr)?.time
+                ?: 0L
+        }.getOrDefault(0L)
+    }
+
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val animeId = anime.url.toIntOrNull() ?: return emptyList()
         val data = apiPost("api/anime", mapOf("id" to animeId)) ?: return emptyList()
-        val info = data["data"]?.jsonObject?.get("anime")?.jsonObject ?: return emptyList()
+        val dataObj = data["data"]?.jsonObject ?: return emptyList()
+        val info = dataObj["anime"]?.jsonObject ?: return emptyList()
 
         val lastEp = info["lastep"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
         if (lastEp == 0) return emptyList()
 
-        val episodes = (1..lastEp).map { ep ->
-            SEpisode.create().apply {
-                url = "$animeId|$ep"
-                name = "Episode $ep"
-                episode_number = ep.toFloat()
-                scanlator = buildString {
-                    val dub = info["dub"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-                    append("Sub")
-                    if (dub == 1) append(" / Dub")
+        val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
+        val listArray = dataObj["list"]?.jsonArray
+
+        val episodes = if (listArray != null && listArray.isNotEmpty()) {
+            listArray.mapNotNull { element ->
+                val epObj = element.jsonObject
+                val epNum = epObj["number"]?.jsonPrimitive?.content?.toFloatOrNull() ?: return@mapNotNull null
+                
+                SEpisode.create().apply {
+                    url = "$animeId|${epNum.toInt()}"
+                    episode_number = epNum
+                    
+                    val title = epObj["title"]?.jsonPrimitive?.content
+                    name = if (!title.isNullOrBlank()) {
+                        "Episode ${epNum.toInt()}: $title"
+                    } else {
+                        "Episode ${epNum.toInt()}"
+                    }
+                    
+                    val desc = epObj["description"]?.jsonPrimitive?.content
+                    if (!desc.isNullOrBlank()) {
+                        summary = desc
+                    }
+                    
+                    val img = epObj["image"]?.jsonPrimitive?.content
+                    if (showThumbnails && !img.isNullOrBlank()) {
+                        preview_url = img
+                    }
+                    
+                    val dateStr = epObj["airDate"]?.jsonPrimitive?.content
+                    if (!dateStr.isNullOrBlank()) {
+                        date_upload = parseDate(dateStr)
+                    }
+                    
+                    val subVal = epObj["sub"]?.jsonPrimitive
+                    val dubVal = epObj["dub"]?.jsonPrimitive
+                    val hasSub = subVal?.booleanOrNull ?: (subVal?.content?.toIntOrNull() ?: 0 > 0)
+                    val hasDub = dubVal?.booleanOrNull ?: (dubVal?.content?.toIntOrNull() ?: 0 > 0)
+                    
+                    scanlator = when {
+                        hasSub && hasDub -> "Sub, Dub"
+                        hasDub -> "Dub"
+                        hasSub -> "Sub"
+                        else -> null
+                    }
                 }
             }
-        }.reversed()
+        } else {
+            (1..lastEp).map { ep ->
+                SEpisode.create().apply {
+                    url = "$animeId|$ep"
+                    name = "Episode $ep"
+                    episode_number = ep.toFloat()
+                    scanlator = buildString {
+                        val dub = info["dub"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+                        append("Sub")
+                        if (dub == 1) append(" / Dub")
+                    }
+                }
+            }
+        }
 
-        return episodes
+        return episodes.sortedByDescending { it.episode_number }
     }
 
     // ─── Video ────────────────────────────────────────────────────────────────
@@ -591,40 +661,147 @@ class AniSnatch :
         val audioPrefix = hoster.hosterName.split(" - ").firstOrNull() ?: hoster.hosterName
         val serverName = hoster.hosterName.substringAfter(" - ")
 
-        // source format: type/data/animeId-epNum
         val sourceParts = source.split("/")
         val sourceType = sourceParts.getOrNull(0) ?: return emptyList()
-        val sourceData = sourceParts.getOrNull(1) ?: return emptyList()
 
         return when (sourceType.lowercase()) {
             "vibeplayer" -> {
-                // data is base64-encoded player URL, optionally followed by sub= param after second /
+                val sourceData = sourceParts.getOrNull(1) ?: return emptyList()
                 val playerUrl = try {
                     String(Base64.decode(sourceData, Base64.DEFAULT), Charsets.UTF_8)
                 } catch (e: Exception) {
-                    return emptyList()
+                    null
                 }
-                resolveVibePlayer(playerUrl, audioPrefix, serverName)
-            }
-
-            "kwik" -> {
-                // data is base64-encoded JSON of quality→kwik URLs
-                val kwikJson = try {
-                    String(Base64.decode(sourceData.replace("%3D", "="), Base64.DEFAULT), Charsets.UTF_8)
-                } catch (e: Exception) {
-                    return emptyList()
+                if (playerUrl != null) {
+                    resolveVibePlayer(playerUrl, audioPrefix, serverName)
+                } else {
+                    resolveVideoPage(source, audioPrefix, serverName)
                 }
-                resolveKwik(kwikJson, audioPrefix, serverName)
+            }
+            else -> {
+                resolveVideoPage(source, audioPrefix, serverName)
+            }
+        }
+    }
+
+    private fun resolveVideoPage(source: String, audioPrefix: String, serverName: String): List<Video> {
+        return try {
+            val videoUrl = "$baseUrl/video/$source"
+            val pageResp = client.newCall(
+                okhttp3.Request.Builder()
+                    .url(videoUrl)
+                    .headers(headers.newBuilder().set("Referer", "$baseUrl/").build())
+                    .build(),
+            ).execute()
+            val html = pageResp.body.string()
+
+            val videos = mutableListOf<Video>()
+            val subtitleTracks = mutableListOf<Track>()
+
+            // Extract subtitles if present
+            try {
+                if (html.contains("subtitles:")) {
+                    val subsJson = html.substringAfter("subtitles:").substringBefore("]").trim() + "]"
+                    val subsArr = json.parseToJsonElement(subsJson).jsonArray
+                    for (sub in subsArr) {
+                        val file = sub.jsonObject["file"]?.jsonPrimitive?.content ?: continue
+                        val label = sub.jsonObject["label"]?.jsonPrimitive?.content ?: "English"
+                        subtitleTracks.add(Track(file, label))
+                    }
+                }
+            } catch (_: Exception) {}
+
+            // Extract video sources
+            if (html.contains("srcs:")) {
+                val srcsJson = html.substringAfter("srcs:").substringBefore(", thumbnails").trim()
+                val jsonArr = json.parseToJsonElement(srcsJson).jsonArray
+                for (item in jsonArr) {
+                    val url = item.jsonObject["url"]?.jsonPrimitive?.content ?: continue
+                    val label = item.jsonObject["label"]?.jsonPrimitive?.content ?: "HD"
+                    val type = item.jsonObject["type"]?.jsonPrimitive?.content ?: "hls"
+                    
+                    val refHeaders = headers.newBuilder()
+                        .set("Referer", videoUrl)
+                        .build()
+
+                    if (type == "hls") {
+                        val hlsVideos = m3u8Integration.processVideoList(
+                            listOf(
+                                Video(
+                                    videoUrl = url,
+                                    videoTitle = "$audioPrefix - $serverName - $label",
+                                    headers = refHeaders,
+                                    subtitleTracks = subtitleTracks,
+                                )
+                            )
+                        )
+                        videos.addAll(hlsVideos)
+                    } else {
+                        videos.add(
+                            Video(
+                                videoUrl = url,
+                                videoTitle = "$audioPrefix - $serverName - $label",
+                                headers = refHeaders,
+                                subtitleTracks = subtitleTracks,
+                            )
+                        )
+                    }
+                }
+            } else if (html.contains("src:")) {
+                val srcJson = html.substringAfter("src:").substringBefore(", thumbnails").trim()
+                val jsonObj = json.parseToJsonElement(srcJson).jsonObject
+                val url = jsonObj["url"]?.jsonPrimitive?.content
+                val type = jsonObj["type"]?.jsonPrimitive?.content ?: "hls"
+                if (!url.isNullOrBlank()) {
+                    val refHeaders = headers.newBuilder()
+                        .set("Referer", videoUrl)
+                        .build()
+
+                    if (type == "hls") {
+                        val hlsVideos = m3u8Integration.processVideoList(
+                            listOf(
+                                Video(
+                                    videoUrl = url,
+                                    videoTitle = "$audioPrefix - $serverName",
+                                    headers = refHeaders,
+                                    subtitleTracks = subtitleTracks,
+                                )
+                            )
+                        )
+                        videos.addAll(hlsVideos)
+                    } else {
+                        videos.add(
+                            Video(
+                                videoUrl = url,
+                                videoTitle = "$audioPrefix - $serverName",
+                                headers = refHeaders,
+                                subtitleTracks = subtitleTracks,
+                            )
+                        )
+                    }
+                }
+            } else {
+                // Fallback: search for m3u8 URL anywhere in page
+                val m3u8Regex = Regex("""["']?(https?://[^"'s]+.m3u8[^"'s]*)["']?"""")
+                val m3u8Url = m3u8Regex.find(html)?.groupValues?.get(1)
+                if (!m3u8Url.isNullOrBlank()) {
+                    val hlsVideos = m3u8Integration.processVideoList(
+                        listOf(
+                            Video(
+                                videoUrl = m3u8Url,
+                                videoTitle = "$audioPrefix - $serverName",
+                                headers = headers.newBuilder().set("Referer", videoUrl).build(),
+                                subtitleTracks = subtitleTracks,
+                            )
+                        )
+                    )
+                    videos.addAll(hlsVideos)
+                }
             }
 
-            "megaplay", "vidwish" -> {
-                // These are StreamWish-compatible embed servers
-                val embedId = sourceData
-                val embedUrl = "https://megaplay.buzz/stream/$embedId"
-                streamWishExtractor.videosFromUrl(embedUrl) { "$audioPrefix - $serverName - $it" }
-            }
-
-            else -> emptyList()
+            videos
+        } catch (e: Exception) {
+            emptyList()
         }
     }
 
@@ -639,7 +816,7 @@ class AniSnatch :
             val html = pageResp.body.string()
 
             // Look for m3u8 URL in page source
-            val m3u8Regex = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""")
+            val m3u8Regex = Regex("""["']?(https?://[^"'s]+.m3u8[^"'s]*)["']?"""")
             val m3u8Url = m3u8Regex.find(html)?.groupValues?.get(1) ?: return emptyList()
 
             val videos = listOf(
@@ -659,57 +836,6 @@ class AniSnatch :
                 ),
             )
             m3u8Integration.processVideoList(videos)
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-
-    private fun resolveKwik(kwikJson: String, audioPrefix: String, serverName: String): List<Video> {
-        return try {
-            val obj = Json.parseToJsonElement(kwikJson).jsonObject
-            obj.entries.mapNotNull { (quality, urlEl) ->
-                val kwikUrl = urlEl.jsonPrimitive.content
-                if (kwikUrl.isBlank()) return@mapNotNull null
-
-                val reqHeaders = headers.newBuilder()
-                    .set("Referer", "https://anisnatch.top/")
-                    .build()
-
-                val resp = client.newCall(
-                    okhttp3.Request.Builder()
-                        .url(kwikUrl)
-                        .headers(reqHeaders)
-                        .build(),
-                ).execute()
-
-                if (!resp.isSuccessful) return@mapNotNull null
-                val body = resp.body.string()
-
-                val document = org.jsoup.Jsoup.parse(body)
-                val script = document.selectFirst("script:containsData(eval\\(function)")?.data()
-                    ?.substringAfterLast("eval(function(")
-                    ?: return@mapNotNull null
-
-                val unpacked = JsUnpacker.unpackAndCombine("eval(function($script")
-                    ?: return@mapNotNull null
-
-                val m3u8Url = if (unpacked.contains("const source=\\'")) {
-                    unpacked.substringAfter("const source=\\'").substringBefore("\\'")
-                } else {
-                    unpacked.substringAfter("const source='").substringBefore("'")
-                }
-
-                if (m3u8Url.isBlank()) return@mapNotNull null
-
-                Video(
-                    videoUrl = m3u8Url,
-                    videoTitle = "$audioPrefix - $serverName - ${quality}p",
-                    resolution = quality.toIntOrNull(),
-                    headers = headers.newBuilder()
-                        .set("Referer", resp.request.url.toString())
-                        .build(),
-                )
-            }
         } catch (e: Exception) {
             emptyList()
         }
