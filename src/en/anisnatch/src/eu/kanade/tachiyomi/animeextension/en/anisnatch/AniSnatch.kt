@@ -41,14 +41,19 @@ class AniSnatch : AnikotoTheme() {
         var a = 0
         for (n in 0..255) {
             a = (s[n] + a + key[n % key.length].code) % 256
-            val tmp = s[n]; s[n] = s[a]; s[a] = tmp
+            val tmp = s[n]
+            s[n] = s[a]
+            s[a] = tmp
         }
         val out = StringBuilder(animeId.length)
-        var n2 = 0; var a2 = 0
+        var n2 = 0
+        var a2 = 0
         for (r in animeId.indices) {
             n2 = (n2 + 1) % 256
             a2 = (s[n2] + a2) % 256
-            val tmp2 = s[n2]; s[n2] = s[a2]; s[a2] = tmp2
+            val tmp2 = s[n2]
+            s[n2] = s[a2]
+            s[a2] = tmp2
             val k = s[(s[n2] + s[a2]) % 256]
             out.append((animeId[r].code xor k).toChar())
         }
@@ -162,7 +167,10 @@ class AniSnatch : AnikotoTheme() {
         val scoreStr = formatScore(scoreRaw)
 
         val desc = buildString {
-            if (scoreStr != null) { append(scoreStr); append("\n\n") }
+            if (scoreStr != null) {
+                append(scoreStr)
+                append("\n\n")
+            }
             if (synopsis.isNotEmpty()) append(synopsis)
             metaMap["Type"]?.takeIf { it.isNotBlank() }?.let { append("\nType: $it") }
             metaMap["Premiered"]?.takeIf { it.isNotBlank() }?.let { append("\nPremiered: $it") }
