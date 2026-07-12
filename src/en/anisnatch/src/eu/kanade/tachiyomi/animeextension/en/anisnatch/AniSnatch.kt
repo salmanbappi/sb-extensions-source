@@ -24,16 +24,18 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import okhttp3.RequestBody.Companion.toRequestBody
 import uy.kohesive.injekt.injectLazy
 import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
 
-class AniSnatch : Source() {
+class AniSnatch : Source(), ConfigurableAnimeSource {
 
     override val name = "AniSnatch"
     override val baseUrl = "https://anisnatch.top"
     override val lang = "en"
+    override val supportsLatest = true
 
 
 
@@ -140,14 +142,14 @@ class AniSnatch : Source() {
         )
 
         // Preference keys
-        private const val PREF_QUALITY_KEY = "pref_quality"
-        private const val PREF_QUALITY_DEFAULT = "1080"
-        private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "AniVibe"
-        private const val PREF_TYPE_KEY = "pref_type"
-        private const val PREF_TYPE_DEFAULT = "sub"
-        private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
-        private const val PREF_EXCLUDE_TYPE_KEY = "pref_exclude_type"
+        const val PREF_QUALITY_KEY = "pref_quality"
+        const val PREF_QUALITY_DEFAULT = "1080"
+        const val PREF_SERVER_KEY = "pref_server"
+        const val PREF_SERVER_DEFAULT = "AniVibe"
+        const val PREF_TYPE_KEY = "pref_type"
+        const val PREF_TYPE_DEFAULT = "sub"
+        const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
+        const val PREF_EXCLUDE_TYPE_KEY = "pref_exclude_type"
     }
 
     // ─── SMC Cipher ───────────────────────────────────────────────────────────
@@ -262,10 +264,7 @@ class AniSnatch : Source() {
         val timestamp = accurateTime()
         val url = "$baseUrl/$endpoint/$timestamp"
 
-        val requestHeaders = headers.newBuilder()
-            .set("Content-Type", "application/json")
-            .set("Accept", "*/*")
-            .build()
+        val requestHeaders = headers.newBuilder().set("Content-Type", "application/json").set("Accept", "*/*").build()
         val requestBody = payloadJson.toRequestBody("application/json".toMediaType())
         val request = POST(url, requestHeaders, requestBody)
 
@@ -631,9 +630,9 @@ class AniSnatch : Source() {
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
-        val prefType = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
+        val prefQuality = this@AniSnatch.preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val prefServer = this@AniSnatch.preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val prefType = this@AniSnatch.preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefType, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefServer, ignoreCase = true) }
