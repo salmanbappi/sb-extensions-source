@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.en.anisnatch
 
 import android.util.Base64
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -24,20 +25,19 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import okhttp3.RequestBody.Companion.toRequestBody
 import uy.kohesive.injekt.injectLazy
 import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
 
-class AniSnatch : Source(), ConfigurableAnimeSource {
+class AniSnatch :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "AniSnatch"
     override val baseUrl = "https://anisnatch.top"
     override val lang = "en"
     override val supportsLatest = true
-
-
 
     // ─── Crypto constants ─────────────────────────────────────────────────────
 
@@ -197,9 +197,7 @@ class AniSnatch : Source(), ConfigurableAnimeSource {
         return sb.toString()
     }
 
-    private fun str2aci(token: String): String {
-        return token.sumOf { it.code }.toString()
-    }
+    private fun str2aci(token: String): String = token.sumOf { it.code }.toString()
 
     private fun accurateTime(): Long = System.currentTimeMillis() / 1000L + 60L
 
@@ -214,12 +212,17 @@ class AniSnatch : Source(), ConfigurableAnimeSource {
         val authenticator = str2aci(tokenStr)
 
         val payload = buildJsonObject {
-            put("data", JsonArray(dataChunks.mapIndexed { idx, chunk ->
-                buildJsonObject {
-                    put("id", JsonPrimitive(idx))
-                    put("chunk", JsonPrimitive(chunk))
-                }
-            }))
+            put(
+                "data",
+                JsonArray(
+                    dataChunks.mapIndexed { idx, chunk ->
+                        buildJsonObject {
+                            put("id", JsonPrimitive(idx))
+                            put("chunk", JsonPrimitive(chunk))
+                        }
+                    },
+                ),
+            )
             put("key", JsonArray(listOf(JsonPrimitive(0))))
             put("token", JsonPrimitive(tokenStr))
             put("authenticator", JsonPrimitive(authenticator))
@@ -411,52 +414,59 @@ class AniSnatch : Source(), ConfigurableAnimeSource {
 
     // ─── Filter classes ───────────────────────────────────────────────────────
 
-    private class SortFilter : AnimeFilter.Select<String>(
-        "Sort By",
-        SORT.map { it.first }.toTypedArray(),
-    ) {
+    private class SortFilter :
+        AnimeFilter.Select<String>(
+            "Sort By",
+            SORT.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = SORT[state].second
     }
 
-    private class GenreFilter : AnimeFilter.Select<String>(
-        "Genre",
-        GENRES.map { it.first }.toTypedArray(),
-    ) {
+    private class GenreFilter :
+        AnimeFilter.Select<String>(
+            "Genre",
+            GENRES.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = GENRES[state].second
     }
 
-    private class TypeFilter : AnimeFilter.Select<String>(
-        "Type",
-        TYPES.map { it.first }.toTypedArray(),
-    ) {
+    private class TypeFilter :
+        AnimeFilter.Select<String>(
+            "Type",
+            TYPES.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = TYPES[state].second
     }
 
-    private class StatusFilter : AnimeFilter.Select<String>(
-        "Status",
-        STATUS.map { it.first }.toTypedArray(),
-    ) {
+    private class StatusFilter :
+        AnimeFilter.Select<String>(
+            "Status",
+            STATUS.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = STATUS[state].second
     }
 
-    private class SeasonFilter : AnimeFilter.Select<String>(
-        "Season",
-        SEASONS.map { it.first }.toTypedArray(),
-    ) {
+    private class SeasonFilter :
+        AnimeFilter.Select<String>(
+            "Season",
+            SEASONS.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = SEASONS[state].second
     }
 
-    private class RatedFilter : AnimeFilter.Select<String>(
-        "Rating",
-        RATED.map { it.first }.toTypedArray(),
-    ) {
+    private class RatedFilter :
+        AnimeFilter.Select<String>(
+            "Rating",
+            RATED.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = RATED[state].second
     }
 
-    private class LanguageFilter : AnimeFilter.Select<String>(
-        "Language",
-        LANGUAGE.map { it.first }.toTypedArray(),
-    ) {
+    private class LanguageFilter :
+        AnimeFilter.Select<String>(
+            "Language",
+            LANGUAGE.map { it.first }.toTypedArray(),
+        ) {
         fun getSelectedValue() = LANGUAGE[state].second
     }
 
@@ -487,7 +497,10 @@ class AniSnatch : Source(), ConfigurableAnimeSource {
 
         val scoreStr = formatScore(score)
         val desc = buildString {
-            if (scoreStr != null) { append(scoreStr); append("\n\n") }
+            if (scoreStr != null) {
+                append(scoreStr)
+                append("\n\n")
+            }
             if (synopsis.isNotBlank()) append(synopsis)
             if (typeRaw.isNotBlank()) append("\nType: $typeRaw")
             if (statusRaw.isNotBlank()) append("\nStatus: $statusRaw")
@@ -603,6 +616,7 @@ class AniSnatch : Source(), ConfigurableAnimeSource {
                 }
                 resolveVibePlayer(playerUrl, audioPrefix, serverName)
             }
+
             "kwik" -> {
                 // data is base64-encoded JSON of quality→kwik URLs
                 val kwikJson = try {
@@ -612,12 +626,14 @@ class AniSnatch : Source(), ConfigurableAnimeSource {
                 }
                 resolveKwik(kwikJson, audioPrefix, serverName)
             }
+
             "megaplay", "vidwish" -> {
                 // These are StreamWish-compatible embed servers
                 val embedId = sourceData
                 val embedUrl = "https://megaplay.buzz/stream/$embedId"
                 streamWishExtractor.videosFromUrl(embedUrl) { "$audioPrefix - $serverName - $it" }
             }
+
             else -> emptyList()
         }
     }
@@ -643,10 +659,13 @@ class AniSnatch : Source(), ConfigurableAnimeSource {
                     videoTitle = "$audioPrefix - $serverName",
                     headers = headers.newBuilder()
                         .set("Referer", playerUrl)
-                        .set("Origin", playerUrl.substringBefore("/", playerUrl).let { proto ->
-                            val host = playerUrl.substringAfter("://").substringBefore("/")
-                            "$proto//$host"
-                        })
+                        .set(
+                            "Origin",
+                            playerUrl.substringBefore("/", playerUrl).let { proto ->
+                                val host = playerUrl.substringAfter("://").substringBefore("/")
+                                "$proto//$host"
+                            },
+                        )
                         .build(),
                 ),
             )
