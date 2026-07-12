@@ -26,6 +26,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import aniyomi.lib.m3u8server.M3u8Integration
+import dev.datlag.jsunpacker.JsUnpacker
 import uy.kohesive.injekt.injectLazy
 import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
@@ -541,6 +543,7 @@ class AniSnatch :
     // ─── Video ────────────────────────────────────────────────────────────────
 
     private val streamWishExtractor by lazy { StreamWishExtractor(client, headers) }
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val parts = episode.url.split("|")
@@ -630,8 +633,7 @@ class AniSnatch :
             val pageResp = client.newCall(
                 okhttp3.Request.Builder()
                     .url(playerUrl)
-                    .header("Referer", "$baseUrl/")
-                    .header("User-Agent", "Mozilla/5.0")
+                    .headers(headers.newBuilder().set("Referer", "$baseUrl/").build())
                     .build(),
             ).execute()
             val html = pageResp.body.string()
@@ -640,7 +642,7 @@ class AniSnatch :
             val m3u8Regex = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""")
             val m3u8Url = m3u8Regex.find(html)?.groupValues?.get(1) ?: return emptyList()
 
-            listOf(
+            val videos = listOf(
                 Video(
                     videoUrl = m3u8Url,
                     videoTitle = "$audioPrefix - $serverName",
@@ -656,6 +658,7 @@ class AniSnatch :
                         .build(),
                 ),
             )
+            m3u8Integration.processVideoList(videos)
         } catch (e: Exception) {
             emptyList()
         }
@@ -667,21 +670,43 @@ class AniSnatch :
             obj.entries.mapNotNull { (quality, urlEl) ->
                 val kwikUrl = urlEl.jsonPrimitive.content
                 if (kwikUrl.isBlank()) return@mapNotNull null
-                // Kwik requires fetching the redirect to get the final m3u8
+                
+                val reqHeaders = headers.newBuilder()
+                    .set("Referer", "https://anisnatch.top/")
+                    .build()
+                
                 val resp = client.newCall(
                     okhttp3.Request.Builder()
                         .url(kwikUrl)
-                        .header("Referer", "https://kwik.cx/")
-                        .header("User-Agent", "Mozilla/5.0")
+                        .headers(reqHeaders)
                         .build(),
                 ).execute()
-                val m3u8 = resp.request.url.toString()
+                
+                if (!resp.isSuccessful) return@mapNotNull null
+                val body = resp.body.string()
+                
+                val document = org.jsoup.Jsoup.parse(body)
+                val script = document.selectFirst("script:containsData(eval\\(function)")?.data()
+                    ?.substringAfterLast("eval(function(")
+                    ?: return@mapNotNull null
+                
+                val unpacked = JsUnpacker.unpackAndCombine("eval(function($script")
+                    ?: return@mapNotNull null
+                
+                val m3u8Url = if (unpacked.contains("const source=\\'")) {
+                    unpacked.substringAfter("const source=\\'").substringBefore("\\'")
+                } else {
+                    unpacked.substringAfter("const source='").substringBefore("'")
+                }
+                
+                if (m3u8Url.isBlank()) return@mapNotNull null
+                
                 Video(
-                    videoUrl = m3u8,
+                    videoUrl = m3u8Url,
                     videoTitle = "$audioPrefix - $serverName - ${quality}p",
                     resolution = quality.toIntOrNull(),
                     headers = headers.newBuilder()
-                        .set("Referer", "https://kwik.cx/")
+                        .set("Referer", resp.request.url.toString())
                         .build(),
                 )
             }
