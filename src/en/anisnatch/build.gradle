@@ -1,7 +1,7 @@
 ext {
     extName = 'AniSnatch'
     extClass = '.AniSnatch'
-    overrideVersionCode = 2
+    extVersionCode = 2
 }
 
 apply from: "$rootDir/common.gradle"
