@@ -35,7 +35,7 @@ class AniSnatch : Source() {
     override val baseUrl = "https://anisnatch.top"
     override val lang = "en"
 
-    private val json: Json by injectLazy()
+
 
     // ─── Crypto constants ─────────────────────────────────────────────────────
 
@@ -180,7 +180,7 @@ class AniSnatch : Source() {
         // Try passes 1..10 for first encryption
         val f1 = (System.currentTimeMillis() % 10 + 1).toInt()
         val smc1 = smcShift(hexStr, enc = true, passes = f1)
-        val combined = "$smc1strSMCconvert$f1"
+        val combined = "${smc1}strSMCconvert$f1"
         // Find minimum passes such that result does NOT contain "strSMCconv" (strUNIQconvert enc mode)
         for (v in 1..10) {
             val h = smcShift(combined, enc = true, passes = v)
@@ -262,14 +262,12 @@ class AniSnatch : Source() {
         val timestamp = accurateTime()
         val url = "$baseUrl/$endpoint/$timestamp"
 
-        val request = POST(
-            url,
-            headers = headers.newBuilder()
-                .set("Content-Type", "application/json")
-                .set("Accept", "*/*")
-                .build(),
-            body = payloadJson.toRequestBody("application/json".toMediaType()),
-        )
+        val requestHeaders = headers.newBuilder()
+            .set("Content-Type", "application/json")
+            .set("Accept", "*/*")
+            .build()
+        val requestBody = payloadJson.toRequestBody("application/json".toMediaType())
+        val request = POST(url, requestHeaders, requestBody)
 
         return try {
             val response = client.newCall(request).execute()
@@ -651,6 +649,7 @@ class AniSnatch : Source() {
             key = PREF_TYPE_KEY,
             title = "Preferred Type",
             default = PREF_TYPE_DEFAULT,
+            summary = "%s",
             entries = listOf("Sub", "Dub", "Soft-Sub"),
             entryValues = listOf("sub", "dub", "soft-sub"),
         )
@@ -658,6 +657,7 @@ class AniSnatch : Source() {
             key = PREF_SERVER_KEY,
             title = "Preferred Server",
             default = PREF_SERVER_DEFAULT,
+            summary = "%s",
             entries = listOf("AniVibe", "NekoVibe", "Kwik", "Megaplay", "Vidwish"),
             entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "Megaplay", "Vidwish"),
         )
@@ -665,6 +665,7 @@ class AniSnatch : Source() {
             key = PREF_QUALITY_KEY,
             title = "Preferred Quality",
             default = PREF_QUALITY_DEFAULT,
+            summary = "%s",
             entries = listOf("1080p", "720p", "480p", "360p"),
             entryValues = listOf("1080", "720", "480", "360"),
         )
