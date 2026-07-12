@@ -195,7 +195,34 @@ class AniSnatch :
 
     private fun str2aci(token: String): String = token.sumOf { it.code }.toString()
 
-    private fun accurateTime(): Long = System.currentTimeMillis() / 1000L + 60L
+    private var timeOffset: Long = 60L
+    private var timeSynced = false
+
+    private fun syncTime() {
+        if (timeSynced) return
+        synchronized(this) {
+            if (timeSynced) return
+            try {
+                val request = okhttp3.Request.Builder()
+                    .url(baseUrl)
+                    .headers(headers)
+                    .build()
+                val response = client.newCall(request).execute()
+                val html = response.body.string()
+                val serverTimeMatch = Regex("""serverTime\s*=\s*(\d+)""").find(html)
+                if (serverTimeMatch != null) {
+                    val serverTime = serverTimeMatch.groupValues[1].toLong()
+                    val clientTime = System.currentTimeMillis() / 1000L
+                    timeOffset = serverTime - clientTime + 60L
+                    timeSynced = true
+                }
+            } catch (e: Exception) {
+                // fallback
+            }
+        }
+    }
+
+    private fun accurateTime(): Long = System.currentTimeMillis() / 1000L + timeOffset
 
     private fun buildPayload(json: String): Pair<String, String> {
         val encoded = str2enc(json)
@@ -240,6 +267,7 @@ class AniSnatch :
 
     /** Execute a POST request to an api endpoint and return parsed JSON */
     private fun apiPost(endpoint: String, body: Map<String, Any>): JsonObject? {
+        syncTime()
         val jsonBody = buildJsonObject {
             for ((k, v) in body) {
                 when (v) {
