@@ -1,8 +1,7 @@
 ext {
     extName = 'AniSnatch'
     extClass = '.AniSnatch'
-    themePkg = 'anikototheme'
-    overrideVersionCode = 1
+    overrideVersionCode = 2
 }
 
 apply from: "$rootDir/common.gradle"
@@ -11,4 +10,8 @@ android {
     defaultConfig {
         manifestPlaceholders.appName = "AniSnatch"
     }
+}
+
+dependencies {
+    implementation(project(":lib:streamwish-extractor"))
 }
