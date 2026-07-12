@@ -294,15 +294,15 @@ class AniSnatch :
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
         val data = apiPost("api/home", emptyMap()) ?: return AnimesPage(emptyList(), false)
-        val trending = data["trending"]?.jsonArray ?: return AnimesPage(emptyList(), false)
-        val animes = trending.map { it.jsonObject.toSAnime() }
+        val trending = data["trending"] as? JsonArray ?: return AnimesPage(emptyList(), false)
+        val animes = trending.mapNotNull { (it as? JsonObject)?.toSAnime() }
         return AnimesPage(animes, false)
     }
 
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
         val data = apiPost("api/home", emptyMap()) ?: return AnimesPage(emptyList(), false)
-        val airing = data["airing"]?.jsonArray ?: return AnimesPage(emptyList(), false)
-        val animes = airing.map { it.jsonObject.toSAnime() }
+        val airing = data["airing"] as? JsonArray ?: return AnimesPage(emptyList(), false)
+        val animes = airing.mapNotNull { (it as? JsonObject)?.toSAnime() }
         return AnimesPage(animes, false)
     }
 
@@ -312,9 +312,9 @@ class AniSnatch :
         return if (query.isNotBlank()) {
             // Text search via api/search
             val data = apiPost("api/search", mapOf("keyword" to query, "page" to page)) ?: return AnimesPage(emptyList(), false)
-            val animeArr = data["data"]?.jsonObject?.get("anime")?.jsonArray ?: return AnimesPage(emptyList(), false)
+            val animeArr = (data["data"] as? JsonObject)?.get("anime") as? JsonArray ?: return AnimesPage(emptyList(), false)
             val totalPages = data["totalPages"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
-            AnimesPage(animeArr.map { it.jsonObject.toSAnime() }, page < totalPages)
+            AnimesPage(animeArr.mapNotNull { (it as? JsonObject)?.toSAnime() }, page < totalPages)
         } else {
             // Filter search via api/filter
             val genre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.getSelectedValue() ?: ""
@@ -476,7 +476,7 @@ class AniSnatch :
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val animeId = anime.url.toIntOrNull() ?: return anime
         val data = apiPost("api/anime", mapOf("id" to animeId)) ?: return anime
-        val info = data["data"]?.jsonObject?.get("anime")?.jsonObject ?: return anime
+        val info = (data["data"] as? JsonObject)?.get("anime") as? JsonObject ?: return anime
 
         val title = info["title_en"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             ?: info["title"]?.jsonPrimitive?.content ?: anime.title
@@ -537,18 +537,18 @@ class AniSnatch :
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val animeId = anime.url.toIntOrNull() ?: return emptyList()
         val data = apiPost("api/anime", mapOf("id" to animeId)) ?: return emptyList()
-        val dataObj = data["data"]?.jsonObject ?: return emptyList()
-        val info = dataObj["anime"]?.jsonObject ?: return emptyList()
+        val dataObj = data["data"] as? JsonObject ?: return emptyList()
+        val info = dataObj["anime"] as? JsonObject ?: return emptyList()
 
         val lastEp = info["lastep"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
         if (lastEp == 0) return emptyList()
 
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
-        val listArray = dataObj["list"]?.jsonArray
+        val listArray = dataObj["list"] as? JsonArray
 
         val episodes = if (listArray != null && listArray.isNotEmpty()) {
             listArray.mapNotNull { element ->
-                val epObj = element.jsonObject
+                val epObj = element as? JsonObject ?: return@mapNotNull null
                 val epNum = epObj["number"]?.jsonPrimitive?.content?.toFloatOrNull() ?: return@mapNotNull null
 
                 SEpisode.create().apply {
@@ -619,7 +619,7 @@ class AniSnatch :
         val epNum = parts.getOrNull(1)?.toIntOrNull() ?: return emptyList()
 
         val data = apiPost("api/loadSVs", mapOf("id" to animeId, "ep" to epNum)) ?: return emptyList()
-        val serverObj = data["server"]?.jsonObject ?: return emptyList()
+        val serverObj = data["server"] as? JsonObject ?: return emptyList()
 
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
         val excludedTypes = preferences.getStringSet(PREF_EXCLUDE_TYPE_KEY, emptySet()) ?: emptySet()
@@ -635,9 +635,9 @@ class AniSnatch :
             }
             if (excludedTypes.any { it.equals(audioLabel, ignoreCase = true) }) continue
 
-            val serverList = serversEl.jsonArray
+            val serverList = serversEl as? JsonArray ?: continue
             for (serverEl in serverList) {
-                val serverInfo = serverEl.jsonObject
+                val serverInfo = serverEl as? JsonObject ?: continue
                 val title = serverInfo["title"]?.jsonPrimitive?.content ?: continue
                 val source = serverInfo["source"]?.jsonPrimitive?.content ?: continue
                 if (excludedServers.any { it.equals(title, ignoreCase = true) }) continue
@@ -700,10 +700,10 @@ class AniSnatch :
         try {
             if (html.contains("subtitles:")) {
                 val subsJson = html.substringAfter("subtitles:").substringBefore("]").trim() + "]"
-                val subsArr = json.parseToJsonElement(subsJson).jsonArray
+                val subsArr = json.parseToJsonElement(subsJson) as? JsonArray ?: return emptyList()
                 for (sub in subsArr) {
-                    val file = sub.jsonObject["file"]?.jsonPrimitive?.content ?: continue
-                    val label = sub.jsonObject["label"]?.jsonPrimitive?.content ?: "English"
+                    val file = (sub as? JsonObject)?.get("file")?.jsonPrimitive?.content ?: continue
+                    val label = (sub as? JsonObject)?.get("label")?.jsonPrimitive?.content ?: "English"
                     subtitleTracks.add(Track(file, label))
                 }
             }
@@ -712,11 +712,11 @@ class AniSnatch :
         // Extract video sources
         if (html.contains("srcs:")) {
             val srcsJson = html.substringAfter("srcs:").substringBefore(", thumbnails").trim()
-            val jsonArr = json.parseToJsonElement(srcsJson).jsonArray
+            val jsonArr = json.parseToJsonElement(srcsJson) as? JsonArray ?: return emptyList()
             for (item in jsonArr) {
-                val url = item.jsonObject["url"]?.jsonPrimitive?.content ?: continue
-                val label = item.jsonObject["label"]?.jsonPrimitive?.content ?: "HD"
-                val type = item.jsonObject["type"]?.jsonPrimitive?.content ?: "hls"
+                val url = (item as? JsonObject)?.get("url")?.jsonPrimitive?.content ?: continue
+                val label = (item as? JsonObject)?.get("label")?.jsonPrimitive?.content ?: "HD"
+                val type = (item as? JsonObject)?.get("type")?.jsonPrimitive?.content ?: "hls"
 
                 val refHeaders = headers.newBuilder()
                     .set("Referer", videoUrl)
@@ -747,7 +747,7 @@ class AniSnatch :
             }
         } else if (html.contains("src:")) {
             val srcJson = html.substringAfter("src:").substringBefore(", thumbnails").trim()
-            val jsonObj = json.parseToJsonElement(srcJson).jsonObject
+            val jsonObj = json.parseToJsonElement(srcJson) as? JsonObject ?: return emptyList()
             val url = jsonObj["url"]?.jsonPrimitive?.content
             val type = jsonObj["type"]?.jsonPrimitive?.content ?: "hls"
             if (!url.isNullOrBlank()) {
