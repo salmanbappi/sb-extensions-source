@@ -286,14 +286,14 @@ class AniSnatch :
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
         val data = apiPost("api/home", emptyMap()) ?: return AnimesPage(emptyList(), false)
-        val trending = data["data"]?.jsonObject?.get("trending")?.jsonArray ?: return AnimesPage(emptyList(), false)
+        val trending = data["trending"]?.jsonArray ?: return AnimesPage(emptyList(), false)
         val animes = trending.map { it.jsonObject.toSAnime() }
         return AnimesPage(animes, false)
     }
 
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
         val data = apiPost("api/home", emptyMap()) ?: return AnimesPage(emptyList(), false)
-        val airing = data["data"]?.jsonObject?.get("airing")?.jsonArray ?: return AnimesPage(emptyList(), false)
+        val airing = data["airing"]?.jsonArray ?: return AnimesPage(emptyList(), false)
         val animes = airing.map { it.jsonObject.toSAnime() }
         return AnimesPage(animes, false)
     }
