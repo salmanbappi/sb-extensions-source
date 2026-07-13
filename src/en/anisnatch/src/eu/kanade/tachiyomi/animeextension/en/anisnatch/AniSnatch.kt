@@ -482,7 +482,6 @@ class AniSnatch :
         fun getSelectedValue() = STATUS[state].second
     }
 
-
     private class RatedFilter :
         AnimeFilter.Select<String>(
             "Rating",
