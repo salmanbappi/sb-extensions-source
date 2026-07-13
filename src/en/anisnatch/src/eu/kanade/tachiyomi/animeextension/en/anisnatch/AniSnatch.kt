@@ -19,6 +19,7 @@ import extensions.utils.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
+import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -357,7 +358,7 @@ class AniSnatch :
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         val prefType = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefType, ignoreCase = true) }
+            compareByDescending<Video> { it.videoTitle.startsWith("$prefType - ", ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefServer, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
                 .thenByDescending { it.resolution ?: 0 },
@@ -624,7 +625,7 @@ class AniSnatch :
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
         val excludedTypes = preferences.getStringSet(PREF_EXCLUDE_TYPE_KEY, emptySet()) ?: emptySet()
 
-        val hosters = mutableListOf<Hoster>()
+        val hosterMap = mutableMapOf<String, MutableList<Pair<String, String>>>()
 
         for ((audioType, serversEl) in serverObj) {
             val audioLabel = when (audioType) {
@@ -642,43 +643,54 @@ class AniSnatch :
                 val source = serverInfo["source"]?.jsonPrimitive?.content ?: continue
                 if (excludedServers.any { it.equals(title, ignoreCase = true) }) continue
 
-                hosters.add(
-                    Hoster(
-                        hosterName = "$audioLabel - $title",
-                        hosterUrl = source,
-                    ),
-                )
+                hosterMap.getOrPut(title) { mutableListOf() }.add(audioLabel to source)
             }
         }
 
-        return hosters
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val prefType = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
+
+        return hosterMap.map { (title, sources) ->
+            Hoster(
+                hosterName = title,
+                hosterUrl = sources.joinToString(",") { "${it.first}|${it.second}" },
+            )
+        }.sortedWith(
+            compareByDescending<Hoster> { it.hosterName.contains(prefServer, ignoreCase = true) }
+                .thenByDescending { it.hosterUrl.contains(prefType, ignoreCase = true) },
+        )
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val source = hoster.hosterUrl
-        val audioPrefix = hoster.hosterName.split(" - ").firstOrNull() ?: hoster.hosterName
-        val serverName = hoster.hosterName.substringAfter(" - ")
+        val serverName = hoster.hosterName
+        val sourcesEncoded = hoster.hosterUrl.split(",")
 
-        val sourceParts = source.split("/")
-        val sourceType = sourceParts.getOrNull(0) ?: return emptyList()
+        return sourcesEncoded.parallelCatchingFlatMap { item ->
+            val parts = item.split("|")
+            val audioPrefix = parts.getOrNull(0) ?: ""
+            val source = parts.getOrNull(1) ?: return@parallelCatchingFlatMap emptyList<Video>()
 
-        return when (sourceType.lowercase()) {
-            "vibeplayer" -> {
-                val sourceData = sourceParts.getOrNull(1) ?: return emptyList()
-                val playerUrl = try {
-                    String(Base64.decode(sourceData, Base64.DEFAULT), Charsets.UTF_8)
-                } catch (e: Exception) {
-                    null
+            val sourceParts = source.split("/")
+            val sourceType = sourceParts.getOrNull(0) ?: return@parallelCatchingFlatMap emptyList<Video>()
+
+            when (sourceType.lowercase()) {
+                "vibeplayer" -> {
+                    val sourceData = sourceParts.getOrNull(1) ?: return@parallelCatchingFlatMap emptyList<Video>()
+                    val playerUrl = try {
+                        String(Base64.decode(sourceData, Base64.DEFAULT), Charsets.UTF_8)
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (playerUrl != null) {
+                        resolveVibePlayer(playerUrl, audioPrefix, serverName)
+                    } else {
+                        resolveVideoPage(source, audioPrefix, serverName)
+                    }
                 }
-                if (playerUrl != null) {
-                    resolveVibePlayer(playerUrl, audioPrefix, serverName)
-                } else {
+
+                else -> {
                     resolveVideoPage(source, audioPrefix, serverName)
                 }
-            }
-
-            else -> {
-                resolveVideoPage(source, audioPrefix, serverName)
             }
         }
     }
