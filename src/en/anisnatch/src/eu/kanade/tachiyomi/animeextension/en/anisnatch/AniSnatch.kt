@@ -60,93 +60,127 @@ class AniSnatch :
         // Filter data — cached in companion object per skill rules
         val GENRES = listOf(
             Pair("All", ""),
-            Pair("Action", "Action"),
-            Pair("Adventure", "Adventure"),
-            Pair("Cars", "Cars"),
-            Pair("Comedy", "Comedy"),
-            Pair("Dementia", "Dementia"),
-            Pair("Demons", "Demons"),
-            Pair("Drama", "Drama"),
-            Pair("Ecchi", "Ecchi"),
-            Pair("Fantasy", "Fantasy"),
-            Pair("Game", "Game"),
-            Pair("Harem", "Harem"),
-            Pair("Historical", "Historical"),
-            Pair("Horror", "Horror"),
-            Pair("Isekai", "Isekai"),
-            Pair("Josei", "Josei"),
-            Pair("Kids", "Kids"),
-            Pair("Magic", "Magic"),
-            Pair("Martial Arts", "Martial Arts"),
-            Pair("Mecha", "Mecha"),
-            Pair("Military", "Military"),
-            Pair("Music", "Music"),
-            Pair("Mystery", "Mystery"),
-            Pair("Parody", "Parody"),
-            Pair("Police", "Police"),
-            Pair("Psychological", "Psychological"),
-            Pair("Romance", "Romance"),
-            Pair("Samurai", "Samurai"),
-            Pair("School", "School"),
-            Pair("Sci-Fi", "Sci-Fi"),
-            Pair("Seinen", "Seinen"),
-            Pair("Shoujo", "Shoujo"),
-            Pair("Shounen", "Shounen"),
-            Pair("Slice of Life", "Slice of Life"),
-            Pair("Space", "Space"),
-            Pair("Sports", "Sports"),
-            Pair("Super Power", "Super Power"),
-            Pair("Supernatural", "Supernatural"),
-            Pair("Thriller", "Thriller"),
-            Pair("Vampire", "Vampire"),
+            Pair("Action", "0"),
+            Pair("Adult Cast", "1"),
+            Pair("Adventure", "2"),
+            Pair("Anthropomorphic", "3"),
+            Pair("Avant Garde", "4"),
+            Pair("Award Winning", "5"),
+            Pair("Boys Love", "6"),
+            Pair("CGDCT", "7"),
+            Pair("Childcare", "8"),
+            Pair("Combat Sports", "9"),
+            Pair("Comedy", "10"),
+            Pair("Crossdressing", "11"),
+            Pair("Delinquents", "12"),
+            Pair("Detective", "13"),
+            Pair("Drama", "14"),
+            Pair("Ecchi", "15"),
+            Pair("Educational", "16"),
+            Pair("Erotica", "17"),
+            Pair("Fantasy", "18"),
+            Pair("Gag Humor", "19"),
+            Pair("Girls Love", "20"),
+            Pair("Gore", "21"),
+            Pair("Gourmet", "22"),
+            Pair("Harem", "23"),
+            Pair("Hentai", "24"),
+            Pair("High Stakes Game", "25"),
+            Pair("Historical", "26"),
+            Pair("Horror", "27"),
+            Pair("Idols (Female)", "28"),
+            Pair("Idols (Male)", "29"),
+            Pair("Isekai", "30"),
+            Pair("Iyashikei", "31"),
+            Pair("Josei", "32"),
+            Pair("Kids", "33"),
+            Pair("Love Polygon", "34"),
+            Pair("Love Status Quo", "35"),
+            Pair("Magical Sex Shift", "36"),
+            Pair("Mahou Shoujo", "37"),
+            Pair("Martial Arts", "38"),
+            Pair("Mecha", "39"),
+            Pair("Medical", "40"),
+            Pair("Military", "41"),
+            Pair("Music", "42"),
+            Pair("Mystery", "43"),
+            Pair("Mythology", "44"),
+            Pair("Organized Crime", "45"),
+            Pair("Otaku Culture", "46"),
+            Pair("Parody", "47"),
+            Pair("Performing Arts", "48"),
+            Pair("Pets", "49"),
+            Pair("Psychological", "50"),
+            Pair("Racing", "51"),
+            Pair("Reincarnation", "52"),
+            Pair("Reverse Harem", "53"),
+            Pair("Romance", "54"),
+            Pair("Samurai", "55"),
+            Pair("School", "56"),
+            Pair("Sci-Fi", "57"),
+            Pair("Seinen", "58"),
+            Pair("Shoujo", "59"),
+            Pair("Shounen", "60"),
+            Pair("Showbiz", "61"),
+            Pair("Slice of Life", "62"),
+            Pair("Space", "63"),
+            Pair("Sports", "64"),
+            Pair("Strategy Game", "65"),
+            Pair("Super Power", "66"),
+            Pair("Supernatural", "67"),
+            Pair("Survival", "68"),
+            Pair("Suspense", "69"),
+            Pair("Team Sports", "70"),
+            Pair("Time Travel", "71"),
+            Pair("Urban Fantasy", "72"),
+            Pair("Vampire", "73"),
+            Pair("Video Game", "74"),
+            Pair("Villainess", "75"),
+            Pair("Visual Arts", "76"),
+            Pair("Workplace", "77"),
         )
 
         val TYPES = listOf(
             Pair("All", ""),
-            Pair("TV", "TV"),
-            Pair("Movie", "Movie"),
-            Pair("OVA", "OVA"),
-            Pair("ONA", "ONA"),
-            Pair("Special", "Special"),
-            Pair("Music", "Music"),
+            Pair("Movie", "1"),
+            Pair("TV", "2"),
+            Pair("OVA", "3"),
+            Pair("ONA", "4"),
+            Pair("Special", "5"),
+            Pair("Music", "6"),
         )
 
         val STATUS = listOf(
             Pair("All", ""),
-            Pair("Currently Airing", "Currently Airing"),
-            Pair("Finished Airing", "Finished Airing"),
-            Pair("Not yet aired", "Not yet aired"),
+            Pair("Finished Airing", "1"),
+            Pair("Currently Airing", "2"),
+            Pair("Not yet aired", "3"),
         )
 
         val SORT = listOf(
             Pair("Default", "default"),
-            Pair("Recently Added", "recently_added"),
-            Pair("Title A-Z", "title_az"),
+            Pair("Recently Added", "recently"),
             Pair("Score", "score"),
-            Pair("Most Watched", "most_watched"),
-        )
-
-        val SEASONS = listOf(
-            Pair("All", ""),
-            Pair("Winter", "winter"),
-            Pair("Spring", "spring"),
-            Pair("Summer", "summer"),
-            Pair("Fall", "fall"),
+            Pair("Name A-Z", "a-z"),
+            Pair("Newest", "newest"),
+            Pair("Oldest", "oldest"),
+            Pair("Popularity", "popularity"),
         )
 
         val RATED = listOf(
             Pair("All", ""),
-            Pair("G", "G - All Ages"),
-            Pair("PG", "PG - Children"),
-            Pair("PG-13", "PG-13 - Teens 13 or older"),
-            Pair("R", "R - 17+"),
-            Pair("R+", "R+ - Mild Nudity"),
+            Pair("G", "1"),
+            Pair("PG", "2"),
+            Pair("PG-13", "3"),
+            Pair("R", "4"),
+            Pair("R+", "5"),
+            Pair("Rx", "6"),
         )
 
         val LANGUAGE = listOf(
             Pair("All", ""),
-            Pair("Sub", "sub"),
-            Pair("Dub", "dub"),
+            Pair("SUB", "1"),
+            Pair("DUB", "2"),
         )
 
         // Preference keys
@@ -322,7 +356,6 @@ class AniSnatch :
             val type = filters.filterIsInstance<TypeFilter>().firstOrNull()?.getSelectedValue() ?: ""
             val status = filters.filterIsInstance<StatusFilter>().firstOrNull()?.getSelectedValue() ?: ""
             val sort = filters.filterIsInstance<SortFilter>().firstOrNull()?.getSelectedValue() ?: "default"
-            val season = filters.filterIsInstance<SeasonFilter>().firstOrNull()?.getSelectedValue() ?: ""
             val rated = filters.filterIsInstance<RatedFilter>().firstOrNull()?.getSelectedValue() ?: ""
             val language = filters.filterIsInstance<LanguageFilter>().firstOrNull()?.getSelectedValue() ?: ""
 
@@ -330,12 +363,14 @@ class AniSnatch :
             if (genre.isNotBlank()) queryParts.add("genresActive=$genre")
             if (type.isNotBlank()) queryParts.add("type=$type")
             if (status.isNotBlank()) queryParts.add("status=$status")
-            if (season.isNotBlank()) queryParts.add("season=$season")
             if (rated.isNotBlank()) queryParts.add("rated=$rated")
             if (language.isNotBlank()) queryParts.add("language=$language")
             val queryStr = queryParts.joinToString("&")
 
-            val data = apiPost("api/filter", mapOf("query" to queryStr, "page" to page)) ?: return AnimesPage(emptyList(), false)
+            val b64 = Base64.encodeToString(queryStr.toByteArray(), Base64.NO_WRAP).replace("=", "")
+            val queryStrEncoded = b64.reversed()
+
+            val data = apiPost("api/filter", mapOf("query" to queryStrEncoded, "page" to page)) ?: return AnimesPage(emptyList(), false)
             val animeArr = data["data"]?.jsonObject?.get("anime")?.jsonArray ?: return AnimesPage(emptyList(), false)
             val totalPages = data["totalPages"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
             AnimesPage(animeArr.map { it.jsonObject.toSAnime() }, page < totalPages)
@@ -348,7 +383,6 @@ class AniSnatch :
         GenreFilter(),
         TypeFilter(),
         StatusFilter(),
-        SeasonFilter(),
         RatedFilter(),
         LanguageFilter(),
     )
@@ -448,13 +482,6 @@ class AniSnatch :
         fun getSelectedValue() = STATUS[state].second
     }
 
-    private class SeasonFilter :
-        AnimeFilter.Select<String>(
-            "Season",
-            SEASONS.map { it.first }.toTypedArray(),
-        ) {
-        fun getSelectedValue() = SEASONS[state].second
-    }
 
     private class RatedFilter :
         AnimeFilter.Select<String>(
