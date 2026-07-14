@@ -90,7 +90,7 @@ data class EpisodeMeta(
             if (!encoded.startsWith("/watch/") || !encoded.contains("#")) {
                 val parts = encoded.split("|")
                 val urlPart = parts.getOrElse(0) { "" }
-                val slug = urlPart.substringBefore("/ep-")
+                val slug = urlPart.removePrefix("/watch/").substringBefore("/ep-")
                 val epNum = urlPart.substringAfter("/ep-")
                 val malId = parts.getOrElse(1) { "" }
                 val timestamp = parts.getOrElse(2) { "" }

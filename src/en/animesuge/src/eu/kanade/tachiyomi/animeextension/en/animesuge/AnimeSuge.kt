@@ -269,7 +269,7 @@ class AnimeSuge : AnikotoTheme() {
 
             val meta = EpisodeMeta(slug, num.toString(), malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
-                url = meta.encode()
+                url = "/watch/${slug.removePrefix("/").removePrefix("anime/").removePrefix("watch/")}/ep-$num"
                 name = title
                 episode_number = num.toFloat()
                 date_upload = (timestamp.toLongOrNull() ?: 0L) * 1000L
@@ -280,22 +280,20 @@ class AnimeSuge : AnikotoTheme() {
             }
         }.reversed()
 
-        return enrichEpisodesWithMetadata(episodes, detailDoc)
+        val malId = elements.firstNotNullOfOrNull { it.attr("data-mal").takeIf { mal -> mal.isNotEmpty() } } ?: ""
+        return enrichEpisodesWithMetadata(episodes, detailDoc, malId)
     }
 
     private suspend fun enrichEpisodesWithMetadata(
         episodes: List<SEpisode>,
         detailDoc: org.jsoup.nodes.Document,
+        malId: String,
     ): List<SEpisode> {
         val showThumbs = loadThumbnails
         val showTitles = loadTitles
         val showDescs = loadDescriptions
         if (!showThumbs && !showTitles && !showDescs) return episodes
-
-        val firstMeta = episodes.firstOrNull()?.let {
-            runCatching { EpisodeMeta.decode(it.url) }.getOrNull()
-        }
-        val malId = firstMeta?.malId?.takeIf { it.isNotBlank() } ?: return episodes
+        if (malId.isBlank()) return episodes
 
         val animeCoverUrl = detailDoc.selectFirst("#media-info .poster img")?.absUrl("src")
 
@@ -327,6 +325,53 @@ class AnimeSuge : AnikotoTheme() {
     override fun getEpisodeUrl(episode: SEpisode): String {
         val path = EpisodeMeta.extractUrlPath(episode.url)
         return baseUrl + path.replace("/watch/anime/", "/anime/").replace("/watch/", "/anime/")
+    }
+
+    override suspend fun fetchFreshEpisodeMeta(slug: String, epNum: String): EpisodeMeta? {
+        try {
+            val cleanSlug = slug.removePrefix("/").removePrefix("anime/").removePrefix("watch/")
+            val detailResponse = client.newCall(GET("$baseUrl/anime/$cleanSlug")).execute()
+            val detailDoc = detailResponse.asJsoup()
+
+            val animeId = detailDoc.selectFirst(".favourite[data-id], [data-id]")?.attr("data-id")
+                ?: mangaIdRegex.find(detailDoc.html())?.groupValues?.get(1)
+                ?: return null
+
+            val vrf = getVrf(animeId)
+            val ajaxUrl = "$baseUrl/ajax/episode/list/$animeId?vrf=$vrf"
+            val headers = headersBuilder()
+                .set("X-Requested-With", "XMLHttpRequest")
+                .set("Referer", "$baseUrl/")
+                .build()
+            val ajaxResponse = client.newCall(GET(ajaxUrl, headers)).execute()
+            val ajaxJson = json.decodeFromString<EpisodeListResponse>(ajaxResponse.body.string())
+            if (ajaxJson.result.isEmpty()) return null
+
+            val epDoc = Jsoup.parse(ajaxJson.result)
+            val elements = epDoc.select("a[data-ids]")
+            for (element in elements) {
+                val slugNum = element.attr("data-slug")
+                val num = element.text().trim().ifEmpty { slugNum }.toIntOrNull() ?: slugNum.toIntOrNull() ?: 1
+                if (num.toString() == epNum || slugNum == epNum) {
+                    val malId = element.attr("data-mal")
+                    val timestamp = element.attr("data-timestamp")
+                    val dataIds = element.attr("data-ids")
+                    val hasSub = element.attr("data-sub") == "1"
+                    val hasDub = element.attr("data-dub") == "1"
+                    var title = element.attr("title").trim()
+                    if (title.isBlank()) {
+                        title = element.attr("data-num").trim()
+                    }
+                    if (title.isBlank()) {
+                        title = "Episode $num"
+                    }
+                    return EpisodeMeta(cleanSlug, epNum, malId, timestamp, dataIds, hasSub, hasDub, title)
+                }
+            }
+        } catch (e: Exception) {
+            loge("fetchFreshEpisodeMeta FAILED", e)
+        }
+        return null
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
