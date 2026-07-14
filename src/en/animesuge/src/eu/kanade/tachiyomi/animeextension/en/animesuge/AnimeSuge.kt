@@ -269,7 +269,7 @@ class AnimeSuge : AnikotoTheme() {
 
             val meta = EpisodeMeta(slug, num.toString(), malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
-                url = "/watch/${slug.removePrefix("/").removePrefix("anime/").removePrefix("watch/")}/ep-$num"
+                url = "/watch/${getCleanSlug(slug)}/ep-$num"
                 name = title
                 episode_number = num.toFloat()
                 date_upload = (timestamp.toLongOrNull() ?: 0L) * 1000L
@@ -329,7 +329,7 @@ class AnimeSuge : AnikotoTheme() {
 
     override suspend fun fetchFreshEpisodeMeta(slug: String, epNum: String): EpisodeMeta? {
         try {
-            val cleanSlug = slug.removePrefix("/").removePrefix("anime/").removePrefix("watch/")
+            val cleanSlug = getCleanSlug(slug)
             val detailResponse = client.newCall(GET("$baseUrl/anime/$cleanSlug")).execute()
             val detailDoc = detailResponse.asJsoup()
 

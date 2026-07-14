@@ -313,7 +313,7 @@ abstract class AnikotoTheme : Source() {
             if (title.isBlank()) title = "Episode $num"
             val meta = EpisodeMeta(slug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
-                url = "/watch/${slug.removePrefix("/watch/")}/ep-$num"
+                url = "/watch/${getCleanSlug(slug)}/ep-$num"
                 name = title
                 episode_number = num.toFloatOrNull() ?: 0.0f
                 date_upload = (timestamp.toLongOrNull() ?: 0L) * 1000L
@@ -594,7 +594,7 @@ abstract class AnikotoTheme : Source() {
 
     open suspend fun fetchFreshEpisodeMeta(slug: String, epNum: String): EpisodeMeta? {
         try {
-            val cleanSlug = slug.removePrefix("/watch/")
+            val cleanSlug = getCleanSlug(slug)
             val detailResponse = client.newCall(GET("$baseUrl/watch/$cleanSlug/ep-$epNum")).execute()
             val detailDoc = detailResponse.asJsoup()
             val watchMain = detailDoc.selectFirst("#watch-page, #watch-main, .watch-wrap")
@@ -913,6 +913,20 @@ abstract class AnikotoTheme : Source() {
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
         }
+    }
+
+    protected fun getCleanSlug(slug: String): String {
+        var s = slug
+        while (true) {
+            val prev = s
+            s = s.removePrefix("/")
+                .removePrefix("watch/")
+                .removePrefix("anime/")
+                .removePrefix("watch/")
+                .removeSuffix("/")
+            if (s == prev) break
+        }
+        return s
     }
 
     // ---- Logging ----
