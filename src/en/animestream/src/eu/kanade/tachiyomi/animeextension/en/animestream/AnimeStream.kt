@@ -211,9 +211,11 @@ class AnimeStream : Source() {
                                     "Movie"
                                 }
                             }
+
                             !epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true) -> {
                                 "S$seasonNum Ep. $epNumStr - $epTitle"
                             }
+
                             else -> {
                                 "Season $seasonNum Episode $epNumStr"
                             }
