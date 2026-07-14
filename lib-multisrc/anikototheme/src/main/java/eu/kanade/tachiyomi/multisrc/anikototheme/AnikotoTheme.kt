@@ -917,9 +917,9 @@ abstract class AnikotoTheme : Source() {
 
     // ---- Logging ----
 
-    private fun logi(msg: String) = Log.i(TAG, msg)
-    private fun logw(msg: String) = Log.w(TAG, msg)
-    private fun loge(msg: String, e: Throwable? = null) {
+    protected fun logi(msg: String) = Log.i(TAG, msg)
+    protected fun logw(msg: String) = Log.w(TAG, msg)
+    protected fun loge(msg: String, e: Throwable? = null) {
         if (e != null) Log.e(TAG, msg, e) else Log.e(TAG, msg)
     }
 
