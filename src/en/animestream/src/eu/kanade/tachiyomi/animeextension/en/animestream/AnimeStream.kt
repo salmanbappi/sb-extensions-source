@@ -196,10 +196,27 @@ class AnimeStream : Source() {
                             if (it % 1f == 0f) it.toInt().toString() else it.toString()
                         } ?: "1"
                         val epTitle = ep.title
-                        val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
-                            "S${season.season_number} Ep. $epNumStr - $epTitle"
+                        val isSeasonMovie = season.title.contains("Movie", ignoreCase = true)
+                        val seasonNum = if (!isSeasonMovie) {
+                            SEASON_REGEX.find(season.title)?.groupValues?.get(1)?.toIntOrNull()
+                                ?: season.season_number
                         } else {
-                            "Season ${season.season_number} Episode $epNumStr"
+                            season.season_number
+                        }
+                        val nameFormatted = when {
+                            isSeasonMovie -> {
+                                if (!epTitle.isNullOrBlank()) {
+                                    "Movie - $epTitle"
+                                } else {
+                                    "Movie"
+                                }
+                            }
+                            !epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true) -> {
+                                "S$seasonNum Ep. $epNumStr - $epTitle"
+                            }
+                            else -> {
+                                "Season $seasonNum Episode $epNumStr"
+                            }
                         }
                         episodes.add(
                             SEpisode.create().apply {
@@ -547,6 +564,8 @@ class AnimeStream : Source() {
     }
 
     companion object {
+        private val SEASON_REGEX = Regex("""(?i)Season\s+(\d+)""")
+
         private var proxy: LocalProxyServer? = null
 
         private const val PREF_DOMAIN_KEY = "pref_domain"
