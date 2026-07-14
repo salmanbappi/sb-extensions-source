@@ -186,29 +186,35 @@ class AnimeStream : Source() {
             val episodes = mutableListOf<SEpisode>()
 
             details.seasons?.forEach { season ->
-                val seasonResponse = client.newCall(GET("$baseUrl/api/v1/season/${season.content_id}/episodes?order_by=desc", headers)).awaitSuccess()
-                val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(seasonResponse.body.string())
-                seasonEpisodes.forEach { ep ->
-                    val epNumStr = ep.episode_number?.let {
-                        if (it % 1f == 0f) it.toInt().toString() else it.toString()
-                    } ?: "1"
-                    val epTitle = ep.title
-                    val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
-                        "S${season.season_number} Ep. $epNumStr - $epTitle"
-                    } else {
-                        "Season ${season.season_number} Episode $epNumStr"
+                var page = 1
+                while (true) {
+                    val seasonResponse = client.newCall(GET("$baseUrl/api/v1/season/${season.content_id}/episodes?limit=20&page=$page", headers)).awaitSuccess()
+                    val seasonEpisodes = json.decodeFromString<List<EpisodeItemDto>>(seasonResponse.body.string())
+                    if (seasonEpisodes.isEmpty()) break
+                    seasonEpisodes.forEach { ep ->
+                        val epNumStr = ep.episode_number?.let {
+                            if (it % 1f == 0f) it.toInt().toString() else it.toString()
+                        } ?: "1"
+                        val epTitle = ep.title
+                        val nameFormatted = if (!epTitle.isNullOrBlank() && !epTitle.equals("Episode $epNumStr", ignoreCase = true)) {
+                            "S${season.season_number} Ep. $epNumStr - $epTitle"
+                        } else {
+                            "Season ${season.season_number} Episode $epNumStr"
+                        }
+                        episodes.add(
+                            SEpisode.create().apply {
+                                url = "/episode/${ep.content_id}"
+                                name = nameFormatted
+                                episode_number = ep.episode_number ?: 1.0f
+                                date_upload = 0L
+                                summary = ep.description
+                                preview_url = if (showThumbnails) ep.image else null
+                                scanlator = getScanlatorLabel(ep.audio_locales)
+                            },
+                        )
                     }
-                    episodes.add(
-                        SEpisode.create().apply {
-                            url = "/episode/${ep.content_id}"
-                            name = nameFormatted
-                            episode_number = ep.episode_number ?: 1.0f
-                            date_upload = 0L
-                            summary = ep.description
-                            preview_url = if (showThumbnails) ep.image else null
-                            scanlator = getScanlatorLabel(ep.audio_locales)
-                        },
-                    )
+                    if (seasonEpisodes.size < 20) break
+                    page++
                 }
             }
             return episodes.sortedByDescending { it.episode_number }
