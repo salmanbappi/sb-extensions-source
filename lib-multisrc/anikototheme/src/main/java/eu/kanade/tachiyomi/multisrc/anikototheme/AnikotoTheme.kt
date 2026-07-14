@@ -313,7 +313,7 @@ abstract class AnikotoTheme : Source() {
             if (title.isBlank()) title = "Episode $num"
             val meta = EpisodeMeta(slug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
-                url = meta.encode()
+                url = "/watch/${slug.removePrefix("/watch/")}/ep-$num"
                 name = title
                 episode_number = num.toFloatOrNull() ?: 0.0f
                 date_upload = (timestamp.toLongOrNull() ?: 0L) * 1000L
@@ -324,19 +324,17 @@ abstract class AnikotoTheme : Source() {
             }
         }.reversed()
 
-        return enrichEpisodesWithMetadata(episodes, detailDoc)
+        val malId = elements.firstNotNullOfOrNull { it.attr("data-mal").takeIf { mal -> mal.isNotEmpty() } } ?: ""
+        return enrichEpisodesWithMetadata(episodes, detailDoc, malId)
     }
 
     private suspend fun enrichEpisodesWithMetadata(
         episodes: List<SEpisode>,
         detailDoc: Document,
+        malId: String,
     ): List<SEpisode> {
         if (!loadThumbnails && !loadTitles && !loadDescriptions) return episodes
-
-        val firstMeta = episodes.firstOrNull()?.let {
-            runCatching { EpisodeMeta.decode(it.url) }.getOrNull()
-        }
-        val malId = firstMeta?.malId?.takeIf { it.isNotBlank() } ?: return episodes
+        if (malId.isBlank()) return episodes
 
         val animeCoverUrl = detailDoc.selectFirst("#w-info .poster img")?.absUrl("src")
 
@@ -374,11 +372,16 @@ abstract class AnikotoTheme : Source() {
         logi("episode.url = ${episode.url}")
         logi("episode.name = ${episode.name}")
 
-        val meta = try {
+        var meta = try {
             EpisodeMeta.decode(episode.url)
         } catch (e: Exception) {
             loge("getHosterList: EpisodeMeta.decode FAILED — episode.url is not a valid encoded meta", e)
             return emptyList()
+        }
+
+        if (meta.dataIds.isEmpty()) {
+            logi("getHosterList: metadata is empty, fetching fresh metadata")
+            meta = fetchFreshEpisodeMeta(meta.slug, meta.epNum) ?: return emptyList()
         }
 
         logi("getHosterList: EpisodeMeta parsed OK: slug=${meta.slug} num=${meta.epNum} mal=${meta.malId} ts=${meta.timestamp} hasSub=${meta.hasSub} hasDub=${meta.hasDub}")
@@ -587,6 +590,42 @@ abstract class AnikotoTheme : Source() {
         logi("========== getHosterList END ==========")
 
         return sortedHosters
+    }
+
+    open suspend fun fetchFreshEpisodeMeta(slug: String, epNum: String): EpisodeMeta? {
+        try {
+            val cleanSlug = slug.removePrefix("/watch/")
+            val detailResponse = client.newCall(GET("$baseUrl/watch/$cleanSlug/ep-$epNum")).execute()
+            val detailDoc = detailResponse.asJsoup()
+            val watchMain = detailDoc.selectFirst("#watch-page, #watch-main, .watch-wrap")
+            val animeId = watchMain?.attr("data-id") ?: return null
+            if (animeId.isEmpty()) return null
+
+            val vrf = getVrf(animeId)
+            val ajaxUrl = "$baseUrl/ajax/episode/list/$animeId?vrf=$vrf&style=default"
+            val ajaxResponse = client.newCall(GET(ajaxUrl, ajaxHeaders(cleanSlug))).execute()
+            val ajaxJson = json.decodeFromString<EpisodeListResponse>(ajaxResponse.body.string())
+            if (ajaxJson.status != 200 || ajaxJson.result.isEmpty()) return null
+
+            val epDoc = Jsoup.parse(ajaxJson.result)
+            val elements = epDoc.select("ul.ep-range a, .ep-range a, .range a, a[data-ids]")
+            for (element in elements) {
+                val num = element.attr("data-num")
+                if (num == epNum) {
+                    val malId = element.attr("data-mal")
+                    val timestamp = element.attr("data-timestamp")
+                    val dataIds = element.attr("data-ids")
+                    val hasSub = element.attr("data-sub") == "1"
+                    val hasDub = element.attr("data-dub") == "1"
+                    var title = element.attr("title")
+                    if (title.isBlank()) title = "Episode $num"
+                    return EpisodeMeta(cleanSlug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
+                }
+            }
+        } catch (e: Exception) {
+            loge("fetchFreshEpisodeMeta FAILED", e)
+        }
+        return null
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> = hoster.videoList ?: emptyList()
