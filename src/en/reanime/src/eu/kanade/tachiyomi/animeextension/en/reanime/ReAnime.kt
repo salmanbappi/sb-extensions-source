@@ -30,7 +30,9 @@ import okhttp3.Request
 import okhttp3.Response
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.IvParameterSpec
@@ -97,6 +99,7 @@ data class DetailAnimeDto(
 data class EpisodeDto(
     val episode_number: Float,
     val title: String? = null,
+    val aired: String? = null,
 )
 
 class ReAnime : Source() {
@@ -210,10 +213,29 @@ class ReAnime : Source() {
         epList.map {
             SEpisode.create().apply {
                 url = "${anime.url}?ep=${it.episode_number}"
-                name = it.title ?: "Episode ${it.episode_number}"
+                val numStr = if (it.episode_number % 1 == 0f) it.episode_number.toInt().toString() else it.episode_number.toString()
+                name = it.title?.takeIf { it.isNotBlank() } ?: "Episode $numStr"
                 episode_number = it.episode_number
+                date_upload = parseDate(it.aired)
             }
         }.reversed() // Ascending order
+    }
+
+    private fun parseDate(dateStr: String?): Long {
+        if (dateStr.isNullOrEmpty()) return 0L
+        return try {
+            if (dateStr.contains(".")) {
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }.parse(dateStr)?.time ?: 0L
+            } else {
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }.parse(dateStr)?.time ?: 0L
+            }
+        } catch (e: Exception) {
+            0L
+        }
     }
 
     // ============================ Video Links =============================
@@ -269,19 +291,17 @@ class ReAnime : Source() {
                         val embedHtml = embedResponse.body.string()
 
                         val seed = Regex("""obfuscation_seed\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
-                            ?: return@async emptyList()
+                            ?: error("obfuscation_seed not found in embed (${server.serverName}) — possible CF block or changed format")
                         val wPayload = Regex("""w_payload\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
-                            ?: return@async emptyList()
+                            ?: error("w_payload not found in embed (${server.serverName})")
 
                         val mappings = resolveMappings(seed)
 
-                        val tokenRegex = Regex(""""?${mappings.tokenField}"?\s*:\s*"([^"]+)"""")
-                        val w = tokenRegex.find(embedHtml)?.groupValues?.get(1)
-                            ?: return@async emptyList()
+                        val w = Regex(""""?${mappings.tokenField}"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
+                            ?: error("tokenField (${mappings.tokenField}) not found — seed=$seed")
 
-                        val frag2Regex = Regex(""""?${mappings.keyFrag2Field}"?\s*:\s*"([^"]+)"""")
-                        val frag2B64 = frag2Regex.find(embedHtml)?.groupValues?.get(1)
-                            ?: return@async emptyList()
+                        val frag2B64 = Regex(""""?${mappings.keyFrag2Field}"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
+                            ?: error("keyFrag2Field (${mappings.keyFrag2Field}) not found")
 
                         // Fetch session token
                         val m3u8ApiUrl = "https://flixcloud.cc/api/m3u8/$w"
@@ -297,15 +317,15 @@ class ReAnime : Source() {
 
                         val jsonObject = json.parseToJsonElement(tokenBody).jsonObject
                         val v = jsonObject[kField]?.jsonPrimitive?.content
-                            ?: return@async emptyList()
+                            ?: error("kField ($kField) not in m3u8 response: ${tokenBody.take(200)}")
                         val t = jsonObject[pField]?.jsonPrimitive?.content
-                            ?: return@async emptyList()
+                            ?: error("pField ($pField) not in m3u8 response")
 
                         // Dynamic keys resolution via container parsing
                         val frag1B64 = Regex(""""?${mappings.keyField}"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
-                            ?: return@async emptyList()
+                            ?: error("keyField (${mappings.keyField}) not found")
                         val ivB64 = Regex(""""?${mappings.ivField}"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
-                            ?: return@async emptyList()
+                            ?: error("ivField (${mappings.ivField}) not found")
 
                         // Decryption
                         val frag1 = Base64.decode(frag1B64, Base64.DEFAULT)
