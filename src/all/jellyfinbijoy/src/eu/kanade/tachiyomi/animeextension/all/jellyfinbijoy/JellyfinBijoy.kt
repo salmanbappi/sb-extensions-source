@@ -22,10 +22,8 @@ class JellyfinBijoy : Jellyfin("Bijoy") {
         Pair("TV Shows (Indian)", "83f92a8e94d2e1a200fa9d5399a801f6"),
     )
 
-    override fun getFilterList(): AnimeFilterList {
-        return AnimeFilterList(
-            CategoryFilter(staticCategories),
-            SortFilter(),
-        )
-    }
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        CategoryFilter(staticCategories),
+        SortFilter(),
+    )
 }
