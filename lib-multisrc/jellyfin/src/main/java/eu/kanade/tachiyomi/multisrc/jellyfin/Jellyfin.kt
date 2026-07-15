@@ -22,6 +22,7 @@ import extensions.utils.delegate
 import extensions.utils.parseAs
 import extensions.utils.toRequestBody
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -629,13 +630,15 @@ abstract class Jellyfin(
             }
         }
 
-        categoriesCache?.let { if (it.isNotEmpty()) return it }
+        categoriesCache?.let { if (it.size > 1) return it }
 
         val list = mutableListOf<Pair<String, String>>(Pair("All", ""))
         try {
             if (userId.isNotBlank()) {
                 val url = "$baseUrl/Users/$userId/Views"
-                val resp = client.newCall(GET(url)).execute()
+                val resp = runBlocking(Dispatchers.IO) {
+                    client.newCall(GET(url)).execute()
+                }
                 if (resp.isSuccessful) {
                     val views = resp.parseAs<ItemListDto>(json)
                     views.items.forEach { list.add(Pair(it.name, it.id)) }
@@ -651,13 +654,13 @@ abstract class Jellyfin(
                         }
                     }
                     preferences.edit().putString("pref_cached_categories", jsonArray.toString()).apply()
+                    categoriesCache = list
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        categoriesCache = list
-        return list
+        return categoriesCache ?: list
     }
 
     override fun getFilterList(): AnimeFilterList {
