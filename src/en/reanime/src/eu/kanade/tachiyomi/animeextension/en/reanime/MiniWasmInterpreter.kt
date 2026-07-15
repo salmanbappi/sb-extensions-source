@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.reanime
 
 class MiniWasmInterpreter(private val wasmBytes: ByteArray) {
-    private val memory = ByteArray(65536)
+    val memory = ByteArray(65536)
     private val globals = IntArray(16)
 
     fun readVarUint(bytes: ByteArray, offset: IntArray): Int {
@@ -41,15 +41,33 @@ class MiniWasmInterpreter(private val wasmBytes: ByteArray) {
             val size = readVarUint(wasmBytes, offsetRef)
             offset = offsetRef[0]
             val end = offset + size
-            if (type == 10) { // Code section
-                val funcCount = readVarUint(wasmBytes, offsetRef)
-                offset = offsetRef[0]
-                for (f in 0 until funcCount) {
-                    val bodySize = readVarUint(wasmBytes, offsetRef)
-                    val bodyStart = offsetRef[0]
-                    val body = wasmBytes.copyOfRange(bodyStart, bodyStart + bodySize)
-                    funcs.add(body)
-                    offsetRef[0] = bodyStart + bodySize
+            when (type) {
+                10 -> { // Code section
+                    val funcCount = readVarUint(wasmBytes, offsetRef)
+                    offset = offsetRef[0]
+                    for (f in 0 until funcCount) {
+                        val bodySize = readVarUint(wasmBytes, offsetRef)
+                        val bodyStart = offsetRef[0]
+                        val body = wasmBytes.copyOfRange(bodyStart, bodyStart + bodySize)
+                        funcs.add(body)
+                        offsetRef[0] = bodyStart + bodySize
+                    }
+                }
+                11 -> { // Data section — initialize memory segments
+                    val segCount = readVarUint(wasmBytes, offsetRef)
+                    offset = offsetRef[0]
+                    for (s in 0 until segCount) {
+                        val flags = readVarUint(wasmBytes, offsetRef)
+                        if (flags == 0) { // Active segment
+                            // Offset expression: i32.const <value> end
+                            offsetRef[0]++ // skip i32.const opcode (0x41)
+                            val memOffset = readVarSint(wasmBytes, offsetRef)
+                            offsetRef[0]++ // skip end opcode (0x0b)
+                            val dataLen = readVarUint(wasmBytes, offsetRef)
+                            wasmBytes.copyInto(memory, memOffset, offsetRef[0], offsetRef[0] + dataLen)
+                            offsetRef[0] += dataLen
+                        }
+                    }
                 }
             }
             offset = end
@@ -218,11 +236,17 @@ class MiniWasmInterpreter(private val wasmBytes: ByteArray) {
                 pc += 3
                 val addr = stack.removeAt(stack.size - 1)
                 stack.add(memory[addr].toInt() and 0xff)
-            } else if (op == 0x3b || op == 0x3a) { // store8
+            } else if (op == 0x3a) { // i32.store8
                 pc += 3
                 val valStore = stack.removeAt(stack.size - 1)
                 val addr = stack.removeAt(stack.size - 1)
                 memory[addr] = (valStore and 0xff).toByte()
+            } else if (op == 0x3b) { // i32.store16
+                pc += 3
+                val valStore = stack.removeAt(stack.size - 1)
+                val addr = stack.removeAt(stack.size - 1)
+                memory[addr] = (valStore and 0xff).toByte()
+                memory[addr + 1] = ((valStore ushr 8) and 0xff).toByte()
             } else if (op == 0x6a) { // i32.add
                 pc++
                 val b = stack.removeAt(stack.size - 1)
@@ -248,6 +272,11 @@ class MiniWasmInterpreter(private val wasmBytes: ByteArray) {
                 val b = stack.removeAt(stack.size - 1)
                 val a = stack.removeAt(stack.size - 1)
                 stack.add(a shl (b and 31))
+            } else if (op == 0x75) { // i32.shr_s
+                pc++
+                val b = stack.removeAt(stack.size - 1)
+                val a = stack.removeAt(stack.size - 1)
+                stack.add(a shr (b and 31))
             } else if (op == 0x76) { // i32.shr_u
                 pc++
                 val b = stack.removeAt(stack.size - 1)
@@ -263,13 +292,52 @@ class MiniWasmInterpreter(private val wasmBytes: ByteArray) {
                 val b = stack.removeAt(stack.size - 1)
                 val a = stack.removeAt(stack.size - 1)
                 stack.add(a and b)
+            } else if (op == 0x6d) { // i32.div_u
+                pc++
+                val b = stack.removeAt(stack.size - 1)
+                val a = stack.removeAt(stack.size - 1)
+                stack.add((a.toLong() and 0xffffffffL).div(b.toLong() and 0xffffffffL).toInt())
+            } else if (op == 0x70) { // i32.rem_u
+                pc++
+                val b = stack.removeAt(stack.size - 1)
+                val a = stack.removeAt(stack.size - 1)
+                stack.add((a.toLong() and 0xffffffffL).rem(b.toLong() and 0xffffffffL).toInt())
             } else if (op == 0x4f) { // i32.ge_u
                 pc++
                 val b = stack.removeAt(stack.size - 1)
                 val a = stack.removeAt(stack.size - 1)
-                val aLong = a.toLong() and 0xffffffffL
-                val bLong = b.toLong() and 0xffffffffL
-                stack.add(if (aLong >= bLong) 1 else 0)
+                stack.add(if ((a.toLong() and 0xffffffffL) >= (b.toLong() and 0xffffffffL)) 1 else 0)
+            } else if (op == 0x45) { // i32.eqz
+                pc++
+                val a = stack.removeAt(stack.size - 1)
+                stack.add(if (a == 0) 1 else 0)
+            } else if (op == 0x46) { // i32.eq
+                pc++
+                val b = stack.removeAt(stack.size - 1)
+                val a = stack.removeAt(stack.size - 1)
+                stack.add(if (a == b) 1 else 0)
+            } else if (op == 0x47) { // i32.ne
+                pc++
+                val b = stack.removeAt(stack.size - 1)
+                val a = stack.removeAt(stack.size - 1)
+                stack.add(if (a != b) 1 else 0)
+            } else if (op == 0x49) { // i32.lt_u
+                pc++
+                val b = stack.removeAt(stack.size - 1)
+                val a = stack.removeAt(stack.size - 1)
+                stack.add(if ((a.toLong() and 0xffffffffL) < (b.toLong() and 0xffffffffL)) 1 else 0)
+            } else if (op == 0x4b) { // i32.gt_u
+                pc++
+                val b = stack.removeAt(stack.size - 1)
+                val a = stack.removeAt(stack.size - 1)
+                stack.add(if ((a.toLong() and 0xffffffffL) > (b.toLong() and 0xffffffffL)) 1 else 0)
+            } else if (op == 0x4d) { // i32.le_u
+                pc++
+                val b = stack.removeAt(stack.size - 1)
+                val a = stack.removeAt(stack.size - 1)
+                stack.add(if ((a.toLong() and 0xffffffffL) <= (b.toLong() and 0xffffffffL)) 1 else 0)
+            } else if (op == 0x0f) { // return
+                pc++
             } else {
                 throw Exception("Unsupported opcode: " + op.toString(16))
             }
