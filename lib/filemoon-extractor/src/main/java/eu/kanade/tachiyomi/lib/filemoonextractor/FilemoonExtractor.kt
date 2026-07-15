@@ -3,7 +3,7 @@ package eu.kanade.tachiyomi.lib.filemoonextractor
 import android.content.SharedPreferences
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
-import dev.datlag.jsunpacker.JsUnpacker
+import eu.kanade.tachiyomi.lib.unpacker.jsunpacker.JsUnpacker
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils

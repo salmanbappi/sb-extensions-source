@@ -27,7 +27,7 @@ SOFTWARE.
 
 package eu.kanade.tachiyomi.animeextension.en.animepahe.extractor
 
-import dev.datlag.jsunpacker.JsUnpacker
+import eu.kanade.tachiyomi.lib.unpacker.jsunpacker.JsUnpacker
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST

@@ -132,6 +132,7 @@ configurations.configureEach {
     }
 }
 
+
 tasks.register("writeManifestFile") {
     doLast {
         def manifest = android.sourceSets.getByName("main").manifest

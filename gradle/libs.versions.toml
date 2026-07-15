@@ -10,7 +10,6 @@ serialization = "1.7.3"
 
 # Custom additions for BDIX/custom extensions and buildSrc
 kotlinter = "3.15.0"
-jsunpacker = "1.0.1"
 custom-agp = "8.2.2"
 custom-kotlin = "2.0.0"
 custom-serialization = "1.7.1"
@@ -41,7 +40,6 @@ gradle-agp = { module = "com.android.tools.build:gradle", version.ref = "custom-
 gradle-kotlin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "custom-kotlin" }
 gradle-serialization = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "custom-kotlin" }
 gradle-kotlinter = { module = "org.jmailen.gradle:kotlinter-gradle", version.ref = "kotlinter" }
-jsunpacker = { module = "dev.datlag.jsunpacker:jsunpacker", version.ref = "jsunpacker" }
 kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib-jdk8", version.ref = "custom-kotlin" }
 
 [plugins]

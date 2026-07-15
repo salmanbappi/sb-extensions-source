@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.lib.mp4uploadextractor
 
-import dev.datlag.jsunpacker.JsUnpacker
+import eu.kanade.tachiyomi.lib.unpacker.jsunpacker.JsUnpacker
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
