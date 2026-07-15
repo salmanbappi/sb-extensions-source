@@ -3,7 +3,7 @@ package eu.kanade.tachiyomi.animeextension.en.anisnatch
 import android.util.Base64
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.m3u8server.M3u8Integration
-import dev.datlag.jsunpacker.JsUnpacker
+import eu.kanade.tachiyomi.lib.unpacker.jsunpacker.JsUnpacker
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList

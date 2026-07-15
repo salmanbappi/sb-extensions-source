@@ -1,16 +1,13 @@
 ext {
     extName = 'Anitusk'
     extClass = '.Anitusk'
-    extVersionCode = 18
+    extVersionCode = 19
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation(project(":lib:unpacker"))
-    implementation(libs.jsunpacker) {
-        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
-    }
     implementation(project(":lib:vidhide-extractor"))
     implementation(project(":lib:dood-extractor"))
     implementation(project(":lib:playlist-utils"))
