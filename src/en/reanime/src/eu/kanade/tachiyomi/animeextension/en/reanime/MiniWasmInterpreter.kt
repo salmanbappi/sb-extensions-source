@@ -53,6 +53,7 @@ class MiniWasmInterpreter(private val wasmBytes: ByteArray) {
                         offsetRef[0] = bodyStart + bodySize
                     }
                 }
+
                 11 -> { // Data section — initialize memory segments
                     val segCount = readVarUint(wasmBytes, offsetRef)
                     offset = offsetRef[0]
