@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import keiyoushi.utils.parallelCatchingFlatMap
+import keiyoushi.utils.toHex
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -775,7 +776,7 @@ class Fojik :
 
     private fun sha256(input: String): String {
         val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }
+        return bytes.toHex()
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
