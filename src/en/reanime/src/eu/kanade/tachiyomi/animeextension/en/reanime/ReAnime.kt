@@ -13,7 +13,7 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
-import keiyoushi.utils.addSwitchPreference
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -98,8 +98,6 @@ data class DetailAnimeDto(
 data class EpisodeDto(
     val episode_number: Float,
     val title: String? = null,
-    val description: String? = null,
-    val thumbnail: String? = null,
 )
 
 class ReAnime : Source() {
@@ -198,10 +196,6 @@ class ReAnime : Source() {
     // ============================== Episodes ==============================
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = withContext(Dispatchers.IO) {
-        val detailsRequest = GET("$baseUrl/api/v1/anime/${anime.url}", headers)
-        val detailsResponse = client.newCall(detailsRequest).execute()
-        val details = detailsResponse.parseAs<DetailAnimeDto>()
-
         val episodesRequest = GET("$baseUrl/api/v1/anime/${anime.url}/episodes?limit=2000", headers)
         val episodesResponse = client.newCall(episodesRequest).execute()
 
@@ -214,26 +208,11 @@ class ReAnime : Source() {
             } ?: emptyList()
         }
 
-        val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
-        val subbed = details.subbed ?: 0
-        val dubbed = details.dubbed ?: 0
-
         epList.map {
             SEpisode.create().apply {
                 url = "${anime.url}?ep=${it.episode_number}"
                 name = it.title ?: "Episode ${it.episode_number}"
                 episode_number = it.episode_number
-                summary = it.description?.takeIf { d -> d.isNotEmpty() }
-                preview_url = if (showThumbnails) it.thumbnail?.takeIf { t -> t.isNotEmpty() } else null
-
-                val hasSub = it.episode_number.toInt() <= subbed
-                val hasDub = it.episode_number.toInt() <= dubbed
-                scanlator = when {
-                    hasSub && hasDub -> "Sub, Dub"
-                    hasSub -> "Sub"
-                    hasDub -> "Dub"
-                    else -> null
-                }
             }
         }.reversed() // Ascending order
     }
@@ -499,12 +478,6 @@ class ReAnime : Source() {
             default = PREF_QUALITY_DEFAULT,
             summary = "%s",
         )
-        screen.addSwitchPreference(
-            key = PREF_SHOW_THUMBNAILS_KEY,
-            title = PREF_SHOW_THUMBNAILS_TITLE,
-            summary = PREF_SHOW_THUMBNAILS_SUMMARY,
-            default = true,
-        )
     }
 
     companion object {
@@ -512,9 +485,5 @@ class ReAnime : Source() {
         private const val PREF_QUALITY_TITLE = "Calidad preferida"
         private const val PREF_QUALITY_DEFAULT = "1080p"
         private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "480p", "360p")
-
-        private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
-        private const val PREF_SHOW_THUMBNAILS_TITLE = "Show episode thumbnails"
-        private const val PREF_SHOW_THUMBNAILS_SUMMARY = "Fetch and display images in the episode list."
     }
 }
