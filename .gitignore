@@ -12,11 +12,3 @@ gen
 generated-src/
 .kotlin
 .history
-
-# Agent Customizations & Temporary Files
-.agents/
-AGENTS.md
-GEMINI.md
-skills/
-anikoto_decompiled/
-anikoto_decompiled_v3/
