@@ -282,7 +282,7 @@ class Udvash : Source() {
                     } else {
                         parentName
                     }
-                    nextTasks.add(async { recursiveEpisodeFetch(nextUrl, cleanName, fixedSectionId, visited, depth + 1, currentlyInside) })
+                    nextTasks.add(async(Dispatchers.IO) { recursiveEpisodeFetch(nextUrl, cleanName, fixedSectionId, visited, depth + 1, currentlyInside) })
                 }
             }
         }
@@ -352,7 +352,7 @@ class Udvash : Source() {
 
             val fetchedCourses = runBlocking(Dispatchers.IO) {
                 indexLinks.map { path ->
-                    async {
+                    async(Dispatchers.IO) {
                         val localList = mutableListOf<Course>()
                         try {
                             val url = if (path.startsWith("http")) path else "$baseUrl$path"
