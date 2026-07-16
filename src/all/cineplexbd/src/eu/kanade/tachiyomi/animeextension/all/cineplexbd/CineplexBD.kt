@@ -594,9 +594,26 @@ class CineplexBD : Source() {
 
     override fun videoListParse(response: Response): List<Video> {
         val url = response.request.url.toString()
+
+        val responseCookies = response.headers("Set-Cookie")
+            .mapNotNull { okhttp3.Cookie.parse(response.request.url, it) }
+        val jarCookies = client.cookieJar.loadForRequest(response.request.url)
+        val cookies = (responseCookies + jarCookies)
+            .distinctBy { it.name }
+            .joinToString("; ") { "${it.name}=${it.value}" }
+
+        val videoHeaders = headers.newBuilder()
+            .apply {
+                if (cookies.isNotEmpty()) {
+                    add("Cookie", cookies)
+                }
+                add("Referer", url)
+            }
+            .build()
+
         if (url.endsWith(".mp4") || url.endsWith(".mkv") || url.contains("/Data/") || url.contains(".m3u8")) {
             val quality = if (url.contains(".m3u8")) "HLS" else "Direct"
-            return listOf(Video(videoUrl = url, videoTitle = quality))
+            return listOf(Video(videoUrl = url, videoTitle = quality, headers = videoHeaders))
         }
 
         val html = response.body.string()
@@ -612,7 +629,7 @@ class CineplexBD : Source() {
         if (!videoUrl.isNullOrBlank()) {
             val finalUrl = if (videoUrl.startsWith("http")) videoUrl else "$baseUrl/${videoUrl.trimStart('/')}"
             val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
-            return listOf(Video(videoUrl = finalUrl, videoTitle = quality))
+            return listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
         }
         return emptyList()
     }
