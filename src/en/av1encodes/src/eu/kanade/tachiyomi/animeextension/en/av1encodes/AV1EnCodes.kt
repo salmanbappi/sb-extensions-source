@@ -5,8 +5,8 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import extensions.utils.Source
 import extensions.utils.asJsoup
 import extensions.utils.parseAs
 import kotlinx.serialization.Serializable
@@ -16,7 +16,7 @@ import org.jsoup.nodes.Document
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-class AV1EnCodes : AnimeHttpSource() {
+class AV1EnCodes : Source() {
 
     override val name = "AV1 EnCodes"
 
@@ -136,6 +136,8 @@ class AV1EnCodes : AnimeHttpSource() {
         }.reversed()
     }
 
+    override fun videoListRequest(episode: SEpisode): Request = GET("$baseUrl${episode.url}", headers)
+
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.asJsoup()
@@ -179,7 +181,13 @@ class AV1EnCodes : AnimeHttpSource() {
                         val redirectResponse = client.newCall(redirectRequest).execute()
                         val finalUrl = redirectResponse.request.url.toString()
 
-                        videos.add(Video(finalUrl, resText, finalUrl))
+                        videos.add(
+                            Video(
+                                videoUrl = finalUrl,
+                                videoTitle = resText,
+                                headers = headersBuilder().add("Referer", resUrl).build()
+                            )
+                        )
                     }
                 }
             } catch (e: Exception) {
