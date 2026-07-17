@@ -31,12 +31,10 @@ class AV1EnCodes : AnimeHttpSource() {
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int): Request {
-        return if (page == 1) {
-            GET(baseUrl, headers)
-        } else {
-            GET("$baseUrl/anime?sort=latest&page=$page", headers)
-        }
+    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
+        GET(baseUrl, headers)
+    } else {
+        GET("$baseUrl/anime?sort=latest&page=$page", headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -93,9 +91,7 @@ class AV1EnCodes : AnimeHttpSource() {
     }
 
     // =============================== Search ===============================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return GET("$baseUrl/search?q=${URLEncoder.encode(query, "UTF-8")}", headers)
-    }
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = GET("$baseUrl/search?q=${URLEncoder.encode(query, "UTF-8")}", headers)
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val doc = response.asJsoup()
