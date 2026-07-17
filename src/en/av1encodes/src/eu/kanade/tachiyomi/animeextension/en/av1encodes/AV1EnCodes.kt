@@ -6,11 +6,15 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import extensions.utils.parseAs
 import kotlinx.serialization.Serializable
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -18,6 +22,10 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 
 class AV1EnCodes : Source() {
+
+    override val client = network.client.newBuilder()
+        .addInterceptor(AV1EnCodesCloudflareInterceptor(network.client) { baseUrl })
+        .build()
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
 
@@ -207,4 +215,21 @@ class AV1EnCodes : Source() {
         val download_link: String? = null,
         val error: String? = null,
     )
+}
+
+class AV1EnCodesCloudflareInterceptor(
+    private val client: OkHttpClient,
+    private val baseUrlProvider: () -> String,
+) : Interceptor {
+    private val cfInterceptor = CloudflareInterceptor(client)
+
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val isBaseUrl = request.url.host == baseUrlProvider().toHttpUrlOrNull()?.host
+        return if (isBaseUrl) {
+            cfInterceptor.intercept(chain)
+        } else {
+            chain.proceed(request)
+        }
+    }
 }
