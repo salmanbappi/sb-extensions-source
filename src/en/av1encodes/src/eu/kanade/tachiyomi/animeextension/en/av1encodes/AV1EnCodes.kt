@@ -39,7 +39,10 @@ class AV1EnCodes : Source() {
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
+
+    override fun episodeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
