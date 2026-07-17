@@ -57,9 +57,7 @@ class AV1EnCodes : Source() {
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/stats#top-downloads", headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage {
-        return AnimesPage(parseStatsPage(response.asJsoup()), false)
-    }
+    override fun popularAnimeParse(response: Response): AnimesPage = AnimesPage(parseStatsPage(response.asJsoup()), false)
 
     private val seasonRegex by lazy { Regex("""\[S\d""") }
     private val animeNameRegex by lazy { Regex("""\[S\d{1,2}(?:-E\d+)?]\s*([^\[]+?)\s*\[""") }
