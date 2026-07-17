@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.av1encodes
 
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -17,6 +18,8 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 
 class AV1EnCodes : Source() {
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {}
 
     override val name = "AV1 EnCodes"
 
