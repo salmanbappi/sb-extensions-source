@@ -185,8 +185,8 @@ class AV1EnCodes : Source() {
                             Video(
                                 videoUrl = finalUrl,
                                 videoTitle = resText,
-                                headers = headersBuilder().add("Referer", resUrl).build()
-                            )
+                                headers = headersBuilder().add("Referer", resUrl).build(),
+                            ),
                         )
                     }
                 }
