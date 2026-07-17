@@ -447,7 +447,7 @@ class AV1EnCodes : Source() {
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
         return this.sortedWith(
-            compareBy { it.videoTitle.contains(quality) }
+            compareBy { it.videoTitle.contains(quality) },
         ).reversed()
     }
 
