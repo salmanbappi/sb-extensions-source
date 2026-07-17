@@ -9,9 +9,9 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
-import keiyoushi.utils.addEditTextPreference
 import extensions.utils.asJsoup
 import extensions.utils.parseAs
+import keiyoushi.utils.addEditTextPreference
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
