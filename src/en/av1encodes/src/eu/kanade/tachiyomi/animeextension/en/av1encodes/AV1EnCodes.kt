@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
+import keiyoushi.utils.addEditTextPreference
 import extensions.utils.asJsoup
 import extensions.utils.parseAs
 import kotlinx.serialization.Serializable
@@ -28,7 +29,19 @@ class AV1EnCodes : Source() {
         .addInterceptor(AV1EnCodesCloudflareInterceptor(network.client) { baseUrl })
         .build()
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {}
+    private val cfBypassUserAgent by lazy {
+        preferences.getString(PREF_CF_UA_KEY, PREF_CF_UA_DEFAULT)
+            ?.takeIf { it.isNotBlank() } ?: PREF_CF_UA_DEFAULT
+    }
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        screen.addEditTextPreference(
+            key = PREF_CF_UA_KEY,
+            title = PREF_CF_UA_TITLE,
+            summary = PREF_CF_UA_SUMMARY,
+            default = PREF_CF_UA_DEFAULT,
+        )
+    }
 
     override val name = "AV1 EnCodes"
 
@@ -40,7 +53,7 @@ class AV1EnCodes : Source() {
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        .set("User-Agent", cfBypassUserAgent)
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
         .add("Accept-Language", "en-US,en;q=0.9")
         .add("Sec-Ch-Ua", "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\"")
@@ -308,6 +321,16 @@ class AV1EnCodes : Source() {
         val download_link: String? = null,
         val error: String? = null,
     )
+
+    companion object {
+        private const val DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+        private const val PREF_CF_UA_KEY = "cf_bypass_ua"
+        private const val PREF_CF_UA_TITLE = "Custom User-Agent"
+        private const val PREF_CF_UA_DEFAULT = DEFAULT_UA
+        private val PREF_CF_UA_SUMMARY = """Custom User-Agent string for the Cloudflare WebView bypass.
+            |Leave blank to use the default.
+        """.trimMargin()
+    }
 }
 
 class AV1EnCodesCloudflareInterceptor(
