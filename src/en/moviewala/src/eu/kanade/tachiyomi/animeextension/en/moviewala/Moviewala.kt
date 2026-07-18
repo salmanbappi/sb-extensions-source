@@ -9,9 +9,9 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import extensions.utils.Source
 import extensions.utils.asJsoup
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Request
@@ -84,7 +84,7 @@ class Moviewala : Source() {
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        CategoryFilter()
+        CategoryFilter(),
     )
 
     // ======================== Parse Helpers ================================
@@ -217,7 +217,7 @@ class Moviewala : Source() {
                             url = "${anime.url}?tmdb_id=$tmdbId&season=${season.season_number}&episode=${episode.episode_number}"
                             name = "S${season.season_number} E${episode.episode_number} ${episode.title ?: ""}".trim()
                             episode_number = episode.episode_number.toFloat()
-                        }
+                        },
                     )
                 }
             }
@@ -230,7 +230,7 @@ class Moviewala : Source() {
                 url = "${anime.url}?tmdb_id=$tmdbId"
                 name = "Movie"
                 episode_number = 1.0f
-            }
+            },
         )
     }
 
@@ -258,11 +258,9 @@ class Moviewala : Source() {
         return null
     }
 
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        return listOf(
-            Hoster(hosterName = "Silverline", hosterUrl = "$baseUrl${episode.url}")
-        )
-    }
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(
+        Hoster(hosterName = "Silverline", hosterUrl = "$baseUrl${episode.url}"),
+    )
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val uri = android.net.Uri.parse(hoster.hosterUrl)
@@ -292,7 +290,7 @@ class Moviewala : Source() {
             val seasons = myJson.decodeFromString<List<PlayerSeasonDto>>(cleanJson)
             val matchingEpisode = seasons.firstOrNull { it.season_number == season.toInt() }
                 ?.episodes?.firstOrNull { it.episode_number == episode.toInt() }
-                ?: throw Exception("Episode S${season}E${episode} not found in player page")
+                ?: throw Exception("Episode S${season}E$episode not found in player page")
 
             matchingEpisode.playback?.hls ?: throw Exception("HLS stream URL not found for episode")
         } else {
@@ -307,7 +305,7 @@ class Moviewala : Source() {
             playlistUrl = videoUrl,
             referer = playerUrl,
             masterHeaders = headers,
-            videoHeaders = headers
+            videoHeaders = headers,
         )
     }
 
@@ -333,17 +331,17 @@ class Moviewala : Source() {
 @Serializable
 data class PlayerSeasonDto(
     val episodes: List<PlayerEpisodeDto>,
-    val season_number: Int
+    val season_number: Int,
 )
 
 @Serializable
 data class PlayerEpisodeDto(
     val episode_number: Int,
     val playback: PlayerPlaybackDto? = null,
-    val title: String? = null
+    val title: String? = null,
 )
 
 @Serializable
 data class PlayerPlaybackDto(
-    val hls: String? = null
+    val hls: String? = null,
 )
