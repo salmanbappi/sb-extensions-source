@@ -203,7 +203,8 @@ class Moviewala : Source() {
         val tmdbId = extractTmdbId(doc) ?: throw Exception("TMDB ID not found")
 
         if (anime.url.contains("/series/")) {
-            val playerUrl = "https://player.silverlinehub.org/?tmdb_id=$tmdbId&type=series"
+            val timestamp = System.currentTimeMillis() / 1000
+            val playerUrl = "https://player.silverlinehub.org/?tmdb_id=$tmdbId&type=series&_=$timestamp"
             val playerResponse = noCacheClient.newCall(GET(playerUrl, headers)).execute()
             val playerHtml = playerResponse.body.string()
 
@@ -277,10 +278,11 @@ class Moviewala : Source() {
         val season = uri.getQueryParameter("season")
         val episode = uri.getQueryParameter("episode")
 
+        val timestamp = System.currentTimeMillis() / 1000
         val playerUrl = if (season != null && episode != null) {
-            "https://player.silverlinehub.org/?tmdb_id=$tmdbId&type=series"
+            "https://player.silverlinehub.org/?tmdb_id=$tmdbId&type=series&_=$timestamp"
         } else {
-            "https://player.silverlinehub.org/?tmdb_id=$tmdbId"
+            "https://player.silverlinehub.org/?tmdb_id=$tmdbId&_=$timestamp"
         }
 
         val request = GET(playerUrl, headers).newBuilder()
