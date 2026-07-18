@@ -15,6 +15,7 @@ import extensions.utils.Source
 import extensions.utils.asJsoup
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -30,6 +31,10 @@ class Moviewala : Source() {
     override val lang = "en"
 
     override val supportsLatest = true
+
+    override val client: OkHttpClient = network.client.newBuilder()
+        .cache(null)
+        .build()
 
     private val myJson = Json {
         ignoreUnknownKeys = true
