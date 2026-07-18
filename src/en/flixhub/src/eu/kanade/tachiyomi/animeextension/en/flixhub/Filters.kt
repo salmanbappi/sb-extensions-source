@@ -2,24 +2,26 @@ package eu.kanade.tachiyomi.animeextension.en.flixhub
 
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 
-class TypeFilter : AnimeFilter.Select<String>(
-    "Type",
-    types.map { it.first }.toTypedArray()
-) {
+class TypeFilter :
+    AnimeFilter.Select<String>(
+        "Type",
+        types.map { it.first }.toTypedArray(),
+    ) {
     val selected: String get() = types[state].second
 
     companion object {
         val types = listOf(
             Pair("Movies", "movies"),
-            Pair("TV Series", "tv-series")
+            Pair("TV Series", "tv-series"),
         )
     }
 }
 
-class CategoryFilter : AnimeFilter.Select<String>(
-    "Category",
-    categories.map { it.first }.toTypedArray()
-) {
+class CategoryFilter :
+    AnimeFilter.Select<String>(
+        "Category",
+        categories.map { it.first }.toTypedArray(),
+    ) {
     val selected: String get() = categories[state].second
 
     companion object {
@@ -45,21 +47,22 @@ class CategoryFilter : AnimeFilter.Select<String>(
             Pair("Romance", "Romance"),
             Pair("Sci-Fi", "Science Fiction"),
             Pair("Thriller", "Thriller"),
-            Pair("War", "War")
+            Pair("War", "War"),
         )
     }
 }
 
-class SortFilter : AnimeFilter.Select<String>(
-    "Sort (TV Series only)",
-    sorts.map { it.first }.toTypedArray()
-) {
+class SortFilter :
+    AnimeFilter.Select<String>(
+        "Sort (TV Series only)",
+        sorts.map { it.first }.toTypedArray(),
+    ) {
     val selected: String get() = sorts[state].second
 
     companion object {
         val sorts = listOf(
             Pair("Latest", "latest"),
-            Pair("Popular", "popular")
+            Pair("Popular", "popular"),
         )
     }
 }

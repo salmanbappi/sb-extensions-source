@@ -59,10 +59,13 @@ class FlixHub : Source() {
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         if (query.isNotBlank()) {
             val response = client.newCall(
-                GET("$baseUrl/search/suggestions?q=${UriEncoder.encode(query)}", headers.newBuilder()
-                    .add("X-Requested-With", "XMLHttpRequest")
-                    .add("Accept", "application/json")
-                    .build())
+                GET(
+                    "$baseUrl/search/suggestions?q=${UriEncoder.encode(query)}",
+                    headers.newBuilder()
+                        .add("X-Requested-With", "XMLHttpRequest")
+                        .add("Accept", "application/json")
+                        .build(),
+                ),
             ).execute()
             val jsonString = response.body.string()
             val searchResult = myJson.decodeFromString<SearchResponseDto>(jsonString)
@@ -89,6 +92,7 @@ class FlixHub : Source() {
 
         val url = when {
             category == "kidztime" -> "$baseUrl/kidztime?page=$page"
+
             type == "movies" -> {
                 if (category == "all") {
                     "$baseUrl/movies?page=$page"
@@ -96,6 +100,7 @@ class FlixHub : Source() {
                     "$baseUrl/movies?category=$category&page=$page"
                 }
             }
+
             else -> {
                 if (category == "all") {
                     "$baseUrl/tv-series?sort=$sort&page=$page"
@@ -112,7 +117,7 @@ class FlixHub : Source() {
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
         TypeFilter(),
         CategoryFilter(),
-        SortFilter()
+        SortFilter(),
     )
 
     // ======================== Parse Helpers ================================
@@ -148,7 +153,7 @@ class FlixHub : Source() {
                 ?: anime.thumbnail_url
             description = doc.selectFirst("#playerMovieDescText")?.text()
                 ?: doc.selectFirst(".player-movie-description")?.text()
-            
+
             genre = doc.select("a.player-movie-badge--link").joinToString(", ") { it.text() }
             author = doc.selectFirst("span.player-movie-crew-name")?.text()
             status = SAnime.COMPLETED
@@ -164,7 +169,7 @@ class FlixHub : Source() {
                     url = anime.url
                     name = "Movie"
                     episode_number = 1.0f
-                }
+                },
             )
         }
 
@@ -179,7 +184,7 @@ class FlixHub : Source() {
                     url = anime.url
                     name = "Episode 1"
                     episode_number = 1.0f
-                }
+                },
             )
         }
 
@@ -200,38 +205,34 @@ class FlixHub : Source() {
 
     // ============================ Video Links =============================
 
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        return listOf(
-            Hoster(hosterName = "Direct Stream", hosterUrl = "$baseUrl${episode.url}")
-        )
-    }
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(
+        Hoster(hosterName = "Direct Stream", hosterUrl = "$baseUrl${episode.url}"),
+    )
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val response = client.newCall(GET(hoster.hosterUrl, headers)).execute()
         val doc = response.asJsoup()
         val sourceEl = doc.selectFirst("source") ?: throw Exception("Video source not found")
         val videoUrl = sourceEl.attr("abs:src")
-        
+
         val ext = if (videoUrl.contains(".mkv")) "MKV" else "MP4"
         return listOf(
             Video(
                 videoUrl = videoUrl,
                 videoTitle = "Direct ($ext)",
-                headers = headers
-            )
+                headers = headers,
+            ),
         )
     }
 
-    override fun List<Video>.sortVideos(): List<Video> {
-        return this
-    }
+    override fun List<Video>.sortVideos(): List<Video> = this
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
 }
 
 @Serializable
 data class SearchResponseDto(
-    val results: List<SearchResultDto>
+    val results: List<SearchResultDto>,
 )
 
 @Serializable
@@ -242,11 +243,9 @@ data class SearchResultDto(
     val year: String? = null,
     val poster: String? = null,
     val is_available: Boolean,
-    val watch_url: String? = null
+    val watch_url: String? = null,
 )
 
 object UriEncoder {
-    fun encode(s: String): String {
-        return java.net.URLEncoder.encode(s, "UTF-8")
-    }
+    fun encode(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 }
