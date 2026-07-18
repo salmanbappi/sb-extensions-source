@@ -87,7 +87,7 @@ class Moviewala : Source() {
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        CategoryFilter()
+        CategoryFilter(),
     )
 
     // ======================== Parse Helpers ================================
@@ -248,7 +248,7 @@ class Moviewala : Source() {
                 name = "Movie"
                 setUrlWithoutDomain(anime.url)
                 episode_number = 1.0f
-            }
+            },
         )
     }
 
@@ -300,16 +300,16 @@ class Moviewala : Source() {
             hosters.add(
                 Hoster(
                     hosterName = "Silverline (TMDB)",
-                    hosterUrl = "$playerBaseUrl/?tmdb_id=$tmdbPosterId"
-                )
+                    hosterUrl = "$playerBaseUrl/?tmdb_id=$tmdbPosterId",
+                ),
             )
         }
         if (!imdbId.isNullOrBlank()) {
             hosters.add(
                 Hoster(
                     hosterName = "Silverline (IMDB)",
-                    hosterUrl = "$playerBaseUrl/?imdb_id=$imdbId"
-                )
+                    hosterUrl = "$playerBaseUrl/?imdb_id=$imdbId",
+                ),
             )
         }
 
@@ -331,11 +331,12 @@ class Moviewala : Source() {
             val html = client.newCall(
                 Request.Builder()
                     .url(embedUrl)
-                    .headers(headers.newBuilder()
-                        .set("Referer", "$baseUrl/")
-                        .build()
+                    .headers(
+                        headers.newBuilder()
+                            .set("Referer", "$baseUrl/")
+                            .build(),
                     )
-                    .build()
+                    .build(),
             ).execute().body.string()
 
             val videos = mutableListOf<Video>()
@@ -352,10 +353,10 @@ class Moviewala : Source() {
                                 videoTitle = "${hoster.hosterName}",
                                 headers = headers.newBuilder()
                                     .set("Referer", embedUrl)
-                                    .build()
-                            )
-                        )
-                    )
+                                    .build(),
+                            ),
+                        ),
+                    ),
                 )
             }
 
@@ -369,8 +370,8 @@ class Moviewala : Source() {
                         videoTitle = "${hoster.hosterName} - MP4",
                         headers = headers.newBuilder()
                             .set("Referer", embedUrl)
-                            .build()
-                    )
+                            .build(),
+                    ),
                 )
             }
 
@@ -383,7 +384,7 @@ class Moviewala : Source() {
                         Request.Builder()
                             .url(iframeSrc)
                             .headers(headers.newBuilder().set("Referer", embedUrl).build())
-                            .build()
+                            .build(),
                     ).execute().body.string()
 
                     val innerM3u8 = m3u8Regex.find(innerHtml)?.groupValues?.get(1)
@@ -396,10 +397,10 @@ class Moviewala : Source() {
                                         videoTitle = "${hoster.hosterName}",
                                         headers = headers.newBuilder()
                                             .set("Referer", iframeSrc)
-                                            .build()
-                                    )
-                                )
-                            )
+                                            .build(),
+                                    ),
+                                ),
+                            ),
                         )
                     }
                 }
@@ -418,8 +419,7 @@ class Moviewala : Source() {
 
     // ============================ Recommendations ============================
 
-    fun relatedAnimeListRequest(anime: SAnime): Request =
-        GET("$baseUrl${anime.url}", headers)
+    fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
 
     fun relatedAnimeListParse(response: Response): List<SAnime> {
         val doc = response.asJsoup()
