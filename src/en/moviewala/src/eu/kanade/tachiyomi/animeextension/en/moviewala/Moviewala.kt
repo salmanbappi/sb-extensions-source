@@ -38,9 +38,9 @@ class Moviewala : Source() {
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     override fun headersBuilder() = super.headersBuilder()
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .add("Referer", "$baseUrl/")
-        .add("Origin", baseUrl)
+        .set("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
+        .set("Referer", "$baseUrl/")
+        .set("Origin", baseUrl)
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
