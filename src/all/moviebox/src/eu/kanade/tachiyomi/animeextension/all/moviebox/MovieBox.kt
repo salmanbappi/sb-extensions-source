@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
 import kotlinx.serialization.json.Json
@@ -50,6 +51,13 @@ class MovieBox : Source() {
     override val lang = "all"
     override val supportsLatest = false
     override val id: Long = 3508466391484419848L
+
+    private val m3u8Integration by lazy { M3u8Integration(client) }
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val videos = super.getVideoList(episode)
+        return m3u8Integration.processVideoList(videos)
+    }
 
     private val apiHosts = listOf(
         "https://api3.aoneroom.com",
