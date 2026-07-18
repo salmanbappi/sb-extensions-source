@@ -663,10 +663,6 @@ class FourKHDHub : Source() {
                 if (suffix.isNotEmpty()) append(suffix)
             }
 
-            val videoHeaders = headers.newBuilder()
-                .add("Referer", hubCloudUrl)
-                .build()
-
             doc2.select("a.btn, a[class*=btn]").forEach { element ->
                 val link = element.attr("href")
                 val text = element.ownText()
@@ -674,11 +670,13 @@ class FourKHDHub : Source() {
 
                 when {
                     label.contains("fsl server") || label.contains("fslv2") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (FSL)$labelExtras", headers = videoHeaders))
+                        val directLink = if (link.contains("r2.cloudflarestorage.com")) link else getRedirectUrl(link, href)
+                        list.add(Video(videoUrl = directLink, videoTitle = "HubCloud (FSL)$labelExtras", headers = headers))
                     }
 
                     label.contains("download file") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (Download)$labelExtras", headers = videoHeaders))
+                        val directLink = getRedirectUrl(link, href)
+                        list.add(Video(videoUrl = directLink, videoTitle = "HubCloud (Download)$labelExtras", headers = headers))
                     }
 
                     label.contains("buzzserver") -> {
@@ -692,7 +690,7 @@ class FourKHDHub : Source() {
                             val dlink = buzzResp.header("hx-redirect") ?: buzzResp.header("HX-Redirect") ?: ""
                             buzzResp.close()
                             if (dlink.isNotBlank()) {
-                                list.add(Video(videoUrl = dlink, videoTitle = "HubCloud (BuzzServer)$labelExtras", headers = videoHeaders))
+                                list.add(Video(videoUrl = dlink, videoTitle = "HubCloud (BuzzServer)$labelExtras", headers = headers))
                             }
                         } catch (e: Exception) {
                             // ignore
@@ -707,15 +705,18 @@ class FourKHDHub : Source() {
                     }
 
                     label.contains("s3 server") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (S3 Server)$labelExtras", headers = videoHeaders))
+                        val directLink = if (link.contains("r2.cloudflarestorage.com")) link else getRedirectUrl(link, href)
+                        list.add(Video(videoUrl = directLink, videoTitle = "HubCloud (S3 Server)$labelExtras", headers = headers))
                     }
 
                     label.contains("mega server") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (Mega Server)$labelExtras", headers = videoHeaders))
+                        val directLink = if (link.contains("r2.cloudflarestorage.com")) link else getRedirectUrl(link, href)
+                        list.add(Video(videoUrl = directLink, videoTitle = "HubCloud (Mega Server)$labelExtras", headers = headers))
                     }
 
                     label.contains("pdl server") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (PDL Server)$labelExtras", headers = videoHeaders))
+                        val directLink = if (link.contains("r2.cloudflarestorage.com")) link else getRedirectUrl(link, href)
+                        list.add(Video(videoUrl = directLink, videoTitle = "HubCloud (PDL Server)$labelExtras", headers = headers))
                     }
 
                     label.contains("10gbps") || label.contains("10 gbps") || label.contains("10gb") -> {
@@ -846,6 +847,22 @@ class FourKHDHub : Source() {
         "${uri.scheme}://${uri.host}"
     } catch (e: Exception) {
         ""
+    }
+
+    private fun getRedirectUrl(url: String, referer: String): String = try {
+        val redirectClient = client.newBuilder()
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
+        val reqHeaders = headers.newBuilder()
+            .add("Referer", referer)
+            .build()
+        val resp = redirectClient.newCall(GET(url, reqHeaders)).execute()
+        val finalUrl = resp.request.url.toString()
+        resp.close()
+        finalUrl
+    } catch (e: Exception) {
+        url
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
