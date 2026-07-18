@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import extensions.utils.Source
 import extensions.utils.asJsoup
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -33,7 +34,7 @@ class Moviewala : Source() {
         Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
     }
 
-    private val m3u8Integration by lazy { M3u8Integration(client) }
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
@@ -346,17 +347,12 @@ class Moviewala : Source() {
             val m3u8Url = m3u8Regex.find(html)?.groupValues?.get(1)
             if (!m3u8Url.isNullOrBlank()) {
                 videos.addAll(
-                    m3u8Integration.processVideoList(
-                        listOf(
-                            Video(
-                                videoUrl = m3u8Url,
-                                videoTitle = "${hoster.hosterName}",
-                                headers = headers.newBuilder()
-                                    .set("Referer", embedUrl)
-                                    .build(),
-                            ),
-                        ),
-                    ),
+                    playlistUtils.extractFromHls(
+                        playlistUrl = m3u8Url,
+                        referer = embedUrl,
+                        masterHeaders = headers,
+                        videoHeaders = headers
+                    )
                 )
             }
 
@@ -390,17 +386,12 @@ class Moviewala : Source() {
                     val innerM3u8 = m3u8Regex.find(innerHtml)?.groupValues?.get(1)
                     if (!innerM3u8.isNullOrBlank()) {
                         videos.addAll(
-                            m3u8Integration.processVideoList(
-                                listOf(
-                                    Video(
-                                        videoUrl = innerM3u8,
-                                        videoTitle = "${hoster.hosterName}",
-                                        headers = headers.newBuilder()
-                                            .set("Referer", iframeSrc)
-                                            .build(),
-                                    ),
-                                ),
-                            ),
+                            playlistUtils.extractFromHls(
+                                playlistUrl = innerM3u8,
+                                referer = iframeSrc,
+                                masterHeaders = headers,
+                                videoHeaders = headers
+                            )
                         )
                     }
                 }
