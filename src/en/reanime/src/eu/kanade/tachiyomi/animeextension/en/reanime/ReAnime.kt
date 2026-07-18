@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.reanime
 
 import android.util.Base64
+import aniyomi.lib.m3u8server.M3u8Integration
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -120,6 +121,10 @@ class ReAnime : Source() {
 
     private val playlistUtils by lazy {
         PlaylistUtils(client, headers)
+    }
+
+    private val m3u8Integration by lazy {
+        M3u8Integration(client)
     }
 
     override fun headersBuilder() = super.headersBuilder()
@@ -372,7 +377,7 @@ class ReAnime : Source() {
         if (videos.isEmpty() && exceptions.isNotEmpty()) {
             throw exceptions.first()
         }
-        return videos
+        return m3u8Integration.processVideoList(videos)
     }
 
     // ============================ Utilities ===============================
