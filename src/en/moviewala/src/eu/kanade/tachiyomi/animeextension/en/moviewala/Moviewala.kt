@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.animeextension.en.moviewala
 import android.app.Application
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
@@ -37,8 +36,6 @@ class Moviewala : Source() {
     }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-
-    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
@@ -305,13 +302,12 @@ class Moviewala : Source() {
             hlsUrlEscaped.replace("\\u0026", "&").replace("\\/", "/").replace("\\u002f", "/")
         }
 
-        val videos = playlistUtils.extractFromHls(
+        return playlistUtils.extractFromHls(
             playlistUrl = videoUrl,
             referer = playerUrl,
             masterHeaders = headers,
             videoHeaders = headers,
         )
-        return m3u8Integration.processVideoList(videos)
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
