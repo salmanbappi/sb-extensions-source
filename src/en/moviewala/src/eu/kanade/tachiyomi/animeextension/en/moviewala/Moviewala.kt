@@ -276,7 +276,11 @@ class Moviewala : Source() {
             "https://player.silverlinehub.org/?tmdb_id=$tmdbId"
         }
 
-        val response = client.newCall(GET(playerUrl, headers)).execute()
+        val request = GET(playerUrl, headers).newBuilder()
+            .header("Cache-Control", "no-cache, no-store, must-revalidate")
+            .header("Pragma", "no-cache")
+            .build()
+        val response = client.newCall(request).execute()
         val html = response.body.string()
 
         val videoUrl = if (season != null && episode != null) {
