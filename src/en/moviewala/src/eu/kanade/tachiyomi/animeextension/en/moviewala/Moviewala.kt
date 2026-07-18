@@ -32,15 +32,17 @@ class Moviewala : Source() {
 
     override val supportsLatest = true
 
-    override val client: OkHttpClient = network.client.newBuilder()
-        .cache(null)
-        .build()
+    private val noCacheClient by lazy {
+        client.newBuilder()
+            .cache(null)
+            .build()
+    }
 
     private val myJson = Json {
         ignoreUnknownKeys = true
     }
 
-    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val playlistUtils by lazy { PlaylistUtils(noCacheClient, headers) }
 
     override fun headersBuilder() = super.headersBuilder()
         .set("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
@@ -49,13 +51,13 @@ class Moviewala : Source() {
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/en/categories/action", headers)).execute()
+        val response = noCacheClient.newCall(GET("$baseUrl/en/categories/action", headers)).execute()
         return parseListPage(response, page)
     }
 
     // ============================== Latest ================================
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/en/movies-2026", headers)).execute()
+        val response = noCacheClient.newCall(GET("$baseUrl/en/movies-2026", headers)).execute()
         return parseListPage(response, page)
     }
 
@@ -72,7 +74,7 @@ class Moviewala : Source() {
             "$baseUrl/en/categories/action"
         }
 
-        val response = client.newCall(GET(url, headers)).execute()
+        val response = noCacheClient.newCall(GET(url, headers)).execute()
         val doc = response.asJsoup()
 
         val allAnimes = parseAnimeListFromJsonLd(doc)
@@ -136,7 +138,7 @@ class Moviewala : Source() {
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
+        val response = noCacheClient.newCall(GET("$baseUrl${anime.url}", headers)).execute()
         val doc = response.asJsoup()
 
         val movieJsonLd = doc.select("script[type=application/ld+json]")
@@ -196,13 +198,13 @@ class Moviewala : Source() {
 
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
+        val response = noCacheClient.newCall(GET("$baseUrl${anime.url}", headers)).execute()
         val doc = response.asJsoup()
         val tmdbId = extractTmdbId(doc) ?: throw Exception("TMDB ID not found")
 
         if (anime.url.contains("/series/")) {
             val playerUrl = "https://player.silverlinehub.org/?tmdb_id=$tmdbId&type=series"
-            val playerResponse = client.newCall(GET(playerUrl, headers)).execute()
+            val playerResponse = noCacheClient.newCall(GET(playerUrl, headers)).execute()
             val playerHtml = playerResponse.body.string()
 
             val seasonsRegex = Regex("""seasons\\*":\s*(\[.*?\])\s*,\s*\\*"series\\*"""")
@@ -285,7 +287,7 @@ class Moviewala : Source() {
             .header("Cache-Control", "no-cache, no-store, must-revalidate")
             .header("Pragma", "no-cache")
             .build()
-        val response = client.newCall(request).execute()
+        val response = noCacheClient.newCall(request).execute()
         val html = response.body.string()
 
         val videoUrl = if (season != null && episode != null) {
