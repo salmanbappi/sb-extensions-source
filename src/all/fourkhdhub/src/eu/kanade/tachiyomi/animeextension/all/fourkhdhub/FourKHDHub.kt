@@ -664,7 +664,7 @@ class FourKHDHub : Source() {
             }
 
             val videoHeaders = headers.newBuilder()
-                .add("Referer", href)
+                .add("Referer", hubCloudUrl)
                 .build()
 
             doc2.select("a.btn, a[class*=btn]").forEach { element ->
@@ -700,7 +700,9 @@ class FourKHDHub : Source() {
                     }
 
                     label.contains("pixeldra") || label.contains("pixelserver") || label.contains("pixel server") || label.contains("pixeldrain") -> {
-                        val finalUrl = "https://pixeldrain.com/api/file/${getPixeldrainFileId(link)}?download"
+                        val pxlMatch = Regex("""var\s+pxl\s*=\s*"([^"]+)"""").find(doc2.html())
+                        val realLink = pxlMatch?.groupValues?.get(1) ?: link
+                        val finalUrl = "https://pixeldrain.com/api/file/${getPixeldrainFileId(realLink)}?download"
                         list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (Pixeldrain)$labelExtras", headers = headers))
                     }
 
