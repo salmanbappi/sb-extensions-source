@@ -296,11 +296,14 @@ class Moviewala : Source() {
 
             matchingEpisode.playback?.hls ?: throw Exception("HLS stream URL not found for episode")
         } else {
-            val hlsRegex = Regex("""hls\\*":\\*"([^\\"]+)""")
-            val hlsUrlEscaped = hlsRegex.find(html)?.groupValues?.get(1)
+            val hlsRegex = Regex("""hls\\*":\\*"([^"]+)""")
+            val rawHls = hlsRegex.find(html)?.groupValues?.get(1)
                 ?: throw Exception("HLS stream URL not found in player page")
-
-            hlsUrlEscaped.replace("\\u0026", "&").replace("\\/", "/").replace("\\u002f", "/")
+            rawHls.split("\\\"")[0]
+                .replace("\\u0026", "&")
+                .replace("\\/", "/")
+                .replace("\\u002f", "/")
+                .removeSuffix("\\")
         }
 
         return playlistUtils.extractFromHls(
