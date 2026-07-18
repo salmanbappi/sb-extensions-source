@@ -9,9 +9,9 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import extensions.utils.Source
 import extensions.utils.asJsoup
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -351,8 +351,8 @@ class Moviewala : Source() {
                         playlistUrl = m3u8Url,
                         referer = embedUrl,
                         masterHeaders = headers,
-                        videoHeaders = headers
-                    )
+                        videoHeaders = headers,
+                    ),
                 )
             }
 
@@ -390,8 +390,8 @@ class Moviewala : Source() {
                                 playlistUrl = innerM3u8,
                                 referer = iframeSrc,
                                 masterHeaders = headers,
-                                videoHeaders = headers
-                            )
+                                videoHeaders = headers,
+                            ),
                         )
                     }
                 }
