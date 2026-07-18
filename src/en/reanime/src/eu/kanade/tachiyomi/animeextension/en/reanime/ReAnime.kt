@@ -305,9 +305,9 @@ class ReAnime : Source() {
 
                         // Fetch session token
                         val m3u8ApiUrl = "https://flixcloud.cc/api/m3u8/$w"
-                        val tokenHeaders = Headers.Builder()
-                            .add("Referer", server.dataLink)
-                            .add("Origin", "https://flixcloud.cc")
+                        val tokenHeaders = headersBuilder()
+                            .set("Referer", server.dataLink)
+                            .set("Origin", "https://flixcloud.cc")
                             .build()
                         val tokenResponse = client.newCall(GET(m3u8ApiUrl, tokenHeaders)).execute()
                         val tokenBody = tokenResponse.body.string()
@@ -456,10 +456,10 @@ class ReAnime : Source() {
         val videoHttpUrl = runCatching { videoUrl.toHttpUrl() }.getOrNull()
         val origin = videoHttpUrl?.let { "${it.scheme}://${it.host}" } ?: "https://fetch.flixcloud.cc"
 
-        return Headers.Builder()
-            .add("Accept", "*/*")
-            .add("Origin", origin)
-            .add("Referer", embedUrl)
+        return headersBuilder()
+            .set("Accept", "*/*")
+            .set("Origin", origin)
+            .set("Referer", embedUrl)
             .build()
     }
 
