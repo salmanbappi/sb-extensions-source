@@ -2,10 +2,11 @@ package eu.kanade.tachiyomi.animeextension.en.moviewala
 
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 
-class CategoryFilter : AnimeFilter.Select<String>(
-    "Category",
-    categories.map { it.first }.toTypedArray()
-) {
+class CategoryFilter :
+    AnimeFilter.Select<String>(
+        "Category",
+        categories.map { it.first }.toTypedArray(),
+    ) {
     val selected: String get() = categories[state].second
 
     companion object {
