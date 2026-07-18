@@ -663,6 +663,10 @@ class FourKHDHub : Source() {
                 if (suffix.isNotEmpty()) append(suffix)
             }
 
+            val videoHeaders = headers.newBuilder()
+                .add("Referer", href)
+                .build()
+
             doc2.select("a.btn, a[class*=btn]").forEach { element ->
                 val link = element.attr("href")
                 val text = element.ownText()
@@ -670,11 +674,11 @@ class FourKHDHub : Source() {
 
                 when {
                     label.contains("fsl server") || label.contains("fslv2") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (FSL)$labelExtras", headers = headers))
+                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (FSL)$labelExtras", headers = videoHeaders))
                     }
 
                     label.contains("download file") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (Download)$labelExtras", headers = headers))
+                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (Download)$labelExtras", headers = videoHeaders))
                     }
 
                     label.contains("buzzserver") -> {
@@ -688,7 +692,7 @@ class FourKHDHub : Source() {
                             val dlink = buzzResp.header("hx-redirect") ?: buzzResp.header("HX-Redirect") ?: ""
                             buzzResp.close()
                             if (dlink.isNotBlank()) {
-                                list.add(Video(videoUrl = dlink, videoTitle = "HubCloud (BuzzServer)$labelExtras", headers = headers))
+                                list.add(Video(videoUrl = dlink, videoTitle = "HubCloud (BuzzServer)$labelExtras", headers = videoHeaders))
                             }
                         } catch (e: Exception) {
                             // ignore
@@ -696,21 +700,20 @@ class FourKHDHub : Source() {
                     }
 
                     label.contains("pixeldra") || label.contains("pixelserver") || label.contains("pixel server") || label.contains("pixeldrain") -> {
-                        val base = getBaseUrl(link)
-                        val finalUrl = if (link.contains("download")) link else "$base/api/file/${link.substringAfterLast("/")}?download"
+                        val finalUrl = "https://pixeldrain.com/api/file/${getPixeldrainFileId(link)}?download"
                         list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (Pixeldrain)$labelExtras", headers = headers))
                     }
 
                     label.contains("s3 server") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (S3 Server)$labelExtras", headers = headers))
+                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (S3 Server)$labelExtras", headers = videoHeaders))
                     }
 
                     label.contains("mega server") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (Mega Server)$labelExtras", headers = headers))
+                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (Mega Server)$labelExtras", headers = videoHeaders))
                     }
 
                     label.contains("pdl server") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (PDL Server)$labelExtras", headers = headers))
+                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (PDL Server)$labelExtras", headers = videoHeaders))
                     }
 
                     label.contains("10gbps") || label.contains("10 gbps") || label.contains("10gb") -> {
@@ -720,7 +723,7 @@ class FourKHDHub : Source() {
                             gpdlResp.close()
 
                             if (finalUrl.contains("gamerxyt.com/dl.php?link=")) {
-                                val directLink = finalUrl.substringAfter("dl.php?link=")
+                                val directLink = URLDecoder.decode(finalUrl.substringAfter("dl.php?link="), "UTF-8")
                                 if (directLink.isNotEmpty()) {
                                     list.add(Video(videoUrl = directLink, videoTitle = "HubCloud (10Gbps)$labelExtras", headers = headers))
                                 }
@@ -815,9 +818,20 @@ class FourKHDHub : Source() {
     }
 
     private fun resolvePixelDrain(url: String, suffix: String): List<Video> {
-        val fileId = url.substringAfterLast("/")
+        val fileId = getPixeldrainFileId(url)
         val finalUrl = "https://pixeldrain.com/api/file/$fileId?download"
         return listOf(Video(videoUrl = finalUrl, videoTitle = "PixelDrain$suffix", headers = headers))
+    }
+
+    private fun getPixeldrainFileId(url: String): String {
+        val cleanUrl = url.substringBefore("?")
+        val pathPart = when {
+            cleanUrl.contains("/api/file/") -> cleanUrl.substringAfter("/api/file/")
+            cleanUrl.contains("/u/") -> cleanUrl.substringAfter("/u/")
+            cleanUrl.contains("/file/") -> cleanUrl.substringAfter("/file/")
+            else -> cleanUrl.substringAfterLast("/")
+        }
+        return pathPart.substringBefore("/").trim()
     }
 
     private fun getIndexQuality(str: String): String = Regex("""(\d{3,4})[pP]""")
