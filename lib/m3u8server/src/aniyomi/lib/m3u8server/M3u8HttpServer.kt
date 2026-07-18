@@ -141,7 +141,7 @@ class M3u8HttpServer(
         session.headers.forEach { (key, value) ->
             when (key.lowercase()) {
                 "user-agent", "referer", "origin", "accept", "accept-language",
-                "accept-encoding", "connection", "cache-control", "pragma",
+                "accept-encoding", "connection", "cache-control", "pragma", "cookie"
                 -> {
                     headers[key] = value
                 }
