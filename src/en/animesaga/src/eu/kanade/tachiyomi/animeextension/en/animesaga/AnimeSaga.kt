@@ -896,7 +896,7 @@ data class CipherResponse(
 data class EpisodesResponse(
     val success: Boolean = false,
     val provider: String? = null,
-    val animeId: Int? = null,
+    val animeId: kotlinx.serialization.json.JsonElement? = null,
     val episodes: List<EpisodeItem> = emptyList(),
 )
 
