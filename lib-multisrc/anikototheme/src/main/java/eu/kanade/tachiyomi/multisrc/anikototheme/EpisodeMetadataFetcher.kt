@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.multisrc.anikototheme
 
-import extensions.utils.EpisodeMetadataFetcher as CommonFetcher
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
+import extensions.utils.EpisodeMetadataFetcher as CommonFetcher
 
 class EpisodeMetadataFetcher(
     client: OkHttpClient,
@@ -15,7 +15,7 @@ class EpisodeMetadataFetcher(
         json = json,
         webViewFetchText = webViewFetcher?.let { fetcher -> { url -> fetcher.fetchText(url) } },
         webViewPostJson = webViewFetcher?.let { fetcher -> { url, body -> fetcher.postJson(url, body) } },
-        tmdbApiKey = tmdbApiKey
+        tmdbApiKey = tmdbApiKey,
     )
 
     data class EpisodeMetadata(
@@ -25,22 +25,18 @@ class EpisodeMetadataFetcher(
         val airdate: String?,
     )
 
-    suspend fun fetch(malId: String, fallbackThumbnailUrl: String?): Map<Int, EpisodeMetadata> {
-        return fetch(malId, null, fallbackThumbnailUrl)
-    }
+    suspend fun fetch(malId: String, fallbackThumbnailUrl: String?): Map<Int, EpisodeMetadata> = fetch(malId, null, fallbackThumbnailUrl)
 
     suspend fun fetch(
         malId: String,
         animeTitle: String?,
         fallbackThumbnailUrl: String?,
-    ): Map<Int, EpisodeMetadata> {
-        return delegate.fetch(malId, animeTitle, fallbackThumbnailUrl).mapValues { (_, meta) ->
-            EpisodeMetadata(
-                title = meta.title,
-                description = meta.description,
-                thumbnailUrl = meta.thumbnailUrl,
-                airdate = meta.airdate
-            )
-        }
+    ): Map<Int, EpisodeMetadata> = delegate.fetch(malId, animeTitle, fallbackThumbnailUrl).mapValues { (_, meta) ->
+        EpisodeMetadata(
+            title = meta.title,
+            description = meta.description,
+            thumbnailUrl = meta.thumbnailUrl,
+            airdate = meta.airdate,
+        )
     }
 }
