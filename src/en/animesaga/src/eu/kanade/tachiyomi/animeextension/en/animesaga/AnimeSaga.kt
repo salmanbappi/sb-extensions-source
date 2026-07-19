@@ -408,7 +408,12 @@ class AnimeSaga :
             }
         }
 
-        return hosterList
+        val prefServer = preferences.getString(PREF_SERVER_KEY, "auto") ?: "auto"
+        return if (prefServer == "auto") {
+            hosterList
+        } else {
+            hosterList.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
+        }
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -646,6 +651,16 @@ class AnimeSaga :
             setDefaultValue(emptySet<String>())
         }
         screen.addPreference(excludeServersPref)
+
+        val serverPref = ListPreference(screen.context).apply {
+            key = PREF_SERVER_KEY
+            title = "Preferred Server"
+            summary = "Which video server to try first. Currently: %s"
+            entries = arrayOf("Auto", "HD-1", "HD-2", "StreamHG", "Earnvids", "Doodstream")
+            entryValues = arrayOf("auto", "HD-1", "HD-2", "StreamHG", "Earnvids", "Doodstream")
+            setDefaultValue("auto")
+        }
+        screen.addPreference(serverPref)
     }
 
     // ============================ Utilities =============================
@@ -670,6 +685,7 @@ class AnimeSaga :
         private const val PREF_AUDIO_KEY = "preferred_audio"
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_EXCLUDE_SERVERS_KEY = "exclude_servers"
+        private const val PREF_SERVER_KEY = "preferred_server"
 
         private val POPULAR_QUERY = """
             query(${"$"}page: Int) {
