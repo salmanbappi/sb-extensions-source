@@ -380,6 +380,7 @@ class AnimeSaga :
                         }
                     }
                 }
+
                 embedUrl.contains("otakuhg.site") || embedUrl.contains("otakuvid.online") -> {
                     val extractor = VidHideExtractor(client, headers)
                     extractor.videosFromUrl(embedUrl) { quality -> "$serverName ($audioType) - $quality" }.forEach { v ->
@@ -393,6 +394,7 @@ class AnimeSaga :
                         )
                     }
                 }
+
                 embedUrl.contains("playmogo.com") || embedUrl.contains("dood") -> {
                     val extractor = DoodExtractor(client)
                     extractor.videosFromUrl(embedUrl, quality = "$serverName ($audioType)").forEach { v ->
