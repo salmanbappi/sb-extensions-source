@@ -6,7 +6,6 @@ import android.net.Uri
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -24,7 +23,6 @@ import extensions.utils.Source
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -47,8 +45,6 @@ class AnimeSaga :
     override val supportsLatest = false
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-
-    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     private val json: Json by lazy {
         Json {
@@ -437,7 +433,7 @@ class AnimeSaga :
             }
         }
 
-        return m3u8Integration.processVideoList(videoList)
+        return videoList
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
@@ -570,3 +566,152 @@ class AnimeSaga :
         """.trimIndent()
     }
 }
+
+@Serializable
+data class GraphQLRequest(
+    val query: String,
+    val variables: GraphQLVariables? = null,
+)
+
+@Serializable
+data class GraphQLVariables(
+    val page: Int? = null,
+    val search: String? = null,
+    val sort: List<String>? = null,
+    val genres: List<String>? = null,
+    val format: List<String>? = null,
+    val status: List<String>? = null,
+    val season: String? = null,
+    val seasonYear: Int? = null,
+    val id: Int? = null,
+)
+
+@Serializable
+data class AnilistGraphQLResponse(
+    val data: AnilistData,
+)
+
+@Serializable
+data class AnilistData(
+    val Page: AnilistPage? = null,
+    val Media: AnilistMedia? = null,
+)
+
+@Serializable
+data class AnilistPage(
+    val pageInfo: AnilistPageInfo? = null,
+    val media: List<AnilistMedia> = emptyList(),
+)
+
+@Serializable
+data class AnilistPageInfo(
+    val hasNextPage: Boolean,
+)
+
+@Serializable
+data class AnilistMedia(
+    val id: Int,
+    val idMal: Int? = null,
+    val title: AnilistTitle,
+    val coverImage: AnilistCoverImage? = null,
+    val bannerImage: String? = null,
+    val description: String? = null,
+    val status: String? = null,
+    val genres: List<String> = emptyList(),
+    val averageScore: Int? = null,
+    val episodes: Int? = null,
+    val format: String? = null,
+    val source: String? = null,
+    val studios: AnilistStudios? = null,
+)
+
+@Serializable
+data class AnilistTitle(
+    val english: String? = null,
+    val romaji: String? = null,
+    val native: String? = null,
+)
+
+@Serializable
+data class AnilistCoverImage(
+    val large: String? = null,
+    val extraLarge: String? = null,
+)
+
+@Serializable
+data class AnilistStudios(
+    val nodes: List<AnilistStudioNode> = emptyList(),
+)
+
+@Serializable
+data class AnilistStudioNode(
+    val name: String,
+)
+
+@Serializable
+data class CipherResponse(
+    val success: Boolean = false,
+    val ciphertext: String? = null,
+)
+
+@Serializable
+data class EpisodesResponse(
+    val success: Boolean = false,
+    val provider: String? = null,
+    val animeId: Int? = null,
+    val episodes: List<EpisodeItem> = emptyList(),
+)
+
+@Serializable
+data class EpisodeItem(
+    val id: String,
+    val number: Int,
+    val title: String? = null,
+    val url: String? = null,
+    val description: String? = null,
+    val img: String? = null,
+    val airDate: String? = null,
+)
+
+@Serializable
+data class StreamResponse(
+    val success: Boolean = false,
+    val provider: String? = null,
+    val embedUrl: String? = null,
+    val isM3U8: Boolean = false,
+    val tracks: List<TrackItem> = emptyList(),
+    val servers: ServerMap? = null,
+)
+
+@Serializable
+data class TrackItem(
+    val file: String,
+    val label: String,
+    val kind: String? = null,
+    val default: Boolean = false,
+)
+
+@Serializable
+data class ServerMap(
+    val sub: List<ServerItem> = emptyList(),
+    val dub: List<ServerItem> = emptyList(),
+)
+
+@Serializable
+data class ServerItem(
+    val name: String? = null,
+    val label: String? = null,
+    val url: String? = null,
+    val linkId: String? = null,
+)
+
+@Serializable
+data class EpisodePayload(
+    val id: String,
+    val number: Int,
+    val provider: String,
+    val title: String,
+    val romaji: String,
+    val anilistId: Int,
+    val malId: Int?,
+)
