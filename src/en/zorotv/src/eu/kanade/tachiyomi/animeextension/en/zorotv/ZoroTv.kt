@@ -70,33 +70,40 @@ class ZoroTv : Source() {
                             val value = filter.getSelectedValue()
                             if (value.isNotBlank()) addQueryParameter("type", value)
                         }
+
                         is StatusFilter -> {
                             val value = filter.getSelectedValue()
                             if (value.isNotBlank()) addQueryParameter("status", value)
                         }
+
                         is SubFilter -> {
                             val value = filter.getSelectedValue()
                             if (value.isNotBlank()) addQueryParameter("sub", value)
                         }
+
                         is OrderFilter -> {
                             val value = filter.getSelectedValue()
                             if (value.isNotBlank()) addQueryParameter("order", value)
                         }
+
                         is GenreFilter -> {
                             filter.getSelected().forEach { genre ->
                                 addQueryParameter("genre[]", genre)
                             }
                         }
+
                         is SeasonFilter -> {
                             filter.getSelected().forEach { season ->
                                 addQueryParameter("season[]", season)
                             }
                         }
+
                         is StudioFilter -> {
                             filter.getSelected().forEach { studio ->
                                 addQueryParameter("studio[]", studio)
                             }
                         }
+
                         else -> {}
                     }
                 }
@@ -211,12 +218,10 @@ class ZoroTv : Source() {
         }.reversed()
     }
 
-    private fun parseEpisodeDate(dateStr: String): Long {
-        return try {
-            java.text.SimpleDateFormat("MMMM d, yyyy", java.util.Locale.US).parse(dateStr)?.time ?: 0L
-        } catch (e: Exception) {
-            0L
-        }
+    private fun parseEpisodeDate(dateStr: String): Long = try {
+        java.text.SimpleDateFormat("MMMM d, yyyy", java.util.Locale.US).parse(dateStr)?.time ?: 0L
+    } catch (e: Exception) {
+        0L
     }
 
     // ============================ Video Links =============================
@@ -302,7 +307,7 @@ class ZoroTv : Source() {
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString("pref_quality", "1080") ?: "1080"
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+            compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
 
@@ -336,7 +341,7 @@ class ZoroTv : Source() {
     @Serializable
     private data class SamaResponse(
         val ok: Boolean,
-        val rumble_url: String? = null
+        val rumble_url: String? = null,
     )
 
     companion object {
@@ -629,12 +634,9 @@ class ZoroTv : Source() {
 
     private class CheckBoxVal(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
 
-    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) :
-        AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first, false) }) {
-        fun getSelected(): List<String> {
-            return state.mapIndexedNotNull { index, filter ->
-                if (filter.state) vals[index].second else null
-            }
+    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first, false) }) {
+        fun getSelected(): List<String> = state.mapIndexedNotNull { index, filter ->
+            if (filter.state) vals[index].second else null
         }
     }
 
