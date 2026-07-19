@@ -37,7 +37,7 @@ class AnimeSuge : AnikotoTheme() {
 
     override val popularAnimeSelector = "div.main-card > div.item, div.items > div.item, div.item"
 
-    private val myMetadataFetcher by lazy { EpisodeMetadataFetcher(client, json, null) }
+    private val myMetadataFetcher by lazy { EpisodeMetadataFetcher(client, json, null, BuildConfig.TMDB_API) }
 
     private val loadThumbnails: Boolean
         get() = preferences.getBoolean("pref_load_thumbnails", true)
@@ -293,13 +293,18 @@ class AnimeSuge : AnikotoTheme() {
         val showTitles = loadTitles
         val showDescs = loadDescriptions
         if (!showThumbs && !showTitles && !showDescs) return episodes
-        if (malId.isBlank()) return episodes
+
+        val animeTitle = detailDoc.selectFirst("h1.title")?.text()?.trim() ?: ""
+        if (malId.isBlank() && animeTitle.isBlank()) return episodes
 
         val animeCoverUrl = detailDoc.selectFirst("#media-info .poster img")?.absUrl("src")
 
         return try {
-            val metadataMap = myMetadataFetcher.fetch(malId, animeCoverUrl)
-            if (metadataMap.isEmpty()) return episodes
+            val metadataMap = myMetadataFetcher.fetch(malId, animeTitle, animeCoverUrl)
+            if (metadataMap.isEmpty()) {
+                showToast("Failed to fetch episode metadata")
+                return episodes
+            }
 
             episodes.map { episode ->
                 val epNum = episode.episode_number.toInt()

@@ -114,7 +114,16 @@ abstract class AnikotoTheme : Source() {
 
     private val webViewFetcher by lazy { WebViewFetcher(Injekt.get<Application>()) }
     private val extractors by lazy { AnikotoExtractors(client, json, webViewFetcher) }
-    private val metadataFetcher by lazy { EpisodeMetadataFetcher(client, json, webViewFetcher) }
+    private val metadataFetcher by lazy {
+        val tmdbKey = try {
+            val packageName = this.javaClass.name.substringBeforeLast('.')
+            val buildConfigClass = Class.forName("$packageName.BuildConfig")
+            buildConfigClass.getField("TMDB_API").get(null) as String
+        } catch (_: Exception) {
+            ""
+        }
+        EpisodeMetadataFetcher(client, json, webViewFetcher, tmdbKey)
+    }
     private val smartSearch by lazy { SmartSearch(webViewFetcher) }
 
     // ---- Preferences ----
@@ -200,7 +209,7 @@ abstract class AnikotoTheme : Source() {
         return GET(urlBuilder.build())
     }
 
-    private suspend fun showToast(message: String) {
+    protected suspend fun showToast(message: String) {
         try {
             val app = Injekt.get<Application>()
             withContext(Dispatchers.Main) {
@@ -334,14 +343,19 @@ abstract class AnikotoTheme : Source() {
         malId: String,
     ): List<SEpisode> {
         if (!loadThumbnails && !loadTitles && !loadDescriptions) return episodes
-        if (malId.isBlank()) return episodes
+
+        val animeTitle = detailDoc.selectFirst("h1.title")?.text()?.trim() ?: ""
+        if (malId.isBlank() && animeTitle.isBlank()) return episodes
 
         val animeCoverUrl = detailDoc.selectFirst("#w-info .poster img")?.absUrl("src")
 
         return try {
-            logi("enrichEpisodesWithMetadata: malId=$malId, thumbs=$loadThumbnails, titles=$loadTitles, descs=$loadDescriptions")
-            val metadataMap = metadataFetcher.fetch(malId, animeCoverUrl)
-            if (metadataMap.isEmpty()) return episodes
+            logi("enrichEpisodesWithMetadata: malId=$malId, title=$animeTitle, thumbs=$loadThumbnails, titles=$loadTitles, descs=$loadDescriptions")
+            val metadataMap = metadataFetcher.fetch(malId, animeTitle, animeCoverUrl)
+            if (metadataMap.isEmpty()) {
+                showToast("Failed to fetch episode metadata")
+                return episodes
+            }
 
             episodes.map { episode ->
                 val epNum = episode.episode_number.toInt()
