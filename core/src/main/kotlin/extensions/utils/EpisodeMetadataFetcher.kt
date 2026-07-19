@@ -2,6 +2,7 @@ package extensions.utils
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -74,9 +75,13 @@ class EpisodeMetadataFetcher(
                 val startTime = System.currentTimeMillis()
                 logd("fetching for malId=$malId title=$animeTitle")
 
-                // 1. Fetch AniList, Anikage, and Jikan (Fast/Primary)
-                val jikanEps = if (malId.isNotBlank()) fetchJikanEpisodes(malId) else emptyMap()
-                val anilistId = if (malId.isNotBlank()) fetchAniListId(malId) else null
+                // 1. Fetch AniList and Jikan concurrently
+                val jikanDeferred = async { if (malId.isNotBlank()) fetchJikanEpisodes(malId) else emptyMap() }
+                val anilistIdDeferred = async { if (malId.isNotBlank()) fetchAniListId(malId) else null }
+
+                val jikanEps = jikanDeferred.await()
+                val anilistId = anilistIdDeferred.await()
+
                 val anikageEps = if (anilistId != null) fetchAnikageEpisodes(anilistId) else emptyMap()
                 val anilistStreaming = if (malId.isNotBlank()) anilistStreamingCache[malId] ?: emptyList() else emptyList()
                 val bannerUrl = if (malId.isNotBlank()) anilistBannerCache[malId] else null
