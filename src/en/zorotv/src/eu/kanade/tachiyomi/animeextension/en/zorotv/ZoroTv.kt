@@ -284,6 +284,24 @@ class ZoroTv : Source() {
                 } else {
                     emptyList()
                 }
+            } else if (embedUrl.contains("tamilembed.lol/embed/stream/")) {
+                val embedHeaders = headers.newBuilder()
+                    .set("Referer", "https://www.zorotv.se/")
+                    .build()
+                val response = client.newCall(GET(embedUrl, embedHeaders)).execute()
+                val html = response.body.string()
+                val bloggerUrl = "src=\"(https?://(?:www\\.)?blogger\\.com/video\\.g[^\"]+)\"".toRegex()
+                    .find(html)?.groupValues?.get(1)
+
+                if (!bloggerUrl.isNullOrBlank()) {
+                    val unescapedUrl = bloggerUrl.replace("&amp;", "&")
+                    val bloggerHeaders = headers.newBuilder()
+                        .set("Referer", "https://tamilembed.lol/")
+                        .build()
+                    universalExtractor.videosFromUrl(unescapedUrl, bloggerHeaders, prefix = hoster.hosterName)
+                } else {
+                    universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
+                }
             } else {
                 val embedHeaders = headers.newBuilder()
                     .set("Referer", "https://www.zorotv.se/")

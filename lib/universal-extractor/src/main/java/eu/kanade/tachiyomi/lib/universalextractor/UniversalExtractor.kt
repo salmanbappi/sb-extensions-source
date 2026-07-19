@@ -40,6 +40,9 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 domStorageEnabled = true
                 databaseEnabled = true
                 mediaPlaybackRequiresUserGesture = false
+                mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                allowFileAccess = true
+                allowContentAccess = true
                 useWideViewPort = false
                 loadWithOverviewMode = false
                 userAgentString = origRequestHeader["User-Agent"]
@@ -99,8 +102,8 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 playlistUtils.extractFromDash(resultUrl, { it -> "$prefix - $host: $it" }, referer = origRequestUrl)
             }
 
-            "mp4" in resultUrl || "googlevideo.com" in resultUrl -> {
-                Log.d("UniversalExtractor", "mp4/googlevideo URL: $resultUrl")
+            resultUrl.isNotBlank() -> {
+                Log.d("UniversalExtractor", "Direct stream URL: $resultUrl")
                 Video(videoUrl = resultUrl, videoTitle = "$prefix - $host: ${customQuality ?: "Mirror"}", headers = origRequestHeader.newBuilder().add("referer", origRequestUrl).build()).let(::listOf)
             }
 
@@ -118,6 +121,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     companion object {
         const val TIMEOUT_SEC: Long = 10
-        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|googlevideo\\.com/videoplayback)(\\?.*)?$", RegexOption.IGNORE_CASE) }
+        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|googlevideo\\.com/videoplayback|googleusercontent\\.com/videoplayback|blogger\\.com/video-play)(\\?.*)?$", RegexOption.IGNORE_CASE) }
     }
 }
