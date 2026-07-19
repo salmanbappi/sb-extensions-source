@@ -55,7 +55,7 @@ class AnimeSaga :
 
     private val localProxy by lazy { LocalProxy(client) }
 
-    private val json: Json by lazy {
+    override val json: Json by lazy {
         Json {
             ignoreUnknownKeys = true
             coerceInputValues = true
