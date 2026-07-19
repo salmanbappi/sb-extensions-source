@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.bloggerextractor.BloggerExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
+import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.asJsoup
@@ -37,6 +38,8 @@ class ZoroTv : Source() {
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
+
+    private val universalExtractor by lazy { UniversalExtractor(client) }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -215,7 +218,7 @@ class ZoroTv : Source() {
                     date_upload = parseEpisodeDate(dateStr)
                 }
             }
-        }.reversed()
+        }
     }
 
     private fun parseEpisodeDate(dateStr: String): Long = try {
@@ -281,23 +284,11 @@ class ZoroTv : Source() {
                 } else {
                     emptyList()
                 }
-            } else if (embedUrl.contains("tamilembed.lol/embed/stream/")) {
+            } else {
                 val embedHeaders = headers.newBuilder()
                     .set("Referer", "https://www.zorotv.se/")
                     .build()
-                val response = client.newCall(GET(embedUrl, embedHeaders)).execute()
-                val html = response.body.string()
-                val bloggerUrl = "src=\"(https?://(?:www\\.)?blogger\\.com/video\\.g[^\"]+)\"".toRegex()
-                    .find(html)?.groupValues?.get(1) ?: return emptyList()
-
-                val unescapedUrl = bloggerUrl.replace("&amp;", "&")
-                val bloggerHeaders = headers.newBuilder()
-                    .set("Referer", "https://tamilembed.lol/")
-                    .build()
-
-                bloggerExtractor.videosFromUrl(unescapedUrl, bloggerHeaders, " - ${hoster.hosterName}")
-            } else {
-                emptyList()
+                universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
             }
         } catch (e: Exception) {
             emptyList()
