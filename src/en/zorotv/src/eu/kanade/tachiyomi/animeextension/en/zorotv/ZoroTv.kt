@@ -331,10 +331,11 @@ class ZoroTv : Source() {
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addListPreference(
             key = "pref_quality",
-            title = "Preferred quality",
             default = "1080",
-            entries = arrayOf("1080p", "720p", "480p", "360p"),
-            entryValues = arrayOf("1080", "720", "480", "360"),
+            title = "Preferred quality",
+            summary = "%s",
+            entries = listOf("1080p", "720p", "480p", "360p"),
+            entryValues = listOf("1080", "720", "480", "360"),
         )
     }
 
