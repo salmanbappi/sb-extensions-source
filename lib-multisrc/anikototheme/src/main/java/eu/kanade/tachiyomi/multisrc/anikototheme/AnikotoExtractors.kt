@@ -235,7 +235,9 @@ class AnikotoExtractors(
                                 logi("resolveVidTube:   variant ${vi.quality}(${vi.bandwidth}): ${segs.size} segments")
                                 if (segs.isNotEmpty()) {
                                     LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs)
-                                } else null
+                                } else {
+                                    null
+                                }
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
@@ -315,7 +317,9 @@ class AnikotoExtractors(
                                     logd("resolveKiwi:   variant ${vi.quality}: ${segs.size} segments (no filter)")
                                     if (segs.isNotEmpty()) {
                                         LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs)
-                                    } else null
+                                    } else {
+                                        null
+                                    }
                                 } catch (e: CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
