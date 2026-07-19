@@ -2,6 +2,11 @@ package eu.kanade.tachiyomi.multisrc.anikototheme
 
 import android.util.Base64
 import android.util.Log
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.decodeFromString
@@ -220,20 +225,26 @@ class AnikotoExtractors(
             logi("resolveVidTube: ${variants.size} variants: ${variants.joinToString { it.quality }}")
             logi("resolveVidTube: [4/5] fetching ${variants.size} variant playlists")
 
-            val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
-            for (vi in variants) {
-                try {
-                    variantSemaphore.withPermit {
-                        val varText = fetchString(vi.url, seg)
-                        val segs = parseVariantSegments(varText, vi.url)
-                        logi("resolveVidTube:   variant ${vi.quality}(${vi.bandwidth}): ${segs.size} segments")
-                        if (segs.isNotEmpty()) {
-                            variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
+            val variantDataList = coroutineScope {
+                variants.map { vi ->
+                    async(Dispatchers.IO) {
+                        variantSemaphore.withPermit {
+                            try {
+                                val varText = fetchString(vi.url, seg)
+                                val segs = parseVariantSegments(varText, vi.url)
+                                logi("resolveVidTube:   variant ${vi.quality}(${vi.bandwidth}): ${segs.size} segments")
+                                if (segs.isNotEmpty()) {
+                                    LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs)
+                                } else null
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                loge("resolveVidTube:   variant ${vi.quality} fetch FAILED: ${e.message}")
+                                null
+                            }
                         }
                     }
-                } catch (e: Exception) {
-                    loge("resolveVidTube:   variant ${vi.quality} fetch FAILED: ${e.message}")
-                }
+                }.awaitAll().filterNotNull()
             }
 
             if (variantDataList.isEmpty()) {
@@ -294,20 +305,26 @@ class AnikotoExtractors(
                 logi("resolveKiwi: ${variants.size} variants: ${variants.joinToString { it.quality }}")
                 logd("resolveKiwi: [3/4] fetching ${variants.size} variant playlists (NO ad filter)")
 
-                val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
-                for (vi in variants) {
-                    try {
-                        variantSemaphore.withPermit {
-                            val varText = fetchString(vi.url, headers)
-                            val segs = parseVariantSegments(varText, vi.url)
-                            logd("resolveKiwi:   variant ${vi.quality}: ${segs.size} segments (no filter)")
-                            if (segs.isNotEmpty()) {
-                                variantDataList.add(LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs))
+                val variantDataList = coroutineScope {
+                    variants.map { vi ->
+                        async(Dispatchers.IO) {
+                            variantSemaphore.withPermit {
+                                try {
+                                    val varText = fetchString(vi.url, headers)
+                                    val segs = parseVariantSegments(varText, vi.url)
+                                    logd("resolveKiwi:   variant ${vi.quality}: ${segs.size} segments (no filter)")
+                                    if (segs.isNotEmpty()) {
+                                        LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs)
+                                    } else null
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    loge("resolveKiwi:   variant ${vi.quality} fetch FAILED: ${e.message}")
+                                    null
+                                }
                             }
                         }
-                    } catch (e: Exception) {
-                        loge("resolveKiwi:   variant ${vi.quality} fetch FAILED: ${e.message}")
-                    }
+                    }.awaitAll().filterNotNull()
                 }
 
                 if (variantDataList.isEmpty()) {

@@ -27,10 +27,8 @@ class LocalProxyServer(
 ) {
     companion object {
         private const val IDLE_TIMEOUT_MS = 600000L
-        private const val MAX_CACHE_ENTRIES = 24
-        private const val MAX_CACHE_BYTES = 48 * 1024 * 1024
-        private const val MAX_SEGMENT_CACHE_BYTES = 8 * 1024 * 1024
-        private const val MAX_CONCURRENT_PREFETCHES = 2
+        private const val MAX_CACHE_ENTRIES = 200
+        private const val MAX_CONCURRENT_PREFETCHES = 5
         private const val SOCKET_READ_TIMEOUT_MS = 120000
         private const val TAG = "AnikotoProxy"
         private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -59,7 +57,7 @@ class LocalProxyServer(
 
     private val segmentCache = ConcurrentHashMap<String, CachedSegment>()
     private val cacheOrder = Collections.synchronizedList(mutableListOf<String>())
-    private val cacheBytes = AtomicLong(0L)
+
     private val fetching = ConcurrentHashMap<String, Boolean>()
     private val prefetchGeneration = AtomicLong(0L)
     private val activePrefetches = AtomicLong(0L)
@@ -134,7 +132,6 @@ class LocalProxyServer(
             runCatching { executor.shutdownNow() }
             segmentCache.clear()
             cacheOrder.clear()
-            cacheBytes.set(0L)
             fetching.clear()
             prefetchGeneration.incrementAndGet()
             activePrefetches.set(0L)
@@ -391,10 +388,6 @@ class LocalProxyServer(
         currentIndex: Int,
     ) {
         if (prefetchCount <= 0) return
-        if (cacheBytes.get() >= (MAX_CACHE_BYTES * 3L) / 4L) {
-            logi("PREFETCH SKIPPED: cache near budget (${cacheBytes.get()}/$MAX_CACHE_BYTES bytes)")
-            return
-        }
         val gen = prefetchGeneration.get()
         val totalSegs = variant.segments.size
         val prefetchAhead = max((prefetchCount * totalSegs) / 100, 1)
@@ -488,41 +481,20 @@ class LocalProxyServer(
     private fun cacheSegment(key: String, data: ByteArray, offset: Int) {
         val cached = CachedSegment(data, offset)
         if (cached.size <= 0) return
-        if (cached.size > MAX_SEGMENT_CACHE_BYTES) {
-            logi("CACHE SKIP: $key segment too large (${cached.size} bytes)")
-            return
-        }
 
         synchronized(cacheOrder) {
             val existing = segmentCache.remove(key)
             if (existing != null) {
-                cacheBytes.addAndGet(-existing.size.toLong())
                 cacheOrder.remove(key)
             }
 
-            while (
-                cacheOrder.isNotEmpty() &&
-                (segmentCache.size >= MAX_CACHE_ENTRIES || cacheBytes.get() + cached.size > MAX_CACHE_BYTES)
-            ) {
+            while (cacheOrder.isNotEmpty() && segmentCache.size >= MAX_CACHE_ENTRIES) {
                 val evictedKey = cacheOrder.removeAt(0)
-                val evicted = segmentCache.remove(evictedKey)
-                if (evicted != null) {
-                    cacheBytes.addAndGet(-evicted.size.toLong())
-                }
-            }
-
-            if (cacheBytes.get() + cached.size > MAX_CACHE_BYTES) {
-                logi(
-                    "CACHE SKIP: $key cache budget exceeded (${cacheBytes.get()}+${
-                        cached.size
-                    } > $MAX_CACHE_BYTES)",
-                )
-                return
+                segmentCache.remove(evictedKey)
             }
 
             segmentCache[key] = cached
             cacheOrder.add(key)
-            cacheBytes.addAndGet(cached.size.toLong())
         }
     }
 
