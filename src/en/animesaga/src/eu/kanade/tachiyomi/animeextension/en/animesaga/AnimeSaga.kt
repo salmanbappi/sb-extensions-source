@@ -5,8 +5,10 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Base64
 import androidx.preference.ListPreference
+import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
@@ -49,7 +51,7 @@ class AnimeSaga :
 
     override val lang = "en"
 
-    override val supportsLatest = false
+    override val supportsLatest = true
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
@@ -79,19 +81,67 @@ class AnimeSaga :
 
     override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
 
-    override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException()
+    override fun latestUpdatesRequest(page: Int): Request {
+        val queryBody = GraphQLRequest(
+            query = LATEST_QUERY,
+            variables = GraphQLVariables(page = page),
+        )
+        val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
+        return POST("https://graphql.anilist.co", headers, body)
+    }
 
-    override fun latestUpdatesParse(response: Response): AnimesPage = throw UnsupportedOperationException()
+    override fun latestUpdatesParse(response: Response): AnimesPage = searchAnimeParse(response)
 
     // ============================== Search ==============================
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        var selectedSort = listOf("TRENDING_DESC")
+        var selectedGenres: List<String>? = null
+        var selectedFormats: List<String>? = null
+        var selectedStatus: List<String>? = null
+        var selectedSeason: String? = null
+        var selectedYear: Int? = null
+
+        filters.forEach { filter ->
+            when (filter) {
+                is SortFilter -> {
+                    selectedSort = listOf(filter.toValue())
+                }
+                is GenreFilter -> {
+                    val genres = filter.getCheckedValues()
+                    if (genres.isNotEmpty()) selectedGenres = genres
+                }
+                is FormatFilter -> {
+                    val formats = filter.getCheckedValues()
+                    if (formats.isNotEmpty()) selectedFormats = formats
+                }
+                is StatusFilter -> {
+                    val value = filter.toValue()
+                    if (value.isNotEmpty()) selectedStatus = listOf(value)
+                }
+                is SeasonFilter -> {
+                    val value = filter.toValue()
+                    if (value.isNotEmpty()) selectedSeason = value
+                }
+                is YearFilter -> {
+                    val value = filter.state
+                    if (value.isNotBlank()) selectedYear = value.toIntOrNull()
+                }
+                else -> {}
+            }
+        }
+
         val queryBody = GraphQLRequest(
             query = SEARCH_QUERY,
             variables = GraphQLVariables(
                 page = page,
                 search = query.takeIf { it.isNotBlank() },
-                sort = listOf("TRENDING_DESC"),
+                sort = selectedSort,
+                genres = selectedGenres,
+                format = selectedFormats,
+                status = selectedStatus,
+                season = selectedSeason,
+                seasonYear = selectedYear,
             ),
         )
         val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -122,6 +172,43 @@ class AnimeSaga :
         }
         return AnimesPage(animeList, pageInfo.pageInfo?.hasNextPage ?: (animeList.size == 24))
     }
+
+    // ============================== Filters ==============================
+
+    open class UriPartFilter(displayName: String, private val vals: Array<Pair<String, String>>) :
+        AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
+        fun toValue() = vals[state].second
+    }
+
+    private class CheckBoxVal(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
+
+    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) :
+        AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first, false) }) {
+        fun getCheckedValues(): List<String> = state.mapIndexedNotNull { index, checkbox ->
+            if (checkbox.state) vals[index].second else null
+        }
+    }
+
+    class GenreFilter : CheckBoxFilterList("Genres", GENRES)
+    class FormatFilter : CheckBoxFilterList("Formats", FORMATS)
+    class StatusFilter : UriPartFilter("Status", STATUSES)
+    class SeasonFilter : UriPartFilter("Seasons", SEASONS)
+    class SortFilter : UriPartFilter("Sort By", SORT_BY)
+    class YearFilter : AnimeFilter.Text("Year")
+
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        SortFilter(),
+        AnimeFilter.Separator(),
+        GenreFilter(),
+        AnimeFilter.Separator(),
+        FormatFilter(),
+        AnimeFilter.Separator(),
+        StatusFilter(),
+        AnimeFilter.Separator(),
+        SeasonFilter(),
+        AnimeFilter.Separator(),
+        YearFilter(),
+    )
 
     // ============================== Anime Details ==============================
 
@@ -295,9 +382,12 @@ class AnimeSaga :
         val sMap = streamRes.servers ?: return emptyList()
         val allServerNames = (sMap.sub.mapNotNull { it.name ?: it.label } + sMap.dub.mapNotNull { it.name ?: it.label }).distinct()
 
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+        val filteredServerNames = allServerNames.filter { it !in excludedServers }
+
         val hosterList = mutableListOf<Hoster>()
 
-        allServerNames.forEach { serverName ->
+        filteredServerNames.forEach { serverName ->
             val subItem = sMap.sub.firstOrNull { (it.name ?: it.label) == serverName }
             val dubItem = sMap.dub.firstOrNull { (it.name ?: it.label) == serverName }
 
@@ -540,6 +630,16 @@ class AnimeSaga :
             summary = "%s"
         }
         screen.addPreference(audioPref)
+
+        val excludeServersPref = MultiSelectListPreference(screen.context).apply {
+            key = PREF_EXCLUDE_SERVERS_KEY
+            title = "Exclude Servers"
+            summary = "Select servers to exclude from the video list"
+            entries = arrayOf("HD-1", "HD-2", "StreamHG", "Earnvids", "Doodstream")
+            entryValues = arrayOf("HD-1", "HD-2", "StreamHG", "Earnvids", "Doodstream")
+            setDefaultValue(emptySet<String>())
+        }
+        screen.addPreference(excludeServersPref)
     }
 
     // ============================ Utilities =============================
@@ -563,6 +663,7 @@ class AnimeSaga :
         private const val PREF_TITLE_LANG_KEY = "preferred_title_lang"
         private const val PREF_AUDIO_KEY = "preferred_audio"
         private const val PREF_QUALITY_KEY = "preferred_quality"
+        private const val PREF_EXCLUDE_SERVERS_KEY = "exclude_servers"
 
         private val POPULAR_QUERY = """
             query(${"$"}page: Int) {
@@ -571,6 +672,23 @@ class AnimeSaga :
                   hasNextPage
                 }
                 media(sort: [TRENDING_DESC], type: ANIME, isAdult: false) {
+                  id
+                  title { english romaji native }
+                  coverImage { large extraLarge }
+                  description(asHtml: false)
+                  genres
+                }
+              }
+            }
+        """.trimIndent()
+
+        private val LATEST_QUERY = """
+            query(${"$"}page: Int) {
+              Page(page: ${"$"}page, perPage: 24) {
+                pageInfo {
+                  hasNextPage
+                }
+                media(sort: [START_DATE_DESC], type: ANIME, isAdult: false) {
                   id
                   title { english romaji native }
                   coverImage { large extraLarge }
@@ -621,6 +739,62 @@ class AnimeSaga :
               }
             }
         """.trimIndent()
+
+        private val GENRES = arrayOf(
+            Pair("Action", "Action"),
+            Pair("Adventure", "Adventure"),
+            Pair("Comedy", "Comedy"),
+            Pair("Drama", "Drama"),
+            Pair("Ecchi", "Ecchi"),
+            Pair("Fantasy", "Fantasy"),
+            Pair("Horror", "Horror"),
+            Pair("Mahou Shoujo", "Mahou Shoujo"),
+            Pair("Mecha", "Mecha"),
+            Pair("Music", "Music"),
+            Pair("Mystery", "Mystery"),
+            Pair("Psychological", "Psychological"),
+            Pair("Romance", "Romance"),
+            Pair("Sci-Fi", "Sci-Fi"),
+            Pair("Slice of Life", "Slice of Life"),
+            Pair("Sports", "Sports"),
+            Pair("Supernatural", "Supernatural"),
+            Pair("Thriller", "Thriller"),
+        )
+
+        private val FORMATS = arrayOf(
+            Pair("TV", "TV"),
+            Pair("TV Short", "TV_SHORT"),
+            Pair("Movie", "MOVIE"),
+            Pair("Special", "SPECIAL"),
+            Pair("OVA", "OVA"),
+            Pair("ONA", "ONA"),
+            Pair("Music", "MUSIC"),
+        )
+
+        private val STATUSES = arrayOf(
+            Pair("Any", ""),
+            Pair("Finished", "FINISHED"),
+            Pair("Airing", "RELEASING"),
+            Pair("Upcoming", "NOT_YET_RELEASED"),
+            Pair("Cancelled", "CANCELLED"),
+            Pair("Hiatus", "HIATUS"),
+        )
+
+        private val SEASONS = arrayOf(
+            Pair("Any", ""),
+            Pair("Winter", "WINTER"),
+            Pair("Spring", "SPRING"),
+            Pair("Summer", "SUMMER"),
+            Pair("Fall", "FALL"),
+        )
+
+        private val SORT_BY = arrayOf(
+            Pair("Trending", "TRENDING_DESC"),
+            Pair("Popularity", "POPULARITY_DESC"),
+            Pair("Score", "SCORE_DESC"),
+            Pair("Search Match", "SEARCH_MATCH"),
+            Pair("Start Date", "START_DATE_DESC"),
+        )
     }
 }
 
