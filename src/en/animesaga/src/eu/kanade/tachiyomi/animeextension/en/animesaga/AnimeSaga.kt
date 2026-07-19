@@ -107,26 +107,32 @@ class AnimeSaga :
                 is SortFilter -> {
                     selectedSort = listOf(filter.toValue())
                 }
+
                 is GenreFilter -> {
                     val genres = filter.getCheckedValues()
                     if (genres.isNotEmpty()) selectedGenres = genres
                 }
+
                 is FormatFilter -> {
                     val formats = filter.getCheckedValues()
                     if (formats.isNotEmpty()) selectedFormats = formats
                 }
+
                 is StatusFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) selectedStatus = listOf(value)
                 }
+
                 is SeasonFilter -> {
                     val value = filter.toValue()
                     if (value.isNotEmpty()) selectedSeason = value
                 }
+
                 is YearFilter -> {
                     val value = filter.state
                     if (value.isNotBlank()) selectedYear = value.toIntOrNull()
                 }
+
                 else -> {}
             }
         }
@@ -175,15 +181,13 @@ class AnimeSaga :
 
     // ============================== Filters ==============================
 
-    open class UriPartFilter(displayName: String, private val vals: Array<Pair<String, String>>) :
-        AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
+    open class UriPartFilter(displayName: String, private val vals: Array<Pair<String, String>>) : AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
         fun toValue() = vals[state].second
     }
 
     private class CheckBoxVal(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
 
-    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) :
-        AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first, false) }) {
+    open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first, false) }) {
         fun getCheckedValues(): List<String> = state.mapIndexedNotNull { index, checkbox ->
             if (checkbox.state) vals[index].second else null
         }
@@ -512,6 +516,7 @@ class AnimeSaga :
                         }
                     }
                 }
+
                 embedUrl.contains("otakuhg.site") || embedUrl.contains("otakuvid.online") -> {
                     val extractor = VidHideExtractor(client, headers)
                     extractor.videosFromUrl(embedUrl) { quality -> "$audioType - $quality" }.forEach { v ->
@@ -525,6 +530,7 @@ class AnimeSaga :
                         )
                     }
                 }
+
                 embedUrl.contains("playmogo.com") || embedUrl.contains("dood") -> {
                     val extractor = DoodExtractor(client)
                     extractor.videosFromUrl(embedUrl, quality = audioType).forEach { v ->
