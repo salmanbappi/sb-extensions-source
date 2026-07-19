@@ -32,7 +32,7 @@ class ZoroTv : Source() {
 
     override val supportsLatest = true
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val jsonParser = Json { ignoreUnknownKeys = true }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
@@ -270,7 +270,7 @@ class ZoroTv : Source() {
                     .set("Referer", "https://www.zorotv.se/")
                     .build()
                 val response = client.newCall(GET(actionUrl, actionHeaders)).execute().body.string()
-                val parsed = json.decodeFromString<SamaResponse>(response)
+                val parsed = jsonParser.decodeFromString<SamaResponse>(response)
                 val rumbleUrl = parsed.rumble_url
                 if (!rumbleUrl.isNullOrBlank()) {
                     playlistUtils.extractFromHls(
