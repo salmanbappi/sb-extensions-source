@@ -292,30 +292,23 @@ class AnimeSaga :
         val streamRes = json.decodeFromString<StreamResponse>(decryptedBody)
         if (!streamRes.success) return emptyList()
 
-        val hosterList = mutableListOf<Hoster>()
         val sMap = streamRes.servers ?: return emptyList()
+        val allServerNames = (sMap.sub.mapNotNull { it.name ?: it.label } + sMap.dub.mapNotNull { it.name ?: it.label }).distinct()
 
-        sMap.sub.forEach { server ->
-            val name = server.name ?: server.label ?: "Unknown"
-            val idVal = server.url ?: server.linkId ?: ""
-            if (idVal.isNotEmpty()) {
+        val hosterList = mutableListOf<Hoster>()
+
+        allServerNames.forEach { serverName ->
+            val subItem = sMap.sub.firstOrNull { (it.name ?: it.label) == serverName }
+            val dubItem = sMap.dub.firstOrNull { (it.name ?: it.label) == serverName }
+
+            val subIdVal = subItem?.let { it.url ?: it.linkId } ?: ""
+            val dubIdVal = dubItem?.let { it.url ?: it.linkId } ?: ""
+
+            if (subIdVal.isNotEmpty() || dubIdVal.isNotEmpty()) {
                 hosterList.add(
                     Hoster(
-                        hosterName = "$name (SUB)",
-                        hosterUrl = "sub|${payload.provider}|$name|$idVal|${payload.title}|${payload.romaji}|${payload.anilistId}|${payload.malId}",
-                    ),
-                )
-            }
-        }
-
-        sMap.dub.forEach { server ->
-            val name = server.name ?: server.label ?: "Unknown"
-            val idVal = server.url ?: server.linkId ?: ""
-            if (idVal.isNotEmpty()) {
-                hosterList.add(
-                    Hoster(
-                        hosterName = "$name (DUB)",
-                        hosterUrl = "dub|${payload.provider}|$name|$idVal|${payload.title}|${payload.romaji}|${payload.anilistId}|${payload.malId}",
+                        hosterName = serverName,
+                        hosterUrl = "$serverName|$subIdVal|$dubIdVal|${payload.provider}|${payload.title}|${payload.romaji}|${payload.anilistId}|${payload.malId}",
                     ),
                 )
             }
@@ -328,11 +321,64 @@ class AnimeSaga :
         val parts = hoster.hosterUrl.split("|")
         if (parts.size < 8) return emptyList()
 
-        val audioType = parts[0]
-        val provider = parts[1]
-        val serverName = parts[2]
-        val urlOrLinkId = parts[3]
+        val serverName = parts[0]
+        val subUrl = parts[1]
+        val dubUrl = parts[2]
+        val provider = parts[3]
+        val title = parts[4]
+        val romaji = parts[5]
+        val anilistId = parts[6]
+        val malId = parts[7]
 
+        val videoList = mutableListOf<Video>()
+
+        if (subUrl.isNotEmpty()) {
+            runCatching {
+                extractVideos(
+                    provider = provider,
+                    urlOrLinkId = subUrl,
+                    serverName = serverName,
+                    audioType = "SUB",
+                    title = title,
+                    romaji = romaji,
+                    anilistId = anilistId,
+                    malId = malId,
+                ).forEach { v ->
+                    videoList.add(v)
+                }
+            }
+        }
+
+        if (dubUrl.isNotEmpty()) {
+            runCatching {
+                extractVideos(
+                    provider = provider,
+                    urlOrLinkId = dubUrl,
+                    serverName = serverName,
+                    audioType = "DUB",
+                    title = title,
+                    romaji = romaji,
+                    anilistId = anilistId,
+                    malId = malId,
+                ).forEach { v ->
+                    videoList.add(v)
+                }
+            }
+        }
+
+        return videoList
+    }
+
+    private suspend fun extractVideos(
+        provider: String,
+        urlOrLinkId: String,
+        serverName: String,
+        audioType: String,
+        title: String,
+        romaji: String,
+        anilistId: String,
+        malId: String,
+    ): List<Video> {
         val videoList = mutableListOf<Video>()
 
         if (provider == "gogoanime" || provider == "anikoto") {
@@ -368,7 +414,7 @@ class AnimeSaga :
                             playlistUtils.extractFromHls(
                                 finalM3u8,
                                 referer = embedUrl,
-                                videoNameGen = { quality -> "$serverName ($audioType) - $quality" },
+                                videoNameGen = { quality -> "$audioType - $quality" },
                                 subtitleList = subtitleTracks,
                             ).forEach { v ->
                                 videoList.add(v)
@@ -376,10 +422,9 @@ class AnimeSaga :
                         }
                     }
                 }
-
                 embedUrl.contains("otakuhg.site") || embedUrl.contains("otakuvid.online") -> {
                     val extractor = VidHideExtractor(client, headers)
-                    extractor.videosFromUrl(embedUrl) { quality -> "$serverName ($audioType) - $quality" }.forEach { v ->
+                    extractor.videosFromUrl(embedUrl) { quality -> "$audioType - $quality" }.forEach { v ->
                         videoList.add(
                             Video(
                                 videoUrl = v.videoUrl,
@@ -390,10 +435,9 @@ class AnimeSaga :
                         )
                     }
                 }
-
                 embedUrl.contains("playmogo.com") || embedUrl.contains("dood") -> {
                     val extractor = DoodExtractor(client)
-                    extractor.videosFromUrl(embedUrl, quality = "$serverName ($audioType)").forEach { v ->
+                    extractor.videosFromUrl(embedUrl, quality = audioType).forEach { v ->
                         videoList.add(
                             Video(
                                 videoUrl = v.videoUrl,
@@ -435,7 +479,7 @@ class AnimeSaga :
                             playlistUtils.extractFromHls(
                                 proxiedM3u8,
                                 referer = "https://megaplay.buzz/",
-                                videoNameGen = { quality -> "$serverName ($audioType) - $quality" },
+                                videoNameGen = { quality -> "$audioType - $quality" },
                                 subtitleList = tracks,
                             ).forEach { v ->
                                 videoList.add(v)
