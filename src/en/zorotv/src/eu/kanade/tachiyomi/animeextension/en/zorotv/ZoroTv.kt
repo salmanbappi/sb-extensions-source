@@ -33,7 +33,6 @@ class ZoroTv : Source() {
 
     override val supportsLatest = true
 
-
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
