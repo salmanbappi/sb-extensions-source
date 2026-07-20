@@ -2,9 +2,11 @@ package eu.kanade.tachiyomi.lib.universalextractor
 
 import android.annotation.SuppressLint
 import android.app.Application
+import android.net.http.SslError
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.webkit.SslErrorHandler
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -48,6 +50,15 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 userAgentString = origRequestHeader["User-Agent"]
             }
             newView.webViewClient = object : WebViewClient() {
+                @SuppressLint("WebViewClientOnReceivedSslError")
+                override fun onReceivedSslError(
+                    view: WebView?,
+                    handler: SslErrorHandler?,
+                    error: SslError?,
+                ) {
+                    handler?.proceed()
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     view?.evaluateJavascript(
