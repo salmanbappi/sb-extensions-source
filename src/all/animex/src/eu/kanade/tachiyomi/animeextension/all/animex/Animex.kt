@@ -760,6 +760,13 @@ class Animex : Source() {
                                             sourcesData.headers?.forEach { (key, value) ->
                                                 set(key, value)
                                             }
+                                            if (providerId.equals("uwu", ignoreCase = true) || providerId.equals("owo", ignoreCase = true)) {
+                                                if (get("Origin") == null) set("Origin", "https://animex.one")
+                                                if (get("Referer") == null) set("Referer", "https://animex.one/")
+                                            }
+                                            if (providerId.equals("sora", ignoreCase = true)) {
+                                                if (get("Referer") == null) set("Referer", "https://animex.one/")
+                                            }
                                         }.build()
 
                                         if (streamUrl.contains(".m3u8", ignoreCase = true)) {
@@ -774,7 +781,13 @@ class Animex : Source() {
                                                         "$providerName: $parsedQuality ($categoryLabel)$subStyle"
                                                     },
                                                     subtitleList = subtitleTracks,
-                                                )
+                                                ).map { video ->
+                                                    val cleanUrl = when {
+                                                        video.videoUrl.startsWith("//") -> "https:${video.videoUrl}"
+                                                        else -> video.videoUrl
+                                                    }
+                                                    video.copy(videoUrl = cleanUrl)
+                                                }
                                                 providerVideos.addAll(playlistVideos)
                                             } catch (e: Exception) {
                                                 val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
@@ -865,13 +878,9 @@ class Animex : Source() {
             val isTargetServer = video.videoTitle.contains("mimi", ignoreCase = true) ||
                 video.videoTitle.contains("vee", ignoreCase = true) ||
                 video.videoTitle.contains("yuki", ignoreCase = true) ||
-                video.videoTitle.contains("sora", ignoreCase = true) ||
-                video.videoTitle.contains("uwu", ignoreCase = true) ||
                 video.videoUrl.contains("mimi", ignoreCase = true) ||
                 video.videoUrl.contains("vee", ignoreCase = true) ||
-                video.videoUrl.contains("yuki", ignoreCase = true) ||
-                video.videoUrl.contains("sora", ignoreCase = true) ||
-                video.videoUrl.contains("uwu", ignoreCase = true)
+                video.videoUrl.contains("yuki", ignoreCase = true)
 
             if (isTargetServer && video.videoUrl.contains(".m3u8")) {
                 Video(
