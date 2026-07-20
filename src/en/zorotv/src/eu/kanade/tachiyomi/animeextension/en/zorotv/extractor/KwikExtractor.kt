@@ -29,7 +29,7 @@ class KwikExtractor(
 
         val unpacked = JsUnpacker.unpackAndCombine("eval(function(\$script")
             ?: throw Exception("JsUnpacker failed to unpack Kwik script.")
-        
+
         val hlsUrl = unpacked.substringAfter("const source=\\'").substringBefore("\\';")
 
         return Video(
