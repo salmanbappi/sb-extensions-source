@@ -9,7 +9,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import aniyomi.lib.playlistutils.PlaylistUtils
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Video
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
