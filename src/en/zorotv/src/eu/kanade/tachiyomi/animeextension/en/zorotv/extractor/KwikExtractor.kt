@@ -49,7 +49,7 @@ class KwikExtractor(
             ?: throw Exception("JsUnpacker not found.")
         val unpacked = JsUnpacker.unpackAndCombine("eval(function(\$script")
             ?: throw Exception("JsUnpacker failed to unpack Kwik script.")
-        
+
         return HlsStream(
             url = unpacked.substringAfter("const source=\\'").substringBefore("\\';"),
             referer = content.finalUrl,
