@@ -2,11 +2,11 @@ package eu.kanade.tachiyomi.animeextension.en.zorotv.extractor
 
 import android.annotation.SuppressLint
 import android.net.Uri
+import android.net.http.SslError
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
-import android.net.http.SslError
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import keiyoushi.utils.applicationContext
