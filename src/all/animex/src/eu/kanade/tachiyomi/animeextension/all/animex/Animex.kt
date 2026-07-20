@@ -849,8 +849,14 @@ class Animex : Source() {
         return videos.map { video ->
             val isTargetServer = video.videoTitle.contains("mimi", ignoreCase = true) ||
                 video.videoTitle.contains("vee", ignoreCase = true) ||
+                video.videoTitle.contains("yuki", ignoreCase = true) ||
+                video.videoTitle.contains("sora", ignoreCase = true) ||
+                video.videoTitle.contains("uwu", ignoreCase = true) ||
                 video.videoUrl.contains("mimi", ignoreCase = true) ||
-                video.videoUrl.contains("vee", ignoreCase = true)
+                video.videoUrl.contains("vee", ignoreCase = true) ||
+                video.videoUrl.contains("yuki", ignoreCase = true) ||
+                video.videoUrl.contains("sora", ignoreCase = true) ||
+                video.videoUrl.contains("uwu", ignoreCase = true)
 
             if (isTargetServer && video.videoUrl.contains(".m3u8")) {
                 Video(
@@ -1323,7 +1329,11 @@ private class LocalProxyServer(private val client: OkHttpClient) {
     }
 
     private fun servePlaylist(targetUrl: String, output: OutputStream) {
-        val response = client.newCall(GET(targetUrl)).execute()
+        val reqHeaders = Headers.Builder()
+            .add("User-Agent", API_UA)
+            .add("Referer", "https://animex.one/")
+            .build()
+        val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
             response.close()
@@ -1346,12 +1356,20 @@ private class LocalProxyServer(private val client: OkHttpClient) {
                 val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
                 uriRegex.find(trimmed)?.let { match ->
                     val uriValue = match.groupValues[1]
-                    val resolvedUri = targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
+                    val rawResolved = when {
+                        uriValue.startsWith("//") -> "https:$uriValue"
+                        else -> targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
+                    }
+                    val resolvedUri = if (rawResolved.startsWith("//")) "https:$rawResolved" else rawResolved
                     val proxiedUri = getProxyUrl(resolvedUri)
                     builder.append(trimmed.replace(uriValue, proxiedUri))
                 } ?: builder.append(trimmed)
             } else {
-                val resolvedUri = targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
+                val rawResolved = when {
+                    trimmed.startsWith("//") -> "https:$trimmed"
+                    else -> targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
+                }
+                val resolvedUri = if (rawResolved.startsWith("//")) "https:$rawResolved" else rawResolved
                 builder.append(getProxyUrl(resolvedUri))
             }
             builder.append("\n")
@@ -1367,7 +1385,11 @@ private class LocalProxyServer(private val client: OkHttpClient) {
     }
 
     private fun serveSegment(targetUrl: String, output: OutputStream) {
-        val response = client.newCall(GET(targetUrl)).execute()
+        val reqHeaders = Headers.Builder()
+            .add("User-Agent", API_UA)
+            .add("Referer", "https://animex.one/")
+            .build()
+        val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
             response.close()
