@@ -1255,7 +1255,9 @@ private class LocalProxyServer(private val client: OkHttpClient) {
     fun start() {
         if (running.get() && serverSocket?.isClosed == false) return
         running.set(false)
-        try { serverSocket?.close() } catch (_: Exception) {}
+        try {
+            serverSocket?.close()
+        } catch (_: Exception) {}
         try {
             serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
             running.set(true)
@@ -1292,7 +1294,9 @@ private class LocalProxyServer(private val client: OkHttpClient) {
         val encodedUrl = uri.getQueryParameter("url") ?: return
         val targetUrl = try {
             String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-        } catch (_: Exception) { return }
+        } catch (_: Exception) {
+            return
+        }
 
         try {
             if (path.contains("playlist.m3u8")) {
