@@ -864,8 +864,10 @@ class Animex : Source() {
         return videos.map { video ->
             val isTargetServer = video.videoTitle.contains("mimi", ignoreCase = true) ||
                 video.videoTitle.contains("vee", ignoreCase = true) ||
+                video.videoTitle.contains("yuki", ignoreCase = true) ||
                 video.videoUrl.contains("mimi", ignoreCase = true) ||
-                video.videoUrl.contains("vee", ignoreCase = true)
+                video.videoUrl.contains("vee", ignoreCase = true) ||
+                video.videoUrl.contains("yuki", ignoreCase = true)
 
             if (isTargetServer && video.videoUrl.contains(".m3u8")) {
                 Video(
