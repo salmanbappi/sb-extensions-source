@@ -5,6 +5,8 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
+import android.webkit.SslErrorHandler
+import android.net.http.SslError
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import keiyoushi.utils.applicationContext
@@ -40,6 +42,15 @@ class CloudflareBypass {
             webView?.settings?.userAgentString = userAgentToUse
 
             webView?.webViewClient = object : WebViewClient() {
+                @SuppressLint("WebViewClientOnReceivedSslError")
+                override fun onReceivedSslError(
+                    view: WebView?,
+                    handler: SslErrorHandler?,
+                    error: SslError?,
+                ) {
+                    handler?.proceed()
+                }
+
                 override fun onPageFinished(view: WebView, loadedUrl: String) {
                     pollForClearance(pageUrl, userAgentToUse, cancelled) { bypassResult ->
                         result = bypassResult
