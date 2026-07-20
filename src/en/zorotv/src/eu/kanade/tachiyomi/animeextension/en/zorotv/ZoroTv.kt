@@ -303,7 +303,9 @@ class ZoroTv : Source() {
                             videoUrl = rumbleUrl,
                             videoTitle = "${hoster.hosterName} - Auto",
                             headers = rumbleHeaders,
-                        ),
+                        ).apply {
+                            mimeType = "application/x-mpegURL"
+                        },
                     )
                 } else {
                     emptyList()
