@@ -74,13 +74,28 @@ class Animex : Source() {
 
     private var proxy: LocalProxyServer? = null
 
-    private fun getProxyUrl(url: String): String {
+    private fun getProxyUrl(url: String, headers: Headers? = null): String {
         if (proxy == null) {
             proxy = LocalProxyServer(client).apply { start() }
         }
         val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val encodedHeaders = encodeHeaders(headers)
         val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
-        return "http://127.0.0.1:${proxy!!.port}/$path?url=$encodedUrl"
+        val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
+        return "http://127.0.0.1:${proxy!!.port}/$path?$query"
+    }
+
+    private fun encodeHeaders(headers: Headers?): String? {
+        if (headers == null || headers.size == 0) return null
+        val map = mutableMapOf<String, String>()
+        for (i in 0 until headers.size) {
+            map[headers.name(i)] = headers.value(i)
+        }
+        return try {
+            Base64.encodeToString(json.encodeToString(map).toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override fun headersBuilder() = super.headersBuilder().apply {
@@ -860,7 +875,7 @@ class Animex : Source() {
 
             if (isTargetServer && video.videoUrl.contains(".m3u8")) {
                 Video(
-                    videoUrl = getProxyUrl(video.videoUrl),
+                    videoUrl = getProxyUrl(video.videoUrl, video.headers),
                     videoTitle = video.videoTitle,
                     subtitleTracks = video.subtitleTracks,
                     audioTracks = video.audioTracks,
@@ -1303,17 +1318,19 @@ private class LocalProxyServer(private val client: OkHttpClient) {
     private fun routeRequest(path: String, output: OutputStream) {
         val uri = Uri.parse("http://127.0.0.1$path")
         val encodedUrl = uri.getQueryParameter("url") ?: return
+        val encodedHeaders = uri.getQueryParameter("headers")
         val targetUrl = try {
             String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
         } catch (_: Exception) {
             return
         }
+        val headers = decodeHeaders(encodedHeaders)
 
         try {
             if (path.contains("playlist.m3u8")) {
-                servePlaylist(targetUrl, output)
+                servePlaylist(targetUrl, headers, encodedHeaders, output)
             } else {
-                serveSegment(targetUrl, output)
+                serveSegment(targetUrl, headers, output)
             }
         } catch (_: Exception) {
             try {
@@ -1322,18 +1339,36 @@ private class LocalProxyServer(private val client: OkHttpClient) {
         }
     }
 
-    private fun getProxyUrl(url: String): String {
-        val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
-        return "http://127.0.0.1:$port/$path?url=$encoded"
+    private fun decodeHeaders(encoded: String?): Headers {
+        if (encoded.isNullOrEmpty()) {
+            return Headers.Builder()
+                .set("User-Agent", API_UA)
+                .set("Referer", "https://animex.one/")
+                .build()
+        }
+        return try {
+            val jsonStr = String(Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+            val map = json.decodeFromString<Map<String, String>>(jsonStr)
+            Headers.Builder().apply {
+                map.forEach { (k, v) -> set(k, v) }
+            }.build()
+        } catch (_: Exception) {
+            Headers.Builder()
+                .set("User-Agent", API_UA)
+                .set("Referer", "https://animex.one/")
+                .build()
+        }
     }
 
-    private fun servePlaylist(targetUrl: String, output: OutputStream) {
-        val reqHeaders = Headers.Builder()
-            .add("User-Agent", API_UA)
-            .add("Referer", "https://animex.one/")
-            .build()
-        val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
+    private fun getProxyUrl(url: String, headersStr: String?): String {
+        val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
+        val query = "url=$encoded" + if (!headersStr.isNullOrEmpty()) "&headers=$headersStr" else ""
+        return "http://127.0.0.1:$port/$path?$query"
+    }
+
+    private fun servePlaylist(targetUrl: String, headers: Headers, encodedHeaders: String?, output: OutputStream) {
+        val response = client.newCall(GET(targetUrl, headers)).execute()
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
             response.close()
@@ -1361,7 +1396,7 @@ private class LocalProxyServer(private val client: OkHttpClient) {
                         else -> targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
                     }
                     val resolvedUri = if (rawResolved.startsWith("//")) "https:$rawResolved" else rawResolved
-                    val proxiedUri = getProxyUrl(resolvedUri)
+                    val proxiedUri = getProxyUrl(resolvedUri, encodedHeaders)
                     builder.append(trimmed.replace(uriValue, proxiedUri))
                 } ?: builder.append(trimmed)
             } else {
@@ -1370,7 +1405,7 @@ private class LocalProxyServer(private val client: OkHttpClient) {
                     else -> targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
                 }
                 val resolvedUri = if (rawResolved.startsWith("//")) "https:$rawResolved" else rawResolved
-                builder.append(getProxyUrl(resolvedUri))
+                builder.append(getProxyUrl(resolvedUri, encodedHeaders))
             }
             builder.append("\n")
         }
@@ -1384,12 +1419,8 @@ private class LocalProxyServer(private val client: OkHttpClient) {
         output.flush()
     }
 
-    private fun serveSegment(targetUrl: String, output: OutputStream) {
-        val reqHeaders = Headers.Builder()
-            .add("User-Agent", API_UA)
-            .add("Referer", "https://animex.one/")
-            .build()
-        val response = client.newCall(GET(targetUrl, reqHeaders)).execute()
+    private fun serveSegment(targetUrl: String, headers: Headers, output: OutputStream) {
+        val response = client.newCall(GET(targetUrl, headers)).execute()
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
             response.close()
