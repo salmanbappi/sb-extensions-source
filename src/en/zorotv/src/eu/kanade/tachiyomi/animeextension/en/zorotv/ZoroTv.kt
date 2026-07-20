@@ -324,42 +324,30 @@ class ZoroTv : Source() {
                     val rumbleHeaders = headers.newBuilder()
                         .set("Referer", "https://rumble.com/")
                         .build()
-                    val extracted = try {
-                        playlistUtils.extractFromHls(
+                    val videoList = mutableListOf<Video>()
+                    // Primary stream (Auto/Master playlist)
+                    videoList.add(
+                        Video(
+                            videoUrl = rumbleUrl,
+                            videoTitle = "${hoster.hosterName} - Auto",
+                            headers = rumbleHeaders,
+                            preferred = true,
+                        ),
+                    )
+                    // Extracted resolution sub-streams
+                    try {
+                        val extracted = playlistUtils.extractFromHls(
                             playlistUrl = rumbleUrl,
                             referer = "https://rumble.com/",
                             masterHeaders = rumbleHeaders,
                             videoHeaders = rumbleHeaders,
                             videoNameGen = { "${hoster.hosterName} - $it" },
                         )
+                        videoList.addAll(extracted)
                     } catch (e: Exception) {
-                        emptyList()
+                        // Ignore extraction errors
                     }
-                    if (extracted.isNotEmpty()) {
-                        extracted.mapIndexed { idx, video ->
-                            if (idx == 0) {
-                                Video(
-                                    videoUrl = video.videoUrl,
-                                    videoTitle = video.videoTitle,
-                                    headers = video.headers,
-                                    preferred = true,
-                                    subtitleTracks = video.subtitleTracks,
-                                    audioTracks = video.audioTracks,
-                                )
-                            } else {
-                                video
-                            }
-                        }
-                    } else {
-                        listOf(
-                            Video(
-                                videoUrl = rumbleUrl,
-                                videoTitle = "${hoster.hosterName} - Auto",
-                                headers = rumbleHeaders,
-                                preferred = true,
-                            ),
-                        )
-                    }
+                    videoList
                 } else {
                     emptyList()
                 }
@@ -387,9 +375,6 @@ class ZoroTv : Source() {
                     // Fallback to embedUrl
                 }
 
-                if (videos.isEmpty()) {
-                    videos = universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
-                }
                 videos
             } else {
                 val embedHeaders = headers.newBuilder()
