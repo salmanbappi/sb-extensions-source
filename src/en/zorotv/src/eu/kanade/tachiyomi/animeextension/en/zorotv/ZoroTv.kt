@@ -33,11 +33,39 @@ class ZoroTv : Source() {
 
     override val supportsLatest = true
 
-    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val unsafeClient: okhttp3.OkHttpClient by lazy {
+        try {
+            val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(
+                object : javax.net.ssl.X509TrustManager {
+                    override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                    override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
+                },
+            )
+            val sslContext = javax.net.ssl.SSLContext.getInstance("SSL")
+            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+            client.newBuilder()
+                .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as javax.net.ssl.X509TrustManager)
+                .hostnameVerifier { _, _ -> true }
+                .build()
+        } catch (e: Exception) {
+            client
+        }
+    }
 
-    private val bloggerExtractor by lazy { BloggerExtractor(client) }
+    private fun okhttp3.Call.executeSafe(): Response {
+        return try {
+            this.execute()
+        } catch (e: javax.net.ssl.SSLException) {
+            unsafeClient.newCall(this.request()).execute()
+        }
+    }
 
-    private val universalExtractor by lazy { UniversalExtractor(client) }
+    private val playlistUtils by lazy { PlaylistUtils(unsafeClient, headers) }
+
+    private val bloggerExtractor by lazy { BloggerExtractor(unsafeClient) }
+
+    private val universalExtractor by lazy { UniversalExtractor(unsafeClient) }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -46,14 +74,14 @@ class ZoroTv : Source() {
     // ============================== Popular ===============================
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/anime/?page=$page&order=popular", headers)).execute()
+        val response = client.newCall(GET("$baseUrl/anime/?page=$page&order=popular", headers)).executeSafe()
         return parseAnimeListPage(response)
     }
 
     // ============================== Latest ================================
 
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/anime/?page=$page&order=update", headers)).execute()
+        val response = client.newCall(GET("$baseUrl/anime/?page=$page&order=update", headers)).executeSafe()
         return parseAnimeListPage(response)
     }
 
@@ -61,7 +89,7 @@ class ZoroTv : Source() {
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         return if (query.isNotBlank()) {
-            val response = client.newCall(GET("$baseUrl/page/$page/?s=$query", headers)).execute()
+            val response = client.newCall(GET("$baseUrl/page/$page/?s=$query", headers)).executeSafe()
             parseAnimeListPage(response)
         } else {
             val url = "$baseUrl/anime/page/$page/".toHttpUrl().newBuilder().apply {
@@ -109,7 +137,7 @@ class ZoroTv : Source() {
                     }
                 }
             }.build()
-            val response = client.newCall(GET(url, headers)).execute()
+            val response = client.newCall(GET(url, headers)).executeSafe()
             return parseAnimeListPage(response)
         }
     }
@@ -141,7 +169,7 @@ class ZoroTv : Source() {
     // =========================== Anime Details ============================
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
+        val response = client.newCall(GET("$baseUrl${anime.url}", headers)).executeSafe()
         val doc = response.asJsoup()
 
         val infoDiv = doc.selectFirst("div.info-content")
@@ -184,7 +212,7 @@ class ZoroTv : Source() {
     // ============================== Episodes ==============================
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
+        val response = client.newCall(GET("$baseUrl${anime.url}", headers)).executeSafe()
         val doc = response.asJsoup()
         val epElements = doc.select("div.eplister ul li")
 
@@ -228,7 +256,7 @@ class ZoroTv : Source() {
     // ============================ Video Links =============================
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val response = client.newCall(GET("$baseUrl${episode.url}", headers)).execute()
+        val response = client.newCall(GET("$baseUrl${episode.url}", headers)).executeSafe()
         val doc = response.asJsoup()
         val hosters = mutableListOf<Hoster>()
 
@@ -284,7 +312,7 @@ class ZoroTv : Source() {
                 val actionHeaders = headers.newBuilder()
                     .set("Referer", "https://www.zorotv.se/")
                     .build()
-                val body = client.newCall(GET(actionUrl, actionHeaders)).execute().body.string()
+                val body = client.newCall(GET(actionUrl, actionHeaders)).executeSafe().body.string()
                 // Extract rumble_url from JSON response using simple string parsing
                 // to avoid any runtime serialization issues
                 val rumbleUrl = body
@@ -343,7 +371,7 @@ class ZoroTv : Source() {
                     .build()
                 var videos = emptyList<Video>()
                 try {
-                    val response = client.newCall(GET(embedUrl, embedHeaders)).execute()
+                    val response = client.newCall(GET(embedUrl, embedHeaders)).executeSafe()
                     val html = response.body.string()
                     val bloggerUrl = "src=\"(https?://(?:www\\.)?blogger\\.com/video\\.g[^\"]+)\"".toRegex()
                         .find(html)?.groupValues?.get(1)
