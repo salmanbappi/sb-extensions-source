@@ -64,12 +64,17 @@ class UniversalExtractor(private val client: OkHttpClient) {
                     view?.evaluateJavascript(
                         """
                         (function() {
-                            try {
-                                var v = document.querySelector('video');
-                                if (v) { v.muted = true; v.play(); }
-                                var btns = document.querySelectorAll('button, div[role="button"], .play-button, .vjs-big-play-button, #player');
-                                btns.forEach(function(b) { b.click(); });
-                            } catch(e) {}
+                            var attempts = 0;
+                            var interval = setInterval(function() {
+                                try {
+                                    var v = document.querySelector('video');
+                                    if (v) { v.muted = true; v.play(); }
+                                    var btns = document.querySelectorAll('button, div[role="button"], .play-button, .vjs-big-play-button, #player, .ytp-large-play-button');
+                                    btns.forEach(function(b) { b.click(); });
+                                } catch(e) {}
+                                attempts++;
+                                if (attempts > 20) clearInterval(interval);
+                            }, 500);
                         })();
                         """.trimIndent(),
                         null,
@@ -134,7 +139,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
             resultUrl.isNotBlank() -> {
                 Log.d("UniversalExtractor", "Direct stream URL: $resultUrl")
-                val isGoogle = resultUrl.contains("googlevideo.com") || resultUrl.contains("googleusercontent.com")
+                val isGoogle = resultUrl.contains("googlevideo.com") || resultUrl.contains("googleusercontent.com") || resultUrl.contains("youtube.com")
                 val videoHeaders = if (isGoogle) {
                     origRequestHeader.newBuilder()
                         .set("Referer", "https://www.blogger.com/")
@@ -165,6 +170,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     companion object {
         const val TIMEOUT_SEC: Long = 10
-        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|googlevideo\\.com/|googleusercontent\\.com/|blogger\\.com/video-play|action=stream)(\\?.*)?$", RegexOption.IGNORE_CASE) }
+        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|googlevideo\\.com/|googleusercontent\\.com/|blogger\\.com/video-play|youtube\\.com/|action=stream)(\\?.*)?$", RegexOption.IGNORE_CASE) }
     }
 }
