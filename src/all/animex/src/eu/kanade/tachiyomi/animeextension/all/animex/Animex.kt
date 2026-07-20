@@ -2,6 +2,8 @@ package eu.kanade.tachiyomi.animeextension.all.animex
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.net.Uri
+import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
@@ -40,6 +42,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.OutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val API_UA =
     "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
@@ -63,6 +71,17 @@ class Animex : Source() {
     override val client: OkHttpClient = network.client.newBuilder()
         .addNetworkInterceptor(AnimexInterceptor(network.client.cookieJar))
         .build()
+
+    private var proxy: LocalProxyServer? = null
+
+    private fun getProxyUrl(url: String): String {
+        if (proxy == null) {
+            proxy = LocalProxyServer(client).apply { start() }
+        }
+        val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
+        return "http://127.0.0.1:${proxy!!.port}/$path?url=$encodedUrl"
+    }
 
     override fun headersBuilder() = super.headersBuilder().apply {
         set("User-Agent", API_UA)
@@ -827,7 +846,19 @@ class Animex : Source() {
             },
         )
 
-        return videos
+        return videos.map { video ->
+            if (video.videoUrl.contains(".m3u8")) {
+                Video(
+                    videoUrl = getProxyUrl(video.videoUrl),
+                    videoTitle = video.videoTitle,
+                    subtitleTracks = video.subtitleTracks,
+                    audioTracks = video.audioTracks,
+                    headers = video.headers,
+                )
+            } else {
+                video
+            }
+        }
     }
 
     // ============================== FILTERS ==============================
@@ -1213,3 +1244,172 @@ data class TrackItem(
     val kind: String? = null,
     val default: Boolean? = null,
 )
+
+private class LocalProxyServer(private val client: OkHttpClient) {
+    private val executor = Executors.newCachedThreadPool()
+    private val running = AtomicBoolean(false)
+    private var serverSocket: ServerSocket? = null
+    val port: Int
+        get() = serverSocket?.let { if (it.isClosed) 0 else it.localPort } ?: 0
+
+    fun start() {
+        if (running.get() && serverSocket?.isClosed == false) return
+        running.set(false)
+        try { serverSocket?.close() } catch (_: Exception) {}
+        try {
+            serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
+            running.set(true)
+            executor.execute {
+                while (running.get() && serverSocket?.isClosed == false) {
+                    try {
+                        val socket = serverSocket?.accept() ?: break
+                        executor.execute { handleClient(socket) }
+                    } catch (_: Exception) {
+                        if (serverSocket?.isClosed == true || !running.get()) break
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            running.set(false)
+        }
+    }
+
+    private fun handleClient(socket: Socket) {
+        socket.use { s ->
+            val input = s.getInputStream()
+            val output = s.getOutputStream()
+            val firstLine = input.bufferedReader().readLine() ?: return
+            val parts = firstLine.split(" ")
+            if (parts.size >= 2 && parts[0] == "GET") {
+                val path = parts[1]
+                routeRequest(path, output)
+            }
+        }
+    }
+
+    private fun routeRequest(path: String, output: OutputStream) {
+        val uri = Uri.parse("http://127.0.0.1$path")
+        val encodedUrl = uri.getQueryParameter("url") ?: return
+        val targetUrl = try {
+            String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+        } catch (_: Exception) { return }
+
+        try {
+            if (path.contains("playlist.m3u8")) {
+                servePlaylist(targetUrl, output)
+            } else {
+                serveSegment(targetUrl, output)
+            }
+        } catch (_: Exception) {
+            try {
+                output.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n".toByteArray())
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun getProxyUrl(url: String): String {
+        val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
+        return "http://127.0.0.1:$port/$path?url=$encoded"
+    }
+
+    private fun servePlaylist(targetUrl: String, output: OutputStream) {
+        val response = client.newCall(GET(targetUrl)).execute()
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
+            return
+        }
+
+        val content = response.body.string()
+        response.close()
+        val lines = content.split(Regex("""\r?\n"""))
+        val builder = StringBuilder(content.length * 2)
+
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                builder.append("\n")
+                continue
+            }
+
+            if (trimmed.startsWith("#")) {
+                val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
+                uriRegex.find(trimmed)?.let { match ->
+                    val uriValue = match.groupValues[1]
+                    val resolvedUri = targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
+                    val proxiedUri = getProxyUrl(resolvedUri)
+                    builder.append(trimmed.replace(uriValue, proxiedUri))
+                } ?: builder.append(trimmed)
+            } else {
+                val resolvedUri = targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
+                builder.append(getProxyUrl(resolvedUri))
+            }
+            builder.append("\n")
+        }
+
+        val bodyBytes = builder.toString().toByteArray()
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: ${bodyBytes.size}\r\n".toByteArray())
+        output.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        output.write(bodyBytes)
+        output.flush()
+    }
+
+    private fun serveSegment(targetUrl: String, output: OutputStream) {
+        val response = client.newCall(GET(targetUrl)).execute()
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
+            return
+        }
+
+        val bytes = response.body.bytes()
+        response.close()
+
+        val skipBytes = detectSkipBytes(bytes)
+        val payloadLength = bytes.size - skipBytes
+
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: $payloadLength\r\n".toByteArray())
+        output.write("Content-Type: video/mp2t\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        if (payloadLength > 0) {
+            output.write(bytes, skipBytes, payloadLength)
+        }
+        output.flush()
+    }
+
+    private fun detectSkipBytes(data: ByteArray): Int {
+        if (data.size < 4) return 0
+
+        val isPng = data[0] == 0x89.toByte() && data[1] == 0x50.toByte() && data[2] == 0x4E.toByte() && data[3] == 0x47.toByte()
+        val isJpeg = data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte() && data[2] == 0xFF.toByte()
+        val isGif = data[0] == 0x47.toByte() && data[1] == 0x49.toByte() && data[2] == 0x46.toByte()
+
+        if (!isPng && !isJpeg && !isGif) return 0
+
+        val ftyp = byteArrayOf(0x66.toByte(), 0x74.toByte(), 0x79.toByte(), 0x70.toByte())
+        for (i in 0..data.size - ftyp.size) {
+            if (data[i] == ftyp[0] && data[i + 1] == ftyp[1] && data[i + 2] == ftyp[2] && data[i + 3] == ftyp[3]) {
+                return if (i >= 4) i - 4 else i
+            }
+        }
+
+        for (i in data.indices) {
+            if (data[i] == 0x47.toByte()) {
+                var validPackets = 0
+                for (j in i until minOf(data.size, i + 1024) step 188) {
+                    if (j + 188 <= data.size && data[j] == 0x47.toByte()) {
+                        validPackets++
+                    }
+                }
+                if (validPackets >= 2) {
+                    return i
+                }
+            }
+        }
+        return 0
+    }
+}
