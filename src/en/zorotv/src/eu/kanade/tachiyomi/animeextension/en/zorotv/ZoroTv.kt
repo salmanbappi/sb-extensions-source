@@ -53,12 +53,10 @@ class ZoroTv : Source() {
         }
     }
 
-    private fun okhttp3.Call.executeSafe(): Response {
-        return try {
-            this.execute()
-        } catch (e: javax.net.ssl.SSLException) {
-            unsafeClient.newCall(this.request()).execute()
-        }
+    private fun okhttp3.Call.executeSafe(): Response = try {
+        this.execute()
+    } catch (e: javax.net.ssl.SSLException) {
+        unsafeClient.newCall(this.request()).execute()
     }
 
     private val playlistUtils by lazy { PlaylistUtils(unsafeClient, headers) }
