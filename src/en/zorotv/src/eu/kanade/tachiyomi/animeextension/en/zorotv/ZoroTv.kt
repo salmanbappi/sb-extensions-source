@@ -349,13 +349,13 @@ class ZoroTv : Source() {
                         .takeIf { it.startsWith("http") }
                 }
 
+                var videoList = mutableListOf<Video>()
                 if (!targetUrl.isNullOrBlank()) {
                     val isRumble = targetUrl.contains("rumble.com")
                     val refererUrl = if (isRumble) "https://rumble.com/" else "https://animesama.se/"
                     val streamHeaders = headers.newBuilder()
                         .set("Referer", refererUrl)
                         .build()
-                    val videoList = mutableListOf<Video>()
                     val fixedMasterUrl = if (targetUrl.contains("#")) targetUrl else "$targetUrl#playlist.m3u8"
                     videoList.add(
                         Video(
@@ -388,10 +388,13 @@ class ZoroTv : Source() {
                     } catch (e: Exception) {
                         // Ignore extraction errors
                     }
-                    videoList
-                } else {
-                    emptyList()
                 }
+
+                if (videoList.isEmpty()) {
+                    videoList = universalExtractor.videosFromUrl(embedUrl, actionHeaders, prefix = hoster.hosterName).toMutableList()
+                }
+
+                videoList
             } else if (embedUrl.contains("tamilembed.lol/embed/stream/")) {
                 val embedHeaders = headers.newBuilder()
                     .set("Referer", "https://www.zorotv.se/")

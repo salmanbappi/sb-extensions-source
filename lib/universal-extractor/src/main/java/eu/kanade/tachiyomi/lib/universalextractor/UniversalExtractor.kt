@@ -119,10 +119,12 @@ class UniversalExtractor(private val client: OkHttpClient) {
         }
         // terabox special case end
 
+        val isHls = "m3u8" in resultUrl || "action=stream" in resultUrl
         return when {
-            "m3u8" in resultUrl -> {
-                Log.d("UniversalExtractor", "m3u8 URL: $resultUrl")
-                playlistUtils.extractFromHls(resultUrl, origRequestUrl, videoNameGen = { "$prefix - $host: $it" })
+            isHls -> {
+                Log.d("UniversalExtractor", "m3u8/stream URL: $resultUrl")
+                val streamUrl = if (resultUrl.contains("#")) resultUrl else "$resultUrl#playlist.m3u8"
+                playlistUtils.extractFromHls(streamUrl, origRequestUrl, videoNameGen = { "$prefix - $host: $it" })
             }
 
             "mpd" in resultUrl -> {
@@ -163,6 +165,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     companion object {
         const val TIMEOUT_SEC: Long = 10
-        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|googlevideo\\.com/|googleusercontent\\.com/|blogger\\.com/video-play)(\\?.*)?$", RegexOption.IGNORE_CASE) }
+        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|googlevideo\\.com/|googleusercontent\\.com/|blogger\\.com/video-play|action=stream)(\\?.*)?$", RegexOption.IGNORE_CASE) }
     }
 }
