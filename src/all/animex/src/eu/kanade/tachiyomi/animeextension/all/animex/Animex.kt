@@ -76,7 +76,7 @@ class Animex : Source() {
 
     private fun getProxyUrl(url: String, headers: Headers? = null): String {
         if (proxy == null) {
-            proxy = LocalProxyServer(client).apply { start() }
+            proxy = LocalProxyServer(client, json).apply { start() }
         }
         val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val encodedHeaders = encodeHeaders(headers)
@@ -1271,7 +1271,10 @@ data class TrackItem(
     val default: Boolean? = null,
 )
 
-private class LocalProxyServer(private val client: OkHttpClient) {
+private class LocalProxyServer(
+    private val client: OkHttpClient,
+    private val json: Json,
+) {
     private val executor = Executors.newCachedThreadPool()
     private val running = AtomicBoolean(false)
     private var serverSocket: ServerSocket? = null
@@ -1350,7 +1353,9 @@ private class LocalProxyServer(private val client: OkHttpClient) {
             val jsonStr = String(Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
             val map = json.decodeFromString<Map<String, String>>(jsonStr)
             Headers.Builder().apply {
-                map.forEach { (k, v) -> set(k, v) }
+                for (entry in map.entries) {
+                    set(entry.key, entry.value)
+                }
             }.build()
         } catch (_: Exception) {
             Headers.Builder()
