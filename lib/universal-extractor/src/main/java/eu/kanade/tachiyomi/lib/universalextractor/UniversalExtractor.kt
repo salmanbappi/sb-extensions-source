@@ -124,7 +124,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
         }
         // terabox special case end
 
-        val isHls = "m3u8" in resultUrl || "action=stream" in resultUrl
+        val isHls = "m3u8" in resultUrl
         return when {
             isHls -> {
                 Log.d("UniversalExtractor", "m3u8/stream URL: $resultUrl")
