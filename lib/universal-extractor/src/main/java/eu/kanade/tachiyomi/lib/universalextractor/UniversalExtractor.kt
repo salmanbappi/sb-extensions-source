@@ -2,17 +2,15 @@ package eu.kanade.tachiyomi.lib.universalextractor
 
 import android.annotation.SuppressLint
 import android.app.Application
-import android.net.http.SslError
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.webkit.SslErrorHandler
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -41,53 +39,18 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 javaScriptEnabled = true
                 domStorageEnabled = true
                 databaseEnabled = true
-                mediaPlaybackRequiresUserGesture = false
-                mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                allowFileAccess = true
-                allowContentAccess = true
                 useWideViewPort = false
                 loadWithOverviewMode = false
                 userAgentString = origRequestHeader["User-Agent"]
             }
             newView.webViewClient = object : WebViewClient() {
-                @SuppressLint("WebViewClientOnReceivedSslError")
-                override fun onReceivedSslError(
-                    view: WebView?,
-                    handler: SslErrorHandler?,
-                    error: SslError?,
-                ) {
-                    handler?.proceed()
-                }
-
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    super.onPageFinished(view, url)
-                    view?.evaluateJavascript(
-                        """
-                        (function() {
-                            var attempts = 0;
-                            var interval = setInterval(function() {
-                                try {
-                                    var v = document.querySelector('video');
-                                    if (v) { v.muted = true; v.play(); }
-                                    var btns = document.querySelectorAll('button, div[role="button"], .play-button, .vjs-big-play-button, #player, .ytp-large-play-button');
-                                    btns.forEach(function(b) { b.click(); });
-                                } catch(e) {}
-                                attempts++;
-                                if (attempts > 20) clearInterval(interval);
-                            }, 500);
-                        })();
-                        """.trimIndent(),
-                        null,
-                    )
-                }
-
                 override fun shouldInterceptRequest(
                     view: WebView,
                     request: WebResourceRequest,
                 ): WebResourceResponse? {
-                    val videoUrl = request.url.toString()
-                    if (VIDEO_REGEX.containsMatchIn(videoUrl)) {
-                        resultUrl = videoUrl
+                    val url = request.url.toString()
+                    if (VIDEO_REGEX.containsMatchIn(url)) {
+                        resultUrl = url
                         latch.countDown()
                     }
                     return super.shouldInterceptRequest(view, request)
@@ -124,38 +87,19 @@ class UniversalExtractor(private val client: OkHttpClient) {
         }
         // terabox special case end
 
-        val isHls = "m3u8" in resultUrl
         return when {
-            isHls -> {
-                Log.d("UniversalExtractor", "m3u8/stream URL: $resultUrl")
-                val streamUrl = if (resultUrl.contains("#")) resultUrl else "$resultUrl#playlist.m3u8"
-                playlistUtils.extractFromHls(streamUrl, origRequestUrl, videoNameGen = { "$prefix - $host: $it" })
+            "m3u8" in resultUrl -> {
+                Log.d("UniversalExtractor", "m3u8 URL: $resultUrl")
+                playlistUtils.extractFromHls(resultUrl, origRequestUrl, videoNameGen = { "$prefix - $host: $it" })
             }
-
             "mpd" in resultUrl -> {
                 Log.d("UniversalExtractor", "mpd URL: $resultUrl")
                 playlistUtils.extractFromDash(resultUrl, { it -> "$prefix - $host: $it" }, referer = origRequestUrl)
             }
-
-            resultUrl.isNotBlank() -> {
-                Log.d("UniversalExtractor", "Direct stream URL: $resultUrl")
-                val isGoogle = resultUrl.contains("googlevideo.com") || resultUrl.contains("googleusercontent.com") || resultUrl.contains("youtube.com")
-                val videoHeaders = if (isGoogle) {
-                    origRequestHeader.newBuilder()
-                        .set("Referer", "https://www.blogger.com/")
-                        .build()
-                } else {
-                    origRequestHeader.newBuilder()
-                        .set("Referer", origRequestUrl)
-                        .build()
-                }
-                Video(
-                    videoUrl = resultUrl,
-                    videoTitle = "$prefix - $host: ${customQuality ?: "Mirror"}",
-                    headers = videoHeaders,
-                ).let(::listOf)
+            "mp4" in resultUrl -> {
+                Log.d("UniversalExtractor", "mp4 URL: $resultUrl")
+                Video(resultUrl, "$prefix - $host: ${customQuality ?: "Mirror"}", resultUrl, origRequestHeader.newBuilder().add("referer", origRequestUrl).build()).let(::listOf)
             }
-
             else -> emptyList()
         }
     }
@@ -170,6 +114,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     companion object {
         const val TIMEOUT_SEC: Long = 10
-        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|googlevideo\\.com/|googleusercontent\\.com/|blogger\\.com/video-play|youtube\\.com/|action=stream)(\\?.*)?$", RegexOption.IGNORE_CASE) }
+        private val VIDEO_REGEX by lazy { Regex(".*\\.(mp4|m3u8|mpd)(\\?.*)?$") }
     }
 }
