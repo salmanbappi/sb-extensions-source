@@ -36,8 +36,6 @@ class AV1Encodes : Source() {
     override val lang = "en"
     override val supportsLatest = true
 
-    private val preferences by getPreferencesLazy()
-
     override val baseUrl: String
         get() = preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT)!!
 
