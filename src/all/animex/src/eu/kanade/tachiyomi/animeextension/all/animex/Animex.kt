@@ -865,9 +865,15 @@ class Animex : Source() {
             val isTargetServer = video.videoTitle.contains("mimi", ignoreCase = true) ||
                 video.videoTitle.contains("vee", ignoreCase = true) ||
                 video.videoTitle.contains("yuki", ignoreCase = true) ||
+                video.videoTitle.contains("sora", ignoreCase = true) ||
+                video.videoTitle.contains("uwu", ignoreCase = true) ||
+                video.videoTitle.contains("owo", ignoreCase = true) ||
                 video.videoUrl.contains("mimi", ignoreCase = true) ||
                 video.videoUrl.contains("vee", ignoreCase = true) ||
-                video.videoUrl.contains("yuki", ignoreCase = true)
+                video.videoUrl.contains("yuki", ignoreCase = true) ||
+                video.videoUrl.contains("sora", ignoreCase = true) ||
+                video.videoUrl.contains("uwu", ignoreCase = true) ||
+                video.videoUrl.contains("owo", ignoreCase = true)
 
             if (isTargetServer && video.videoUrl.contains(".m3u8")) {
                 Video(
@@ -1372,8 +1378,25 @@ private class LocalProxyServer(
         return "http://127.0.0.1:$port/$path?$query"
     }
 
+    private fun fetchWithRetry(targetUrl: String, headers: Headers): Response {
+        var response = client.newCall(GET(targetUrl, headers)).execute()
+        if (response.code == 403) {
+            response.close()
+            val fallbackHeaders = headers.newBuilder()
+                .set("Referer", "https://animex.one/")
+                .build()
+            response = client.newCall(GET(targetUrl, fallbackHeaders)).execute()
+            if (response.code == 403) {
+                response.close()
+                val noRefererHeaders = headers.newBuilder().removeAll("Referer").build()
+                response = client.newCall(GET(targetUrl, noRefererHeaders)).execute()
+            }
+        }
+        return response
+    }
+
     private fun servePlaylist(targetUrl: String, headers: Headers, encodedHeaders: String?, output: OutputStream) {
-        val response = client.newCall(GET(targetUrl, headers)).execute()
+        val response = fetchWithRetry(targetUrl, headers)
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
             response.close()
@@ -1427,7 +1450,7 @@ private class LocalProxyServer(
     }
 
     private fun serveKey(targetUrl: String, headers: Headers, output: OutputStream) {
-        val response = client.newCall(GET(targetUrl, headers)).execute()
+        val response = fetchWithRetry(targetUrl, headers)
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
             response.close()
@@ -1446,7 +1469,7 @@ private class LocalProxyServer(
     }
 
     private fun serveSegment(targetUrl: String, headers: Headers, output: OutputStream) {
-        val response = client.newCall(GET(targetUrl, headers)).execute()
+        val response = fetchWithRetry(targetUrl, headers)
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
             response.close()
