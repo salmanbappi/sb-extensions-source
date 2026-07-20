@@ -2,15 +2,14 @@ package eu.kanade.tachiyomi.animeextension.en.av1encodes
 
 import android.net.Uri
 import android.util.Log
+import extensions.utils.Source
 import androidx.preference.PreferenceScreen
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.bodyString
@@ -31,9 +30,7 @@ import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import java.util.Locale
 
-class AV1Encodes :
-    AnimeHttpSource(),
-    ConfigurableAnimeSource {
+class AV1Encodes : Source() {
 
     override val name = "AV1Encodes"
     override val lang = "en"
@@ -536,19 +533,19 @@ class AV1Encodes :
             val dashBase = watchUrl.replace("/watch/", "/dash/")
             val mpdUrl = "$dashBase/manifest.mpd"
             Log.d(TAG, "getVideoList: DASH MPD → $mpdUrl")
-            videos.add(Video(mpdUrl, "$qualLabel · DASH", mpdUrl))
+            videos.add(Video(videoUrl = mpdUrl, videoTitle = "$qualLabel · DASH"))
         }
 
         val streamUrl = resolveRedirect(ddl.streamLink)
         if (streamUrl != null && streamUrl != watchUrl) {
             Log.d(TAG, "getVideoList: stream URL → $streamUrl")
-            videos.add(Video(streamUrl, "$qualLabel · Stream", streamUrl))
+            videos.add(Video(videoUrl = streamUrl, videoTitle = "$qualLabel · Stream"))
         }
 
         val dlUrl = resolveRedirect(ddl.downloadLink)
         if (dlUrl != null) {
             Log.d(TAG, "getVideoList: download URL → $dlUrl")
-            videos.add(Video(dlUrl, "$qualLabel · Direct DL", dlUrl))
+            videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL"))
         }
 
         if (videos.isEmpty()) {
@@ -567,7 +564,7 @@ class AV1Encodes :
             .find(filename)?.groupValues?.get(1) ?: ""
         val label = "AV1 · $resLabel${if (audioTag.isNotBlank()) " [$audioTag]" else ""} · Direct DL"
         Log.d(TAG, "getVideoList: fallback URL → $fullUrl")
-        return listOf(Video(fullUrl, label, fullUrl))
+        return listOf(Video(videoUrl = fullUrl, videoTitle = label))
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -663,7 +660,7 @@ class AV1Encodes :
         buildPreferenceScreen(screen)
     }
 
-    override fun List<Video>.sort(): List<Video> = sortByPreferredQuality(preferences)
+    override fun List<Video>.sortVideos(): List<Video> = sortByPreferredQuality(preferences)
 
     // ══════════════════════════════════════════════════════════════════════════
     // CONSTANTS
