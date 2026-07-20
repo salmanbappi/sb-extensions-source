@@ -10,4 +10,5 @@ dependencies {
     implementation(project(":lib:playlist-utils"))
     implementation(project(":lib:blogger-extractor"))
     implementation(project(":lib:universal-extractor"))
+    implementation(project(":lib:unpacker"))
 }

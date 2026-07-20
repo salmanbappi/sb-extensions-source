@@ -422,6 +422,13 @@ class ZoroTv : Source() {
                 videos.ifEmpty {
                     universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
                 }
+            } else if (embedUrl.contains("kwik.cx/e/")) {
+                try {
+                    val kwikExtractor = eu.kanade.tachiyomi.animeextension.en.zorotv.extractor.KwikExtractor(client, headers)
+                    listOf(kwikExtractor.getHlsVideo(embedUrl, "https://www.zorotv.se/", hoster.hosterName))
+                } catch (e: Exception) {
+                    emptyList()
+                }
             } else {
                 val embedHeaders = headers.newBuilder()
                     .set("Referer", "https://www.zorotv.se/")
