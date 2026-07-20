@@ -235,16 +235,20 @@ class ZoroTv : Source() {
         val buttons = doc.select(".server-options .server-btn, .server-btn, [data-server]")
         if (buttons.isNotEmpty()) {
             buttons.forEach { btn ->
-                val hostName = btn.attr("data-hostname").ifBlank {
+                var hostName = btn.attr("data-hostname").ifBlank {
                     btn.text().trim().ifBlank { "Server ${btn.attr("data-index")}" }
                 }
                 val b64Server = btn.attr("data-server")
                 if (b64Server.isNotBlank()) {
                     try {
-                        val decoded = String(android.util.Base64.decode(b64Server, android.util.Base64.DEFAULT))
+                        val decoded = String(android.util.Base64.decode(b64Server, android.util.Base64.NO_WRAP or android.util.Base64.DEFAULT))
                         val embedDoc = org.jsoup.Jsoup.parseBodyFragment(decoded)
                         val embedUrl = embedDoc.selectFirst("iframe")?.attr("src")
                         if (!embedUrl.isNullOrBlank()) {
+                            if (hostName.startsWith("Server")) {
+                                if (embedUrl.contains("animesama.se")) hostName = "Fast Server"
+                                else if (embedUrl.contains("tamilembed.lol")) hostName = "Standard Server"
+                            }
                             if (hosters.none { it.hosterUrl == embedUrl }) {
                                 hosters.add(Hoster(hosterName = hostName, hosterUrl = embedUrl))
                             }
@@ -257,10 +261,11 @@ class ZoroTv : Source() {
         }
 
         if (hosters.isEmpty()) {
-            val defaultIframe = doc.selectFirst("div.player-embed iframe")
+            val defaultIframe = doc.selectFirst("div.player-embed iframe, #pembed iframe")
             val defaultUrl = defaultIframe?.attr("src")
             if (!defaultUrl.isNullOrBlank()) {
-                hosters.add(Hoster(hosterName = "Default Server", hosterUrl = defaultUrl))
+                val name = if (defaultUrl.contains("animesama.se")) "Fast Server" else "Standard Server"
+                hosters.add(Hoster(hosterName = name, hosterUrl = defaultUrl))
             }
         }
 
