@@ -44,14 +44,16 @@ class ZoroTv : Source() {
             )
             val sslContext = javax.net.ssl.SSLContext.getInstance("TLS")
             sslContext.init(null, trustAllCerts, java.security.SecureRandom())
-            client.newBuilder()
+            network.client.newBuilder()
                 .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as javax.net.ssl.X509TrustManager)
                 .hostnameVerifier { _, _ -> true }
                 .build()
         } catch (e: Exception) {
-            client
+            network.client
         }
     }
+
+    override val client: okhttp3.OkHttpClient by lazy { unsafeClient }
 
     private fun okhttp3.Call.executeSafe(): Response = try {
         this.execute()
@@ -269,8 +271,11 @@ class ZoroTv : Source() {
                     try {
                         val decoded = String(android.util.Base64.decode(b64Server, android.util.Base64.NO_WRAP or android.util.Base64.DEFAULT))
                         val embedDoc = org.jsoup.Jsoup.parseBodyFragment(decoded)
-                        val embedUrl = embedDoc.selectFirst("iframe")?.attr("src")
+                        var embedUrl = embedDoc.selectFirst("iframe")?.attr("src")
                         if (!embedUrl.isNullOrBlank()) {
+                            if (embedUrl.startsWith("//")) {
+                                embedUrl = "https:$embedUrl"
+                            }
                             if (hostName.startsWith("Server")) {
                                 if (embedUrl.contains("animesama.se")) {
                                     hostName = "Fast Server"
@@ -291,8 +296,11 @@ class ZoroTv : Source() {
 
         if (hosters.isEmpty()) {
             val defaultIframe = doc.selectFirst("div.player-embed iframe, #pembed iframe")
-            val defaultUrl = defaultIframe?.attr("src")
+            var defaultUrl = defaultIframe?.attr("src")
             if (!defaultUrl.isNullOrBlank()) {
+                if (defaultUrl.startsWith("//")) {
+                    defaultUrl = "https:$defaultUrl"
+                }
                 val name = if (defaultUrl.contains("animesama.se")) "Fast Server" else "Standard Server"
                 hosters.add(Hoster(hosterName = name, hosterUrl = defaultUrl))
             }
@@ -302,7 +310,10 @@ class ZoroTv : Source() {
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val embedUrl = hoster.hosterUrl
+        var embedUrl = hoster.hosterUrl
+        if (embedUrl.startsWith("//")) {
+            embedUrl = "https:$embedUrl"
+        }
         return try {
             if (embedUrl.contains("animesama.se/e/")) {
                 val embedId = embedUrl.substringAfterLast("/").substringBefore("?")
