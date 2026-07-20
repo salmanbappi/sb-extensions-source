@@ -246,8 +246,11 @@ class ZoroTv : Source() {
                         val embedUrl = embedDoc.selectFirst("iframe")?.attr("src")
                         if (!embedUrl.isNullOrBlank()) {
                             if (hostName.startsWith("Server")) {
-                                if (embedUrl.contains("animesama.se")) hostName = "Fast Server"
-                                else if (embedUrl.contains("tamilembed.lol")) hostName = "Standard Server"
+                                if (embedUrl.contains("animesama.se")) {
+                                    hostName = "Fast Server"
+                                } else if (embedUrl.contains("tamilembed.lol")) {
+                                    hostName = "Standard Server"
+                                }
                             }
                             if (hosters.none { it.hosterUrl == embedUrl }) {
                                 hosters.add(Hoster(hosterName = hostName, hosterUrl = embedUrl))
