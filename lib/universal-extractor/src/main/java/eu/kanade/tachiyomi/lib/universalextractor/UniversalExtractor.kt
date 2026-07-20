@@ -48,6 +48,23 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 userAgentString = origRequestHeader["User-Agent"]
             }
             newView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    view?.evaluateJavascript(
+                        """
+                        (function() {
+                            try {
+                                var v = document.querySelector('video');
+                                if (v) { v.muted = true; v.play(); }
+                                var btns = document.querySelectorAll('button, div[role="button"], .play-button, .vjs-big-play-button, #player');
+                                btns.forEach(function(b) { b.click(); });
+                            } catch(e) {}
+                        })();
+                        """.trimIndent(),
+                        null,
+                    )
+                }
+
                 override fun shouldInterceptRequest(
                     view: WebView,
                     request: WebResourceRequest,
@@ -128,6 +145,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     companion object {
         const val TIMEOUT_SEC: Long = 10
-        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|googlevideo\\.com/videoplayback|googleusercontent\\.com/videoplayback|blogger\\.com/video-play)(\\?.*)?$", RegexOption.IGNORE_CASE) }
+        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|googlevideo\\.com/|googleusercontent\\.com/|blogger\\.com/video-play)(\\?.*)?$", RegexOption.IGNORE_CASE) }
     }
 }
