@@ -103,7 +103,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 Video(
                     videoUrl = resultUrl,
                     videoTitle = "$prefix - $host: ${customQuality ?: "Mirror"}",
-                    headers = origRequestHeader.newBuilder().add("referer", origRequestUrl).build()
+                    headers = origRequestHeader.newBuilder().add("referer", origRequestUrl).build(),
                 ).let(::listOf)
             }
 
