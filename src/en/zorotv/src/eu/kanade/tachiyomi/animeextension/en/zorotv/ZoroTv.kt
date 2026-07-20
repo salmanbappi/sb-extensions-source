@@ -339,7 +339,6 @@ class ZoroTv : Source() {
         }
     }
 
-
     // ============================ Relation / Recommendations =============================
 
     fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
@@ -358,7 +357,6 @@ class ZoroTv : Source() {
     // ============================== Settings ==============================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
-
 
     companion object {
         private val TYPES = arrayOf(
