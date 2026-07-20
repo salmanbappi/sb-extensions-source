@@ -42,7 +42,7 @@ class ZoroTv : Source() {
                     override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
                 },
             )
-            val sslContext = javax.net.ssl.SSLContext.getInstance("SSL")
+            val sslContext = javax.net.ssl.SSLContext.getInstance("TLS")
             sslContext.init(null, trustAllCerts, java.security.SecureRandom())
             client.newBuilder()
                 .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as javax.net.ssl.X509TrustManager)
@@ -55,7 +55,7 @@ class ZoroTv : Source() {
 
     private fun okhttp3.Call.executeSafe(): Response = try {
         this.execute()
-    } catch (e: javax.net.ssl.SSLException) {
+    } catch (e: Exception) {
         unsafeClient.newCall(this.request()).execute()
     }
 
@@ -343,7 +343,18 @@ class ZoroTv : Source() {
                             videoHeaders = rumbleHeaders,
                             videoNameGen = { "${hoster.hosterName} - $it" },
                         )
-                        videoList.addAll(extracted)
+                        videoList.addAll(
+                            extracted.map { v ->
+                                val fixedUrl = if (v.videoUrl.contains("#")) v.videoUrl else "${v.videoUrl}#playlist.m3u8"
+                                Video(
+                                    videoUrl = fixedUrl,
+                                    videoTitle = v.videoTitle,
+                                    headers = v.headers,
+                                    subtitleTracks = v.subtitleTracks,
+                                    audioTracks = v.audioTracks,
+                                )
+                            },
+                        )
                     } catch (e: Exception) {
                         // Ignore extraction errors
                     }
