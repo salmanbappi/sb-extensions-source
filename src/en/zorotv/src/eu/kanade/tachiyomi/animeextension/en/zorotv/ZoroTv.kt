@@ -339,12 +339,6 @@ class ZoroTv : Source() {
         }
     }
 
-    override fun List<Video>.sortVideos(): List<Video> {
-        val prefQuality = preferences.getString("pref_quality", "1080") ?: "1080"
-        return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) },
-        )
-    }
 
     // ============================ Relation / Recommendations =============================
 
@@ -363,16 +357,8 @@ class ZoroTv : Source() {
 
     // ============================== Settings ==============================
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        screen.addListPreference(
-            key = "pref_quality",
-            default = "1080",
-            title = "Preferred quality",
-            summary = "%s",
-            entries = listOf("1080p", "720p", "480p", "360p"),
-            entryValues = listOf("1080", "720", "480", "360"),
-        )
-    }
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {}
+
 
     companion object {
         private val TYPES = arrayOf(
