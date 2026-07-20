@@ -310,13 +310,27 @@ class ZoroTv : Source() {
                         emptyList()
                     }
                     if (extracted.isNotEmpty()) {
-                        extracted
+                        extracted.mapIndexed { idx, video ->
+                            if (idx == 0) {
+                                Video(
+                                    videoUrl = video.videoUrl,
+                                    videoTitle = video.videoTitle,
+                                    headers = video.headers,
+                                    preferred = true,
+                                    subtitleTracks = video.subtitleTracks,
+                                    audioTracks = video.audioTracks,
+                                )
+                            } else {
+                                video
+                            }
+                        }
                     } else {
                         listOf(
                             Video(
                                 videoUrl = rumbleUrl,
                                 videoTitle = "${hoster.hosterName} - Auto",
                                 headers = rumbleHeaders,
+                                preferred = true,
                             ),
                         )
                     }
