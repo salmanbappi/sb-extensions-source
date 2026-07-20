@@ -867,11 +867,13 @@ class Animex : Source() {
                 video.videoTitle.contains("yuki", ignoreCase = true) ||
                 video.videoTitle.contains("sora", ignoreCase = true) ||
                 video.videoTitle.contains("uwu", ignoreCase = true) ||
+                video.videoTitle.contains("owo", ignoreCase = true) ||
                 video.videoUrl.contains("mimi", ignoreCase = true) ||
                 video.videoUrl.contains("vee", ignoreCase = true) ||
                 video.videoUrl.contains("yuki", ignoreCase = true) ||
                 video.videoUrl.contains("sora", ignoreCase = true) ||
-                video.videoUrl.contains("uwu", ignoreCase = true)
+                video.videoUrl.contains("uwu", ignoreCase = true) ||
+                video.videoUrl.contains("owo", ignoreCase = true)
 
             if (isTargetServer && video.videoUrl.contains(".m3u8")) {
                 Video(
@@ -1330,10 +1332,10 @@ private class LocalProxyServer(
         val headers = decodeHeaders(encodedHeaders)
 
         try {
-            if (path.contains("playlist.m3u8")) {
-                servePlaylist(targetUrl, headers, encodedHeaders, output)
-            } else {
-                serveSegment(targetUrl, headers, output)
+            when {
+                path.contains("playlist.m3u8") -> servePlaylist(targetUrl, headers, encodedHeaders, output)
+                path.contains("key.bin") -> serveKey(targetUrl, headers, output)
+                else -> serveSegment(targetUrl, headers, output)
             }
         } catch (_: Exception) {
             try {
@@ -1365,9 +1367,13 @@ private class LocalProxyServer(
         }
     }
 
-    private fun getProxyUrl(url: String, headersStr: String?): String {
+    private fun getProxyUrl(url: String, headersStr: String?, isKey: Boolean = false): String {
         val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
+        val path = when {
+            isKey || url.contains(".key") || url.contains("key.bin") -> "key.bin"
+            url.contains(".m3u8") -> "playlist.m3u8"
+            else -> "segment.ts"
+        }
         val query = "url=$encoded" + if (!headersStr.isNullOrEmpty()) "&headers=$headersStr" else ""
         return "http://127.0.0.1:$port/$path?$query"
     }
@@ -1401,7 +1407,8 @@ private class LocalProxyServer(
                         else -> targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
                     }
                     val resolvedUri = if (rawResolved.startsWith("//")) "https:$rawResolved" else rawResolved
-                    val proxiedUri = getProxyUrl(resolvedUri, encodedHeaders)
+                    val isKeyLine = trimmed.contains("#EXT-X-KEY") || resolvedUri.contains(".key")
+                    val proxiedUri = getProxyUrl(resolvedUri, encodedHeaders, isKey = isKeyLine)
                     builder.append(trimmed.replace(uriValue, proxiedUri))
                 } ?: builder.append(trimmed)
             } else {
@@ -1410,7 +1417,8 @@ private class LocalProxyServer(
                     else -> targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
                 }
                 val resolvedUri = if (rawResolved.startsWith("//")) "https:$rawResolved" else rawResolved
-                builder.append(getProxyUrl(resolvedUri, encodedHeaders))
+                val isKeyLine = resolvedUri.contains(".key")
+                builder.append(getProxyUrl(resolvedUri, encodedHeaders, isKey = isKeyLine))
             }
             builder.append("\n")
         }
@@ -1424,7 +1432,7 @@ private class LocalProxyServer(
         output.flush()
     }
 
-    private fun serveSegment(targetUrl: String, headers: Headers, output: OutputStream) {
+    private fun serveKey(targetUrl: String, headers: Headers, output: OutputStream) {
         val response = client.newCall(GET(targetUrl, headers)).execute()
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
@@ -1435,17 +1443,57 @@ private class LocalProxyServer(
         val bytes = response.body.bytes()
         response.close()
 
-        val skipBytes = detectSkipBytes(bytes)
-        val payloadLength = bytes.size - skipBytes
-
         output.write("HTTP/1.1 200 OK\r\n".toByteArray())
-        output.write("Content-Length: $payloadLength\r\n".toByteArray())
-        output.write("Content-Type: video/mp2t\r\n".toByteArray())
+        output.write("Content-Length: ${bytes.size}\r\n".toByteArray())
+        output.write("Content-Type: application/octet-stream\r\n".toByteArray())
         output.write("Connection: close\r\n\r\n".toByteArray())
-        if (payloadLength > 0) {
-            output.write(bytes, skipBytes, payloadLength)
+        output.write(bytes)
+        output.flush()
+    }
+
+    private fun serveSegment(targetUrl: String, headers: Headers, output: OutputStream) {
+        val response = client.newCall(GET(targetUrl, headers)).execute()
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
+            return
+        }
+
+        val body = response.body
+        val inputStream = body.byteStream()
+
+        val headerBuffer = ByteArray(131072)
+        var totalRead = 0
+        while (totalRead < headerBuffer.size) {
+            val read = inputStream.read(headerBuffer, totalRead, headerBuffer.size - totalRead)
+            if (read == -1) break
+            totalRead += read
+        }
+
+        val sample = if (totalRead == headerBuffer.size) headerBuffer else headerBuffer.copyOf(totalRead)
+        val skipBytes = detectSkipBytes(sample)
+        val contentLength = body.contentLength()
+        val payloadLength = if (contentLength > 0) contentLength - skipBytes else -1L
+
+        val headerBuilder = StringBuilder("HTTP/1.1 200 OK\r\n")
+        if (payloadLength >= 0) {
+            headerBuilder.append("Content-Length: $payloadLength\r\n")
+        }
+        headerBuilder.append("Content-Type: video/mp2t\r\n")
+        headerBuilder.append("Connection: close\r\n\r\n")
+        output.write(headerBuilder.toString().toByteArray())
+
+        if (totalRead > skipBytes) {
+            output.write(sample, skipBytes, totalRead - skipBytes)
+        }
+
+        val buffer = ByteArray(8192)
+        var bytesRead: Int
+        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+            output.write(buffer, 0, bytesRead)
         }
         output.flush()
+        response.close()
     }
 
     private fun detectSkipBytes(data: ByteArray): Int {
@@ -1457,22 +1505,39 @@ private class LocalProxyServer(
 
         if (!isPng && !isJpeg && !isGif) return 0
 
+        val maxScan = minOf(data.size, 131072)
+
         val ftyp = byteArrayOf(0x66.toByte(), 0x74.toByte(), 0x79.toByte(), 0x70.toByte())
-        for (i in 0..data.size - ftyp.size) {
+        val maxFtyp = minOf(data.size - ftyp.size, maxScan)
+        for (i in 0..maxFtyp) {
             if (data[i] == ftyp[0] && data[i + 1] == ftyp[1] && data[i + 2] == ftyp[2] && data[i + 3] == ftyp[3]) {
                 return if (i >= 4) i - 4 else i
             }
         }
 
-        for (i in data.indices) {
-            if (data[i] == 0x47.toByte()) {
-                var validPackets = 0
-                for (j in i until minOf(data.size, i + 1024) step 188) {
-                    if (j + 188 <= data.size && data[j] == 0x47.toByte()) {
-                        validPackets++
-                    }
+        if (isPng) {
+            val iend = byteArrayOf(0x49.toByte(), 0x45.toByte(), 0x4E.toByte(), 0x44.toByte())
+            val maxIend = minOf(data.size - iend.size, maxScan)
+            for (i in 0..maxIend) {
+                if (data[i] == iend[0] && data[i + 1] == iend[1] && data[i + 2] == iend[2] && data[i + 3] == iend[3]) {
+                    if (i + 8 <= data.size) return i + 8
                 }
-                if (validPackets >= 2) {
+            }
+        }
+
+        val maxTs = minOf(data.size - 188 * 2, maxScan)
+        for (i in 0..maxTs) {
+            if (data[i] == 0x47.toByte()) {
+                var validCount = 0
+                val limit = minOf(data.size, i + 188 * 4)
+                var j = i
+                while (j < limit) {
+                    if (data[j] == 0x47.toByte()) {
+                        validCount++
+                    }
+                    j += 188
+                }
+                if (validCount >= 3) {
                     return i
                 }
             }
