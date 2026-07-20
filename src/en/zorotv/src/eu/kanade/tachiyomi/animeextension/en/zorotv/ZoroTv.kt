@@ -234,10 +234,12 @@ class ZoroTv : Source() {
         val doc = response.asJsoup()
         val hosters = mutableListOf<Hoster>()
 
-        val buttons = doc.select("div.server-options button.server-btn")
+        val buttons = doc.select(".server-options .server-btn, .server-btn, [data-server]")
         if (buttons.isNotEmpty()) {
             buttons.forEach { btn ->
-                val hostName = btn.attr("data-hostname").ifBlank { "Server ${btn.attr("data-index")}" }
+                val hostName = btn.attr("data-hostname").ifBlank {
+                    btn.text().trim().ifBlank { "Server ${btn.attr("data-index")}" }
+                }
                 val b64Server = btn.attr("data-server")
                 if (b64Server.isNotBlank()) {
                     try {
@@ -245,7 +247,9 @@ class ZoroTv : Source() {
                         val embedDoc = org.jsoup.Jsoup.parseBodyFragment(decoded)
                         val embedUrl = embedDoc.selectFirst("iframe")?.attr("src")
                         if (!embedUrl.isNullOrBlank()) {
-                            hosters.add(Hoster(hosterName = hostName, hosterUrl = embedUrl))
+                            if (hosters.none { it.hosterUrl == embedUrl }) {
+                                hosters.add(Hoster(hosterName = hostName, hosterUrl = embedUrl))
+                            }
                         }
                     } catch (e: Exception) {
                         // Ignore decoding errors
@@ -272,22 +276,29 @@ class ZoroTv : Source() {
                 val embedId = embedUrl.substringAfterLast("/").substringBefore("?")
                 val actionUrl = "https://animesama.se/e/$embedId?action=get_source&id=$embedId"
                 val actionHeaders = headers.newBuilder()
-                    .set("Referer", "https://www.zorotv.se/")
+                    .set("Referer", "https://animesama.se/e/$embedId")
                     .build()
                 val response = client.newCall(GET(actionUrl, actionHeaders)).execute().body.string()
-                val parsed = jsonParser.decodeFromString<SamaResponse>(response)
-                val rumbleUrl = parsed.rumble_url
+                val rumbleUrl = "rumble_url\"\\s*:\\s*\"([^\"]+)\"".toRegex()
+                    .find(response)?.groupValues?.get(1)
+                    ?.replace("\\/", "/")
                 if (!rumbleUrl.isNullOrBlank()) {
                     val rumbleHeaders = headers.newBuilder()
                         .set("Referer", "https://rumble.com/")
                         .build()
-                    playlistUtils.extractFromHls(
+                    val autoVideo = Video(
+                        videoUrl = rumbleUrl,
+                        videoTitle = "${hoster.hosterName} - Auto",
+                        headers = rumbleHeaders,
+                    )
+                    val subVideos = playlistUtils.extractFromHls(
                         playlistUrl = rumbleUrl,
                         referer = "https://rumble.com/",
                         masterHeaders = rumbleHeaders,
                         videoHeaders = rumbleHeaders,
                         videoNameGen = { "${hoster.hosterName} - $it" },
                     )
+                    listOf(autoVideo) + subVideos
                 } else {
                     emptyList()
                 }
