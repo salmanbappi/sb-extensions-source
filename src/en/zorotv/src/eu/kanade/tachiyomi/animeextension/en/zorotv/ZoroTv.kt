@@ -298,15 +298,28 @@ class ZoroTv : Source() {
                     val rumbleHeaders = headers.newBuilder()
                         .set("Referer", "https://rumble.com/")
                         .build()
-                    listOf(
-                        Video(
-                            videoUrl = rumbleUrl,
-                            videoTitle = "${hoster.hosterName} - Auto",
-                            headers = rumbleHeaders,
-                        ).apply {
-                            mimeType = "application/x-mpegURL"
-                        },
-                    )
+                    val extracted = try {
+                        playlistUtils.extractFromHls(
+                            playlistUrl = rumbleUrl,
+                            referer = "https://rumble.com/",
+                            masterHeaders = rumbleHeaders,
+                            videoHeaders = rumbleHeaders,
+                            videoNameGen = { "${hoster.hosterName} - $it" },
+                        )
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
+                    if (extracted.isNotEmpty()) {
+                        extracted
+                    } else {
+                        listOf(
+                            Video(
+                                videoUrl = rumbleUrl,
+                                videoTitle = "${hoster.hosterName} - Auto",
+                                headers = rumbleHeaders,
+                            ),
+                        )
+                    }
                 } else {
                     emptyList()
                 }
