@@ -278,9 +278,11 @@ class ZoroTv : Source() {
                 val parsed = jsonParser.decodeFromString<SamaResponse>(response)
                 val rumbleUrl = parsed.rumble_url
                 if (!rumbleUrl.isNullOrBlank()) {
+                    val emptyHeaders = Headers.Builder().build()
                     playlistUtils.extractFromHls(
                         playlistUrl = rumbleUrl,
-                        referer = "https://animesama.se/",
+                        masterHeaders = emptyHeaders,
+                        videoHeaders = emptyHeaders,
                         videoNameGen = { "${hoster.hosterName} - $it" },
                     )
                 } else {
@@ -290,22 +292,30 @@ class ZoroTv : Source() {
                 val embedHeaders = headers.newBuilder()
                     .set("Referer", "https://www.zorotv.se/")
                     .build()
-                val response = client.newCall(GET(embedUrl, embedHeaders)).execute()
-                val html = response.body.string()
-                val bloggerUrl = "src=\"(https?://(?:www\\.)?blogger\\.com/video\\.g[^\"]+)\"".toRegex()
-                    .find(html)?.groupValues?.get(1)
+                var videos = emptyList<Video>()
+                try {
+                    val response = client.newCall(GET(embedUrl, embedHeaders)).execute()
+                    val html = response.body.string()
+                    val bloggerUrl = "src=\"(https?://(?:www\\.)?blogger\\.com/video\\.g[^\"]+)\"".toRegex()
+                        .find(html)?.groupValues?.get(1)
 
-                if (!bloggerUrl.isNullOrBlank()) {
-                    val unescapedUrl = bloggerUrl.replace("&amp;", "&")
-                    val origin = unescapedUrl.substringAfter("origin=", "").substringBefore("&")
-                    val ref = if (origin.isNotBlank()) "https://$origin/" else "https://www.blogger.com/"
-                    val bloggerHeaders = headers.newBuilder()
-                        .set("Referer", ref)
-                        .build()
-                    universalExtractor.videosFromUrl(unescapedUrl, bloggerHeaders, prefix = hoster.hosterName)
-                } else {
-                    universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
+                    if (!bloggerUrl.isNullOrBlank()) {
+                        val unescapedUrl = bloggerUrl.replace("&amp;", "&")
+                        val origin = unescapedUrl.substringAfter("origin=", "").substringBefore("&")
+                        val ref = if (origin.isNotBlank()) "https://$origin/" else "https://www.blogger.com/"
+                        val bloggerHeaders = headers.newBuilder()
+                            .set("Referer", ref)
+                            .build()
+                        videos = universalExtractor.videosFromUrl(unescapedUrl, bloggerHeaders, prefix = hoster.hosterName)
+                    }
+                } catch (e: Exception) {
+                    // Fallback to embedUrl
                 }
+
+                if (videos.isEmpty()) {
+                    videos = universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
+                }
+                videos
             } else {
                 val embedHeaders = headers.newBuilder()
                     .set("Referer", "https://www.zorotv.se/")
