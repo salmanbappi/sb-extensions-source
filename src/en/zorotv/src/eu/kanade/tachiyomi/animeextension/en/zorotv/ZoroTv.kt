@@ -234,29 +234,31 @@ class ZoroTv : Source() {
         val doc = response.asJsoup()
         val hosters = mutableListOf<Hoster>()
 
-        // 1. Get default player embed
-        val defaultIframe = doc.selectFirst("div.player-embed iframe")
-        val defaultUrl = defaultIframe?.attr("src")
-        if (!defaultUrl.isNullOrBlank()) {
-            hosters.add(Hoster(hosterName = "Default Server", hosterUrl = defaultUrl))
+        val buttons = doc.select("div.server-options button.server-btn")
+        if (buttons.isNotEmpty()) {
+            buttons.forEach { btn ->
+                val hostName = btn.attr("data-hostname").ifBlank { "Server ${btn.attr("data-index")}" }
+                val b64Server = btn.attr("data-server")
+                if (b64Server.isNotBlank()) {
+                    try {
+                        val decoded = String(android.util.Base64.decode(b64Server, android.util.Base64.DEFAULT))
+                        val embedDoc = org.jsoup.Jsoup.parseBodyFragment(decoded)
+                        val embedUrl = embedDoc.selectFirst("iframe")?.attr("src")
+                        if (!embedUrl.isNullOrBlank()) {
+                            hosters.add(Hoster(hosterName = hostName, hosterUrl = embedUrl))
+                        }
+                    } catch (e: Exception) {
+                        // Ignore decoding errors
+                    }
+                }
+            }
         }
 
-        // 2. Parse server-options buttons
-        val buttons = doc.select("div.server-options button.server-btn")
-        buttons.forEach { btn ->
-            val hostName = btn.attr("data-hostname").ifBlank { "Server ${btn.attr("data-index")}" }
-            val b64Server = btn.attr("data-server")
-            if (b64Server.isNotBlank()) {
-                try {
-                    val decoded = String(android.util.Base64.decode(b64Server, android.util.Base64.DEFAULT))
-                    val embedDoc = org.jsoup.Jsoup.parseBodyFragment(decoded)
-                    val embedUrl = embedDoc.selectFirst("iframe")?.attr("src")
-                    if (!embedUrl.isNullOrBlank() && embedUrl != defaultUrl) {
-                        hosters.add(Hoster(hosterName = hostName, hosterUrl = embedUrl))
-                    }
-                } catch (e: Exception) {
-                    // Ignore decoding errors
-                }
+        if (hosters.isEmpty()) {
+            val defaultIframe = doc.selectFirst("div.player-embed iframe")
+            val defaultUrl = defaultIframe?.attr("src")
+            if (!defaultUrl.isNullOrBlank()) {
+                hosters.add(Hoster(hosterName = "Default Server", hosterUrl = defaultUrl))
             }
         }
 
@@ -295,8 +297,10 @@ class ZoroTv : Source() {
 
                 if (!bloggerUrl.isNullOrBlank()) {
                     val unescapedUrl = bloggerUrl.replace("&amp;", "&")
+                    val origin = unescapedUrl.substringAfter("origin=", "").substringBefore("&")
+                    val ref = if (origin.isNotBlank()) "https://$origin/" else "https://www.blogger.com/"
                     val bloggerHeaders = headers.newBuilder()
-                        .set("Referer", "https://tamilembed.lol/")
+                        .set("Referer", ref)
                         .build()
                     universalExtractor.videosFromUrl(unescapedUrl, bloggerHeaders, prefix = hoster.hosterName)
                 } else {
