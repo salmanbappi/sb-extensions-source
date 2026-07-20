@@ -127,14 +127,15 @@ class UniversalExtractor(private val client: OkHttpClient) {
                         .set("Referer", "https://www.blogger.com/")
                         .build()
                 } else {
-                    origRequestHeader.newBuilder().add("referer", origRequestUrl).build()
+                    origRequestHeader.newBuilder()
+                        .set("Referer", origRequestUrl)
+                        .build()
                 }
-                val fixedUrl = if (isGoogle && !resultUrl.contains(".mp4") && !resultUrl.contains(".m3u8")) {
-                    "$resultUrl#.mp4"
-                } else {
-                    resultUrl
-                }
-                Video(videoUrl = fixedUrl, videoTitle = "$prefix - $host: ${customQuality ?: "Mirror"}", headers = videoHeaders).let(::listOf)
+                Video(
+                    videoUrl = resultUrl,
+                    videoTitle = "$prefix - $host: ${customQuality ?: "Mirror"}",
+                    headers = videoHeaders,
+                ).let(::listOf)
             }
 
             else -> emptyList()
