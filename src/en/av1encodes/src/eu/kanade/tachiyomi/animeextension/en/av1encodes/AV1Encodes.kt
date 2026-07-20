@@ -341,6 +341,8 @@ class AV1Encodes : Source() {
     // ANIME DETAIL
     // ══════════════════════════════════════════════════════════════════════════
 
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, headers)
+
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.useAsJsoup()
         return SAnime.create().apply {
@@ -377,6 +379,8 @@ class AV1Encodes : Source() {
     // ══════════════════════════════════════════════════════════════════════════
     // EPISODE LIST
     // ══════════════════════════════════════════════════════════════════════════
+
+    override fun episodeListRequest(anime: SAnime): Request = GET(baseUrl + anime.url, headers)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = Jsoup.parse(response.bodyString())
