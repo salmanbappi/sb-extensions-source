@@ -321,37 +321,56 @@ class ZoroTv : Source() {
                 val actionHeaders = headers.newBuilder()
                     .set("Referer", "https://www.zorotv.se/")
                     .build()
-                val body = client.newCall(GET(actionUrl, actionHeaders)).executeSafe().body.string()
-                // Extract rumble_url from JSON response using simple string parsing
-                // to avoid any runtime serialization issues
-                val rumbleUrl = body
+                val body = try {
+                    client.newCall(GET(actionUrl, actionHeaders)).executeSafe().body.string()
+                } catch (e: Exception) {
+                    ""
+                }
+                var targetUrl = body
                     .substringAfter("\"rumble_url\":", "")
                     .trimStart()
                     .removePrefix("\"")
                     .substringBefore("\"")
                     .replace("\\/", "/")
                     .takeIf { it.startsWith("http") }
-                if (!rumbleUrl.isNullOrBlank()) {
-                    val rumbleHeaders = headers.newBuilder()
-                        .set("Referer", "https://rumble.com/")
+
+                if (targetUrl.isNullOrBlank()) {
+                    val iframeResponse = try {
+                        client.newCall(GET(embedUrl, actionHeaders)).executeSafe()
+                    } catch (e: Exception) {
+                        null
+                    }
+                    val iframeHtml = iframeResponse?.body?.string() ?: ""
+                    targetUrl = iframeHtml
+                        .substringAfter("const STREAM=\"", "")
+                        .substringAfter("STREAM=\"", "")
+                        .substringBefore("\"")
+                        .replace("\\/", "/")
+                        .takeIf { it.startsWith("http") }
+                }
+
+                if (!targetUrl.isNullOrBlank()) {
+                    val isRumble = targetUrl.contains("rumble.com")
+                    val refererUrl = if (isRumble) "https://rumble.com/" else "https://animesama.se/"
+                    val streamHeaders = headers.newBuilder()
+                        .set("Referer", refererUrl)
                         .build()
                     val videoList = mutableListOf<Video>()
-                    // Primary stream (Auto/Master playlist)
+                    val fixedMasterUrl = if (targetUrl.contains("#")) targetUrl else "$targetUrl#playlist.m3u8"
                     videoList.add(
                         Video(
-                            videoUrl = rumbleUrl,
+                            videoUrl = fixedMasterUrl,
                             videoTitle = "${hoster.hosterName} - Auto",
-                            headers = rumbleHeaders,
+                            headers = streamHeaders,
                             preferred = true,
                         ),
                     )
-                    // Extracted resolution sub-streams
                     try {
                         val extracted = playlistUtils.extractFromHls(
-                            playlistUrl = rumbleUrl,
-                            referer = "https://rumble.com/",
-                            masterHeaders = rumbleHeaders,
-                            videoHeaders = rumbleHeaders,
+                            playlistUrl = targetUrl,
+                            referer = refererUrl,
+                            masterHeaders = streamHeaders,
+                            videoHeaders = streamHeaders,
                             videoNameGen = { "${hoster.hosterName} - $it" },
                         )
                         videoList.addAll(
@@ -397,7 +416,9 @@ class ZoroTv : Source() {
                     // Fallback to embedUrl
                 }
 
-                videos
+                videos.ifEmpty {
+                    universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
+                }
             } else {
                 val embedHeaders = headers.newBuilder()
                     .set("Referer", "https://www.zorotv.se/")
