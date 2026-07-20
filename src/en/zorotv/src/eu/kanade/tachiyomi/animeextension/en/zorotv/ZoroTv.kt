@@ -276,29 +276,22 @@ class ZoroTv : Source() {
                 val embedId = embedUrl.substringAfterLast("/").substringBefore("?")
                 val actionUrl = "https://animesama.se/e/$embedId?action=get_source&id=$embedId"
                 val actionHeaders = headers.newBuilder()
-                    .set("Referer", "https://animesama.se/e/$embedId")
+                    .set("Referer", "https://www.zorotv.se/")
                     .build()
                 val response = client.newCall(GET(actionUrl, actionHeaders)).execute().body.string()
-                val rumbleUrl = "rumble_url\"\\s*:\\s*\"([^\"]+)\"".toRegex()
-                    .find(response)?.groupValues?.get(1)
-                    ?.replace("\\/", "/")
+                val parsed = jsonParser.decodeFromString<SamaResponse>(response)
+                val rumbleUrl = parsed.rumble_url?.takeIf { it.isNotBlank() }
                 if (!rumbleUrl.isNullOrBlank()) {
                     val rumbleHeaders = headers.newBuilder()
                         .set("Referer", "https://rumble.com/")
                         .build()
-                    val autoVideo = Video(
-                        videoUrl = rumbleUrl,
-                        videoTitle = "${hoster.hosterName} - Auto",
-                        headers = rumbleHeaders,
+                    listOf(
+                        Video(
+                            videoUrl = rumbleUrl,
+                            videoTitle = "${hoster.hosterName} - Auto",
+                            headers = rumbleHeaders,
+                        ),
                     )
-                    val subVideos = playlistUtils.extractFromHls(
-                        playlistUrl = rumbleUrl,
-                        referer = "https://rumble.com/",
-                        masterHeaders = rumbleHeaders,
-                        videoHeaders = rumbleHeaders,
-                        videoNameGen = { "${hoster.hosterName} - $it" },
-                    )
-                    listOf(autoVideo) + subVideos
                 } else {
                     emptyList()
                 }
