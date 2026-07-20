@@ -279,12 +279,22 @@ class ZoroTv : Source() {
                 val rumbleUrl = parsed.rumble_url
                 if (!rumbleUrl.isNullOrBlank()) {
                     val emptyHeaders = Headers.Builder().build()
-                    playlistUtils.extractFromHls(
+                    val videos = playlistUtils.extractFromHls(
                         playlistUrl = rumbleUrl,
                         masterHeaders = emptyHeaders,
                         videoHeaders = emptyHeaders,
                         videoNameGen = { "${hoster.hosterName} - $it" },
                     )
+                    videos.map { video ->
+                        val fixedUrl = if (!video.videoUrl.contains(".m3u8")) "${video.videoUrl}#.m3u8" else video.videoUrl
+                        Video(
+                            videoUrl = fixedUrl,
+                            videoTitle = video.videoTitle,
+                            headers = video.headers,
+                            subtitleTracks = video.subtitleTracks,
+                            audioTracks = video.audioTracks,
+                        )
+                    }
                 } else {
                     emptyList()
                 }

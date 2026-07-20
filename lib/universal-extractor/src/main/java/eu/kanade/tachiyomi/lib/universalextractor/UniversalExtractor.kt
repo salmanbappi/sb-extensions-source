@@ -121,14 +121,20 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
             resultUrl.isNotBlank() -> {
                 Log.d("UniversalExtractor", "Direct stream URL: $resultUrl")
-                val videoHeaders = if (resultUrl.contains("googlevideo.com") || resultUrl.contains("googleusercontent.com")) {
+                val isGoogle = resultUrl.contains("googlevideo.com") || resultUrl.contains("googleusercontent.com")
+                val videoHeaders = if (isGoogle) {
                     origRequestHeader.newBuilder()
                         .set("Referer", "https://www.blogger.com/")
                         .build()
                 } else {
                     origRequestHeader.newBuilder().add("referer", origRequestUrl).build()
                 }
-                Video(videoUrl = resultUrl, videoTitle = "$prefix - $host: ${customQuality ?: "Mirror"}", headers = videoHeaders).let(::listOf)
+                val fixedUrl = if (isGoogle && !resultUrl.contains(".mp4") && !resultUrl.contains(".m3u8")) {
+                    "$resultUrl#.mp4"
+                } else {
+                    resultUrl
+                }
+                Video(videoUrl = fixedUrl, videoTitle = "$prefix - $host: ${customQuality ?: "Mirror"}", headers = videoHeaders).let(::listOf)
             }
 
             else -> emptyList()
