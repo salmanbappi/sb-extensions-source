@@ -6,7 +6,9 @@ import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
@@ -18,10 +20,7 @@ import eu.kanade.tachiyomi.lib.mp4uploadextractor.Mp4uploadExtractor
 import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
 import extensions.utils.Source
-import extensions.utils.addListPreference
-import extensions.utils.addSetPreference
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -29,8 +28,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -166,7 +163,7 @@ class Anidap :
             description = buildString {
                 val score = detail.averageScore
                 if (score != null && score > 0) {
-                    val fullStars = (score / 20).coerceIn(0, 5)
+                    val fullStars = (score / 20).toInt().coerceIn(0, 5)
                     append("${"★".repeat(fullStars)}${"☆".repeat(5 - fullStars)} ${"%.1f".format(score / 10.0)}/10\n\n")
                 }
                 detail.description?.let { append(it.replace(Regex("<[^>]*>"), "")) }
@@ -266,8 +263,8 @@ class Anidap :
                                     Track(track.url, track.label ?: track.lang ?: "English")
                                 } ?: emptyList()
 
-                                sourcesData.sources.mapNotNull { source ->
-                                    val rawUrl = source.url ?: return@mapNotNull null
+                                sourcesData.sources.flatMap { source ->
+                                    val rawUrl = source.url ?: return@flatMap emptyList()
                                     val transformedUrl = transformSourceUrl(rawUrl, providerId)
                                     val quality = source.quality ?: "Auto"
                                     val videoTitle = "${providerId.uppercase()}: $quality ($categoryLabel)$subStyle"
@@ -280,12 +277,12 @@ class Anidap :
                                                 subtitleList = subtitleTracks,
                                             )
                                         }.getOrElse {
-                                            listOf(Video(transformedUrl, videoTitle, headers, subtitleTracks = subtitleTracks))
+                                            listOf(Video(videoUrl = transformedUrl, videoTitle = videoTitle, headers = headers, subtitleTracks = subtitleTracks))
                                         }
                                     } else {
-                                        listOf(Video(transformedUrl, videoTitle, headers, subtitleTracks = subtitleTracks))
+                                        listOf(Video(videoUrl = transformedUrl, videoTitle = videoTitle, headers = headers, subtitleTracks = subtitleTracks))
                                     }
-                                }.flatten()
+                                }
                             }
                         }.getOrDefault(emptyList())
                     }
@@ -371,53 +368,52 @@ class Anidap :
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        screen.addListPreference(
-            key = "pref_audio_type",
-            default = "sub",
-            title = "Preferred Audio Type",
-            summary = "Select preferred audio format",
-            entries = listOf("Sub", "Dub"),
-            entryValues = listOf("sub", "dub"),
-        )
+        ListPreference(screen.context).apply {
+            key = "pref_audio_type"
+            title = "Preferred Audio Type"
+            entries = arrayOf("Sub", "Dub")
+            entryValues = arrayOf("sub", "dub")
+            setDefaultValue("sub")
+            summary = "%s"
+        }.also { screen.addPreference(it) }
 
-        screen.addListPreference(
-            key = "pref_server",
-            default = "auto",
-            title = "Preferred Server",
-            summary = "Select default server to play first",
-            entries = listOf("Auto", "Mimi", "Beep", "Yuki", "Kiwi", "Loli", "Miku", "Shiro", "Kami"),
-            entryValues = listOf("auto", "mimi", "beep", "yuki", "kiwi", "loli", "miku", "shiro", "kami"),
-        )
+        ListPreference(screen.context).apply {
+            key = "pref_server"
+            title = "Preferred Server"
+            entries = arrayOf("Auto", "Mimi", "Beep", "Yuki", "Kiwi", "Loli", "Miku", "Shiro", "Kami")
+            entryValues = arrayOf("auto", "mimi", "beep", "yuki", "kiwi", "loli", "miku", "shiro", "kami")
+            setDefaultValue("auto")
+            summary = "%s"
+        }.also { screen.addPreference(it) }
 
-        screen.addSetPreference(
-            key = "pref_disabled_servers",
-            default = emptySet(),
-            title = "Disabled Servers",
-            summary = "Select servers to disable",
-            entries = listOf("Mimi", "Beep", "Yuki", "Kiwi", "Loli", "Miku", "Shiro", "Kami"),
-            entryValues = listOf("mimi", "beep", "yuki", "kiwi", "loli", "miku", "shiro", "kami"),
-        )
+        MultiSelectListPreference(screen.context).apply {
+            key = "pref_disabled_servers"
+            title = "Disabled Servers"
+            entries = arrayOf("Mimi", "Beep", "Yuki", "Kiwi", "Loli", "Miku", "Shiro", "Kami")
+            entryValues = arrayOf("mimi", "beep", "yuki", "kiwi", "loli", "miku", "shiro", "kami")
+            setDefaultValue(emptySet<String>())
+        }.also { screen.addPreference(it) }
 
-        screen.addSwitchPreference(
-            key = "pref_load_thumbnails",
-            default = true,
-            title = "Load Episode Thumbnails",
-            summary = "Fetch and show preview thumbnails for episodes",
-        )
+        SwitchPreferenceCompat(screen.context).apply {
+            key = "pref_load_thumbnails"
+            title = "Load Episode Thumbnails"
+            summary = "Fetch and show preview thumbnails for episodes"
+            setDefaultValue(true)
+        }.also { screen.addPreference(it) }
 
-        screen.addSwitchPreference(
-            key = "pref_load_titles",
-            default = true,
-            title = "Load Episode Titles",
-            summary = "Fetch custom titles for episodes",
-        )
+        SwitchPreferenceCompat(screen.context).apply {
+            key = "pref_load_titles"
+            title = "Load Episode Titles"
+            summary = "Fetch custom titles for episodes"
+            setDefaultValue(true)
+        }.also { screen.addPreference(it) }
 
-        screen.addSwitchPreference(
-            key = "pref_load_descriptions",
-            default = true,
-            title = "Load Episode Summaries",
-            summary = "Fetch synopsis descriptions for episodes",
-        )
+        SwitchPreferenceCompat(screen.context).apply {
+            key = "pref_load_descriptions"
+            title = "Load Episode Summaries"
+            summary = "Fetch synopsis descriptions for episodes"
+            setDefaultValue(true)
+        }.also { screen.addPreference(it) }
     }
 
     // Data Models
