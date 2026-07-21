@@ -241,7 +241,8 @@ class Anidap :
                 } else {
                     "Episode $num"
                 }
-                url = "$slug?ep=$num"
+                val epStr = if (num == num.toLong().toFloat()) num.toLong().toString() else num.toString()
+                url = "$slug?ep=$epStr"
                 if (loadThumbnails && !ep.img.isNullOrBlank()) {
                     preview_url = ep.img
                 }
