@@ -302,7 +302,6 @@ class AnimeSuge : AnikotoTheme() {
         return try {
             val metadataMap = myMetadataFetcher.fetch(malId, animeTitle, animeCoverUrl)
             if (metadataMap.isEmpty()) {
-                showToast("Failed to fetch episode metadata")
                 return episodes
             }
 
