@@ -443,7 +443,7 @@ class Anidap :
         )
     }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString("pref_quality", "1080p") ?: "1080p"
         return this.sortedWith(
             compareBy { video ->
