@@ -374,9 +374,11 @@ class Anidap :
         }
 
         if (preferredType == "dub") {
-            addDub(dubProviders); addSub(subProviders)
+            addDub(dubProviders)
+            addSub(subProviders)
         } else {
-            addSub(subProviders); addDub(dubProviders)
+            addSub(subProviders)
+            addDub(dubProviders)
         }
 
         return sortHostersByPreference(proxiedHosters + hosters)
@@ -388,19 +390,27 @@ class Anidap :
             "proxy" -> {
                 // mimi / yuki / loli — local proxy path
                 if (parts.size < 6) return emptyList()
-                val animeId = parts[1]; val epNum = parts[2]; val providerId = parts[3]
-                val hasSub = parts[4] == "1"; val hasDub = parts[5] == "1"
+                val animeId = parts[1]
+                val epNum = parts[2]
+                val providerId = parts[3]
+                val hasSub = parts[4] == "1"
+                val hasDub = parts[5] == "1"
                 val videos = mutableListOf<Video>()
                 if (hasSub) videos.addAll(fetchProxiedVideos(animeId, epNum, providerId, "sub"))
                 if (hasDub) videos.addAll(fetchProxiedVideos(animeId, epNum, providerId, "dub"))
                 videos.sortVideos()
             }
+
             "plain" -> {
                 // All other servers — existing extractor logic
                 if (parts.size < 5) return emptyList()
-                val animeId = parts[1]; val epNum = parts[2]; val type = parts[3]; val providerId = parts[4]
+                val animeId = parts[1]
+                val epNum = parts[2]
+                val type = parts[3]
+                val providerId = parts[4]
                 fetchPlainVideos(animeId, epNum, type, providerId)
             }
+
             else -> emptyList()
         }
     }
@@ -480,9 +490,11 @@ class Anidap :
                 providerId.equals("mp4upload", ignoreCase = true) -> {
                     videos.addAll(mp4uploadExtractor.videosFromUrl(finalUrl, headers))
                 }
+
                 providerId.equals("okru", ignoreCase = true) -> {
                     videos.addAll(okruExtractor.videosFromUrl(finalUrl))
                 }
+
                 finalUrl.contains(".m3u8") -> {
                     val playlistVideos = playlistUtils.extractFromHls(
                         playlistUrl = finalUrl,
@@ -493,6 +505,7 @@ class Anidap :
                     )
                     videos.addAll(playlistVideos)
                 }
+
                 else -> {
                     videos.add(
                         Video(
@@ -510,18 +523,27 @@ class Anidap :
 
     private fun transformSourceUrl(url: String, providerId: String): String = when (providerId.lowercase()) {
         "shiro" -> "${b(url)}&origin=https://kem.clvd.xyz/"
+
         "kami" -> "${b(url)}&origin=https://krussdomi.com"
+
         "vee" -> if (url.startsWith("https://cdn.animeonsen.xyz")) url else "${b(url)}&origin=https://www.animeonsen.xyz/"
+
         "yuki" -> f(url, "https://megaplay.buzz")
+
         "uwu" -> f(url, "https://kwik.cx/")
+
         "miku" -> f(url, "https://allanime.uns.bio")
+
         "mochi" -> url.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
+
         "beep" -> when {
             url.startsWith("https://bd.24stream.xyz/media") -> url
             url.startsWith("/") -> "https://bd.24stream.xyz/media${url.replace("/r2", "")}"
             else -> "https://bd.24stream.xyz/media${url.replace(Regex("https?://[^/]+"), "").replace("/r2", "")}"
         }
+
         "mimi" -> url.replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
+
         else -> url
     }
 
@@ -855,7 +877,10 @@ private class LocalProxyServer(
 
         for (line in lines) {
             val trimmed = line.trim()
-            if (trimmed.isEmpty()) { builder.append("\n"); continue }
+            if (trimmed.isEmpty()) {
+                builder.append("\n")
+                continue
+            }
             if (trimmed.startsWith("#")) {
                 val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
                 uriRegex.find(trimmed)?.let { match ->
