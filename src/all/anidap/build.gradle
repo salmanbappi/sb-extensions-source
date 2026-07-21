@@ -1,7 +1,7 @@
 ext {
     extName = 'Anidap'
     extClass = '.Anidap'
-    extVersionCode = 7
+    extVersionCode = 8
     isNsfw = false
 }
 

@@ -318,11 +318,11 @@ class Anidap :
             json.decodeFromString<SourcesResponse>(response.body.string())
         }.getOrNull() ?: return emptyList()
 
-        val dataObj = sourcesData.data ?: sourcesData
-        val sources = dataObj.sources ?: emptyList()
+        val sources = sourcesData.data?.sources ?: sourcesData.sources ?: emptyList()
         if (sources.isEmpty()) return emptyList()
 
-        val subtitles = (dataObj.subtitles ?: dataObj.tracks ?: emptyList()).mapNotNull { track ->
+        val rawSubs = sourcesData.data?.subtitles ?: sourcesData.subtitles ?: sourcesData.data?.tracks ?: sourcesData.tracks ?: emptyList()
+        val subtitles = rawSubs.mapNotNull { track ->
             val trackUrl = track.url ?: return@mapNotNull null
             Track(url = trackUrl, lang = track.label ?: track.lang ?: "Sub")
         }
@@ -343,9 +343,10 @@ class Anidap :
                 finalUrl.contains(".m3u8") -> {
                     val playlistVideos = playlistUtils.extractFromHls(
                         playlistUrl = finalUrl,
-                        referer = "https://anidap.lol/",
+                        masterHeaders = headers,
+                        videoHeaders = headers,
                         videoNameGen = { quality -> "$titleLabel - $quality" },
-                        subtitleTracks = subtitles,
+                        subtitleList = subtitles,
                     )
                     videos.addAll(playlistVideos)
                 }
