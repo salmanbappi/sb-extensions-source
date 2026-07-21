@@ -146,8 +146,10 @@ class Anidap :
         val animeId = anime.url.removePrefix("/").substringBefore("?")
         val request = GET("$baseUrl/api/anime/$animeId", headers)
         val response = client.newCall(request).execute()
-        val detailsData = json.decodeFromString<AnimeDetailsApiResponse>(response.body.string())
-        val detail = detailsData.data ?: throw Exception("Failed to parse anime details")
+        val detailsData = runCatching {
+            json.decodeFromString<AnimeDetailsApiResponse>(response.body.string())
+        }.getOrNull()
+        val detail = detailsData?.data ?: return anime
 
         return SAnime.create().apply {
             title = detail.title?.english ?: detail.title?.userPreferred ?: detail.title?.romaji ?: anime.title
@@ -185,7 +187,16 @@ class Anidap :
         val animeId = anime.url.removePrefix("/").substringBefore("?")
         val request = GET("https://chad.anidap.lol/rest/api/episodes?id=$animeId", headers)
         val response = client.newCall(request).execute()
-        val episodes = json.decodeFromString<List<EpisodeItem>>(response.body.string())
+        val body = response.body.string()
+
+        val episodes = runCatching {
+            val jsonElement = json.parseToJsonElement(body)
+            when {
+                jsonElement is JsonArray -> json.decodeFromJsonElement<List<EpisodeItem>>(jsonElement)
+                jsonElement is JsonObject && jsonElement["data"] is JsonArray -> json.decodeFromJsonElement<List<EpisodeItem>>(jsonElement["data"]!!)
+                else -> emptyList()
+            }
+        }.getOrDefault(emptyList())
 
         val loadThumbnails = preferences.getBoolean("pref_load_thumbnails", true)
         val loadTitles = preferences.getBoolean("pref_load_titles", true)
@@ -226,7 +237,9 @@ class Anidap :
 
         val serversRequest = GET("https://chad.anidap.lol/rest/api/servers?id=$animeId&epNum=$epNum", headers)
         val response = client.newCall(serversRequest).execute()
-        val serversData = json.decodeFromString<ServersResponse>(response.body.string())
+        val serversData = runCatching {
+            json.decodeFromString<ServersResponse>(response.body.string())
+        }.getOrNull() ?: ServersResponse()
 
         val disabledServers = preferences.getStringSet("pref_disabled_servers", emptySet()) ?: emptySet()
         val preferredType = preferences.getString("pref_audio_type", "sub") ?: "sub"
