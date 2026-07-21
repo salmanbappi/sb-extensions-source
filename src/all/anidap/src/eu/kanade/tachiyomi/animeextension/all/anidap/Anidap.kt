@@ -119,16 +119,22 @@ class Anidap :
         filters.forEach { filter ->
             when (filter) {
                 is Filters.TypeFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("format", filter.toUriPart())
+
                 is Filters.StatusFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
+
                 is Filters.SeasonFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
+
                 is Filters.YearFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("year", filter.toUriPart())
+
                 is Filters.SortFilter -> filter.toUriPart()?.let { urlBuilder.addQueryParameter("sort", it) }
+
                 is Filters.GenreFilter -> {
                     val selected = filter.toQueries()
                     if (selected.isNotEmpty()) {
                         urlBuilder.addQueryParameter("genres", selected.joinToString(","))
                     }
                 }
+
                 else -> {}
             }
         }
@@ -625,7 +631,9 @@ private class LocalProxyServer(
     fun start() {
         if (running.get() && serverSocket?.isClosed == false) return
         running.set(false)
-        try { serverSocket?.close() } catch (_: Exception) {}
+        try {
+            serverSocket?.close()
+        } catch (_: Exception) {}
         try {
             serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
             running.set(true)
@@ -662,7 +670,9 @@ private class LocalProxyServer(
         val encodedHeaders = uri.getQueryParameter("headers")
         val targetUrl = try {
             String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-        } catch (_: Exception) { return }
+        } catch (_: Exception) {
+            return
+        }
         val hdrs = decodeHeaders(encodedHeaders)
 
         try {
@@ -672,7 +682,9 @@ private class LocalProxyServer(
                 else -> serveSegment(targetUrl, hdrs, output)
             }
         } catch (_: Exception) {
-            try { output.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n".toByteArray()) } catch (_: Exception) {}
+            try {
+                output.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n".toByteArray())
+            } catch (_: Exception) {}
         }
     }
 
@@ -686,7 +698,9 @@ private class LocalProxyServer(
             val jsonStr = String(Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
             val map = json.decodeFromString<Map<String, String>>(jsonStr)
             okhttp3.Headers.Builder().apply { for ((k, v) in map) set(k, v) }.build()
-        } catch (_: Exception) { fallback }
+        } catch (_: Exception) {
+            fallback
+        }
     }
 
     private fun getProxyUrl(url: String, headersStr: String?, isKey: Boolean = false): String {
@@ -724,7 +738,10 @@ private class LocalProxyServer(
 
         for (line in lines) {
             val trimmed = line.trim()
-            if (trimmed.isEmpty()) { builder.append("\n"); continue }
+            if (trimmed.isEmpty()) {
+                builder.append("\n")
+                continue
+            }
 
             if (trimmed.startsWith("#")) {
                 val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
