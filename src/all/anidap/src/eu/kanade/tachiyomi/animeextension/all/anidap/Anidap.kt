@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.all.anidap
 
-import android.app.Application
-import android.content.SharedPreferences
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
@@ -25,16 +23,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Response
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
-class Anidap :
-    Source(),
-    ConfigurableAnimeSource {
+class Anidap : Source(), ConfigurableAnimeSource {
 
     override val name = "Anidap"
 
@@ -43,14 +36,6 @@ class Anidap :
     override val lang = "all"
 
     override val supportsLatest = true
-
-    private val json: Json by lazy {
-        Injekt.get<Json>()
-    }
-
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", Application.MODE_PRIVATE)
-    }
 
     private val okruExtractor by lazy { OkruExtractor(client) }
     private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
@@ -91,22 +76,16 @@ class Anidap :
         filters.forEach { filter ->
             when (filter) {
                 is Filters.TypeFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("format", filter.toUriPart())
-
                 is Filters.StatusFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
-
                 is Filters.SeasonFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
-
                 is Filters.YearFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("year", filter.toUriPart())
-
                 is Filters.SortFilter -> filter.toUriPart()?.let { urlBuilder.addQueryParameter("sort", it) }
-
                 is Filters.GenreFilter -> {
                     val selected = filter.toQueries()
                     if (selected.isNotEmpty()) {
                         urlBuilder.addQueryParameter("genres", selected.joinToString(","))
                     }
                 }
-
                 else -> {}
             }
         }
@@ -245,7 +224,7 @@ class Anidap :
 
                             embedUrl.contains("mp4upload") -> {
                                 runCatching {
-                                    mp4uploadExtractor.videosFromUrl(embedUrl, prefix = "${providerId.uppercase()}: ($categoryLabel)$subStyle ")
+                                    mp4uploadExtractor.videosFromUrl(embedUrl, headers = headers, prefix = "${providerId.uppercase()}: ($categoryLabel)$subStyle ")
                                 }.getOrDefault(emptyList())
                             }
 
@@ -307,33 +286,26 @@ class Anidap :
         return listOf(Hoster(hosterName = "Anidap Servers", hosterUrl = "", videoList = videos))
     }
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> = hoster.videoList
+    override suspend fun getVideoList(hoster: Hoster): List<Video> = hoster.videoList ?: emptyList()
 
     // ============================ Stream Transformations =============================
-    private fun transformSourceUrl(url: String, providerId: String): String = when (providerId.lowercase()) {
-        "shiro" -> build24StreamUrl(url, "https://kem.clvd.xyz/")
-
-        "kami" -> build24StreamUrl(url, "https://krussdomi.com")
-
-        "vee" -> if (url.startsWith("https://cdn.animeonsen.xyz")) url else build24StreamUrl(url, "https://www.animeonsen.xyz/")
-
-        "yuki" -> buildAniwatchUrl(url, "https://megaplay.buzz")
-
-        "uwu" -> buildAniwatchUrl(url, "https://kwik.cx/")
-
-        "miku" -> buildAniwatchUrl(url, "https://allanime.uns.bio")
-
-        "mochi" -> url.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
-
-        "beep" -> when {
-            url.startsWith("https://bd.24stream.xyz/media") -> url
-            url.startsWith("/") -> "https://bd.24stream.xyz/media${url.replace("/r2", "")}"
-            else -> "https://bd.24stream.xyz/media${url.replace(Regex("https?://[^/]+"), "").replace("/r2", "")}"
+    private fun transformSourceUrl(url: String, providerId: String): String {
+        return when (providerId.lowercase()) {
+            "shiro" -> build24StreamUrl(url, "https://kem.clvd.xyz/")
+            "kami" -> build24StreamUrl(url, "https://krussdomi.com")
+            "vee" -> if (url.startsWith("https://cdn.animeonsen.xyz")) url else build24StreamUrl(url, "https://www.animeonsen.xyz/")
+            "yuki" -> buildAniwatchUrl(url, "https://megaplay.buzz")
+            "uwu" -> buildAniwatchUrl(url, "https://kwik.cx/")
+            "miku" -> buildAniwatchUrl(url, "https://allanime.uns.bio")
+            "mochi" -> url.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
+            "beep" -> when {
+                url.startsWith("https://bd.24stream.xyz/media") -> url
+                url.startsWith("/") -> "https://bd.24stream.xyz/media${url.replace("/r2", "")}"
+                else -> "https://bd.24stream.xyz/media${url.replace(Regex("https?://[^/]+"), "").replace("/r2", "")}"
+            }
+            "mimi" -> url.replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
+            else -> url
         }
-
-        "mimi" -> url.replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
-
-        else -> url
     }
 
     private fun build24StreamUrl(url: String, origin: String): String {
