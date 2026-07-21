@@ -129,7 +129,7 @@ class Anidap :
                 val item = json.decodeFromJsonElement<AnimeItem>(element)
                 SAnime.create().apply {
                     title = item.title?.english ?: item.title?.userPreferred ?: item.title?.romaji ?: "Anime"
-                    setUrlWithoutDomain(item.id.toString())
+                    setUrlWithoutDomain(item.id?.content ?: "")
                     thumbnail_url = item.coverImage?.extraLarge ?: item.coverImage?.large ?: item.coverImage?.medium ?: item.image
                 }
             }.getOrNull()
@@ -428,7 +428,7 @@ class Anidap :
 
     @Serializable
     private data class AnimeItem(
-        val id: Long? = null,
+        val id: JsonPrimitive? = null,
         val title: TitleItem? = null,
         val coverImage: CoverImageItem? = null,
         val image: String? = null,
@@ -455,7 +455,7 @@ class Anidap :
 
     @Serializable
     private data class AnimeDetailsItem(
-        val id: Long? = null,
+        val id: JsonPrimitive? = null,
         val title: TitleItem? = null,
         val coverImage: CoverImageItem? = null,
         val description: String? = null,
