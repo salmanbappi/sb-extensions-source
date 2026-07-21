@@ -309,9 +309,13 @@ class Animotvslash : Source() {
 
         runCatching {
             when {
-                embedUrl.contains("/jw-player/") -> {
-                    val b64 = embedUrl.substringAfter("/jw-player/").substringBefore("?")
-                    val jsonStr = String(Base64.decode(b64, Base64.DEFAULT))
+                embedUrl.contains("/jw-player/") || embedUrl.contains("/vidstack-player/") -> {
+                    val b64 = when {
+                        embedUrl.contains("/vidstack-player/") -> embedUrl.substringAfter("/vidstack-player/").substringBefore("?")
+                        embedUrl.contains("/jw-player/") -> embedUrl.substringAfter("/jw-player/").substringBefore("?")
+                        else -> ""
+                    }
+                    val jsonStr = String(Base64.decode(b64, Base64.DEFAULT or Base64.NO_WRAP))
                     val m3u8Url = jsonStr.substringAfter("\"url\":\"").substringBefore("\"").replace("\\/", "/")
                     if (m3u8Url.isNotBlank() && m3u8Url.contains("m3u8")) {
                         videoList.addAll(
@@ -410,8 +414,8 @@ class Animotvslash : Source() {
             default = PREF_SERVER_DEFAULT,
             title = "Preferred Server",
             summary = "%s",
-            entries = listOf("Auto", "Rumble", "StreamWish", "VidHide", "Vidara", "P2PPlay"),
-            entryValues = listOf("auto", "Rumble", "StreamWish", "VidHide", "Vidara", "P2PPlay"),
+            entries = listOf("Auto", "Rumble", "ANIMO-M", "ANIMO-H", "ANIMO-D", "StreamWish", "VidHide", "Vidara", "Hydrax (Abyss)", "P2PPlay"),
+            entryValues = listOf("auto", "Rumble", "ANIMO-M", "ANIMO-H", "ANIMO-D", "StreamWish", "VidHide", "Vidara", "Hydrax", "P2PPlay"),
         )
 
         screen.addListPreference(
@@ -453,8 +457,8 @@ class Animotvslash : Source() {
             default = emptySet(),
             title = "Exclude Servers",
             summary = "Select servers to hide from stream options",
-            entries = listOf("Rumble", "StreamWish", "VidHide", "Vidara", "P2PPlay"),
-            entryValues = listOf("Rumble", "StreamWish", "VidHide", "Vidara", "P2PPlay"),
+            entries = listOf("Rumble", "ANIMO-M", "ANIMO-H", "ANIMO-D", "StreamWish", "VidHide", "Vidara", "Hydrax (Abyss)", "P2PPlay"),
+            entryValues = listOf("Rumble", "ANIMO-M", "ANIMO-H", "ANIMO-D", "StreamWish", "VidHide", "Vidara", "Hydrax", "P2PPlay"),
         )
 
         screen.addSetPreference(
