@@ -193,6 +193,14 @@ class Anidap :
         return anime
     }
 
+    private val gqlHeaders by lazy {
+        Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
+            .add("Accept", "application/json, text/plain, */*")
+            .add("Content-Type", "application/json")
+            .build()
+    }
+
     private fun resolveSlugAndDetails(anilistId: Int): Pair<String, CatalogAnimeItem>? {
         return runCatching {
             val queryBody = GraphQLRequest(
@@ -200,7 +208,7 @@ class Anidap :
                 variables = GraphQLVariables(anilistId = anilistId),
             )
             val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-            val response = client.newCall(POST(GRAPHQL_URL, headers, body)).execute()
+            val response = client.newCall(POST(GRAPHQL_URL, gqlHeaders, body)).execute()
             val detailsData = json.decodeFromString<GetAnimeResponse>(response.body.string())
             val detail = detailsData.data.anime ?: return null
             Pair(detail.id, detail)
