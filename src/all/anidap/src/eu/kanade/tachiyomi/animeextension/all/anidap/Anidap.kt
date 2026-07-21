@@ -202,9 +202,7 @@ class Anidap :
         }.getOrNull()
     }
 
-    private fun resolveSlug(idOrSlug: String): String {
-        return resolveSlugNative(idOrSlug)?.first ?: idOrSlug
-    }
+    private fun resolveSlug(idOrSlug: String): String = resolveSlugNative(idOrSlug)?.first ?: idOrSlug
 
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
