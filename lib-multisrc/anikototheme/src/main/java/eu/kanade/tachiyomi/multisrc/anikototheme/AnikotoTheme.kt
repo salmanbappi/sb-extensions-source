@@ -353,7 +353,6 @@ abstract class AnikotoTheme : Source() {
             logi("enrichEpisodesWithMetadata: malId=$malId, title=$animeTitle, thumbs=$loadThumbnails, titles=$loadTitles, descs=$loadDescriptions")
             val metadataMap = metadataFetcher.fetch(malId, animeTitle, animeCoverUrl)
             if (metadataMap.isEmpty()) {
-                showToast("Failed to fetch episode metadata")
                 return episodes
             }
 
