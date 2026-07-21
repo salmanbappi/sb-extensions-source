@@ -101,9 +101,13 @@ class Anidap :
         filters.forEach { filter ->
             when (filter) {
                 is Filters.TypeFilter -> if (!filter.isDefault()) selectedFormats = listOf(filter.toUriPart())
+
                 is Filters.StatusFilter -> if (!filter.isDefault()) selectedStatus = listOf(filter.toUriPart())
+
                 is Filters.SeasonFilter -> if (!filter.isDefault()) selectedSeason = listOf(filter.toUriPart())
+
                 is Filters.YearFilter -> if (!filter.isDefault()) selectedYear = filter.toUriPart().toIntOrNull()
+
                 is Filters.SortFilter -> filter.toUriPart()?.let {
                     val field = when (it) {
                         "START_DATE_DESC" -> "CREATED_AT"
@@ -113,10 +117,12 @@ class Anidap :
                     }
                     selectedSort = listOf(AnimeSortInput(field, "DESC"))
                 }
+
                 is Filters.GenreFilter -> {
                     val selected = filter.toQueries()
                     if (selected.isNotEmpty()) selectedGenres = selected
                 }
+
                 else -> {}
             }
         }
@@ -343,9 +349,11 @@ class Anidap :
                 providerId.equals("mp4upload", ignoreCase = true) -> {
                     videos.addAll(mp4uploadExtractor.videosFromUrl(finalUrl, headers))
                 }
+
                 providerId.equals("okru", ignoreCase = true) -> {
                     videos.addAll(okruExtractor.videosFromUrl(finalUrl))
                 }
+
                 finalUrl.contains(".m3u8") -> {
                     val playlistVideos = playlistUtils.extractFromHls(
                         playlistUrl = finalUrl,
@@ -356,6 +364,7 @@ class Anidap :
                     )
                     videos.addAll(playlistVideos)
                 }
+
                 else -> {
                     videos.add(
                         Video(
@@ -372,23 +381,30 @@ class Anidap :
         return videos.sortVideos()
     }
 
-    private fun transformSourceUrl(url: String, providerId: String): String {
-        return when (providerId.lowercase()) {
-            "shiro" -> "${b(url)}&origin=https://kem.clvd.xyz/"
-            "kami" -> "${b(url)}&origin=https://krussdomi.com"
-            "vee" -> if (url.startsWith("https://cdn.animeonsen.xyz")) url else "${b(url)}&origin=https://www.animeonsen.xyz/"
-            "yuki" -> f(url, "https://megaplay.buzz")
-            "uwu" -> f(url, "https://kwik.cx/")
-            "miku" -> f(url, "https://allanime.uns.bio")
-            "mochi" -> url.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
-            "beep" -> when {
-                url.startsWith("https://bd.24stream.xyz/media") -> url
-                url.startsWith("/") -> "https://bd.24stream.xyz/media${url.replace("/r2", "")}"
-                else -> "https://bd.24stream.xyz/media${url.replace(Regex("https?://[^/]+"), "").replace("/r2", "")}"
-            }
-            "mimi" -> url.replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
-            else -> url
+    private fun transformSourceUrl(url: String, providerId: String): String = when (providerId.lowercase()) {
+        "shiro" -> "${b(url)}&origin=https://kem.clvd.xyz/"
+
+        "kami" -> "${b(url)}&origin=https://krussdomi.com"
+
+        "vee" -> if (url.startsWith("https://cdn.animeonsen.xyz")) url else "${b(url)}&origin=https://www.animeonsen.xyz/"
+
+        "yuki" -> f(url, "https://megaplay.buzz")
+
+        "uwu" -> f(url, "https://kwik.cx/")
+
+        "miku" -> f(url, "https://allanime.uns.bio")
+
+        "mochi" -> url.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
+
+        "beep" -> when {
+            url.startsWith("https://bd.24stream.xyz/media") -> url
+            url.startsWith("/") -> "https://bd.24stream.xyz/media${url.replace("/r2", "")}"
+            else -> "https://bd.24stream.xyz/media${url.replace(Regex("https?://[^/]+"), "").replace("/r2", "")}"
         }
+
+        "mimi" -> url.replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
+
+        else -> url
     }
 
     private fun b(url: String): String {
