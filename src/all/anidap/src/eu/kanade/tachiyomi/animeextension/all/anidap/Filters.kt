@@ -16,44 +16,48 @@ object Filters {
         fun isDefault() = state == 0
     }
 
-    class TypeFilter : UriPartFilter(
-        "Format",
-        arrayOf(
-            Pair("All", ""),
-            Pair("TV", "TV"),
-            Pair("Movie", "MOVIE"),
-            Pair("OVA", "OVA"),
-            Pair("ONA", "ONA"),
-            Pair("Special", "SPECIAL"),
-        ),
-    )
+    class TypeFilter :
+        UriPartFilter(
+            "Format",
+            arrayOf(
+                Pair("All", ""),
+                Pair("TV", "TV"),
+                Pair("Movie", "MOVIE"),
+                Pair("OVA", "OVA"),
+                Pair("ONA", "ONA"),
+                Pair("Special", "SPECIAL"),
+            ),
+        )
 
-    class StatusFilter : UriPartFilter(
-        "Status",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Releasing", "RELEASING"),
-            Pair("Finished", "FINISHED"),
-            Pair("Not Yet Released", "NOT_YET_RELEASED"),
-            Pair("Hiatus", "HIATUS"),
-        ),
-    )
+    class StatusFilter :
+        UriPartFilter(
+            "Status",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Releasing", "RELEASING"),
+                Pair("Finished", "FINISHED"),
+                Pair("Not Yet Released", "NOT_YET_RELEASED"),
+                Pair("Hiatus", "HIATUS"),
+            ),
+        )
 
-    class SeasonFilter : UriPartFilter(
-        "Season",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Winter", "WINTER"),
-            Pair("Spring", "SPRING"),
-            Pair("Summer", "SUMMER"),
-            Pair("Fall", "FALL"),
-        ),
-    )
+    class SeasonFilter :
+        UriPartFilter(
+            "Season",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Winter", "WINTER"),
+                Pair("Spring", "SPRING"),
+                Pair("Summer", "SUMMER"),
+                Pair("Fall", "FALL"),
+            ),
+        )
 
-    class YearFilter : UriPartFilter(
-        "Year",
-        YEARS,
-    ) {
+    class YearFilter :
+        UriPartFilter(
+            "Year",
+            YEARS,
+        ) {
         companion object {
             private val CURRENT_YEAR by lazy {
                 Calendar.getInstance().get(Calendar.YEAR)
@@ -68,10 +72,11 @@ object Filters {
 
     class GenreCheckBox(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
 
-    class GenreFilter : AnimeFilter.Group<AnimeFilter.CheckBox>(
-        "Genres",
-        GENRES.map { GenreCheckBox(it.first, it.second) },
-    ) {
+    class GenreFilter :
+        AnimeFilter.Group<AnimeFilter.CheckBox>(
+            "Genres",
+            GENRES.map { GenreCheckBox(it.first, it.second) },
+        ) {
         fun toQueries(): List<String> = state.filter { it.state }.map {
             (it as GenreCheckBox).id
         }
@@ -100,10 +105,11 @@ object Filters {
         }
     }
 
-    class SortFilter : AnimeFilter.Sort(
-        "Sort By",
-        arrayOf("Popularity", "Score", "Release Date", "Title"),
-    ) {
+    class SortFilter :
+        AnimeFilter.Sort(
+            "Sort By",
+            arrayOf("Popularity", "Score", "Release Date", "Title"),
+        ) {
         fun toUriPart(): String? = state?.let {
             val key = when (it.index) {
                 0 -> "POPULARITY"
