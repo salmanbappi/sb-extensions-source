@@ -5,41 +5,45 @@ import java.util.Calendar
 
 object Filters {
 
-    class TypeFilter : UriPartFilter(
-        "Type",
-        arrayOf(
-            Pair("All", ""),
-            Pair("TV Series", "series"),
-            Pair("Movie", "movies"),
-            Pair("OVA", "ova"),
-            Pair("ONA", "ona"),
-            Pair("Special", "special"),
-        ),
-    )
+    class TypeFilter :
+        UriPartFilter(
+            "Type",
+            arrayOf(
+                Pair("All", ""),
+                Pair("TV Series", "series"),
+                Pair("Movie", "movies"),
+                Pair("OVA", "ova"),
+                Pair("ONA", "ona"),
+                Pair("Special", "special"),
+            ),
+        )
 
-    class StatusFilter : UriPartFilter(
-        "Status",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Ongoing", "ongoing"),
-            Pair("Completed", "completed"),
-        ),
-    )
+    class StatusFilter :
+        UriPartFilter(
+            "Status",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Ongoing", "ongoing"),
+                Pair("Completed", "completed"),
+            ),
+        )
 
-    class OrderFilter : UriPartFilter(
-        "Order By",
-        arrayOf(
-            Pair("Latest Update", "update"),
-            Pair("Popularity", "popular"),
-            Pair("Title", "title"),
-            Pair("Recently Added", "latest"),
-        ),
-    )
+    class OrderFilter :
+        UriPartFilter(
+            "Order By",
+            arrayOf(
+                Pair("Latest Update", "update"),
+                Pair("Popularity", "popular"),
+                Pair("Title", "title"),
+                Pair("Recently Added", "latest"),
+            ),
+        )
 
-    class YearFilter : UriPartFilter(
-        "Year",
-        YEARS,
-    ) {
+    class YearFilter :
+        UriPartFilter(
+            "Year",
+            YEARS,
+        ) {
         companion object {
             private val CURRENT_YEAR by lazy {
                 Calendar.getInstance().get(Calendar.YEAR)
@@ -54,10 +58,11 @@ object Filters {
 
     class GenreCheckBox(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
 
-    class GenreFilter : AnimeFilter.Group<AnimeFilter.CheckBox>(
-        "Genres",
-        GENRES.map { GenreCheckBox(it.first, it.second) },
-    ) {
+    class GenreFilter :
+        AnimeFilter.Group<AnimeFilter.CheckBox>(
+            "Genres",
+            GENRES.map { GenreCheckBox(it.first, it.second) },
+        ) {
         fun selectedGenres(): List<String> = state.filter { it.state }.map { it.id }
 
         companion object {
