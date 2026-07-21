@@ -20,21 +20,21 @@ import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
@@ -61,95 +61,51 @@ class Anidap :
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val queryBody = GraphQLRequest(
-            query = CATALOG_QUERY,
-            variables = GraphQLVariables(
-                sort = listOf(AnimeSortInput("POPULARITY", "DESC")),
-                limit = 30,
-                offset = (page - 1) * 30,
-            ),
-        )
-        val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-        val response = client.newCall(POST(GRAPHQL_URL, headers, body)).execute()
-        return parseGraphQLAnimePage(response)
+        val request = GET("$baseUrl/api/anime/advanced-search?sort=POPULARITY_DESC&page=$page", headers)
+        val response = client.newCall(request).execute()
+        return parseAnimePage(response)
     }
 
     // ============================== Latest ================================
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val queryBody = GraphQLRequest(
-            query = CATALOG_QUERY,
-            variables = GraphQLVariables(
-                sort = listOf(AnimeSortInput("CREATED_AT", "DESC")),
-                limit = 30,
-                offset = (page - 1) * 30,
-            ),
-        )
-        val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-        val response = client.newCall(POST(GRAPHQL_URL, headers, body)).execute()
-        return parseGraphQLAnimePage(response)
+        val request = GET("$baseUrl/api/anime/advanced-search?sort=START_DATE_DESC&page=$page", headers)
+        val response = client.newCall(request).execute()
+        return parseAnimePage(response)
     }
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        var selectedSort = listOf(AnimeSortInput("POPULARITY", "DESC"))
-        var selectedGenres: List<String>? = null
-        var selectedFormats: List<String>? = null
-        var selectedStatus: List<String>? = null
-        var selectedSeason: List<String>? = null
-        var selectedYear: Int? = null
+        if (query.isNotBlank()) {
+            val url = "$baseUrl/api/anime/search".toHttpUrl().newBuilder()
+                .addQueryParameter("q", query)
+                .addQueryParameter("page", page.toString())
+                .build()
+            val response = client.newCall(GET(url, headers)).execute()
+            return parseAnimePage(response)
+        }
+
+        val urlBuilder = "$baseUrl/api/anime/advanced-search".toHttpUrl().newBuilder()
+        urlBuilder.addQueryParameter("page", page.toString())
 
         filters.forEach { filter ->
             when (filter) {
-                is Filters.TypeFilter -> if (!filter.isDefault()) selectedFormats = listOf(filter.toUriPart())
-
-                is Filters.StatusFilter -> if (!filter.isDefault()) selectedStatus = listOf(filter.toUriPart())
-
-                is Filters.SeasonFilter -> if (!filter.isDefault()) selectedSeason = listOf(filter.toUriPart())
-
-                is Filters.YearFilter -> if (!filter.isDefault()) selectedYear = filter.toUriPart().toIntOrNull()
-
-                is Filters.SortFilter -> filter.toUriPart()?.let {
-                    val field = when (it) {
-                        "START_DATE_DESC" -> "CREATED_AT"
-                        "POPULARITY_DESC" -> "POPULARITY"
-                        "SCORE_DESC" -> "AVERAGE_SCORE"
-                        else -> "POPULARITY"
-                    }
-                    selectedSort = listOf(AnimeSortInput(field, "DESC"))
-                }
-
+                is Filters.TypeFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("format", filter.toUriPart())
+                is Filters.StatusFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
+                is Filters.SeasonFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
+                is Filters.YearFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("year", filter.toUriPart())
+                is Filters.SortFilter -> filter.toUriPart()?.let { urlBuilder.addQueryParameter("sort", it) }
                 is Filters.GenreFilter -> {
                     val selected = filter.toQueries()
-                    if (selected.isNotEmpty()) selectedGenres = selected
+                    if (selected.isNotEmpty()) {
+                        urlBuilder.addQueryParameter("genres", selected.joinToString(","))
+                    }
                 }
-
                 else -> {}
             }
         }
 
-        val filterInput = AnimeCatalogFilterInput(
-            query = if (query.isNotBlank()) query else null,
-            statusIn = selectedStatus,
-            seasonIn = selectedSeason,
-            seasonYearMin = selectedYear,
-            seasonYearMax = selectedYear,
-            formatIn = selectedFormats,
-            genres = selectedGenres,
-        )
-
-        val queryBody = GraphQLRequest(
-            query = CATALOG_QUERY,
-            variables = GraphQLVariables(
-                filter = filterInput,
-                sort = selectedSort,
-                limit = 30,
-                offset = (page - 1) * 30,
-            ),
-        )
-
-        val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-        val response = client.newCall(POST(GRAPHQL_URL, headers, body)).execute()
-        return parseGraphQLAnimePage(response)
+        val response = client.newCall(GET(urlBuilder.build(), headers)).execute()
+        return parseAnimePage(response)
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
@@ -162,77 +118,99 @@ class Anidap :
         Filters.GenreFilter(),
     )
 
-    private fun parseGraphQLAnimePage(response: Response): AnimesPage {
-        val responseBody = response.body.string()
-        val result = runCatching {
-            json.decodeFromString<CatalogAnimeResponse>(responseBody)
-        }.getOrNull() ?: return AnimesPage(emptyList(), false)
+    private fun parseAnimePage(response: Response): AnimesPage {
+        val body = response.body.string()
+        val jsonElement = json.parseToJsonElement(body).jsonObject
+        val dataElement = jsonElement["data"] ?: jsonElement
 
-        val items = result.data.catalogAnime.items
-        val animes = items.map { item ->
-            SAnime.create().apply {
-                url = item.id
-                title = item.titleEnglish ?: item.titleRomaji ?: "Anime"
-                thumbnail_url = item.coverImage
-                genre = item.genres.joinToString()
-            }
+        val itemsArray = when (dataElement) {
+            is JsonArray -> dataElement
+            is JsonObject -> dataElement["results"]?.jsonArray ?: dataElement["data"]?.jsonArray
+            else -> jsonElement["results"]?.jsonArray
+        } ?: JsonArray(emptyList())
+
+        val animes = itemsArray.mapNotNull { element ->
+            runCatching {
+                val item = json.decodeFromJsonElement<AnimeItem>(element)
+                val idStr = item.id?.content ?: return@mapNotNull null
+                val animeTitle = item.title?.english ?: item.title?.userPreferred ?: item.title?.romaji ?: "Anime"
+                val animeThumb = item.coverImage?.extraLarge ?: item.coverImage?.large ?: item.coverImage?.medium ?: item.image
+
+                SAnime.create().apply {
+                    url = idStr
+                    title = animeTitle
+                    thumbnail_url = animeThumb
+                }
+            }.getOrNull()
         }
-        return AnimesPage(animes, items.size >= 30)
+
+        val hasNext = (dataElement as? JsonObject)?.get("hasNextPage")?.jsonPrimitive?.booleanOrNull
+            ?: (jsonElement["hasNextPage"]?.jsonPrimitive?.booleanOrNull ?: (animes.isNotEmpty()))
+
+        return AnimesPage(animes, hasNext)
     }
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val slug = anime.url.removePrefix("/").substringBefore("?")
-        val anilistId = slug.substringAfterLast("-").toIntOrNull()
+        val idOrSlug = anime.url.removePrefix("/").substringBefore("?")
+        val anilistId = idOrSlug.toIntOrNull()
 
         if (anilistId != null) {
-            val queryBody = GraphQLRequest(
-                query = GET_ANIME_QUERY,
-                variables = GraphQLVariables(anilistId = anilistId),
-            )
-            val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-            val response = runCatching {
-                client.newCall(POST(GRAPHQL_URL, headers, body)).execute()
-            }.getOrNull()
-
-            if (response != null && response.isSuccessful) {
-                val detailsData = runCatching {
-                    json.decodeFromString<GetAnimeResponse>(response.body.string())
-                }.getOrNull()
-
-                detailsData?.data?.anime?.let { detail ->
-                    return SAnime.create().apply {
-                        url = anime.url
-                        title = detail.titleEnglish ?: detail.titleRomaji ?: anime.title
-                        thumbnail_url = detail.coverImage ?: anime.thumbnail_url
-                        genre = detail.genres.joinToString()
-                        status = when (detail.status?.uppercase()) {
-                            "RELEASING" -> SAnime.ONGOING
-                            "FINISHED" -> SAnime.COMPLETED
-                            "NOT_YET_RELEASED" -> SAnime.LICENSED
-                            else -> SAnime.UNKNOWN
-                        }
-                        initialized = true
-                        description = buildString {
-                            val score = detail.averageScore
-                            if (score != null && score > 0) {
-                                val fullStars = (score / 20).toInt().coerceIn(0, 5)
-                                append("${"★".repeat(fullStars)}${"☆".repeat(5 - fullStars)} ${"%.1f".format(score / 10.0)}/10\n\n")
-                            }
-                            detail.description?.let { append(it.replace(Regex("<[^>]*>"), "")) }
-                            if (detail.season != null) append("\n\nSeason: ${detail.season} ${detail.seasonYear ?: ""}")
-                            if (detail.format != null) append("\nFormat: ${detail.format}")
-                        }.trim()
+            val resolved = resolveSlugAndDetails(anilistId)
+            if (resolved != null) {
+                val (slug, detail) = resolved
+                return SAnime.create().apply {
+                    url = slug
+                    title = detail.titleEnglish ?: detail.titleRomaji ?: anime.title
+                    thumbnail_url = detail.coverImage ?: anime.thumbnail_url
+                    genre = detail.genres.joinToString()
+                    status = when (detail.status?.uppercase()) {
+                        "RELEASING" -> SAnime.ONGOING
+                        "FINISHED" -> SAnime.COMPLETED
+                        "NOT_YET_RELEASED" -> SAnime.LICENSED
+                        else -> SAnime.UNKNOWN
                     }
+                    initialized = true
+                    description = buildString {
+                        val score = detail.averageScore
+                        if (score != null && score > 0) {
+                            val fullStars = (score / 20).toInt().coerceIn(0, 5)
+                            append("${"★".repeat(fullStars)}${"☆".repeat(5 - fullStars)} ${"%.1f".format(score / 10.0)}/10\n\n")
+                        }
+                        detail.description?.let { append(it.replace(Regex("<[^>]*>"), "")) }
+                        if (detail.season != null) append("\n\nSeason: ${detail.season} ${detail.seasonYear ?: ""}")
+                        if (detail.format != null) append("\nFormat: ${detail.format}")
+                    }.trim()
                 }
             }
         }
         return anime
     }
 
+    private fun resolveSlugAndDetails(anilistId: Int): Pair<String, CatalogAnimeItem>? {
+        return runCatching {
+            val queryBody = GraphQLRequest(
+                query = GET_ANIME_QUERY,
+                variables = GraphQLVariables(anilistId = anilistId),
+            )
+            val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
+            val response = client.newCall(POST(GRAPHQL_URL, headers, body)).execute()
+            val detailsData = json.decodeFromString<GetAnimeResponse>(response.body.string())
+            val detail = detailsData.data.anime ?: return null
+            Pair(detail.id, detail)
+        }.getOrNull()
+    }
+
+    private fun resolveSlug(idOrSlug: String): String {
+        val anilistId = idOrSlug.toIntOrNull() ?: return idOrSlug
+        return resolveSlugAndDetails(anilistId)?.first ?: idOrSlug
+    }
+
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val slug = anime.url.removePrefix("/").substringBefore("?")
+        val rawId = anime.url.removePrefix("/").substringBefore("?")
+        val slug = resolveSlug(rawId)
+
         val request = GET("https://chad.anidap.lol/rest/api/episodes?id=$slug", headers)
         val response = client.newCall(request).execute()
         val body = response.body.string()
@@ -349,11 +327,9 @@ class Anidap :
                 providerId.equals("mp4upload", ignoreCase = true) -> {
                     videos.addAll(mp4uploadExtractor.videosFromUrl(finalUrl, headers))
                 }
-
                 providerId.equals("okru", ignoreCase = true) -> {
                     videos.addAll(okruExtractor.videosFromUrl(finalUrl))
                 }
-
                 finalUrl.contains(".m3u8") -> {
                     val playlistVideos = playlistUtils.extractFromHls(
                         playlistUrl = finalUrl,
@@ -364,7 +340,6 @@ class Anidap :
                     )
                     videos.addAll(playlistVideos)
                 }
-
                 else -> {
                     videos.add(
                         Video(
@@ -381,30 +356,23 @@ class Anidap :
         return videos.sortVideos()
     }
 
-    private fun transformSourceUrl(url: String, providerId: String): String = when (providerId.lowercase()) {
-        "shiro" -> "${b(url)}&origin=https://kem.clvd.xyz/"
-
-        "kami" -> "${b(url)}&origin=https://krussdomi.com"
-
-        "vee" -> if (url.startsWith("https://cdn.animeonsen.xyz")) url else "${b(url)}&origin=https://www.animeonsen.xyz/"
-
-        "yuki" -> f(url, "https://megaplay.buzz")
-
-        "uwu" -> f(url, "https://kwik.cx/")
-
-        "miku" -> f(url, "https://allanime.uns.bio")
-
-        "mochi" -> url.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
-
-        "beep" -> when {
-            url.startsWith("https://bd.24stream.xyz/media") -> url
-            url.startsWith("/") -> "https://bd.24stream.xyz/media${url.replace("/r2", "")}"
-            else -> "https://bd.24stream.xyz/media${url.replace(Regex("https?://[^/]+"), "").replace("/r2", "")}"
+    private fun transformSourceUrl(url: String, providerId: String): String {
+        return when (providerId.lowercase()) {
+            "shiro" -> "${b(url)}&origin=https://kem.clvd.xyz/"
+            "kami" -> "${b(url)}&origin=https://krussdomi.com"
+            "vee" -> if (url.startsWith("https://cdn.animeonsen.xyz")) url else "${b(url)}&origin=https://www.animeonsen.xyz/"
+            "yuki" -> f(url, "https://megaplay.buzz")
+            "uwu" -> f(url, "https://kwik.cx/")
+            "miku" -> f(url, "https://allanime.uns.bio")
+            "mochi" -> url.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
+            "beep" -> when {
+                url.startsWith("https://bd.24stream.xyz/media") -> url
+                url.startsWith("/") -> "https://bd.24stream.xyz/media${url.replace("/r2", "")}"
+                else -> "https://bd.24stream.xyz/media${url.replace(Regex("https?://[^/]+"), "").replace("/r2", "")}"
+            }
+            "mimi" -> url.replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
+            else -> url
         }
-
-        "mimi" -> url.replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
-
-        else -> url
     }
 
     private fun b(url: String): String {
@@ -505,6 +473,29 @@ class Anidap :
     }
 
     // Data Models
+    @Serializable
+    private data class AnimeItem(
+        val id: JsonPrimitive? = null,
+        val malId: Long? = null,
+        val title: TitleItem? = null,
+        val image: String? = null,
+        val coverImage: CoverImageItem? = null,
+    )
+
+    @Serializable
+    private data class TitleItem(
+        val english: String? = null,
+        val romaji: String? = null,
+        val userPreferred: String? = null,
+    )
+
+    @Serializable
+    private data class CoverImageItem(
+        val extraLarge: String? = null,
+        val large: String? = null,
+        val medium: String? = null,
+    )
+
     @Serializable
     private data class GraphQLRequest(
         val query: String,
@@ -641,29 +632,6 @@ class Anidap :
 
     companion object {
         private const val GRAPHQL_URL = "https://graphql.animex.one/graphql"
-
-        private const val CATALOG_QUERY = """
-            query CatalogAnime(${'$'}filter: AnimeCatalogFilterInput, ${'$'}sort: [AnimeSortInput!], ${'$'}limit: Int, ${'$'}offset: Int) {
-              catalogAnime(filter: ${'$'}filter, sort: ${'$'}sort, limit: ${'$'}limit, offset: ${'$'}offset) {
-                items {
-                  id
-                  anilistId
-                  titleRomaji
-                  titleEnglish
-                  coverImage
-                  bannerImage
-                  description
-                  status
-                  format
-                  averageScore
-                  popularity
-                  seasonYear
-                  season
-                  genres
-                }
-              }
-            }
-        """
 
         private const val GET_ANIME_QUERY = """
             query GetAnime(${'$'}anilistId: Int) {
