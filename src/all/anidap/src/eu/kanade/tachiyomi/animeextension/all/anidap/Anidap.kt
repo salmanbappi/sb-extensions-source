@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.all.anidap
 import android.net.Uri
 import android.util.Base64
 import androidx.preference.ListPreference
+import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -14,6 +15,9 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.mp4uploadextractor.Mp4uploadExtractor
+import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import kotlinx.serialization.SerialName
@@ -52,6 +56,9 @@ class Anidap :
 
     override val supportsLatest = true
 
+    private val okruExtractor by lazy { OkruExtractor(client) }
+    private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private var proxy: LocalProxyServer? = null
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -59,7 +66,7 @@ class Anidap :
         .add("Referer", "$baseUrl/")
         .add("Origin", baseUrl)
 
-    // ============================== Proxy ================================
+    // ============================== Proxy (mimi / yuki / loli only) =======
 
     private fun getProxyUrl(url: String, sourceHeaders: Headers? = null): String {
         if (proxy == null) {
@@ -268,7 +275,7 @@ class Anidap :
             SEpisode.create().apply {
                 val num = ep.number ?: ep.episodeNumber ?: 1f
                 episode_number = num
-                // Display as integer when whole number (Episode 1, not Episode 1.0)
+                // Integer display: Episode 1 not Episode 1.0
                 val epStr = if (num == num.toLong().toFloat()) num.toLong().toString() else num.toString()
                 name = if (loadTitles && !ep.title.isNullOrBlank()) {
                     "Episode $epStr: ${ep.title}"
@@ -291,7 +298,7 @@ class Anidap :
             }
         }
 
-        // Descending order: Episode 12 at top, Episode 1 at bottom
+        // Descending: Episode 12 at top, Episode 1 at bottom
         return episodeList.sortedByDescending { it.episode_number }
     }
 
@@ -307,36 +314,31 @@ class Anidap :
             json.decodeFromString<ServersResponse>(response.body.string())
         }.getOrNull() ?: ServersResponse()
 
+        val disabledServers = preferences.getStringSet("pref_disabled_servers", emptySet()) ?: emptySet()
+        val preferredType = preferences.getString("pref_audio_type", "sub") ?: "sub"
+
         val subProviders = serversData.data?.subProviders ?: serversData.subProviders ?: emptyList()
         val dubProviders = serversData.data?.dubProviders ?: serversData.dubProviders ?: emptyList()
 
-        val allowedServers = setOf("mimi", "yuki", "loli")
+        // Servers that get combined sub+dub into one hoster with soft/hard sub label
+        val proxiedServers = setOf("mimi", "yuki", "loli")
 
-        // Aggregate per-server: tip from API, whether sub/dub is available
+        // --- Proxied servers: one combined hoster per server ---
         data class ServerInfo(val tip: String?, val hasSub: Boolean, val hasDub: Boolean)
-        val serverMap = linkedMapOf<String, ServerInfo>()
+        val proxiedMap = linkedMapOf<String, ServerInfo>()
 
         for (server in subProviders) {
-            if (server.id !in allowedServers) continue
-            val existing = serverMap[server.id]
-            serverMap[server.id] = ServerInfo(
-                tip = server.tip ?: existing?.tip,
-                hasSub = true,
-                hasDub = existing?.hasDub ?: false,
-            )
+            if (server.id !in proxiedServers || disabledServers.contains(server.id)) continue
+            val existing = proxiedMap[server.id]
+            proxiedMap[server.id] = ServerInfo(server.tip ?: existing?.tip, true, existing?.hasDub ?: false)
         }
         for (server in dubProviders) {
-            if (server.id !in allowedServers) continue
-            val existing = serverMap[server.id]
-            serverMap[server.id] = ServerInfo(
-                tip = server.tip ?: existing?.tip,
-                hasSub = existing?.hasSub ?: false,
-                hasDub = true,
-            )
+            if (server.id !in proxiedServers || disabledServers.contains(server.id)) continue
+            val existing = proxiedMap[server.id]
+            proxiedMap[server.id] = ServerInfo(server.tip ?: existing?.tip, existing?.hasSub ?: false, true)
         }
 
-        val hosters = serverMap.map { (id, info) ->
-            // Resolve soft/hard sub from the "tip" field returned by the API
+        val proxiedHosters = proxiedMap.map { (id, info) ->
             val subType = when {
                 info.tip?.contains("Hard sub", ignoreCase = true) == true -> "Hard Sub"
                 info.tip?.contains("Soft sub", ignoreCase = true) == true -> "Soft Sub"
@@ -349,30 +351,62 @@ class Anidap :
             }
             Hoster(
                 hosterName = "${id.uppercase()} [$subType] [$audioLabel]",
-                hosterUrl = "$animeId|$epNum|$id|${if (info.hasSub) "1" else "0"}|${if (info.hasDub) "1" else "0"}",
+                hosterUrl = "proxy|$animeId|$epNum|$id|${if (info.hasSub) "1" else "0"}|${if (info.hasDub) "1" else "0"}",
             )
         }
 
-        return sortHostersByPreference(hosters)
+        // --- All other servers: separate sub/dub hosters as before ---
+        val hosters = mutableListOf<Hoster>()
+
+        val addSub = { providers: List<ServerItem> ->
+            providers.forEach { server ->
+                if (server.id !in proxiedServers && !disabledServers.contains(server.id)) {
+                    hosters.add(Hoster(hosterName = "SUB - ${server.id.uppercase()}", hosterUrl = "plain|$animeId|$epNum|sub|${server.id}"))
+                }
+            }
+        }
+        val addDub = { providers: List<ServerItem> ->
+            providers.forEach { server ->
+                if (server.id !in proxiedServers && !disabledServers.contains(server.id)) {
+                    hosters.add(Hoster(hosterName = "DUB - ${server.id.uppercase()}", hosterUrl = "plain|$animeId|$epNum|dub|${server.id}"))
+                }
+            }
+        }
+
+        if (preferredType == "dub") {
+            addDub(dubProviders); addSub(subProviders)
+        } else {
+            addSub(subProviders); addDub(dubProviders)
+        }
+
+        return sortHostersByPreference(proxiedHosters + hosters)
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val parts = hoster.hosterUrl.split("|")
-        if (parts.size < 5) return emptyList()
-
-        val animeId = parts[0]
-        val epNum = parts[1]
-        val providerId = parts[2]
-        val hasSub = parts[3] == "1"
-        val hasDub = parts[4] == "1"
-
-        val videos = mutableListOf<Video>()
-        if (hasSub) videos.addAll(fetchVideosForType(animeId, epNum, providerId, "sub"))
-        if (hasDub) videos.addAll(fetchVideosForType(animeId, epNum, providerId, "dub"))
-        return videos.sortVideos()
+        return when (parts.firstOrNull()) {
+            "proxy" -> {
+                // mimi / yuki / loli — local proxy path
+                if (parts.size < 6) return emptyList()
+                val animeId = parts[1]; val epNum = parts[2]; val providerId = parts[3]
+                val hasSub = parts[4] == "1"; val hasDub = parts[5] == "1"
+                val videos = mutableListOf<Video>()
+                if (hasSub) videos.addAll(fetchProxiedVideos(animeId, epNum, providerId, "sub"))
+                if (hasDub) videos.addAll(fetchProxiedVideos(animeId, epNum, providerId, "dub"))
+                videos.sortVideos()
+            }
+            "plain" -> {
+                // All other servers — existing extractor logic
+                if (parts.size < 5) return emptyList()
+                val animeId = parts[1]; val epNum = parts[2]; val type = parts[3]; val providerId = parts[4]
+                fetchPlainVideos(animeId, epNum, type, providerId)
+            }
+            else -> emptyList()
+        }
     }
 
-    private fun fetchVideosForType(animeId: String, epNum: String, providerId: String, type: String): List<Video> {
+    /** Fetch videos for mimi/yuki/loli through the local proxy (injects Referer per segment). */
+    private fun fetchProxiedVideos(animeId: String, epNum: String, providerId: String, type: String): List<Video> {
         val requestUrl = "https://chad.anidap.lol/rest/api/sources?id=$animeId&epNum=$epNum&type=$type&providerId=$providerId"
         val response = client.newCall(GET(requestUrl, headers)).execute()
         val sourcesData = runCatching {
@@ -389,12 +423,52 @@ class Anidap :
             Track(url = trackUrl, lang = track.label ?: track.lang ?: "Sub")
         }
 
-        // Use Referer from the API's "headers" field for per-server header injection
+        // Referer from API's "headers" field — injected on every segment via the proxy
         val apiHeaders = sourcesData.data?.apiHeaders ?: sourcesData.apiHeaders ?: emptyMap()
         val referer = apiHeaders["Referer"] ?: apiHeaders["referer"]
         val sourceHeaders = headers.newBuilder().apply {
             referer?.let { set("Referer", it) }
         }.build()
+
+        return sources.mapNotNull { src ->
+            val rawUrl = src.url ?: return@mapNotNull null
+            val finalUrl = transformSourceUrl(rawUrl, providerId)
+            val titleLabel = "${type.uppercase()} - ${providerId.uppercase()} - ${src.quality ?: "Auto"}"
+            if (finalUrl.contains(".m3u8")) {
+                Video(
+                    videoUrl = getProxyUrl(finalUrl, sourceHeaders),
+                    videoTitle = titleLabel,
+                    headers = headers,
+                    subtitleTracks = subtitles,
+                )
+            } else {
+                Video(
+                    videoUrl = finalUrl,
+                    videoTitle = titleLabel,
+                    headers = sourceHeaders,
+                    subtitleTracks = subtitles,
+                )
+            }
+        }
+    }
+
+    /** Fetch videos for all other servers using existing extractors. */
+    private fun fetchPlainVideos(animeId: String, epNum: String, type: String, providerId: String): List<Video> {
+        val requestUrl = "https://chad.anidap.lol/rest/api/sources?id=$animeId&epNum=$epNum&type=$type&providerId=$providerId"
+        val response = client.newCall(GET(requestUrl, headers)).execute()
+        val sourcesData = runCatching {
+            json.decodeFromString<SourcesResponse>(response.body.string())
+        }.getOrNull() ?: return emptyList()
+
+        val sources = sourcesData.data?.sources ?: sourcesData.sources ?: emptyList()
+        if (sources.isEmpty()) return emptyList()
+
+        val rawSubs = sourcesData.data?.subtitles ?: sourcesData.subtitles
+            ?: sourcesData.data?.tracks ?: sourcesData.tracks ?: emptyList()
+        val subtitles = rawSubs.mapNotNull { track ->
+            val trackUrl = track.url ?: return@mapNotNull null
+            Track(url = trackUrl, lang = track.label ?: track.lang ?: "Sub")
+        }
 
         val videos = mutableListOf<Video>()
         for (src in sources) {
@@ -402,35 +476,60 @@ class Anidap :
             val finalUrl = transformSourceUrl(rawUrl, providerId)
             val titleLabel = "${type.uppercase()} - ${providerId.uppercase()} - ${src.quality ?: "Auto"}"
 
-            if (finalUrl.contains(".m3u8")) {
-                // Route through local proxy to inject Referer on every segment request
-                val proxyUrl = getProxyUrl(finalUrl, sourceHeaders)
-                videos.add(
-                    Video(
-                        videoUrl = proxyUrl,
-                        videoTitle = titleLabel,
-                        headers = headers,
-                        subtitleTracks = subtitles,
-                    ),
-                )
-            } else {
-                videos.add(
-                    Video(
-                        videoUrl = finalUrl,
-                        videoTitle = titleLabel,
-                        headers = sourceHeaders,
-                        subtitleTracks = subtitles,
-                    ),
-                )
+            when {
+                providerId.equals("mp4upload", ignoreCase = true) -> {
+                    videos.addAll(mp4uploadExtractor.videosFromUrl(finalUrl, headers))
+                }
+                providerId.equals("okru", ignoreCase = true) -> {
+                    videos.addAll(okruExtractor.videosFromUrl(finalUrl))
+                }
+                finalUrl.contains(".m3u8") -> {
+                    val playlistVideos = playlistUtils.extractFromHls(
+                        playlistUrl = finalUrl,
+                        masterHeaders = headers,
+                        videoHeaders = headers,
+                        videoNameGen = { quality -> "$titleLabel - $quality" },
+                        subtitleList = subtitles,
+                    )
+                    videos.addAll(playlistVideos)
+                }
+                else -> {
+                    videos.add(
+                        Video(
+                            videoUrl = finalUrl,
+                            videoTitle = titleLabel,
+                            headers = headers,
+                            subtitleTracks = subtitles,
+                        ),
+                    )
+                }
             }
         }
-        return videos
+        return videos.sortVideos()
     }
 
     private fun transformSourceUrl(url: String, providerId: String): String = when (providerId.lowercase()) {
-        "mimi" -> url.replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
+        "shiro" -> "${b(url)}&origin=https://kem.clvd.xyz/"
+        "kami" -> "${b(url)}&origin=https://krussdomi.com"
+        "vee" -> if (url.startsWith("https://cdn.animeonsen.xyz")) url else "${b(url)}&origin=https://www.animeonsen.xyz/"
         "yuki" -> f(url, "https://megaplay.buzz")
-        else -> url // loli passes through; Referer header from API handles CDN access
+        "uwu" -> f(url, "https://kwik.cx/")
+        "miku" -> f(url, "https://allanime.uns.bio")
+        "mochi" -> url.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
+        "beep" -> when {
+            url.startsWith("https://bd.24stream.xyz/media") -> url
+            url.startsWith("/") -> "https://bd.24stream.xyz/media${url.replace("/r2", "")}"
+            else -> "https://bd.24stream.xyz/media${url.replace(Regex("https?://[^/]+"), "").replace("/r2", "")}"
+        }
+        "mimi" -> url.replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
+        else -> url
+    }
+
+    private fun b(url: String): String {
+        val bytes = url.toByteArray()
+        val xored = ByteArray(bytes.size) { i -> (bytes[i].toInt() xor 137).toByte() }
+        val hex = xored.joinToString("") { "%02x".format(it) }
+        return "https://crs.24stream.xyz/media/$hex"
     }
 
     private fun f(url: String, referer: String): String {
@@ -478,10 +577,19 @@ class Anidap :
         ListPreference(screen.context).apply {
             key = "pref_preferred_server"
             title = "Preferred Server"
-            summary = "Server shown first in the hoster list"
-            entries = arrayOf("Mimi", "Yuki", "Loli")
-            entryValues = arrayOf("mimi", "yuki", "loli")
+            summary = "Preferred video server hoster"
+            entries = arrayOf("Mimi", "Beep", "Yuki", "Kiwi", "Vee", "Miku", "Mochi", "Loli")
+            entryValues = arrayOf("mimi", "beep", "yuki", "kiwi", "vee", "miku", "mochi", "loli")
             setDefaultValue("mimi")
+        }.also { screen.addPreference(it) }
+
+        ListPreference(screen.context).apply {
+            key = "pref_audio_type"
+            title = "Preferred Audio Category"
+            summary = "Show Subbed, Dubbed, or Both servers"
+            entries = arrayOf("Sub", "Dub", "Both")
+            entryValues = arrayOf("sub", "dub", "both")
+            setDefaultValue("sub")
         }.also { screen.addPreference(it) }
 
         ListPreference(screen.context).apply {
@@ -491,6 +599,15 @@ class Anidap :
             entries = arrayOf("1080p", "720p", "480p", "360p", "Auto")
             entryValues = arrayOf("1080p", "720p", "480p", "360p", "auto")
             setDefaultValue("1080p")
+        }.also { screen.addPreference(it) }
+
+        MultiSelectListPreference(screen.context).apply {
+            key = "pref_disabled_servers"
+            title = "Disabled Servers"
+            summary = "Select servers to exclude from video list"
+            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Loli", "Uwu", "Kiwi", "Miku", "Mochi")
+            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "loli", "uwu", "kiwi", "miku", "mochi")
+            setDefaultValue(emptySet<String>())
         }.also { screen.addPreference(it) }
 
         SwitchPreferenceCompat(screen.context).apply {
@@ -738,11 +855,7 @@ private class LocalProxyServer(
 
         for (line in lines) {
             val trimmed = line.trim()
-            if (trimmed.isEmpty()) {
-                builder.append("\n")
-                continue
-            }
-
+            if (trimmed.isEmpty()) { builder.append("\n"); continue }
             if (trimmed.startsWith("#")) {
                 val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
                 uriRegex.find(trimmed)?.let { match ->
