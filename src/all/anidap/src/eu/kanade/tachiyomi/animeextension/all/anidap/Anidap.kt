@@ -152,7 +152,13 @@ class Anidap :
         return SAnime.create().apply {
             title = detail.title?.english ?: detail.title?.userPreferred ?: detail.title?.romaji ?: anime.title
             thumbnail_url = detail.coverImage?.extraLarge ?: detail.coverImage?.large ?: anime.thumbnail_url
-            genre = detail.genres?.joinToString()
+            genre = detail.genres?.mapNotNull { element ->
+                when (element) {
+                    is JsonPrimitive -> element.contentOrNull
+                    is JsonObject -> element["name"]?.jsonPrimitive?.contentOrNull ?: element["label"]?.jsonPrimitive?.contentOrNull
+                    else -> null
+                }
+            }?.joinToString()
             author = detail.studios?.joinToString { it.name }
             status = when (detail.status?.uppercase()) {
                 "RELEASING" -> SAnime.ONGOING
@@ -460,7 +466,7 @@ class Anidap :
         val coverImage: CoverImageItem? = null,
         val description: String? = null,
         val averageScore: Double? = null,
-        val genres: List<String>? = null,
+        val genres: List<JsonElement>? = null,
         val status: String? = null,
         val season: String? = null,
         val year: Int? = null,
