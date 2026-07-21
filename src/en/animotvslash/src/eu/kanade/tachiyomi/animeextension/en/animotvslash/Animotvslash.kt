@@ -47,6 +47,7 @@ class Animotvslash : Source() {
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val streamWishExtractor by lazy { StreamWishExtractor(client, headers) }
+    private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val vidHideExtractor by lazy { VidHideExtractor(client, headers) }
     private val vidaraExtractor by lazy { VidaraExtractor(client) }
 
@@ -57,7 +58,7 @@ class Animotvslash : Source() {
     // ============================== Popular ==============================
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val url = if (page == 1) "$baseUrl/anime/?order=popular" else "$baseUrl/anime/page/$page/?order=popular"
+        val url = if (page == 1) "$baseUrl/anime/?order=popular" else "$baseUrl/anime/?page=$page&order=popular"
         val response = client.newCall(GET(url, headers)).execute()
         return parseAnimeListPage(response)
     }
@@ -65,7 +66,7 @@ class Animotvslash : Source() {
     // ============================== Latest ==============================
 
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val url = if (page == 1) "$baseUrl/anime/?order=update" else "$baseUrl/anime/page/$page/?order=update"
+        val url = if (page == 1) "$baseUrl/anime/?order=update" else "$baseUrl/anime/?page=$page&order=update"
         val response = client.newCall(GET(url, headers)).execute()
         return parseAnimeListPage(response)
     }
@@ -74,13 +75,14 @@ class Animotvslash : Source() {
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         val urlBuilder = if (query.isNotBlank()) {
-            val path = if (page == 1) "/" else "/page/$page/"
-            "$baseUrl$path".toHttpUrl().newBuilder().apply {
+            "$baseUrl/".toHttpUrl().newBuilder().apply {
                 addQueryParameter("s", query)
+                if (page > 1) addQueryParameter("page", page.toString())
             }
         } else {
-            val path = if (page == 1) "/anime/" else "/anime/page/$page/"
-            "$baseUrl$path".toHttpUrl().newBuilder()
+            "$baseUrl/anime/".toHttpUrl().newBuilder().apply {
+                if (page > 1) addQueryParameter("page", page.toString())
+            }
         }
 
         filters.forEach { filter ->
@@ -134,7 +136,7 @@ class Animotvslash : Source() {
             }
         }.distinctBy { it.url }
 
-        val hasNext = doc.selectFirst("a.next, a.r, div.hpage a:contains(Next)") != null
+        val hasNext = doc.selectFirst("div.hpage a.r, div.hpage a:contains(Next), a.next") != null
         return AnimesPage(animeList, hasNext)
     }
 
@@ -327,10 +329,13 @@ class Animotvslash : Source() {
                         )
                     }
                 }
-                embedUrl.contains("streamwish") || embedUrl.contains("bysezoxexe") -> {
-                    videoList.addAll(
-                        streamWishExtractor.videosFromUrl(embedUrl) { quality -> "$audioType - StreamWish:$quality" },
-                    )
+                embedUrl.contains("streamwish") || embedUrl.contains("bysezoxexe") || embedUrl.contains("filemoon") -> {
+                    val extracted = streamWishExtractor.videosFromUrl(embedUrl) { quality -> "$audioType - Moon:$quality" }
+                    if (extracted.isNotEmpty()) {
+                        videoList.addAll(extracted)
+                    } else {
+                        videoList.addAll(filemoonExtractor.videosFromUrl(embedUrl, "$audioType - Moon:"))
+                    }
                 }
                 embedUrl.contains("vidhide") || embedUrl.contains("minochinos") -> {
                     videoList.addAll(

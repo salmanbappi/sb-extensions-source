@@ -1,7 +1,7 @@
 ext {
     extName = 'ANIMOTVSLASH'
     extClass = '.Animotvslash'
-    extVersionCode = 2
+    extVersionCode = 3
     isNsfw = false
 }
 
@@ -10,6 +10,7 @@ apply from: "$rootDir/common.gradle"
 dependencies {
     implementation(project(":lib:playlist-utils"))
     implementation(project(":lib:streamwish-extractor"))
+    implementation(project(":lib:filemoon-extractor"))
     implementation(project(":lib:vidhide-extractor"))
     implementation(project(":lib:vidara-extractor"))
 }
