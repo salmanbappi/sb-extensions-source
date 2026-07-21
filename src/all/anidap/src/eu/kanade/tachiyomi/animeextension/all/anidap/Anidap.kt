@@ -18,10 +18,8 @@ import eu.kanade.tachiyomi.lib.mp4uploadextractor.Mp4uploadExtractor
 import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -34,8 +32,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
 class Anidap :
@@ -159,71 +155,62 @@ class Anidap :
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val idOrSlug = anime.url.removePrefix("/").substringBefore("?")
-        val anilistId = idOrSlug.toIntOrNull()
-
-        if (anilistId != null) {
-            val resolved = resolveSlugAndDetails(anilistId)
-            if (resolved != null) {
-                val (slug, detail) = resolved
-                return SAnime.create().apply {
-                    url = slug
-                    title = detail.titleEnglish ?: detail.titleRomaji ?: anime.title
-                    thumbnail_url = detail.coverImage ?: anime.thumbnail_url
-                    genre = detail.genres.joinToString()
-                    status = when (detail.status?.uppercase()) {
-                        "RELEASING" -> SAnime.ONGOING
-                        "FINISHED" -> SAnime.COMPLETED
-                        "NOT_YET_RELEASED" -> SAnime.LICENSED
-                        else -> SAnime.UNKNOWN
-                    }
-                    initialized = true
-                    description = buildString {
-                        val score = detail.averageScore
-                        if (score != null && score > 0) {
-                            val fullStars = (score / 20).toInt().coerceIn(0, 5)
-                            append("${"★".repeat(fullStars)}${"☆".repeat(5 - fullStars)} ${"%.1f".format(score / 10.0)}/10\n\n")
-                        }
-                        detail.description?.let { append(it.replace(Regex("<[^>]*>"), "")) }
-                        if (detail.season != null) append("\n\nSeason: ${detail.season} ${detail.seasonYear ?: ""}")
-                        if (detail.format != null) append("\nFormat: ${detail.format}")
-                    }.trim()
+        val resolved = resolveSlugNative(idOrSlug)
+        if (resolved != null) {
+            val obj = resolved.second
+            return SAnime.create().apply {
+                url = resolved.first
+                title = obj["titleEnglish"]?.jsonPrimitive?.content
+                    ?: obj["titleRomaji"]?.jsonPrimitive?.content
+                    ?: anime.title
+                thumbnail_url = (obj["coverImage"] as? JsonObject)
+                    ?.let { c -> c["extraLarge"]?.jsonPrimitive?.content ?: c["large"]?.jsonPrimitive?.content ?: c["medium"]?.jsonPrimitive?.content }
+                    ?: obj["coverImage"]?.jsonPrimitive?.content
+                    ?: anime.thumbnail_url
+                genre = obj["genres"]?.jsonArray
+                    ?.mapNotNull { it.jsonPrimitive.content.takeIf { s -> s.isNotBlank() } }
+                    ?.joinToString()
+                status = when (obj["status"]?.jsonPrimitive?.content?.uppercase()) {
+                    "RELEASING" -> SAnime.ONGOING
+                    "FINISHED" -> SAnime.COMPLETED
+                    "NOT_YET_RELEASED" -> SAnime.LICENSED
+                    else -> SAnime.UNKNOWN
                 }
+                initialized = true
+                description = buildString {
+                    obj["description"]?.jsonPrimitive?.content
+                        ?.let { append(it.replace(Regex("<[^>]*>"), "")) }
+                    obj["season"]?.jsonPrimitive?.content?.let {
+                        append("\n\nSeason: $it ${obj["seasonYear"]?.jsonPrimitive?.content ?: ""}")
+                    }
+                    obj["format"]?.jsonPrimitive?.content?.let { append("\nFormat: $it") }
+                }.trim()
             }
         }
         return anime
     }
 
-    private val gqlHeaders by lazy {
-        Headers.Builder()
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
-            .add("Accept", "application/json, text/plain, */*")
-            .add("Content-Type", "application/json")
-            .build()
-    }
-
-    private fun resolveSlugAndDetails(anilistId: Int): Pair<String, CatalogAnimeItem>? {
+    /** Resolves an AniList numeric ID (or existing slug) to Pair<slug, raw JsonObject>.
+     *  Uses anidap.lol/api/anime/{id} which returns data.id == backend slug. */
+    private fun resolveSlugNative(idOrSlug: String): Pair<String, JsonObject>? {
         return runCatching {
-            val queryBody = GraphQLRequest(
-                query = GET_ANIME_QUERY,
-                variables = GraphQLVariables(anilistId = anilistId),
-            )
-            val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-            val response = client.newCall(POST(GRAPHQL_URL, gqlHeaders, body)).execute()
-            val detailsData = json.decodeFromString<GetAnimeResponse>(response.body.string())
-            val detail = detailsData.data.anime ?: return null
-            Pair(detail.id, detail)
+            val response = client.newCall(GET("$baseUrl/api/anime/$idOrSlug", headers)).execute()
+            val obj = json.parseToJsonElement(response.body.string()).jsonObject
+            val data = obj["data"]?.jsonObject ?: return null
+            val slug = data["id"]?.jsonPrimitive?.content ?: return null
+            Pair(slug, data)
         }.getOrNull()
     }
 
     private fun resolveSlug(idOrSlug: String): String {
-        val anilistId = idOrSlug.toIntOrNull() ?: return idOrSlug
-        return resolveSlugAndDetails(anilistId)?.first ?: idOrSlug
+        return resolveSlugNative(idOrSlug)?.first ?: idOrSlug
     }
 
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val rawId = anime.url.removePrefix("/").substringBefore("?")
-        val slug = resolveSlug(rawId)
+        // If rawId is numeric (AniList ID), resolve to backend slug first
+        val slug = if (rawId.toIntOrNull() != null) resolveSlug(rawId) else rawId
 
         val request = GET("https://chad.anidap.lol/rest/api/episodes?id=$slug", headers)
         val response = client.newCall(request).execute()
