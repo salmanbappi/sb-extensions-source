@@ -168,7 +168,12 @@ class Anidap :
                     ?: obj["coverImage"]?.jsonPrimitive?.content
                     ?: anime.thumbnail_url
                 genre = obj["genres"]?.jsonArray
-                    ?.mapNotNull { it.jsonPrimitive.content.takeIf { s -> s.isNotBlank() } }
+                    ?.mapNotNull { el ->
+                        when (el) {
+                            is JsonObject -> el["name"]?.jsonPrimitive?.content
+                            else -> el.jsonPrimitive.content.takeIf { it.isNotBlank() }
+                        }
+                    }
                     ?.joinToString()
                 status = when (obj["status"]?.jsonPrimitive?.content?.uppercase()) {
                     "RELEASING" -> SAnime.ONGOING
@@ -273,20 +278,28 @@ class Anidap :
         val subProviders = serversData.data?.subProviders ?: serversData.subProviders ?: emptyList()
         val dubProviders = serversData.data?.dubProviders ?: serversData.dubProviders ?: emptyList()
 
-        if (preferredType == "sub" || preferredType == "both") {
-            subProviders.forEach { server ->
+        // Add preferred type first, then the other
+        val addSub = { providers: List<ServerItem> ->
+            providers.forEach { server ->
                 if (!disabledServers.contains(server.id)) {
                     hosters.add(Hoster(hosterName = "SUB - ${server.id.uppercase()}", hosterUrl = "$animeId|$epNum|sub|${server.id}"))
                 }
             }
         }
-
-        if (preferredType == "dub" || preferredType == "both") {
-            dubProviders.forEach { server ->
+        val addDub = { providers: List<ServerItem> ->
+            providers.forEach { server ->
                 if (!disabledServers.contains(server.id)) {
                     hosters.add(Hoster(hosterName = "DUB - ${server.id.uppercase()}", hosterUrl = "$animeId|$epNum|dub|${server.id}"))
                 }
             }
+        }
+
+        if (preferredType == "dub") {
+            addDub(dubProviders)
+            addSub(subProviders)
+        } else {
+            addSub(subProviders)
+            addDub(dubProviders)
         }
 
         return sortHostersByPreference(hosters)
