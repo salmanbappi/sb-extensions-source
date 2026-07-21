@@ -1,0 +1,15 @@
+ext {
+    extName = 'ANIMOTVSLASH'
+    extClass = '.Animotvslash'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:streamwish-extractor"))
+    implementation(project(":lib:vidhide-extractor"))
+    implementation(project(":lib:vidara-extractor"))
+}
