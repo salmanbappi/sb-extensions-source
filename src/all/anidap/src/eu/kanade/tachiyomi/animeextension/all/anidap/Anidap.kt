@@ -363,7 +363,7 @@ class Anidap :
             }
         }
 
-        return sortVideos(videos)
+        return videos.sortVideos()
     }
 
     private fun transformSourceUrl(url: String, providerId: String): String {
@@ -421,9 +421,9 @@ class Anidap :
         )
     }
 
-    override fun sortVideos(videos: List<Video>): List<Video> {
+    private fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString("pref_quality", "1080p") ?: "1080p"
-        return videos.sortedWith(
+        return this.sortedWith(
             compareBy { video ->
                 val title = video.videoTitle.lowercase()
                 !title.contains(quality.lowercase())
