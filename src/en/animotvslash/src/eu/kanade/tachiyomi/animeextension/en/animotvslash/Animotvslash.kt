@@ -21,6 +21,9 @@ import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Response
 import org.jsoup.Jsoup
@@ -251,6 +254,14 @@ class Animotvslash : Source() {
 
     // ============================== Hoster & Videos ==============================
 
+    @Serializable
+    private data class HosterEmbed(
+        val url: String,
+        val audioType: String,
+    )
+
+    // ============================== Hoster & Videos ==============================
+
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val response = client.newCall(GET("$baseUrl${episode.url}", headers)).execute()
         val doc = response.asJsoup()
@@ -258,14 +269,14 @@ class Animotvslash : Source() {
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
         val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
 
-        val hosters = mutableListOf<Hoster>()
+        val serverEmbedsMap = mutableMapOf<String, MutableList<HosterEmbed>>()
 
-        // 1. Check default iframe player (Rumble/Direct)
+        // 1. Check default iframe player (Rumble/Default)
         val mainIframeSrc = doc.selectFirst("div.player-embed iframe, div#pembed iframe")?.attr("src")
         if (!mainIframeSrc.isNullOrBlank()) {
-            val hosterData = "$mainIframeSrc|SUB"
             if ("Rumble" !in excludedServers && "SUB" !in excludedAudios) {
-                hosters.add(Hoster(hosterName = "Rumble (Default)", hosterUrl = hosterData))
+                serverEmbedsMap.getOrPut("Rumble") { mutableListOf() }
+                    .add(HosterEmbed(mainIframeSrc, "SUB"))
             }
         }
 
@@ -291,11 +302,14 @@ class Animotvslash : Source() {
 
             if (serverName in excludedServers || audioType in excludedAudios) return@forEach
 
-            hosters.add(
-                Hoster(
-                    hosterName = "$serverName ($audioType)",
-                    hosterUrl = "$iframeSrc|$audioType",
-                ),
+            serverEmbedsMap.getOrPut(serverName) { mutableListOf() }
+                .add(HosterEmbed(iframeSrc, audioType))
+        }
+
+        val hosters = serverEmbedsMap.map { (serverName, embeds) ->
+            Hoster(
+                hosterName = serverName,
+                hosterUrl = json.encodeToString(embeds),
             )
         }
 
@@ -303,74 +317,84 @@ class Animotvslash : Source() {
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val parts = hoster.hosterUrl.split("|")
-        val embedUrl = parts.getOrNull(0) ?: return emptyList()
-        val audioType = parts.getOrNull(1) ?: "SUB"
+        val embeds = runCatching {
+            json.decodeFromString<List<HosterEmbed>>(hoster.hosterUrl)
+        }.getOrElse {
+            val parts = hoster.hosterUrl.split("|")
+            val url = parts.getOrNull(0) ?: return emptyList()
+            val audio = parts.getOrNull(1) ?: "SUB"
+            listOf(HosterEmbed(url, audio))
+        }
 
         val videoList = mutableListOf<Video>()
 
-        runCatching {
-            when {
-                embedUrl.contains("/jw-player/") || embedUrl.contains("/vidstack-player/") -> {
-                    val b64 = when {
-                        embedUrl.contains("/vidstack-player/") -> embedUrl.substringAfter("/vidstack-player/").substringBefore("?")
-                        embedUrl.contains("/jw-player/") -> embedUrl.substringAfter("/jw-player/").substringBefore("?")
-                        else -> ""
+        embeds.forEach { embed ->
+            val embedUrl = embed.url
+            val audioType = embed.audioType
+
+            runCatching {
+                when {
+                    embedUrl.contains("/jw-player/") || embedUrl.contains("/vidstack-player/") -> {
+                        val b64 = when {
+                            embedUrl.contains("/vidstack-player/") -> embedUrl.substringAfter("/vidstack-player/").substringBefore("?")
+                            embedUrl.contains("/jw-player/") -> embedUrl.substringAfter("/jw-player/").substringBefore("?")
+                            else -> ""
+                        }
+                        val jsonStr = String(Base64.decode(b64, Base64.DEFAULT or Base64.NO_WRAP))
+                        val m3u8Url = jsonStr.substringAfter("\"url\":\"").substringBefore("\"").replace("\\/", "/")
+                        if (m3u8Url.isNotBlank() && m3u8Url.contains("m3u8")) {
+                            videoList.addAll(
+                                playlistUtils.extractFromHls(
+                                    playlistUrl = m3u8Url,
+                                    referer = "$baseUrl/",
+                                    videoNameGen = { quality -> "$audioType - $quality" },
+                                ),
+                            )
+                        }
                     }
-                    val jsonStr = String(Base64.decode(b64, Base64.DEFAULT or Base64.NO_WRAP))
-                    val m3u8Url = jsonStr.substringAfter("\"url\":\"").substringBefore("\"").replace("\\/", "/")
-                    if (m3u8Url.isNotBlank() && m3u8Url.contains("m3u8")) {
+                    embedUrl.contains("streamwish") || embedUrl.contains("bysezoxexe") || embedUrl.contains("filemoon") -> {
+                        val extracted = streamWishExtractor.videosFromUrl(embedUrl) { quality -> "$audioType - Moon:$quality" }
+                        if (extracted.isNotEmpty()) {
+                            videoList.addAll(extracted)
+                        } else {
+                            videoList.addAll(filemoonExtractor.videosFromUrl(embedUrl, "$audioType - Moon:"))
+                        }
+                    }
+                    embedUrl.contains("vidhide") || embedUrl.contains("minochinos") -> {
                         videoList.addAll(
-                            playlistUtils.extractFromHls(
-                                playlistUrl = m3u8Url,
-                                referer = "$baseUrl/",
-                                videoNameGen = { quality -> "$audioType - $quality" },
-                            ),
+                            vidHideExtractor.videosFromUrl(embedUrl) { quality -> "$audioType - VidHide:$quality" },
                         )
                     }
-                }
-                embedUrl.contains("streamwish") || embedUrl.contains("bysezoxexe") || embedUrl.contains("filemoon") -> {
-                    val extracted = streamWishExtractor.videosFromUrl(embedUrl) { quality -> "$audioType - Moon:$quality" }
-                    if (extracted.isNotEmpty()) {
-                        videoList.addAll(extracted)
-                    } else {
-                        videoList.addAll(filemoonExtractor.videosFromUrl(embedUrl, "$audioType - Moon:"))
-                    }
-                }
-                embedUrl.contains("vidhide") || embedUrl.contains("minochinos") -> {
-                    videoList.addAll(
-                        vidHideExtractor.videosFromUrl(embedUrl) { quality -> "$audioType - VidHide:$quality" },
-                    )
-                }
-                embedUrl.contains("vidara") -> {
-                    videoList.addAll(
-                        vidaraExtractor.videosFromUrl(embedUrl, "$audioType - "),
-                    )
-                }
-                embedUrl.contains("p2pplay") -> {
-                    val html = client.newCall(GET(embedUrl, headers)).execute().body.string()
-                    val m3u8Url = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""").find(html)?.groupValues?.get(1)
-                    if (!m3u8Url.isNullOrBlank()) {
+                    embedUrl.contains("vidara") -> {
                         videoList.addAll(
-                            playlistUtils.extractFromHls(
-                                playlistUrl = m3u8Url,
-                                referer = embedUrl,
-                                videoNameGen = { quality -> "$audioType - P2PPlay:$quality" },
-                            ),
+                            vidaraExtractor.videosFromUrl(embedUrl, "$audioType - "),
                         )
                     }
-                }
-                else -> {
-                    val html = client.newCall(GET(embedUrl, headers)).execute().body.string()
-                    val m3u8Url = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""").find(html)?.groupValues?.get(1)
-                    if (!m3u8Url.isNullOrBlank()) {
-                        videoList.addAll(
-                            playlistUtils.extractFromHls(
-                                playlistUrl = m3u8Url,
-                                referer = embedUrl,
-                                videoNameGen = { quality -> "$audioType - $quality" },
-                            ),
-                        )
+                    embedUrl.contains("p2pplay") -> {
+                        val html = client.newCall(GET(embedUrl, headers)).execute().body.string()
+                        val m3u8Url = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""").find(html)?.groupValues?.get(1)
+                        if (!m3u8Url.isNullOrBlank()) {
+                            videoList.addAll(
+                                playlistUtils.extractFromHls(
+                                    playlistUrl = m3u8Url,
+                                    referer = embedUrl,
+                                    videoNameGen = { quality -> "$audioType - P2PPlay:$quality" },
+                                ),
+                            )
+                        }
+                    }
+                    else -> {
+                        val html = client.newCall(GET(embedUrl, headers)).execute().body.string()
+                        val m3u8Url = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""").find(html)?.groupValues?.get(1)
+                        if (!m3u8Url.isNullOrBlank()) {
+                            videoList.addAll(
+                                playlistUtils.extractFromHls(
+                                    playlistUrl = m3u8Url,
+                                    referer = embedUrl,
+                                    videoNameGen = { quality -> "$audioType - $quality" },
+                                ),
+                            )
+                        }
                     }
                 }
             }
