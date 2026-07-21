@@ -50,14 +50,14 @@ class Anidap :
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val request = GET("$baseUrl/api/anime/popular?page=$page", headers)
+        val request = GET("$baseUrl/api/anime/advanced-search?sort=POPULARITY_DESC&page=$page", headers)
         val response = client.newCall(request).execute()
         return parseAnimePage(response)
     }
 
     // ============================== Latest ================================
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val request = GET("$baseUrl/api/anime/recent?page=$page", headers)
+        val request = GET("$baseUrl/api/anime/advanced-search?sort=START_DATE_DESC&page=$page", headers)
         val response = client.newCall(request).execute()
         return parseAnimePage(response)
     }
@@ -130,7 +130,7 @@ class Anidap :
                 SAnime.create().apply {
                     title = item.title?.english ?: item.title?.userPreferred ?: item.title?.romaji ?: "Anime"
                     setUrlWithoutDomain(item.id.toString())
-                    thumbnail_url = item.coverImage?.extraLarge ?: item.coverImage?.large ?: item.coverImage?.medium
+                    thumbnail_url = item.coverImage?.extraLarge ?: item.coverImage?.large ?: item.coverImage?.medium ?: item.image
                 }
             }.getOrNull()
         }
@@ -431,6 +431,7 @@ class Anidap :
         val id: Long? = null,
         val title: TitleItem? = null,
         val coverImage: CoverImageItem? = null,
+        val image: String? = null,
     )
 
     @Serializable
