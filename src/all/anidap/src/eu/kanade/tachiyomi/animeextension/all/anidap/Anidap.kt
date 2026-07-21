@@ -23,6 +23,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.*
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Response
@@ -114,16 +115,29 @@ class Anidap :
 
     private fun parseAnimePage(response: Response): AnimesPage {
         val body = response.body.string()
-        val data = json.decodeFromString<AnimeListApiResponse>(body)
-        val items = data.data ?: data.results ?: emptyList()
-        val animes = items.map { item ->
-            SAnime.create().apply {
-                title = item.title?.english ?: item.title?.userPreferred ?: item.title?.romaji ?: "Anime"
-                setUrlWithoutDomain(item.id.toString())
-                thumbnail_url = item.coverImage?.extraLarge ?: item.coverImage?.large ?: item.coverImage?.medium
-            }
+        val jsonElement = json.parseToJsonElement(body).jsonObject
+        val dataElement = jsonElement["data"] ?: jsonElement
+
+        val itemsArray = when (dataElement) {
+            is JsonArray -> dataElement
+            is JsonObject -> dataElement["results"]?.jsonArray ?: dataElement["data"]?.jsonArray
+            else -> jsonElement["results"]?.jsonArray
+        } ?: JsonArray(emptyList())
+
+        val animes = itemsArray.mapNotNull { element ->
+            runCatching {
+                val item = json.decodeFromJsonElement<AnimeItem>(element)
+                SAnime.create().apply {
+                    title = item.title?.english ?: item.title?.userPreferred ?: item.title?.romaji ?: "Anime"
+                    setUrlWithoutDomain(item.id.toString())
+                    thumbnail_url = item.coverImage?.extraLarge ?: item.coverImage?.large ?: item.coverImage?.medium
+                }
+            }.getOrNull()
         }
-        val hasNext = data.hasNextPage ?: (animes.isNotEmpty() && data.currentPage != null)
+
+        val hasNext = (dataElement as? JsonObject)?.get("hasNextPage")?.jsonPrimitive?.booleanOrNull
+            ?: (jsonElement["hasNextPage"]?.jsonPrimitive?.booleanOrNull ?: (animes.isNotEmpty()))
+
         return AnimesPage(animes, hasNext)
     }
 
