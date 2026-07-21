@@ -15,12 +15,12 @@ import eu.kanade.tachiyomi.lib.vidaraextractor.VidaraExtractor
 import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
-import extensions.utils.addBaseUrlPreference
-import extensions.utils.addListPreference
-import extensions.utils.addSetPreference
-import extensions.utils.addSwitchPreference
 import extensions.utils.asJsoup
 import extensions.utils.delegate
+import keiyoushi.utils.addBaseUrlPreference
+import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSetPreference
+import keiyoushi.utils.addSwitchPreference
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Response
 import org.jsoup.Jsoup

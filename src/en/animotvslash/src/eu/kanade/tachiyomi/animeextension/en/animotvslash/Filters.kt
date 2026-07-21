@@ -63,7 +63,7 @@ object Filters {
             "Genres",
             GENRES.map { GenreCheckBox(it.first, it.second) },
         ) {
-        fun selectedGenres(): List<String> = state.filter { it.state }.map { it.id }
+        fun selectedGenres(): List<String> = state.filter { it.state }.map { (it as GenreCheckBox).id }
 
         companion object {
             private val GENRES = listOf(
