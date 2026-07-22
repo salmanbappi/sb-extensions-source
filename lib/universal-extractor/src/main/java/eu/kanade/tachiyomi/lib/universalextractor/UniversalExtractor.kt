@@ -57,6 +57,25 @@ class UniversalExtractor(private val client: OkHttpClient) {
                     }
                     return super.shouldInterceptRequest(view, request)
                 }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    super.onPageFinished(view, url)
+                    handler.postDelayed({
+                        try {
+                            view.evaluateJavascript(
+                                """
+                                (function() {
+                                    var v = document.querySelector('video');
+                                    if (v) { v.play(); }
+                                    var btns = document.querySelectorAll('.ZHnjvd, .kFwPee, button, [role="button"], [jsaction]');
+                                    btns.forEach(function(b) { b.click(); });
+                                })();
+                                """.trimIndent(),
+                                null,
+                            )
+                        } catch (e: Exception) {}
+                    }, 500)
+                }
             }
 
             webView?.loadUrl(origRequestUrl, headers)
@@ -102,10 +121,13 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
             "mp4" in resultUrl || "videoplayback" in resultUrl || "googlevideo" in resultUrl || "action=stream" in resultUrl -> {
                 Log.d("UniversalExtractor", "mp4/stream URL: $resultUrl")
+                val videoHeaders = origRequestHeader.newBuilder()
+                    .set("Referer", origRequestUrl)
+                    .build()
                 Video(
                     videoUrl = resultUrl,
                     videoTitle = "$prefix - $host: ${customQuality ?: "Auto"}",
-                    headers = origRequestHeader.newBuilder().add("referer", origRequestUrl).build(),
+                    headers = videoHeaders,
                 ).let(::listOf)
             }
 
@@ -123,6 +145,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     companion object {
         const val TIMEOUT_SEC: Long = 10
-        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|videoplayback|googleusercontent|googlevideo|action=stream)(\\?.*)?$", RegexOption.IGNORE_CASE) }
+        private val VIDEO_REGEX by lazy { Regex("(?:\\.(?:mp4|m3u8|mpd)|videoplayback|googleusercontent|googlevideo|action=stream)", RegexOption.IGNORE_CASE) }
     }
 }
