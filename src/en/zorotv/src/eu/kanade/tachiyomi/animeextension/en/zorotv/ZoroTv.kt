@@ -341,52 +341,66 @@ class ZoroTv : Source() {
                         null
                     }
                     val iframeHtml = iframeResponse?.body?.string() ?: ""
-                    targetUrl = iframeHtml
-                        .substringAfter("const STREAM=\"", "")
-                        .substringAfter("STREAM=\"", "")
-                        .substringBefore("\"")
-                        .replace("\\/", "/")
-                        .takeIf { it.startsWith("http") }
+                    val streamMatch = """STREAM\s*=\s*['"]([^'"]+)['"]""".toRegex().find(iframeHtml)
+                    targetUrl = streamMatch?.groupValues?.get(1)?.replace("\\/", "/")?.takeIf { it.startsWith("http") }
                 }
 
                 var videoList = mutableListOf<Video>()
                 if (!targetUrl.isNullOrBlank()) {
                     val isRumble = targetUrl.contains("rumble.com")
-                    val refererUrl = if (isRumble) "https://rumble.com/" else "https://animesama.se/"
+                    val isM3u8 = targetUrl.contains(".m3u8") || targetUrl.contains("#playlist.m3u8")
+                    val refererUrl = when {
+                        isRumble -> "https://rumble.com/"
+                        targetUrl.contains("kickassanime") -> "https://animesama.se/"
+                        else -> "https://animesama.se/"
+                    }
                     val streamHeaders = headers.newBuilder()
                         .set("Referer", refererUrl)
                         .build()
-                    val fixedMasterUrl = if (targetUrl.contains("#")) targetUrl else "$targetUrl#playlist.m3u8"
-                    videoList.add(
-                        Video(
-                            videoUrl = fixedMasterUrl,
-                            videoTitle = "${hoster.hosterName} - Auto",
-                            headers = streamHeaders,
-                            preferred = true,
-                        ),
-                    )
-                    try {
-                        val extracted = playlistUtils.extractFromHls(
-                            playlistUrl = targetUrl,
-                            referer = refererUrl,
-                            masterHeaders = streamHeaders,
-                            videoHeaders = streamHeaders,
-                            videoNameGen = { "${hoster.hosterName} - $it" },
+
+                    if (isM3u8) {
+                        val fixedMasterUrl = if (targetUrl.contains("#")) targetUrl else "$targetUrl#playlist.m3u8"
+                        videoList.add(
+                            Video(
+                                videoUrl = fixedMasterUrl,
+                                videoTitle = "${hoster.hosterName} - Auto",
+                                headers = streamHeaders,
+                                preferred = true,
+                            ),
                         )
-                        videoList.addAll(
-                            extracted.map { v ->
-                                val fixedUrl = if (v.videoUrl.contains("#")) v.videoUrl else "${v.videoUrl}#playlist.m3u8"
-                                Video(
-                                    videoUrl = fixedUrl,
-                                    videoTitle = v.videoTitle,
-                                    headers = v.headers,
-                                    subtitleTracks = v.subtitleTracks,
-                                    audioTracks = v.audioTracks,
-                                )
-                            },
+                        try {
+                            val extracted = playlistUtils.extractFromHls(
+                                playlistUrl = targetUrl,
+                                referer = refererUrl,
+                                masterHeaders = streamHeaders,
+                                videoHeaders = streamHeaders,
+                                videoNameGen = { "${hoster.hosterName} - $it" },
+                            )
+                            videoList.addAll(
+                                extracted.map { v ->
+                                    val fixedUrl = if (v.videoUrl.contains("#")) v.videoUrl else "${v.videoUrl}#playlist.m3u8"
+                                    Video(
+                                        videoUrl = fixedUrl,
+                                        videoTitle = v.videoTitle,
+                                        headers = v.headers,
+                                        subtitleTracks = v.subtitleTracks,
+                                        audioTracks = v.audioTracks,
+                                    )
+                                },
+                            )
+                        } catch (e: Exception) {
+                            // Ignore extraction errors
+                        }
+                    } else {
+                        // Direct video file (e.g. MP4)
+                        videoList.add(
+                            Video(
+                                videoUrl = targetUrl,
+                                videoTitle = "${hoster.hosterName} - Auto",
+                                headers = streamHeaders,
+                                preferred = true,
+                            ),
                         )
-                    } catch (e: Exception) {
-                        // Ignore extraction errors
                     }
                 }
 
@@ -403,7 +417,7 @@ class ZoroTv : Source() {
                 try {
                     val response = client.newCall(GET(embedUrl, embedHeaders)).executeSafe()
                     val html = response.body.string()
-                    val bloggerUrl = "src=\"(https?://(?:www\\.)?blogger\\.com/video\\.g[^\"]+)\"".toRegex()
+                    val bloggerUrl = """src="([^"]*blogger\.com/video\.g[^"]*)"""".toRegex()
                         .find(html)?.groupValues?.get(1)
 
                     if (!bloggerUrl.isNullOrBlank()) {
