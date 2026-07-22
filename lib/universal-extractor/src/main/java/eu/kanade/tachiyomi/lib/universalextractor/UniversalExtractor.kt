@@ -41,6 +41,8 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 databaseEnabled = true
                 useWideViewPort = false
                 loadWithOverviewMode = false
+                mediaPlaybackRequiresUserGesture = false
+                mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 userAgentString = origRequestHeader["User-Agent"]
             }
             newView.webViewClient = object : WebViewClient() {
