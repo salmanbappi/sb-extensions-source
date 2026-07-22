@@ -98,11 +98,11 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 playlistUtils.extractFromDash(resultUrl, { it -> "$prefix - $host: $it" }, referer = origRequestUrl)
             }
 
-            "mp4" in resultUrl -> {
-                Log.d("UniversalExtractor", "mp4 URL: $resultUrl")
+            "mp4" in resultUrl || "videoplayback" in resultUrl || "googlevideo" in resultUrl || "action=stream" in resultUrl -> {
+                Log.d("UniversalExtractor", "mp4/stream URL: $resultUrl")
                 Video(
                     videoUrl = resultUrl,
-                    videoTitle = "$prefix - $host: ${customQuality ?: "Mirror"}",
+                    videoTitle = "$prefix - $host: ${customQuality ?: "Auto"}",
                     headers = origRequestHeader.newBuilder().add("referer", origRequestUrl).build(),
                 ).let(::listOf)
             }
@@ -121,6 +121,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     companion object {
         const val TIMEOUT_SEC: Long = 10
-        private val VIDEO_REGEX by lazy { Regex(".*\\.(mp4|m3u8|mpd)(\\?.*)?$") }
+        private val VIDEO_REGEX by lazy { Regex(".*(\\.(mp4|m3u8|mpd)|videoplayback|googleusercontent|googlevideo|action=stream)(\\?.*)?$", RegexOption.IGNORE_CASE) }
     }
 }
