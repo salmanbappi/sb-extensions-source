@@ -293,22 +293,38 @@ class FourAnimo : Source() {
                 val rawSynopsis = element["synopsis"]?.jsonPrimitive?.content
                     ?: element["description"]?.jsonPrimitive?.content ?: ""
 
-                val metaMatch = """"\(?:name|property\)":"\(?:og:)?description","content":"\([^"]+\)"""".toRegex().find(payload)
+                val rscSynopsis = if (rawSynopsis.startsWith("$")) {
+                    val refId = rawSynopsis.removePrefix("$")
+                    val rscMatch = """(?:^|[\n\r]|")${Regex.escape(refId)}:(?:T[0-9a-fA-F]+,)?(?:"|\\")?([^\n\r"\\]+)""".toRegex().find(payload)
+                    rscMatch?.groupValues?.get(1) ?: ""
+                } else {
+                    ""
+                }
+
+                val metaMatch = """"?(?:name|property)"?\s*:\s*"?(?:og:)?description"?,?\s*"content"\s*:\s*"([^"]+)"""".toRegex().find(payload)
                 val metaDesc = metaMatch?.groupValues?.get(1) ?: ""
 
                 val descriptionStr = when {
                     rawSynopsis.isNotBlank() && !rawSynopsis.startsWith("$") -> rawSynopsis
+                    rscSynopsis.isNotBlank() -> rscSynopsis
                     metaDesc.isNotBlank() -> metaDesc
                     else -> ""
                 }
 
                 val cleanDescription = descriptionStr
+                    .replace("\\u003c", "<")
+                    .replace("\\u003e", ">")
+                    .replace("\\u0026", "&")
+                    .replace("\\u0027", "'")
+                    .replace("\\\"", "\"")
                     .replace(Regex("(?i)<br\\s*/?>"), "\n")
                     .replace(Regex("<[^>]*>"), "")
                     .replace("&nbsp;", " ")
                     .replace("&amp;", "&")
                     .replace("&lt;", "<")
                     .replace("&gt;", ">")
+                    .replace("&quot;", "\"")
+                    .replace("&#039;", "'")
                     .replace(Regex("\n{3,}"), "\n\n")
                     .trim()
 
