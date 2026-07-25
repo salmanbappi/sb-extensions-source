@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.fouranimo
 
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -470,8 +469,6 @@ class FourAnimo : Source() {
         return sortHostersByPreference(hosters)
     }
 
-    private val m3u8Integration by lazy { M3u8Integration(client) }
-
     override suspend fun getVideoList(hoster: Hoster): List<Video> = coroutineScope {
         val parts = hoster.hosterUrl.split("|")
         val serverName = parts.getOrNull(0) ?: hoster.hosterName
@@ -486,7 +483,7 @@ class FourAnimo : Source() {
         }
 
         val videos = subDeferred.await() + dubDeferred.await()
-        m3u8Integration.processVideoList(videos.sortVideos())
+        FourAnimoHlsServer.processVideoList(client, videos.sortVideos())
     }
 
     private fun extractVideosFromEmbed(audioPrefix: String, serverName: String, embedUrl: String): List<Video> {
