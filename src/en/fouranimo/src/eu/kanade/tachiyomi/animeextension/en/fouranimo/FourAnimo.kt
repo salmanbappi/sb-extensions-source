@@ -1,3 +1,4 @@
+@file:Suppress("unused")
 package eu.kanade.tachiyomi.animeextension.en.fouranimo
 
 import androidx.preference.PreferenceScreen
@@ -504,7 +505,7 @@ class FourAnimo : Source() {
         }
 
         val videos = subDeferred.await() + dubDeferred.await()
-        FourAnimoHlsServer.processVideoList(client, videos.sortVideos())
+        videos.sortVideos()
     }
 
     private fun extractVideosFromEmbed(audioPrefix: String, serverName: String, embedUrl: String): List<Video> {
