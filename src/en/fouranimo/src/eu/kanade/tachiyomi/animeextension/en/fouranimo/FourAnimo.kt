@@ -1,4 +1,5 @@
 @file:Suppress("unused")
+
 package eu.kanade.tachiyomi.animeextension.en.fouranimo
 
 import androidx.preference.PreferenceScreen
