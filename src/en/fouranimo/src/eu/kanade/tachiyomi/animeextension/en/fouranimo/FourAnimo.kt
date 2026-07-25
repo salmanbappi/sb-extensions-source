@@ -453,17 +453,6 @@ class FourAnimo : Source() {
             )
         }
 
-        // 2. ReCloud HD-2 (Server 2: s-2)
-        if ("ReCloud HD-2 (Server 2)" !in excludedServers && (canSub || canDub)) {
-            val subHd2Url = if (canSub) "$embedBaseUrl/embed/s-2/$embedId/sub?k=1" else ""
-            val dubHd2Url = if (canDub) "$embedBaseUrl/embed/s-2/$embedId/dub?k=1" else ""
-            hosters.add(
-                Hoster(
-                    hosterName = "ReCloud HD-2 (Server 2)",
-                    hosterUrl = "ReCloud HD-2 (Server 2)|$subHd2Url|$dubHd2Url",
-                ),
-            )
-        }
 
         // 3. ReCloud (Server 1: a-1)
         if ("ReCloud (Server 1)" !in excludedServers && (canSub || canDub)) {
@@ -659,8 +648,8 @@ class FourAnimo : Source() {
             default = PREF_SERVER_DEFAULT,
             title = "Preferred server",
             summary = "Prioritizes this server in the host list. Currently: %s",
-            entries = listOf("Auto", "ReCloud HD-2 (Server 1)", "ReCloud HD-2 (Server 2)", "ReCloud (Server 1)", "ReCloud (Server 2)"),
-            entryValues = listOf("auto", "ReCloud HD-2 (Server 1)", "ReCloud HD-2 (Server 2)", "ReCloud (Server 1)", "ReCloud (Server 2)"),
+            entries = listOf("Auto", "ReCloud HD-2", "ReCloud (Server 1)", "ReCloud (Server 2)"),
+            entryValues = listOf("auto", "ReCloud HD-2", "ReCloud (Server 1)", "ReCloud (Server 2)"),
         )
 
         screen.addSetPreference(
@@ -668,8 +657,8 @@ class FourAnimo : Source() {
             default = emptySet(),
             title = "Exclude servers",
             summary = "Select servers to exclude from episode hosters",
-            entries = listOf("ReCloud HD-2 (Server 1)", "ReCloud HD-2 (Server 2)", "ReCloud (Server 1)", "ReCloud (Server 2)"),
-            entryValues = listOf("ReCloud HD-2 (Server 1)", "ReCloud HD-2 (Server 2)", "ReCloud (Server 1)", "ReCloud (Server 2)"),
+            entries = listOf("ReCloud HD-2", "ReCloud (Server 1)", "ReCloud (Server 2)"),
+            entryValues = listOf("ReCloud HD-2 (Server 1)", "ReCloud (Server 1)", "ReCloud (Server 2)"),
         )
 
         screen.addSetPreference(
