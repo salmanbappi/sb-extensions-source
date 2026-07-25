@@ -9,19 +9,17 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.addListPreference
 import extensions.utils.addSetPreference
 import extensions.utils.asJsoup
 import extensions.utils.delegate
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import java.net.URLEncoder
@@ -223,7 +221,7 @@ class FourAnimo : Source() {
         val updatedAnime = SAnime.create().apply {
             title = anime.title
             thumbnail_url = anime.thumbnail_url
-            url = anime.url
+            setUrlWithoutDomain(anime.url)
         }
 
         if (animeObjMatch != null) {
@@ -311,7 +309,7 @@ class FourAnimo : Source() {
                     name = if (epTitle.isNotBlank()) "Episode $epNum: $epTitle" else "Episode ${epNum.toInt()}"
                     episode_number = epNum
                     // Encode embed params into url: episode_id|embed_id|anime_id|number|sub|dub
-                    url = "$epId|$embedId|$animeId|${epNum.toInt()}|$hasSub|$hasDub"
+                    setUrlWithoutDomain("$epId|$embedId|$animeId|${epNum.toInt()}|$hasSub|$hasDub")
                     scanlator = when {
                         hasSub && hasDub -> "Sub / Dub"
                         hasDub -> "Dub"
