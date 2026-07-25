@@ -870,8 +870,7 @@ private class LocalProxyServer(
         for (line in lines) {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) {
-                builder.append("
-")
+                builder.append("\n")
                 continue
             }
 
@@ -897,8 +896,7 @@ private class LocalProxyServer(
                 val isKeyLine = resolvedUri.contains(".key")
                 builder.append(getProxyUrl(resolvedUri, encodedHeaders, isKey = isKeyLine))
             }
-            builder.append("
-")
+            builder.append("\n")
         }
 
         val bodyBytes = builder.toString().toByteArray()
