@@ -439,19 +439,7 @@ class FourAnimo : Source() {
 
         val hosters = mutableListOf<Hoster>()
 
-        // 1. ReCloud
-        if ("ReCloud" !in excludedServers && (canSub || canDub)) {
-            val subEmbedUrl = if (canSub) "$embedBaseUrl/embed/a-1/$epId/sub?k=1&autoPlay=1" else ""
-            val dubEmbedUrl = if (canDub) "$embedBaseUrl/embed/a-1/$epId/dub?k=1&autoPlay=1" else ""
-            hosters.add(
-                Hoster(
-                    hosterName = "ReCloud",
-                    hosterUrl = "ReCloud|$subEmbedUrl|$dubEmbedUrl",
-                ),
-            )
-        }
-
-        // 2. ReCloud HD-2
+        // 1. ReCloud HD-2 (Working Server)
         if ("ReCloud HD-2" !in excludedServers && (canSub || canDub)) {
             val subHd2Url = if (canSub) "$embedBaseUrl/embed/s-1/$embedId/sub?k=1" else ""
             val dubHd2Url = if (canDub) "$embedBaseUrl/embed/s-1/$embedId/dub?k=1" else ""
@@ -459,6 +447,18 @@ class FourAnimo : Source() {
                 Hoster(
                     hosterName = "ReCloud HD-2",
                     hosterUrl = "ReCloud HD-2|$subHd2Url|$dubHd2Url",
+                ),
+            )
+        }
+
+        // 2. ReCloud
+        if ("ReCloud" !in excludedServers && (canSub || canDub)) {
+            val subEmbedUrl = if (canSub) "$embedBaseUrl/embed/a-1/$epId/sub?k=1&autoPlay=1" else ""
+            val dubEmbedUrl = if (canDub) "$embedBaseUrl/embed/a-1/$epId/dub?k=1&autoPlay=1" else ""
+            hosters.add(
+                Hoster(
+                    hosterName = "ReCloud",
+                    hosterUrl = "ReCloud|$subEmbedUrl|$dubEmbedUrl",
                 ),
             )
         }
@@ -633,8 +633,8 @@ class FourAnimo : Source() {
             default = PREF_SERVER_DEFAULT,
             title = "Preferred server",
             summary = "Prioritizes this server in the host list. Currently: %s",
-            entries = listOf("Auto", "ReCloud", "ReCloud HD-2"),
-            entryValues = listOf("auto", "ReCloud", "ReCloud HD-2"),
+            entries = listOf("Auto", "ReCloud HD-2", "ReCloud"),
+            entryValues = listOf("auto", "ReCloud HD-2", "ReCloud"),
         )
 
         screen.addSetPreference(
@@ -642,8 +642,8 @@ class FourAnimo : Source() {
             default = emptySet(),
             title = "Exclude servers",
             summary = "Select servers to exclude from episode hosters",
-            entries = listOf("ReCloud", "ReCloud HD-2"),
-            entryValues = listOf("ReCloud", "ReCloud HD-2"),
+            entries = listOf("ReCloud HD-2", "ReCloud"),
+            entryValues = listOf("ReCloud HD-2", "ReCloud"),
         )
 
         screen.addSetPreference(
@@ -664,7 +664,7 @@ class FourAnimo : Source() {
         private const val PREF_AUDIO_DEFAULT = "SUB"
 
         private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "auto"
+        private const val PREF_SERVER_DEFAULT = "ReCloud HD-2"
 
         private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
         private const val PREF_EXCLUDE_AUDIO_KEY = "pref_exclude_audio"
