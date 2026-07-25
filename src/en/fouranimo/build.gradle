@@ -1,10 +1,13 @@
 ext {
     extName = 'Animo'
     extClass = '.FourAnimo'
-    extVersionCode = 17
+    extVersionCode = 18
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
 
+dependencies {
+    implementation(project(':lib:m3u8server'))
+}
 

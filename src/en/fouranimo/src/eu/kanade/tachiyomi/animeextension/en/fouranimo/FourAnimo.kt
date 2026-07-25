@@ -2,6 +2,8 @@
 
 package eu.kanade.tachiyomi.animeextension.en.fouranimo
 
+import aniyomi.lib.m3u8server.M3u8Integration
+
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -27,6 +29,8 @@ import okhttp3.Response
 import java.net.URLEncoder
 
 class FourAnimo : Source() {
+
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override val name = "Animo"
 
@@ -494,7 +498,7 @@ class FourAnimo : Source() {
         }
 
         val videos = subDeferred.await() + dubDeferred.await()
-        videos.sortVideos()
+        m3u8Integration.processVideoList(videos.sortVideos())
     }
 
     private fun extractVideosFromEmbed(audioPrefix: String, serverName: String, embedUrl: String): List<Video> {
