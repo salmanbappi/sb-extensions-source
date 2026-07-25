@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.fouranimo
 
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -14,6 +15,9 @@ import extensions.utils.Source
 import extensions.utils.addListPreference
 import extensions.utils.addSetPreference
 import extensions.utils.delegate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -466,22 +470,23 @@ class FourAnimo : Source() {
         return sortHostersByPreference(hosters)
     }
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+    private val m3u8Integration by lazy { M3u8Integration(client) }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> = coroutineScope {
         val parts = hoster.hosterUrl.split("|")
         val serverName = parts.getOrNull(0) ?: hoster.hosterName
         val subEmbedUrl = parts.getOrNull(1).orEmpty()
         val dubEmbedUrl = parts.getOrNull(2).orEmpty()
 
-        val videos = mutableListOf<Video>()
-
-        if (subEmbedUrl.isNotBlank()) {
-            videos.addAll(extractVideosFromEmbed("SUB", serverName, subEmbedUrl))
+        val subDeferred = async(Dispatchers.IO) {
+            if (subEmbedUrl.isNotBlank()) extractVideosFromEmbed("SUB", serverName, subEmbedUrl) else emptyList()
         }
-        if (dubEmbedUrl.isNotBlank()) {
-            videos.addAll(extractVideosFromEmbed("DUB", serverName, dubEmbedUrl))
+        val dubDeferred = async(Dispatchers.IO) {
+            if (dubEmbedUrl.isNotBlank()) extractVideosFromEmbed("DUB", serverName, dubEmbedUrl) else emptyList()
         }
 
-        return FourAnimoHlsServer.processVideoList(client, videos.sortVideos())
+        val videos = subDeferred.await() + dubDeferred.await()
+        m3u8Integration.processVideoList(videos.sortVideos())
     }
 
     private fun extractVideosFromEmbed(audioPrefix: String, serverName: String, embedUrl: String): List<Video> {
