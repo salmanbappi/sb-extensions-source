@@ -439,26 +439,50 @@ class FourAnimo : Source() {
 
         val hosters = mutableListOf<Hoster>()
 
-        // 1. ReCloud HD-2 (Working Server)
-        if ("ReCloud HD-2" !in excludedServers && (canSub || canDub)) {
+        // 1. ReCloud HD-2 (Server 1: s-1)
+        if ("ReCloud HD-2 (Server 1)" !in excludedServers && (canSub || canDub)) {
             val subHd2Url = if (canSub) "$embedBaseUrl/embed/s-1/$embedId/sub?k=1" else ""
             val dubHd2Url = if (canDub) "$embedBaseUrl/embed/s-1/$embedId/dub?k=1" else ""
             hosters.add(
                 Hoster(
-                    hosterName = "ReCloud HD-2",
-                    hosterUrl = "ReCloud HD-2|$subHd2Url|$dubHd2Url",
+                    hosterName = "ReCloud HD-2 (Server 1)",
+                    hosterUrl = "ReCloud HD-2 (Server 1)|$subHd2Url|$dubHd2Url",
                 ),
             )
         }
 
-        // 2. ReCloud
-        if ("ReCloud" !in excludedServers && (canSub || canDub)) {
+        // 2. ReCloud HD-2 (Server 2: s-2)
+        if ("ReCloud HD-2 (Server 2)" !in excludedServers && (canSub || canDub)) {
+            val subHd2Url = if (canSub) "$embedBaseUrl/embed/s-2/$embedId/sub?k=1" else ""
+            val dubHd2Url = if (canDub) "$embedBaseUrl/embed/s-2/$embedId/dub?k=1" else ""
+            hosters.add(
+                Hoster(
+                    hosterName = "ReCloud HD-2 (Server 2)",
+                    hosterUrl = "ReCloud HD-2 (Server 2)|$subHd2Url|$dubHd2Url",
+                ),
+            )
+        }
+
+        // 3. ReCloud (Server 1: a-1)
+        if ("ReCloud (Server 1)" !in excludedServers && (canSub || canDub)) {
             val subEmbedUrl = if (canSub) "$embedBaseUrl/embed/a-1/$epId/sub?k=1&autoPlay=1" else ""
             val dubEmbedUrl = if (canDub) "$embedBaseUrl/embed/a-1/$epId/dub?k=1&autoPlay=1" else ""
             hosters.add(
                 Hoster(
-                    hosterName = "ReCloud",
-                    hosterUrl = "ReCloud|$subEmbedUrl|$dubEmbedUrl",
+                    hosterName = "ReCloud (Server 1)",
+                    hosterUrl = "ReCloud (Server 1)|$subEmbedUrl|$dubEmbedUrl",
+                ),
+            )
+        }
+
+        // 4. ReCloud (Server 2: a-2)
+        if ("ReCloud (Server 2)" !in excludedServers && (canSub || canDub)) {
+            val subEmbedUrl = if (canSub) "$embedBaseUrl/embed/a-2/$epId/sub?k=1&autoPlay=1" else ""
+            val dubEmbedUrl = if (canDub) "$embedBaseUrl/embed/a-2/$epId/dub?k=1&autoPlay=1" else ""
+            hosters.add(
+                Hoster(
+                    hosterName = "ReCloud (Server 2)",
+                    hosterUrl = "ReCloud (Server 2)|$subEmbedUrl|$dubEmbedUrl",
                 ),
             )
         }
@@ -633,8 +657,8 @@ class FourAnimo : Source() {
             default = PREF_SERVER_DEFAULT,
             title = "Preferred server",
             summary = "Prioritizes this server in the host list. Currently: %s",
-            entries = listOf("Auto", "ReCloud HD-2", "ReCloud"),
-            entryValues = listOf("auto", "ReCloud HD-2", "ReCloud"),
+            entries = listOf("Auto", "ReCloud HD-2 (Server 1)", "ReCloud HD-2 (Server 2)", "ReCloud (Server 1)", "ReCloud (Server 2)"),
+            entryValues = listOf("auto", "ReCloud HD-2 (Server 1)", "ReCloud HD-2 (Server 2)", "ReCloud (Server 1)", "ReCloud (Server 2)"),
         )
 
         screen.addSetPreference(
@@ -642,8 +666,8 @@ class FourAnimo : Source() {
             default = emptySet(),
             title = "Exclude servers",
             summary = "Select servers to exclude from episode hosters",
-            entries = listOf("ReCloud HD-2", "ReCloud"),
-            entryValues = listOf("ReCloud HD-2", "ReCloud"),
+            entries = listOf("ReCloud HD-2 (Server 1)", "ReCloud HD-2 (Server 2)", "ReCloud (Server 1)", "ReCloud (Server 2)"),
+            entryValues = listOf("ReCloud HD-2 (Server 1)", "ReCloud HD-2 (Server 2)", "ReCloud (Server 1)", "ReCloud (Server 2)"),
         )
 
         screen.addSetPreference(
@@ -664,7 +688,7 @@ class FourAnimo : Source() {
         private const val PREF_AUDIO_DEFAULT = "SUB"
 
         private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "ReCloud HD-2"
+        private const val PREF_SERVER_DEFAULT = "ReCloud HD-2 (Server 1)"
 
         private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
         private const val PREF_EXCLUDE_AUDIO_KEY = "pref_exclude_audio"
