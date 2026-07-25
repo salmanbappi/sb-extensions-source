@@ -288,7 +288,18 @@ class FourAnimo : Source() {
                     updatedAnime.author = authorStr
                 }
 
-                val descriptionStr = element["description"]?.jsonPrimitive?.content ?: ""
+                val rawSynopsis = element["synopsis"]?.jsonPrimitive?.content
+                    ?: element["description"]?.jsonPrimitive?.content ?: ""
+
+                val metaMatch = """\"(?:name|property)\":\"(?:og:)?description\",\"content\":\"([^\"]+)\"""".toRegex().find(payload)
+                val metaDesc = metaMatch?.groupValues?.get(1) ?: ""
+
+                val descriptionStr = when {
+                    rawSynopsis.isNotBlank() && !rawSynopsis.startsWith("$") -> rawSynopsis
+                    metaDesc.isNotBlank() -> metaDesc
+                    else -> ""
+                }
+
                 val cleanDescription = descriptionStr
                     .replace(Regex("(?i)<br\\s*/?>"), "\n")
                     .replace(Regex("<[^>]*>"), "")
