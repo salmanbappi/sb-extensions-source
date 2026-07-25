@@ -73,7 +73,7 @@ class FourAnimo : Source() {
                         this.title = title
                         setUrlWithoutDomain("/watch/$slug")
                         thumbnail_url = posterUrl
-                    }
+                    },
                 )
             }
         }
@@ -92,7 +92,7 @@ class FourAnimo : Source() {
                             this.title = title
                             setUrlWithoutDomain("/watch/$slug")
                             thumbnail_url = poster
-                        }
+                        },
                     )
                 }
             }
@@ -101,14 +101,12 @@ class FourAnimo : Source() {
         return animeList
     }
 
-    private fun extractTitleFromJson(titlesJson: String): String {
-        return runCatching {
-            val element = json.parseToJsonElement(titlesJson).jsonObject
-            element["english"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-                ?: element["romaji"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-                ?: element["native"]?.jsonPrimitive?.content ?: "Anime"
-        }.getOrDefault("Anime")
-    }
+    private fun extractTitleFromJson(titlesJson: String): String = runCatching {
+        val element = json.parseToJsonElement(titlesJson).jsonObject
+        element["english"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            ?: element["romaji"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            ?: element["native"]?.jsonPrimitive?.content ?: "Anime"
+    }.getOrDefault("Anime")
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -170,24 +168,28 @@ class FourAnimo : Source() {
                         targetUrl = "$baseUrl/catalog?sort=$sortValue"
                     }
                 }
+
                 is Filters.TypeFilter -> {
                     if (!filter.isDefault()) {
                         val typeValue = filter.toUriPart()
                         targetUrl = "$baseUrl/anime/type/$typeValue"
                     }
                 }
+
                 is Filters.StatusFilter -> {
                     if (!filter.isDefault()) {
                         val statusValue = filter.toUriPart()
                         targetUrl = "$baseUrl/catalog?status=$statusValue"
                     }
                 }
+
                 is Filters.GenreFilter -> {
                     val selectedGenres = filter.selected()
                     if (selectedGenres.isNotEmpty()) {
                         targetUrl = "$baseUrl/anime/genre/${selectedGenres.first()}"
                     }
                 }
+
                 else -> {}
             }
         }
@@ -205,7 +207,7 @@ class FourAnimo : Source() {
         Filters.StatusFilter(),
         Filters.SortFilter(),
         Filters.SeasonFilter(),
-        Filters.GenreFilter()
+        Filters.GenreFilter(),
     )
 
     // =========================== Anime Details ============================
@@ -231,8 +233,11 @@ class FourAnimo : Source() {
                 val titlesObj = element["titles"]?.jsonObject
                 val engTitle = titlesObj?.get("english")?.jsonPrimitive?.content
                 val romajiTitle = titlesObj?.get("romaji")?.jsonPrimitive?.content
-                if (!engTitle.isNullOrBlank()) updatedAnime.title = engTitle
-                else if (!romajiTitle.isNullOrBlank()) updatedAnime.title = romajiTitle
+                if (!engTitle.isNullOrBlank()) {
+                    updatedAnime.title = engTitle
+                } else if (!romajiTitle.isNullOrBlank()) {
+                    updatedAnime.title = romajiTitle
+                }
 
                 val statusStr = element["status"]?.jsonPrimitive?.content ?: ""
                 updatedAnime.status = when {
@@ -345,8 +350,8 @@ class FourAnimo : Source() {
             hosters.add(
                 Hoster(
                     hosterName = "ReCloud (SUB)",
-                    hosterUrl = "SUB|$subEmbedUrl"
-                )
+                    hosterUrl = "SUB|$subEmbedUrl",
+                ),
             )
         }
 
@@ -356,8 +361,8 @@ class FourAnimo : Source() {
             hosters.add(
                 Hoster(
                     hosterName = "ReCloud (DUB)",
-                    hosterUrl = "DUB|$dubEmbedUrl"
-                )
+                    hosterUrl = "DUB|$dubEmbedUrl",
+                ),
             )
         }
 
@@ -438,7 +443,9 @@ class FourAnimo : Source() {
                             currentQuality = "${height}p"
                         }
                     } else if (line.isNotEmpty() && !line.startsWith("#")) {
-                        val streamUrl = if (line.startsWith("http")) line else {
+                        val streamUrl = if (line.startsWith("http")) {
+                            line
+                        } else {
                             val baseM3u8 = m3u8Url.substringBeforeLast("/")
                             "$baseM3u8/$line"
                         }
@@ -447,8 +454,8 @@ class FourAnimo : Source() {
                                 videoUrl = streamUrl,
                                 videoTitle = "$audioPrefix - ${hoster.hosterName} - $currentQuality",
                                 headers = headers.newBuilder().set("Referer", embedUrl).build(),
-                                subtitleTracks = subtitleTracks
-                            )
+                                subtitleTracks = subtitleTracks,
+                            ),
                         )
                     }
                 }
@@ -460,8 +467,8 @@ class FourAnimo : Source() {
                         videoUrl = m3u8Url,
                         videoTitle = "$audioPrefix - ${hoster.hosterName}",
                         headers = headers.newBuilder().set("Referer", embedUrl).build(),
-                        subtitleTracks = subtitleTracks
-                    )
+                        subtitleTracks = subtitleTracks,
+                    ),
                 )
             }
 
@@ -475,7 +482,7 @@ class FourAnimo : Source() {
 
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefAudio, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
 
@@ -508,7 +515,7 @@ class FourAnimo : Source() {
             title = "Preferred quality",
             summary = "Sorts streams so this quality is prioritized. Currently: %s",
             entries = listOf("1080p", "720p", "480p", "360p"),
-            entryValues = listOf("1080", "720", "480", "360")
+            entryValues = listOf("1080", "720", "480", "360"),
         )
 
         screen.addListPreference(
@@ -517,7 +524,7 @@ class FourAnimo : Source() {
             title = "Preferred audio type",
             summary = "Prioritizes Sub or Dub audio streams. Currently: %s",
             entries = listOf("Subtitled", "Dubbed"),
-            entryValues = listOf("SUB", "DUB")
+            entryValues = listOf("SUB", "DUB"),
         )
 
         screen.addListPreference(
@@ -526,7 +533,7 @@ class FourAnimo : Source() {
             title = "Preferred server",
             summary = "Prioritizes this server in the host list. Currently: %s",
             entries = listOf("Auto", "ReCloud", "ReCloud HD-2"),
-            entryValues = listOf("auto", "ReCloud", "ReCloud HD-2")
+            entryValues = listOf("auto", "ReCloud", "ReCloud HD-2"),
         )
 
         screen.addSetPreference(
@@ -535,7 +542,7 @@ class FourAnimo : Source() {
             title = "Exclude servers",
             summary = "Select servers to exclude from episode hosters",
             entries = listOf("ReCloud", "ReCloud HD-2"),
-            entryValues = listOf("ReCloud", "ReCloud HD-2")
+            entryValues = listOf("ReCloud", "ReCloud HD-2"),
         )
 
         screen.addSetPreference(
@@ -544,7 +551,7 @@ class FourAnimo : Source() {
             title = "Exclude audio format",
             summary = "Select audio formats to exclude",
             entries = listOf("Subtitled", "Dubbed"),
-            entryValues = listOf("SUB", "DUB")
+            entryValues = listOf("SUB", "DUB"),
         )
     }
 
