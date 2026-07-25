@@ -29,8 +29,6 @@ import java.net.URLEncoder
 
 class FourAnimo : Source() {
 
-    private val m3u8Integration by lazy { M3u8Integration(client) }
-
     override val name = "Animo"
 
     override val baseUrl = "https://4animo.xyz"
@@ -497,7 +495,7 @@ class FourAnimo : Source() {
         }
 
         val videos = subDeferred.await() + dubDeferred.await()
-        m3u8Integration.processVideoList(videos.sortVideos())
+        FourAnimoHlsServer.processVideoList(client, videos.sortVideos())
     }
 
     private fun extractVideosFromEmbed(audioPrefix: String, serverName: String, embedUrl: String): List<Video> {
