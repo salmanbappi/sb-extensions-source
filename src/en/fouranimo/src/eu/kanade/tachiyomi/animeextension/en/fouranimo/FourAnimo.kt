@@ -290,17 +290,13 @@ class FourAnimo : Source() {
 
                 val descriptionStr = element["description"]?.jsonPrimitive?.content ?: ""
                 val cleanDescription = descriptionStr
-                    .replace(Regex("(?i)<br\s*/?>"), "
-")
+                    .replace(Regex("(?i)<br\\s*/?>"), "\n")
                     .replace(Regex("<[^>]*>"), "")
                     .replace("&nbsp;", " ")
                     .replace("&amp;", "&")
                     .replace("&lt;", "<")
                     .replace("&gt;", ">")
-                    .replace(Regex("
-{3,}"), "
-
-")
+                    .replace(Regex("\n{3,}"), "\n\n")
                     .trim()
 
                 val score = element["score"]?.jsonPrimitive?.content?.toDoubleOrNull()
@@ -322,33 +318,25 @@ class FourAnimo : Source() {
                 updatedAnime.description = buildString {
                     if (cleanDescription.isNotBlank()) {
                         append(cleanDescription)
-                        append("
-
-")
+                        append("\n\n")
                     }
                     if (score != null && score > 0.0) {
-                        append("Score: ★ $score
-")
+                        append("Score: ★ $score\n")
                     }
                     if (formatType.isNotBlank()) {
-                        append("Format: $formatType
-")
+                        append("Format: $formatType\n")
                     }
                     if (!duration.isNullOrBlank()) {
-                        append("Duration: ${duration}m
-")
+                        append("Duration: ${duration}m\n")
                     }
                     if (!rating.isNullOrBlank()) {
-                        append("Rating: $rating
-")
+                        append("Rating: $rating\n")
                     }
                     if (!seasonStr.isNullOrBlank()) {
-                        append("Season: $seasonStr
-")
+                        append("Season: $seasonStr\n")
                     }
                     if (!totalEp.isNullOrBlank()) {
-                        append("Episodes: $totalEp (Sub: ${subEp ?: totalEp}, Dub: ${dubEp ?: 0})
-")
+                        append("Episodes: $totalEp (Sub: ${subEp ?: totalEp}, Dub: ${dubEp ?: 0})\n")
                     }
                 }.trim()
             } catch (_: Exception) {}
