@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.fouranimo
 
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -33,6 +34,8 @@ class FourAnimo : Source() {
 
     private val imageBaseUrl = "https://cdnanimo.xyz"
     private val embedBaseUrl = "https://cdn.4animo.xyz"
+
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0")
@@ -474,7 +477,7 @@ class FourAnimo : Source() {
                 )
             }
 
-            videos.sortVideos()
+            m3u8Integration.processVideoList(videos.sortVideos())
         } catch (_: Exception) {
             emptyList()
         }
