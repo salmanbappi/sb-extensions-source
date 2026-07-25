@@ -13,10 +13,7 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.addListPreference
 import extensions.utils.addSetPreference
-import extensions.utils.asJsoup
 import extensions.utils.delegate
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -50,7 +47,7 @@ class FourAnimo : Source() {
     private fun extractNextPayload(html: String): String {
         val regex = """self\.__next_f\.push\(\[1,\s*"(.*)"\]\)""".toRegex()
         val pushes = regex.findAll(html).map { it.groupValues[1] }.joinToString("")
-        return pushes.replace("""\"""", """"""").replace("""\\""", """\"")
+        return pushes.replace("""\"""", """"""").replace("""\\""", """\""")
     }
 
     private fun parseAnimeCardList(payload: String): List<SAnime> {
@@ -101,12 +98,14 @@ class FourAnimo : Source() {
     }
 
     private fun extractTitleFromJson(titlesJson: String): String {
-        return runCatching {
+        return try {
             val element = json.parseToJsonElement(titlesJson).jsonObject
             element["english"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
                 ?: element["romaji"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
                 ?: element["native"]?.jsonPrimitive?.content ?: "Anime"
-        }.getOrDefault("Anime")
+        } catch (_: Exception) {
+            "Anime"
+        }
     }
 
     // ============================== Popular ===============================
@@ -115,7 +114,6 @@ class FourAnimo : Source() {
         val html = response.body.string()
         val payload = extractNextPayload(html)
 
-        // Find mostPopular section or fallback to all parsed cards
         val mostPopularIndex = payload.indexOf("mostPopular")
         val targetPayload = if (mostPopularIndex != -1) {
             payload.substring(mostPopularIndex)
@@ -133,7 +131,6 @@ class FourAnimo : Source() {
         val html = response.body.string()
         val payload = extractNextPayload(html)
 
-        // Find newAdded or latestEpisode section or fallback
         val latestIndex = payload.indexOf("newAdded").takeIf { it != -1 }
             ?: payload.indexOf("latestEpisode").takeIf { it != -1 }
             ?: -1
@@ -159,7 +156,6 @@ class FourAnimo : Source() {
             return AnimesPage(cards, false)
         }
 
-        // Apply filter mapping when query is blank
         var targetUrl = "$baseUrl/home"
         filters.forEach { filter ->
             when (filter) {
@@ -225,7 +221,7 @@ class FourAnimo : Source() {
 
         if (animeObjMatch != null) {
             val jsonStr = animeObjMatch.groupValues[1]
-            runCatching {
+            try {
                 val element = json.parseToJsonElement(jsonStr).jsonObject
                 val idStr = element["id"]?.jsonPrimitive?.content ?: ""
                 if (idStr.isNotBlank()) {
@@ -268,7 +264,7 @@ class FourAnimo : Source() {
                     if (!studioStr.isNullOrBlank()) append("\nStudio: $studioStr")
                     if (!durationStr.isNullOrBlank()) append("\nDuration: ${durationStr}m")
                 }.trim()
-            }
+            } catch (_: Exception) {}
         }
 
         updatedAnime.initialized = true
@@ -288,7 +284,7 @@ class FourAnimo : Source() {
         val jsonStr = episodesMatch.groupValues[1]
         val episodesList = mutableListOf<SEpisode>()
 
-        runCatching {
+        try {
             val arr = json.parseToJsonElement(jsonStr).jsonArray
             arr.forEach { epElem ->
                 val epObj = epElem.jsonObject
@@ -309,7 +305,6 @@ class FourAnimo : Source() {
                 val ep = SEpisode.create().apply {
                     name = if (epTitle.isNotBlank()) "Episode ${epNum.toInt()}: $epTitle" else "Episode ${epNum.toInt()}"
                     episode_number = epNum
-                    // Encode embed params into url: episode_id|embed_id|anime_id|number|sub|dub
                     setUrlWithoutDomain("$epId|$embedId|$animeId|${epNum.toInt()}|$hasSub|$hasDub")
                     scanlator = when {
                         hasSub && hasDub -> "Sub / Dub"
@@ -321,7 +316,7 @@ class FourAnimo : Source() {
                 }
                 episodesList.add(ep)
             }
-        }
+        } catch (_: Exception) {}
 
         return episodesList.reversed()
     }
@@ -386,7 +381,7 @@ class FourAnimo : Source() {
         val audioPrefix = parts.getOrNull(0) ?: "SUB"
         val embedUrl = parts.getOrNull(1) ?: return emptyList()
 
-        return runCatching {
+        return try {
             val embedReq = Request.Builder()
                 .url(embedUrl)
                 .headers(headers.newBuilder().set("Referer", "$baseUrl/").build())
@@ -475,7 +470,9 @@ class FourAnimo : Source() {
             }
 
             videos.sortVideos()
-        }.getOrDefault(emptyList())
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
