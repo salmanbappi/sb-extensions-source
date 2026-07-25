@@ -172,7 +172,8 @@ object FourAnimoHlsServer : NanoHTTPD(0) {
 
                 else -> {
                     val resolvedUrl = baseHttpUrl?.resolve(trimmed)?.toString() ?: trimmed
-                    if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
+                    val isMasterPlaylist = content.contains("#EXT-X-STREAM-INF")
+                    if (isMasterPlaylist || resolvedUrl.contains(".m3u8", ignoreCase = true)) {
                         modifiedLines.add(createLocalM3u8Url(resolvedUrl, Headers.headersOf("Referer", referer)))
                     } else {
                         modifiedLines.add(createLocalSegmentUrl(resolvedUrl, referer))
