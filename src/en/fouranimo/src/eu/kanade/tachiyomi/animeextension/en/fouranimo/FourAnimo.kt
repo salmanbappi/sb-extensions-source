@@ -34,6 +34,7 @@ class FourAnimo : Source() {
 
     override val supportsLatest = true
 
+    private val imageBaseUrl = "https://cdnanimo.xyz"
     private val embedBaseUrl = "https://cdn.4animo.xyz"
 
     override fun headersBuilder() = super.headersBuilder()
@@ -49,7 +50,7 @@ class FourAnimo : Source() {
     private fun extractNextPayload(html: String): String {
         val regex = """self\.__next_f\.push\(\[1,\s*"(.*)"\]\)""".toRegex()
         val pushes = regex.findAll(html).map { it.groupValues[1] }.joinToString("")
-        return pushes.replace("""\"""", """"""").replace("""\\""", """\""")
+        return pushes.replace("""\"""", """"""").replace("""\\""", """\"")
     }
 
     private fun parseAnimeCardList(payload: String): List<SAnime> {
@@ -65,13 +66,13 @@ class FourAnimo : Source() {
             if (slug !in seen) {
                 seen.add(slug)
                 val title = extractTitleFromJson(titlesJson)
-                val posterUrl = "$embedBaseUrl/poster/$id.jpg"
+                val posterUrl = "$imageBaseUrl/poster/$id.jpg"
                 animeList.add(
                     SAnime.create().apply {
                         this.title = title
                         setUrlWithoutDomain("/watch/$slug")
                         thumbnail_url = posterUrl
-                    },
+                    }
                 )
             }
         }
@@ -90,7 +91,7 @@ class FourAnimo : Source() {
                             this.title = title
                             setUrlWithoutDomain("/watch/$slug")
                             thumbnail_url = poster
-                        },
+                        }
                     )
                 }
             }
@@ -99,12 +100,14 @@ class FourAnimo : Source() {
         return animeList
     }
 
-    private fun extractTitleFromJson(titlesJson: String): String = runCatching {
-        val element = json.parseToJsonElement(titlesJson).jsonObject
-        element["english"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            ?: element["romaji"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            ?: element["native"]?.jsonPrimitive?.content ?: "Anime"
-    }.getOrDefault("Anime")
+    private fun extractTitleFromJson(titlesJson: String): String {
+        return runCatching {
+            val element = json.parseToJsonElement(titlesJson).jsonObject
+            element["english"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                ?: element["romaji"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                ?: element["native"]?.jsonPrimitive?.content ?: "Anime"
+        }.getOrDefault("Anime")
+    }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -166,28 +169,24 @@ class FourAnimo : Source() {
                         targetUrl = "$baseUrl/catalog?sort=$sortValue"
                     }
                 }
-
                 is Filters.TypeFilter -> {
                     if (!filter.isDefault()) {
                         val typeValue = filter.toUriPart()
                         targetUrl = "$baseUrl/anime/type/$typeValue"
                     }
                 }
-
                 is Filters.StatusFilter -> {
                     if (!filter.isDefault()) {
                         val statusValue = filter.toUriPart()
                         targetUrl = "$baseUrl/catalog?status=$statusValue"
                     }
                 }
-
                 is Filters.GenreFilter -> {
                     val selectedGenres = filter.selected()
                     if (selectedGenres.isNotEmpty()) {
                         targetUrl = "$baseUrl/anime/genre/${selectedGenres.first()}"
                     }
                 }
-
                 else -> {}
             }
         }
@@ -205,7 +204,7 @@ class FourAnimo : Source() {
         Filters.StatusFilter(),
         Filters.SortFilter(),
         Filters.SeasonFilter(),
-        Filters.GenreFilter(),
+        Filters.GenreFilter()
     )
 
     // =========================== Anime Details ============================
@@ -228,14 +227,16 @@ class FourAnimo : Source() {
             val jsonStr = animeObjMatch.groupValues[1]
             runCatching {
                 val element = json.parseToJsonElement(jsonStr).jsonObject
+                val idStr = element["id"]?.jsonPrimitive?.content ?: ""
+                if (idStr.isNotBlank()) {
+                    updatedAnime.thumbnail_url = "$imageBaseUrl/poster/$idStr.jpg"
+                }
+
                 val titlesObj = element["titles"]?.jsonObject
                 val engTitle = titlesObj?.get("english")?.jsonPrimitive?.content
                 val romajiTitle = titlesObj?.get("romaji")?.jsonPrimitive?.content
-                if (!engTitle.isNullOrBlank()) {
-                    updatedAnime.title = engTitle
-                } else if (!romajiTitle.isNullOrBlank()) {
-                    updatedAnime.title = romajiTitle
-                }
+                if (!engTitle.isNullOrBlank()) updatedAnime.title = engTitle
+                else if (!romajiTitle.isNullOrBlank()) updatedAnime.title = romajiTitle
 
                 val statusStr = element["status"]?.jsonPrimitive?.content ?: ""
                 updatedAnime.status = when {
@@ -303,10 +304,10 @@ class FourAnimo : Source() {
                     ?: titlesObj?.get("romaji")?.jsonPrimitive?.content ?: ""
 
                 val thumbnail = epObj["thumbnail"]?.jsonPrimitive?.content
-                    ?: "$embedBaseUrl/episode/$epId.jpg"
+                    ?: "$imageBaseUrl/episode/$epId.jpg"
 
                 val ep = SEpisode.create().apply {
-                    name = if (epTitle.isNotBlank()) "Episode $epNum: $epTitle" else "Episode ${epNum.toInt()}"
+                    name = if (epTitle.isNotBlank()) "Episode ${epNum.toInt()}: $epTitle" else "Episode ${epNum.toInt()}"
                     episode_number = epNum
                     // Encode embed params into url: episode_id|embed_id|anime_id|number|sub|dub
                     setUrlWithoutDomain("$epId|$embedId|$animeId|${epNum.toInt()}|$hasSub|$hasDub")
@@ -327,7 +328,8 @@ class FourAnimo : Source() {
 
     // ============================ Video Links =============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val parts = episode.url.split("|")
+        val cleanUrl = episode.url.removePrefix("/")
+        val parts = cleanUrl.split("|")
         if (parts.size < 6) return emptyList()
 
         val epId = parts[0]
@@ -348,8 +350,8 @@ class FourAnimo : Source() {
             hosters.add(
                 Hoster(
                     hosterName = "ReCloud (SUB)",
-                    hosterUrl = "SUB|$subEmbedUrl",
-                ),
+                    hosterUrl = "SUB|$subEmbedUrl"
+                )
             )
         }
 
@@ -359,8 +361,8 @@ class FourAnimo : Source() {
             hosters.add(
                 Hoster(
                     hosterName = "ReCloud (DUB)",
-                    hosterUrl = "DUB|$dubEmbedUrl",
-                ),
+                    hosterUrl = "DUB|$dubEmbedUrl"
+                )
             )
         }
 
@@ -406,9 +408,11 @@ class FourAnimo : Source() {
             val sourcesJsonStr = client.newCall(sourcesReq).execute().body.string()
             val jsonRoot = json.parseToJsonElement(sourcesJsonStr).jsonObject
 
-            val m3u8Url = jsonRoot["sources"]?.jsonArray?.getOrNull(0)?.jsonObject?.get("file")?.jsonPrimitive?.content
+            val rawFile = jsonRoot["sources"]?.jsonArray?.getOrNull(0)?.jsonObject?.get("file")?.jsonPrimitive?.content
                 ?: jsonRoot["file"]?.jsonPrimitive?.content
                 ?: return emptyList()
+
+            val m3u8Url = if (rawFile.startsWith("http")) rawFile else "$embedBaseUrl$rawFile"
 
             val subtitleTracks = mutableListOf<Track>()
             jsonRoot["tracks"]?.jsonArray?.forEach { trackElem ->
@@ -417,7 +421,8 @@ class FourAnimo : Source() {
                 if (kind == "captions" || kind == "subtitles") {
                     val file = trackObj["file"]?.jsonPrimitive?.content ?: return@forEach
                     val label = trackObj["label"]?.jsonPrimitive?.content ?: "Subtitles"
-                    subtitleTracks.add(Track(file, label))
+                    val subFileUrl = if (file.startsWith("http")) file else "$embedBaseUrl$file"
+                    subtitleTracks.add(Track(subFileUrl, label))
                 }
             }
 
@@ -441,19 +446,18 @@ class FourAnimo : Source() {
                             currentQuality = "${height}p"
                         }
                     } else if (line.isNotEmpty() && !line.startsWith("#")) {
-                        val streamUrl = if (line.startsWith("http")) {
-                            line
-                        } else {
-                            val baseM3u8 = m3u8Url.substringBeforeLast("/")
-                            "$baseM3u8/$line"
+                        val streamUrl = when {
+                            line.startsWith("http") -> line
+                            line.startsWith("/") -> "$embedBaseUrl$line"
+                            else -> "${m3u8Url.substringBeforeLast("/")}/$line"
                         }
                         videos.add(
                             Video(
                                 videoUrl = streamUrl,
                                 videoTitle = "$audioPrefix - ${hoster.hosterName} - $currentQuality",
                                 headers = headers.newBuilder().set("Referer", embedUrl).build(),
-                                subtitleTracks = subtitleTracks,
-                            ),
+                                subtitleTracks = subtitleTracks
+                            )
                         )
                     }
                 }
@@ -465,8 +469,8 @@ class FourAnimo : Source() {
                         videoUrl = m3u8Url,
                         videoTitle = "$audioPrefix - ${hoster.hosterName}",
                         headers = headers.newBuilder().set("Referer", embedUrl).build(),
-                        subtitleTracks = subtitleTracks,
-                    ),
+                        subtitleTracks = subtitleTracks
+                    )
                 )
             }
 
@@ -480,7 +484,7 @@ class FourAnimo : Source() {
 
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefAudio, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
         )
     }
 
@@ -513,7 +517,7 @@ class FourAnimo : Source() {
             title = "Preferred quality",
             summary = "Sorts streams so this quality is prioritized. Currently: %s",
             entries = listOf("1080p", "720p", "480p", "360p"),
-            entryValues = listOf("1080", "720", "480", "360"),
+            entryValues = listOf("1080", "720", "480", "360")
         )
 
         screen.addListPreference(
@@ -522,7 +526,7 @@ class FourAnimo : Source() {
             title = "Preferred audio type",
             summary = "Prioritizes Sub or Dub audio streams. Currently: %s",
             entries = listOf("Subtitled", "Dubbed"),
-            entryValues = listOf("SUB", "DUB"),
+            entryValues = listOf("SUB", "DUB")
         )
 
         screen.addListPreference(
@@ -531,7 +535,7 @@ class FourAnimo : Source() {
             title = "Preferred server",
             summary = "Prioritizes this server in the host list. Currently: %s",
             entries = listOf("Auto", "ReCloud", "ReCloud HD-2"),
-            entryValues = listOf("auto", "ReCloud", "ReCloud HD-2"),
+            entryValues = listOf("auto", "ReCloud", "ReCloud HD-2")
         )
 
         screen.addSetPreference(
@@ -540,7 +544,7 @@ class FourAnimo : Source() {
             title = "Exclude servers",
             summary = "Select servers to exclude from episode hosters",
             entries = listOf("ReCloud", "ReCloud HD-2"),
-            entryValues = listOf("ReCloud", "ReCloud HD-2"),
+            entryValues = listOf("ReCloud", "ReCloud HD-2")
         )
 
         screen.addSetPreference(
@@ -549,7 +553,7 @@ class FourAnimo : Source() {
             title = "Exclude audio format",
             summary = "Select audio formats to exclude",
             entries = listOf("Subtitled", "Dubbed"),
-            entryValues = listOf("SUB", "DUB"),
+            entryValues = listOf("SUB", "DUB")
         )
     }
 
