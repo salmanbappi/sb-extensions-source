@@ -382,7 +382,7 @@ class FourAnimo : Source() {
                 val ep = SEpisode.create().apply {
                     name = if (epTitle.isNotBlank()) "Episode ${epNum.toInt()}: $epTitle" else "Episode ${epNum.toInt()}"
                     episode_number = epNum
-                    setUrlWithoutDomain("$epId|$embedId|$hasSub|$hasDub")
+                    setUrlWithoutDomain("$epId|$embedId|$animeId|${epNum.toInt()}|$hasSub|$hasDub")
                     scanlator = when {
                         hasSub && hasDub -> "Sub / Dub"
                         hasDub -> "Dub"
@@ -404,12 +404,21 @@ class FourAnimo : Source() {
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val cleanUrl = episode.url.removePrefix("/")
         val parts = cleanUrl.split("|")
-        if (parts.size < 4) return emptyList()
 
-        val epId = parts[0]
-        val embedId = parts[1]
-        val hasSub = parts[2] == "true"
-        val hasDub = parts[3] == "true"
+        val epId = parts.getOrNull(0) ?: return emptyList()
+        val embedId = parts.getOrNull(1) ?: epId
+
+        val hasSub = when {
+            parts.size >= 6 -> parts[4] != "false"
+            parts.size >= 4 -> parts[2] != "false"
+            else -> true
+        }
+
+        val hasDub = when {
+            parts.size >= 6 -> parts[5] == "true"
+            parts.size >= 4 -> parts[3] == "true"
+            else -> true
+        }
 
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
         val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
