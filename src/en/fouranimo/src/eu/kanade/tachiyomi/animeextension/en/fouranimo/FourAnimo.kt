@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.fouranimo
 
+import android.net.Uri
+import android.util.Base64
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -17,12 +19,23 @@ import extensions.utils.delegate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import java.io.OutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 import java.net.URLEncoder
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class FourAnimo : Source() {
 
@@ -37,6 +50,8 @@ class FourAnimo : Source() {
     private val imageBaseUrl = "https://cdnanimo.xyz"
     private val embedBaseUrl = "https://cdn.4animo.xyz"
 
+    private var proxy: LocalProxyServer? = null
+
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0")
         .add("Referer", "$baseUrl/")
@@ -45,6 +60,31 @@ class FourAnimo : Source() {
     private val preferredQuality by preferences.delegate(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)
     private val preferredAudio by preferences.delegate(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT)
     private val preferredServer by preferences.delegate(PREF_SERVER_KEY, PREF_SERVER_DEFAULT)
+
+    // ============================== Local Proxy ===============================
+    private fun getProxyUrl(url: String, sourceHeaders: Headers? = null): String {
+        if (proxy == null) {
+            proxy = LocalProxyServer(client, json).apply { start() }
+        }
+        val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val encodedHeaders = encodeHeaders(sourceHeaders)
+        val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
+        val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
+        return "http://127.0.0.1:${proxy!!.port}/$path?$query"
+    }
+
+    private fun encodeHeaders(hdrs: Headers?): String? {
+        if (hdrs == null || hdrs.size == 0) return null
+        val map = mutableMapOf<String, String>()
+        for (i in 0 until hdrs.size) {
+            map[hdrs.name(i)] = hdrs.value(i)
+        }
+        return try {
+            Base64.encodeToString(json.encodeToString(map).toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     // ============================== Helper Utils ==============================
     private fun extractNextPayload(html: String): String {
@@ -294,7 +334,7 @@ class FourAnimo : Source() {
                 val rawSynopsis = element["synopsis"]?.jsonPrimitive?.content
                     ?: element["description"]?.jsonPrimitive?.content ?: ""
 
-                val metaMatch = """\"(?:name|property)\":\"(?:og:)?description\",\"content\":\"([^\"]+)\"""".toRegex().find(payload)
+                val metaMatch = """"(?:name|property)":"(?:og:)?description","content":"([^"]+)"""".toRegex().find(payload)
                 val metaDesc = metaMatch?.groupValues?.get(1) ?: ""
 
                 val descriptionStr = when {
@@ -304,13 +344,17 @@ class FourAnimo : Source() {
                 }
 
                 val cleanDescription = descriptionStr
-                    .replace(Regex("(?i)<br\\s*/?>"), "\n")
+                    .replace(Regex("(?i)<br\s*/?>"), "
+")
                     .replace(Regex("<[^>]*>"), "")
                     .replace("&nbsp;", " ")
                     .replace("&amp;", "&")
                     .replace("&lt;", "<")
                     .replace("&gt;", ">")
-                    .replace(Regex("\n{3,}"), "\n\n")
+                    .replace(Regex("
+{3,}"), "
+
+")
                     .trim()
 
                 val score = element["score"]?.jsonPrimitive?.content?.toDoubleOrNull()
@@ -332,25 +376,33 @@ class FourAnimo : Source() {
                 updatedAnime.description = buildString {
                     if (cleanDescription.isNotBlank()) {
                         append(cleanDescription)
-                        append("\n\n")
+                        append("
+
+")
                     }
                     if (score != null && score > 0.0) {
-                        append("Score: ★ $score\n")
+                        append("Score: ★ $score
+")
                     }
                     if (formatType.isNotBlank()) {
-                        append("Format: $formatType\n")
+                        append("Format: $formatType
+")
                     }
                     if (!duration.isNullOrBlank()) {
-                        append("Duration: ${duration}m\n")
+                        append("Duration: ${duration}m
+")
                     }
                     if (!rating.isNullOrBlank()) {
-                        append("Rating: $rating\n")
+                        append("Rating: $rating
+")
                     }
                     if (!seasonStr.isNullOrBlank()) {
-                        append("Season: $seasonStr\n")
+                        append("Season: $seasonStr
+")
                     }
                     if (!totalEp.isNullOrBlank()) {
-                        append("Episodes: $totalEp (Sub: ${subEp ?: totalEp}, Dub: ${dubEp ?: 0})\n")
+                        append("Episodes: $totalEp (Sub: ${subEp ?: totalEp}, Dub: ${dubEp ?: 0})
+")
                     }
                 }.trim()
             } catch (_: Exception) {}
@@ -483,7 +535,19 @@ class FourAnimo : Source() {
         }
 
         val videos = subDeferred.await() + dubDeferred.await()
-        FourAnimoHlsServer.processVideoList(client, videos.sortVideos())
+        videos.sortVideos().map { video ->
+            if (video.videoUrl.contains(".m3u8", ignoreCase = true) || video.videoUrl.contains("/p?t=", ignoreCase = true)) {
+                Video(
+                    videoUrl = getProxyUrl(video.videoUrl, video.headers),
+                    videoTitle = video.videoTitle,
+                    subtitleTracks = video.subtitleTracks,
+                    audioTracks = video.audioTracks,
+                    headers = video.headers,
+                )
+            } else {
+                video
+            }
+        }
     }
 
     private fun extractVideosFromEmbed(audioPrefix: String, serverName: String, embedUrl: String): List<Video> {
@@ -671,5 +735,291 @@ class FourAnimo : Source() {
 
         private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
         private const val PREF_EXCLUDE_AUDIO_KEY = "pref_exclude_audio"
+    }
+}
+
+// ========================= Local Proxy Server =============================
+
+private class LocalProxyServer(
+    private val client: OkHttpClient,
+    private val json: Json,
+) {
+    private val executor = Executors.newCachedThreadPool()
+    private val running = AtomicBoolean(false)
+    private var serverSocket: ServerSocket? = null
+
+    val port: Int
+        get() = serverSocket?.let { if (it.isClosed) 0 else it.localPort } ?: 0
+
+    fun start() {
+        if (running.get() && serverSocket?.isClosed == false) return
+        running.set(false)
+        try {
+            serverSocket?.close()
+        } catch (_: Exception) {}
+        try {
+            serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
+            running.set(true)
+            executor.execute {
+                while (running.get() && serverSocket?.isClosed == false) {
+                    try {
+                        val socket = serverSocket?.accept() ?: break
+                        executor.execute { handleClient(socket) }
+                    } catch (_: Exception) {
+                        if (serverSocket?.isClosed == true || !running.get()) break
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            running.set(false)
+        }
+    }
+
+    private fun handleClient(socket: Socket) {
+        socket.use { s ->
+            val input = s.getInputStream()
+            val output = s.getOutputStream()
+            val firstLine = input.bufferedReader().readLine() ?: return
+            val parts = firstLine.split(" ")
+            if (parts.size >= 2 && parts[0] == "GET") {
+                val path = parts[1]
+                routeRequest(path, output)
+            }
+        }
+    }
+
+    private fun routeRequest(path: String, output: OutputStream) {
+        val uri = Uri.parse("http://127.0.0.1$path")
+        val encodedUrl = uri.getQueryParameter("url") ?: return
+        val encodedHeaders = uri.getQueryParameter("headers")
+        val targetUrl = try {
+            String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+        } catch (_: Exception) {
+            return
+        }
+        val headers = decodeHeaders(encodedHeaders)
+
+        try {
+            when {
+                path.contains("playlist.m3u8") -> servePlaylist(targetUrl, headers, encodedHeaders, output)
+                path.contains("key.bin") -> serveKey(targetUrl, headers, output)
+                else -> serveSegment(targetUrl, headers, output)
+            }
+        } catch (_: Exception) {
+            try {
+                output.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n".toByteArray())
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun decodeHeaders(encoded: String?): Headers {
+        val fallback = Headers.Builder()
+            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0")
+            .set("Referer", "https://4animo.xyz/")
+            .build()
+        if (encoded.isNullOrEmpty()) return fallback
+        return try {
+            val jsonStr = String(Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+            val map = json.decodeFromString<Map<String, String>>(jsonStr)
+            Headers.Builder().apply {
+                for (entry in map.entries) {
+                    set(entry.key, entry.value)
+                }
+            }.build()
+        } catch (_: Exception) {
+            fallback
+        }
+    }
+
+    private fun getProxyUrl(url: String, headersStr: String?, isKey: Boolean = false): String {
+        val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val path = when {
+            isKey || url.contains(".key") || url.contains("key.bin") -> "key.bin"
+            url.contains(".m3u8") -> "playlist.m3u8"
+            else -> "segment.ts"
+        }
+        val query = "url=$encoded" + if (!headersStr.isNullOrEmpty()) "&headers=$headersStr" else ""
+        return "http://127.0.0.1:$port/$path?$query"
+    }
+
+    private fun fetchWithRetry(targetUrl: String, headers: Headers): Response {
+        var response = client.newCall(GET(targetUrl, headers)).execute()
+        if (response.code == 403) {
+            response.close()
+            val fallbackHeaders = headers.newBuilder()
+                .set("Referer", "https://4animo.xyz/")
+                .build()
+            response = client.newCall(GET(targetUrl, fallbackHeaders)).execute()
+        }
+        return response
+    }
+
+    private fun servePlaylist(targetUrl: String, headers: Headers, encodedHeaders: String?, output: OutputStream) {
+        val response = fetchWithRetry(targetUrl, headers)
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
+            return
+        }
+
+        val content = response.body.string()
+        response.close()
+        val lines = content.split(Regex("""\r?\n"""))
+        val builder = StringBuilder(content.length * 2)
+
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                builder.append("
+")
+                continue
+            }
+
+            if (trimmed.startsWith("#")) {
+                val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
+                uriRegex.find(trimmed)?.let { match ->
+                    val uriValue = match.groupValues[1]
+                    val rawResolved = when {
+                        uriValue.startsWith("//") -> "https:$uriValue"
+                        else -> targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
+                    }
+                    val resolvedUri = if (rawResolved.startsWith("//")) "https:$rawResolved" else rawResolved
+                    val isKeyLine = trimmed.contains("#EXT-X-KEY") || resolvedUri.contains(".key")
+                    val proxiedUri = getProxyUrl(resolvedUri, encodedHeaders, isKey = isKeyLine)
+                    builder.append(trimmed.replace(uriValue, proxiedUri))
+                } ?: builder.append(trimmed)
+            } else {
+                val rawResolved = when {
+                    trimmed.startsWith("//") -> "https:$trimmed"
+                    else -> targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
+                }
+                val resolvedUri = if (rawResolved.startsWith("//")) "https:$rawResolved" else rawResolved
+                val isKeyLine = resolvedUri.contains(".key")
+                builder.append(getProxyUrl(resolvedUri, encodedHeaders, isKey = isKeyLine))
+            }
+            builder.append("
+")
+        }
+
+        val bodyBytes = builder.toString().toByteArray()
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: ${bodyBytes.size}\r\n".toByteArray())
+        output.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        output.write(bodyBytes)
+        output.flush()
+    }
+
+    private fun serveKey(targetUrl: String, headers: Headers, output: OutputStream) {
+        val response = fetchWithRetry(targetUrl, headers)
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
+            return
+        }
+
+        val bytes = response.body.bytes()
+        response.close()
+
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: ${bytes.size}\r\n".toByteArray())
+        output.write("Content-Type: application/octet-stream\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        output.write(bytes)
+        output.flush()
+    }
+
+    private fun serveSegment(targetUrl: String, headers: Headers, output: OutputStream) {
+        val response = fetchWithRetry(targetUrl, headers)
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
+            return
+        }
+
+        val body = response.body
+        val inputStream = body.byteStream()
+
+        val headerBuffer = ByteArray(131072)
+        var totalRead = 0
+        while (totalRead < headerBuffer.size) {
+            val read = inputStream.read(headerBuffer, totalRead, headerBuffer.size - totalRead)
+            if (read == -1) break
+            totalRead += read
+        }
+
+        val sample = if (totalRead == headerBuffer.size) headerBuffer else headerBuffer.copyOf(totalRead)
+        val skipBytes = detectSkipBytes(sample)
+        val contentLength = body.contentLength()
+        val payloadLength = if (contentLength > 0) contentLength - skipBytes else -1L
+
+        val headerBuilder = StringBuilder("HTTP/1.1 200 OK\r\n")
+        if (payloadLength >= 0) {
+            headerBuilder.append("Content-Length: $payloadLength\r\n")
+        }
+        headerBuilder.append("Content-Type: video/mp2t\r\n")
+        headerBuilder.append("Connection: close\r\n\r\n")
+        output.write(headerBuilder.toString().toByteArray())
+
+        if (totalRead > skipBytes) {
+            output.write(sample, skipBytes, totalRead - skipBytes)
+        }
+
+        val buffer = ByteArray(8192)
+        var bytesRead: Int
+        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+            output.write(buffer, 0, bytesRead)
+        }
+        output.flush()
+        response.close()
+    }
+
+    private fun detectSkipBytes(data: ByteArray): Int {
+        if (data.size < 4) return 0
+
+        val isPng = data[0] == 0x89.toByte() && data[1] == 0x50.toByte() && data[2] == 0x4E.toByte() && data[3] == 0x47.toByte()
+        val isJpeg = data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte() && data[2] == 0xFF.toByte()
+        val isGif = data[0] == 0x47.toByte() && data[1] == 0x49.toByte() && data[2] == 0x46.toByte()
+
+        if (!isPng && !isJpeg && !isGif) return 0
+
+        val maxScan = minOf(data.size, 131072)
+
+        val ftyp = byteArrayOf(0x66.toByte(), 0x74.toByte(), 0x79.toByte(), 0x70.toByte())
+        val maxFtyp = minOf(data.size - ftyp.size, maxScan)
+        for (i in 0..maxFtyp) {
+            if (data[i] == ftyp[0] && data[i + 1] == ftyp[1] && data[i + 2] == ftyp[2] && data[i + 3] == ftyp[3]) {
+                return if (i >= 4) i - 4 else i
+            }
+        }
+
+        if (isPng) {
+            val iend = byteArrayOf(0x49.toByte(), 0x45.toByte(), 0x4E.toByte(), 0x44.toByte())
+            val maxIend = minOf(data.size - iend.size, maxScan)
+            for (i in 0..maxIend) {
+                if (data[i] == iend[0] && data[i + 1] == iend[1] && data[i + 2] == iend[2] && data[i + 3] == iend[3]) {
+                    if (i + 8 <= data.size) return i + 8
+                }
+            }
+        }
+
+        val maxTs = minOf(data.size - 188 * 2, maxScan)
+        for (i in 0..maxTs) {
+            if (data[i] == 0x47.toByte()) {
+                var validCount = 0
+                val limit = minOf(data.size, i + 188 * 4)
+                var j = i
+                while (j < limit) {
+                    if (data[j] == 0x47.toByte()) {
+                        validCount++
+                    }
+                    j += 188
+                }
+                if (validCount >= 3) {
+                    return i
+                }
+            }
+        }
+        return 0
     }
 }

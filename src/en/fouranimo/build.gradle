@@ -1,12 +1,8 @@
 ext {
     extName = 'Animo'
     extClass = '.FourAnimo'
-    extVersionCode = 9
+    extVersionCode = 10
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
-
-dependencies {
-    implementation("com.github.NanoHttpd.nanohttpd:nanohttpd:nanohttpd-project-2.3.1")
-}
