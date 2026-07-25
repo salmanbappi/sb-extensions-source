@@ -142,7 +142,7 @@ object FourAnimoHlsServer : NanoHTTPD(0) {
         videoTitle = videoTitle,
         subtitleTracks = subtitleTracks,
         audioTracks = audioTracks,
-        headers = headers
+        headers = headers,
     )
 
     private fun fetchString(url: String, headers: Headers): String {
@@ -169,6 +169,7 @@ object FourAnimoHlsServer : NanoHTTPD(0) {
             val trimmed = line.trim()
             when {
                 trimmed.startsWith("#") || trimmed.isBlank() -> modifiedLines.add(line)
+
                 else -> {
                     val resolvedUrl = baseHttpUrl?.resolve(trimmed)?.toString() ?: trimmed
                     if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
