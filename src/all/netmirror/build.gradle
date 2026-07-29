@@ -2,7 +2,7 @@ ext {
     extName = 'NetMirror'
     extClass = '.NetMirror'
     author = '@salmanbappi'
-    extVersionCode = 1066
+    extVersionCode = 1067
 }
 
 apply from: "$rootDir/common.gradle"
