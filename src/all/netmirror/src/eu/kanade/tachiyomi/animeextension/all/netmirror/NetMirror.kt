@@ -686,7 +686,7 @@ class CNCVerseSource(
                                     currentOtp = extractedDigits
                                     sharedPreferences.edit().putString("nf_otp", currentOtp).apply()
                                     token = tryOtp(currentOtp)
-                                    if (token != null) return@for
+                                    if (token != null) break
                                 }
                             }
                         }
