@@ -114,10 +114,15 @@ class ShuttleTV : Source() {
                     val part = filter.toUriPart()
                     if (part != "all") mediaType = part
                 }
+
                 is Filters.SortFilter -> sort = filter.toUriPart()
+
                 is Filters.YearFilter -> year = filter.toUriPart()
+
                 is Filters.CountryFilter -> country = filter.toUriPart()
+
                 is Filters.GenreFilter -> genres.addAll(filter.selectedIds())
+
                 else -> {}
             }
         }
@@ -154,7 +159,7 @@ class ShuttleTV : Source() {
         Filters.SortFilter(),
         Filters.YearFilter(),
         Filters.GenreFilter(),
-        Filters.CountryFilter()
+        Filters.CountryFilter(),
     )
 
     private fun parseTmdbMediaList(response: Response): AnimesPage {
@@ -220,14 +225,18 @@ class ShuttleTV : Source() {
             "Completed"
         }
 
-        val releaseYear = (obj["release_date"]?.jsonPrimitive?.content
-            ?: obj["first_air_date"]?.jsonPrimitive?.content ?: "").take(4)
+        val releaseYear = (
+            obj["release_date"]?.jsonPrimitive?.content
+                ?: obj["first_air_date"]?.jsonPrimitive?.content ?: ""
+            ).take(4)
 
         val trailerKey = obj["videos"]?.jsonObject?.get("results")?.jsonArray?.mapNotNull {
             val vObj = it.jsonObject
             if (vObj["site"]?.jsonPrimitive?.content == "YouTube" && vObj["type"]?.jsonPrimitive?.content == "Trailer") {
                 vObj["key"]?.jsonPrimitive?.content
-            } else null
+            } else {
+                null
+            }
         }?.firstOrNull()
 
         return SAnime.create().apply {
@@ -268,7 +277,7 @@ class ShuttleTV : Source() {
                     name = "Movie"
                     setUrlWithoutDomain("/watch/$id?type=movie")
                     episode_number = 1.0f
-                }
+                },
             )
         }
 
@@ -311,7 +320,7 @@ class ShuttleTV : Source() {
                             episode_number = (seasonNum * 1000 + epNum).toFloat()
                             if (stillUrl.isNotBlank()) preview_url = stillUrl
                             if (overviewStr.isNotBlank()) summary = overviewStr
-                        }
+                        },
                     )
                 }
             }
@@ -341,14 +350,14 @@ class ShuttleTV : Source() {
         val providers = listOf(
             Pair("auto", "Auto (Best Server)"),
             Pair("febbox-hls", "Feb HLS"),
-            Pair("febbox-mp4", "Feb MP4")
+            Pair("febbox-mp4", "Feb MP4"),
         )
 
         val hosters = providers.filter { it.first !in excludedServers }.map { (providerId, providerName) ->
             val finalEmbedUrl = if (providerId != "auto") "$embedUrl&lastserver=$providerId" else embedUrl
             Hoster(
                 hosterName = providerName,
-                hosterUrl = finalEmbedUrl
+                hosterUrl = finalEmbedUrl,
             )
         }
 
@@ -365,14 +374,14 @@ class ShuttleTV : Source() {
                 referer = "$cineSrcUrl/",
                 masterHeaders = headers,
                 videoHeaders = headers,
-                videoNameGen = { quality -> "${hoster.hosterName} - $quality" }
+                videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
             ).sortVideos()
         }
 
         val video = Video(
             videoUrl = resolvedUrl,
             videoTitle = hoster.hosterName,
-            headers = headersBuilder().set("Referer", "$cineSrcUrl/").build()
+            headers = headersBuilder().set("Referer", "$cineSrcUrl/").build(),
         )
 
         return listOf(video).sortVideos()
@@ -381,7 +390,7 @@ class ShuttleTV : Source() {
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+            compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
 
@@ -406,9 +415,7 @@ class ShuttleTV : Source() {
         return GET(url, headers)
     }
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> {
-        return parseTmdbMediaList(response).animes
-    }
+    fun relatedAnimeListParse(response: Response): List<SAnime> = parseTmdbMediaList(response).animes
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
@@ -418,7 +425,7 @@ class ShuttleTV : Source() {
             summary = "%s",
             entries = listOf("Auto", "1080p", "720p", "480p", "360p"),
             entryValues = listOf("Auto", "1080", "720", "480", "360"),
-            default = PREF_QUALITY_DEFAULT
+            default = PREF_QUALITY_DEFAULT,
         )
 
         screen.addListPreference(
@@ -427,7 +434,7 @@ class ShuttleTV : Source() {
             summary = "%s",
             entries = listOf("Auto", "Feb HLS", "Feb MP4", "Default"),
             entryValues = listOf("auto", "Feb HLS", "Feb MP4", "Default"),
-            default = PREF_SERVER_DEFAULT
+            default = PREF_SERVER_DEFAULT,
         )
 
         screen.addListPreference(
@@ -436,21 +443,21 @@ class ShuttleTV : Source() {
             summary = "%s",
             entries = listOf("English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian", "Japanese", "Korean", "Chinese", "Hindi", "Arabic", "Turkish"),
             entryValues = listOf("English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian", "Japanese", "Korean", "Chinese", "Hindi", "Arabic", "Turkish"),
-            default = PREF_SUB_LANG_DEFAULT
+            default = PREF_SUB_LANG_DEFAULT,
         )
 
         screen.addSwitchPreference(
             key = PREF_AUTO_SKIP_KEY,
             title = "Auto Skip Intro",
             summary = "Automatically skip intro segments when supported",
-            default = true
+            default = true,
         )
 
         screen.addSwitchPreference(
             key = PREF_DISABLE_ADS_KEY,
             title = "Disable Ads Parameter",
             summary = "Request ad-free stream token from player API",
-            default = true
+            default = true,
         )
 
         screen.addSetPreference(
@@ -459,7 +466,7 @@ class ShuttleTV : Source() {
             summary = "Select servers to exclude from video list",
             entries = listOf("Feb HLS", "Feb MP4", "Default"),
             entryValues = listOf("Feb HLS", "Feb MP4", "Default"),
-            default = emptySet()
+            default = emptySet(),
         )
     }
 
@@ -509,7 +516,7 @@ class CineSrcResolver(private val context: Application) {
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(
                             view: WebView?,
-                            request: WebResourceRequest?
+                            request: WebResourceRequest?,
                         ): WebResourceResponse? {
                             val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
 
