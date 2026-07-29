@@ -371,8 +371,8 @@ class CNCVerseSource(
         val videoLink = jsonObj.optString("video_link")
         val referer = jsonObj.optString("referer")
 
-        if (videoLink.isEmpty()) {
-            return emptyList()
+        if (videoLink.isEmpty() || status == "otp" || videoLink.contains("220884")) {
+            throw Exception("NetMirror rate limit / OTP check required.")
         }
 
         val cookieVal = getBypassCookie()
@@ -708,33 +708,6 @@ class CNCVerseSource(
                 }
             }
 
-            if (token == null) {
-                try {
-                    val cfClearance = runBlocking { solveCloudflareInWebView("https://netmirror.gg/tv") }
-                    if (!cfClearance.isNullOrEmpty()) {
-                        val req = Request.Builder()
-                            .url("https://netmirror.gg/tv")
-                            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                            .header("Cookie", "cf_clearance=$cfClearance")
-                            .build()
-                        directClient.newCall(req).execute().use { resp ->
-                            val html = resp.body?.string() ?: ""
-                            val match = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(html)
-                            if (match != null) {
-                                val extractedDigits = Regex("""\s*,\s*""").replace(match.groupValues[1], "").replace(" ", "").replace("\"", "").replace("'", "")
-                                if (extractedDigits.isNotEmpty()) {
-                                    currentOtp = extractedDigits
-                                    sharedPreferences.edit().putString("nf_otp", currentOtp).apply()
-                                    token = tryOtp(currentOtp)
-                                }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Ignore
-                }
-            }
-
             if (!token.isNullOrEmpty()) {
                 cachedUserToken = token
                 cachedUserTokenTimestamp = now
@@ -746,69 +719,6 @@ class CNCVerseSource(
             }
 
             return ""
-        }
-
-        private suspend fun solveCloudflareInWebView(url: String): String? {
-            val ctx = Injekt.get<Application>()
-            return withContext(Dispatchers.Main) {
-                suspendCancellableCoroutine { cont ->
-                    try {
-                        val cookieManager = CookieManager.getInstance()
-                        cookieManager.setAcceptCookie(true)
-                        val wv = WebView(ctx)
-                        cookieManager.setAcceptThirdPartyCookies(wv, true)
-                        val ws = wv.settings
-                        ws.javaScriptEnabled = true
-                        ws.domStorageEnabled = true
-                        ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                        ws.userAgentString = "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-                        ws.mediaPlaybackRequiresUserGesture = false
-                        wv.webChromeClient = WebChromeClient()
-
-                        var resolved = false
-                        fun extractAndFinish() {
-                            if (resolved) return
-                            val cookies = cookieManager.getCookie(url) ?: ""
-                            val match = Regex("""cf_clearance=([^;]+)""").find(cookies)
-                            val cf = match?.groupValues?.get(1)
-                            if (!cf.isNullOrEmpty()) {
-                                resolved = true
-                                try {
-                                    wv.destroy()
-                                } catch (_: Exception) {}
-                                cont.resume(cf)
-                            }
-                        }
-
-                        wv.webViewClient = object : WebViewClient() {
-                            override fun onPageFinished(view: WebView?, pageUrl: String?) {
-                                super.onPageFinished(view, pageUrl)
-                                extractAndFinish()
-                                if (!resolved) {
-                                    val handler = Handler(Looper.getMainLooper())
-                                    handler.postDelayed(
-                                        object : Runnable {
-                                            override fun run() {
-                                                if (!resolved) {
-                                                    extractAndFinish()
-                                                    if (!resolved) {
-                                                        handler.postDelayed(this, 1000L)
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        1000L,
-                                    )
-                                }
-                            }
-                        }
-
-                        wv.loadUrl(url)
-                    } catch (e: Exception) {
-                        cont.resume(null)
-                    }
-                }
-            }
         }
 
         private fun decodeBase64(value: String): String = String(android.util.Base64.decode(value, android.util.Base64.DEFAULT))
