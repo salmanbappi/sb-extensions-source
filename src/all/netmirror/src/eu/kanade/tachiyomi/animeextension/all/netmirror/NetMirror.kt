@@ -69,6 +69,7 @@ class CNCVerseSource(
     override val client: OkHttpClient = network.client.newBuilder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        // Inject auth cookie for net77.cc requests and handle verify redirects
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
@@ -83,7 +84,7 @@ class CNCVerseSource(
                             append("; studio=$studio")
                         }
                     }
-                    val refererUrl = if (url.contains("/home")) "$baseUrl/mobile/home?app=1" else "$baseUrl/home"
+                    val refererUrl = "$baseUrl/home"
                     var newRequest = request.newBuilder()
                         .header("Cookie", cookieHeader)
                         .header("Referer", refererUrl)
@@ -118,8 +119,9 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains(".m3u8") || url.contains(".vtt")) {
+            if (url.contains(".m3u8") || url.contains(".jpg") || url.contains(".ts") || url.contains(".vtt") || url.contains("nm-cdn")) {
                 val newRequest = request.newBuilder()
+                    .header("Referer", "https://net52.cc/")
                     .header("Cookie", "hd=on")
                     .build()
                 return@addInterceptor chain.proceed(newRequest)
@@ -146,27 +148,34 @@ class CNCVerseSource(
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/mobile/home?app=1", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        val path = when (ott) {
+            "nf" -> "series"
+            "pv" -> "series"
+            else -> "series"
+        }
+        return GET("$baseUrl/$path", headers)
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = org.jsoup.Jsoup.parse(response.body.string())
         val animeList = mutableListOf<SAnime>()
-        val articles = document.select(".tray-container article, #top10 .top10-post")
-        for (element in articles) {
-            val id = element.selectFirst("a")?.attr("data-post") ?: element.attr("data-post") ?: continue
-            val title = element.selectFirst("img")?.attr("alt")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("img")?.attr("title")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("a")?.attr("title")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst(".card-title")?.text()?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("h3")?.text()?.takeIf { it.isNotEmpty() }
-                ?: ""
-            if (id.isNotEmpty()) {
-                val anime = SAnime.create()
-                anime.title = title
-                anime.url = id
-                anime.thumbnail_url = getPosterUrl(id)
-                animeList.add(anime)
-            }
+        // Desktop pages expose data-post IDs on .open-modal and .slider-item elements
+        val elements = document.select("[data-post]")
+        for (element in elements) {
+            val id = element.attr("data-post").trim()
+            if (id.isEmpty()) continue
+            val anime = SAnime.create()
+            // Title comes from aria-label on nested link or alt on img; fall back to ID
+            val title = element.selectFirst("a[aria-label]")?.attr("aria-label")
+                ?.takeIf { it.isNotBlank() && it != "Loading" }
+                ?: element.selectFirst("img")?.attr("alt")
+                ?.takeIf { it.isNotBlank() }
+                ?: id
+            anime.title = title
+            anime.url = id
+            anime.thumbnail_url = getPosterUrl(id)
+            animeList.add(anime)
         }
         return AnimesPage(animeList.distinctBy { it.url }, false)
     }
@@ -181,8 +190,8 @@ class CNCVerseSource(
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-        val path = if (ottPath.isEmpty()) "search.php" else "$ottPath/search.php"
-        return GET("$baseUrl/mobile/$path?s=$encodedQuery&t=${System.currentTimeMillis() / 1000}", headers)
+        // Desktop search.php is accessible directly (no /mobile/ redirect to dead net50.cc)
+        return GET("$baseUrl/search.php?s=$encodedQuery&t=${System.currentTimeMillis() / 1000}", headers)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
@@ -208,8 +217,8 @@ class CNCVerseSource(
     // =========================== Anime Details ============================
 
     override fun animeDetailsRequest(anime: SAnime): Request {
-        val path = if (ottPath.isEmpty()) "post.php" else "$ottPath/post.php"
-        return GET("$baseUrl/mobile/$path?id=${anime.url}&t=${System.currentTimeMillis() / 1000}", headers)
+        // Desktop post.php is accessible directly — /mobile/ paths redirect to dead net50.cc
+        return GET("$baseUrl/post.php?id=${anime.url}&t=${System.currentTimeMillis() / 1000}", headers)
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
@@ -312,8 +321,8 @@ class CNCVerseSource(
         val episodes = mutableListOf<SEpisode>()
         var pg = page
         while (true) {
-            val path = if (ottPath.isEmpty()) "episodes.php" else "$ottPath/episodes.php"
-            val url = "$baseUrl/mobile/$path?s=$sid&series=$eid&t=${System.currentTimeMillis() / 1000}&page=$pg"
+            // Desktop episodes.php — /mobile/ paths redirect to dead net50.cc
+            val url = "$baseUrl/episodes.php?s=$sid&series=$eid&t=${System.currentTimeMillis() / 1000}&page=$pg"
             val request = GET(url, headers)
             val response = try {
                 client.newCall(request).execute()
@@ -485,6 +494,7 @@ class CNCVerseSource(
         val masterHeadersGen = { baseHeaders: Headers, ref: String ->
             val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
             headers.newBuilder().apply {
+                set("Referer", "https://net52.cc/")
                 if (cookieVal.isNotEmpty()) {
                     set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
                 }
@@ -494,6 +504,7 @@ class CNCVerseSource(
         val videoHeadersGen = { baseHeaders: Headers, ref: String, videoUrl: String ->
             val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
             headers.newBuilder().apply {
+                set("Referer", "https://net52.cc/")
                 if (cookieVal.isNotEmpty()) {
                     set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
                 }
