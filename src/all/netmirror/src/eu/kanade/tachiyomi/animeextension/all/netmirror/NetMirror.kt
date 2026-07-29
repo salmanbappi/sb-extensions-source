@@ -115,7 +115,7 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains(".m3u8") || url.contains(".vtt")) {
+            if (url.contains(".m3u8") || url.contains(".vtt") || url.contains("userver.net52.cc")) {
                 val existingCookie = request.header("Cookie")
                 val cookieVal = getBypassCookie()
                 val cookieHeader = buildString {
