@@ -363,19 +363,21 @@ class CNCVerseSource(
     // ============================ Video Links =============================
 
     override fun videoListRequest(episode: SEpisode): Request {
-        val apiBase = getApiUrl()
-        val url = "$apiBase/newtv/player.php?id=${episode.url}"
+        var cookieVal = getBypassCookie()
+        if (cookieVal.isEmpty()) {
+            cookieVal = getBypassCookie(force = true)
+        }
+        val path = when (ott) {
+            "hs", "dp" -> "/mobile/hs/playlist.php"
+            "pv" -> "/mobile/pv/playlist.php"
+            else -> "/mobile/playlist.php"
+        }
+        val url = "$baseUrl$path?id=${episode.url}"
 
-        val ottValue = if (ott == "dp") "hs" else ott
         val headers = Headers.Builder()
-            .add("Ott", ottValue)
-            .add("Usertoken", "")
-            .add("Cache-Control", "no-cache, no-store, must-revalidate")
-            .add("Pragma", "no-cache")
-            .add("Expires", "0")
-            .add("X-Requested-With", "NetmirrorNewTV v1.0")
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
-            .add("Accept", "application/json, text/plain, */*")
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .add("Referer", "$baseUrl/mobile/home?app=1")
+            .add("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
             .build()
 
         return GET(url, headers)
@@ -383,13 +385,29 @@ class CNCVerseSource(
 
     override fun videoListParse(response: Response): List<Video> {
         val json = response.body.string()
-        val jsonObj = JSONObject(json)
-        val status = jsonObj.optString("status")
-        val videoLink = jsonObj.optString("video_link")
-        val referer = jsonObj.optString("referer")
+        if (json.isEmpty()) return emptyList()
 
-        if ((status != "ok" && status != "otp") || videoLink.isEmpty()) {
-            return emptyList()
+        val videoLink: String
+        val referer: String
+        if (json.trimStart().startsWith("[")) {
+            val jsonArr = JSONArray(json)
+            if (jsonArr.length() == 0) return emptyList()
+            val item = jsonArr.getJSONObject(0)
+            val sources = item.optJSONArray("sources") ?: return emptyList()
+            if (sources.length() == 0) return emptyList()
+            val fileRel = sources.getJSONObject(0).optString("file")
+            if (fileRel.isEmpty()) return emptyList()
+            videoLink = if (fileRel.startsWith("http")) fileRel else "$baseUrl$fileRel"
+            referer = "$baseUrl/mobile/home?app=1"
+        } else {
+            val jsonObj = JSONObject(json)
+            val status = jsonObj.optString("status")
+            val vLink = jsonObj.optString("video_link")
+            if ((status != "ok" && status != "otp") || vLink.isEmpty()) {
+                return emptyList()
+            }
+            videoLink = vLink
+            referer = jsonObj.optString("referer").ifEmpty { getApiUrl() }
         }
 
         var cookieVal = getBypassCookie()
@@ -406,12 +424,6 @@ class CNCVerseSource(
                 append("; studio=$studio")
             }
         }
-
-        val videoHeaders = Headers.Builder()
-            .set("Referer", referer.ifEmpty { getApiUrl() })
-            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
-            .set("Cookie", cookieHeader)
-            .build()
 
         val playlistUtils = PlaylistUtils(client, headers)
 
@@ -436,7 +448,7 @@ class CNCVerseSource(
         val videos = try {
             playlistUtils.extractFromHls(
                 playlistUrl = videoLink,
-                referer = referer.ifEmpty { getApiUrl() },
+                referer = referer,
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
                 videoNameGen = { "$name - $it" },
