@@ -572,7 +572,14 @@ class CNCVerseSource(
             emptyList()
         }
 
-        return videos.map { video ->
+        val finalVideos = if (videos.isEmpty() && videoLink.isNotEmpty()) {
+            val vHeaders = masterHeadersGen(headers, "$workingDomain/play.php")
+            listOf(Video(videoLink, "$name - Direct Stream", videoLink, headers = vHeaders))
+        } else {
+            videos
+        }
+
+        return finalVideos.map { video ->
             if (video.subtitleTracks.isEmpty()) {
                 video
             } else {
