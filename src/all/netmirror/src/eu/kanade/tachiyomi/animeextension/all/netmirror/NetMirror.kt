@@ -576,9 +576,8 @@ class CNCVerseSource(
             val vHeaders = masterHeadersGen(headers, "$workingDomain/play.php")
             listOf(
                 Video(
-                    url = videoLink,
-                    quality = "$name - Direct Stream",
                     videoUrl = videoLink,
+                    videoTitle = "$name - Direct Stream",
                     headers = vHeaders,
                 ),
             )
@@ -591,9 +590,8 @@ class CNCVerseSource(
                 video
             } else {
                 Video(
-                    url = video.videoUrl,
-                    quality = video.videoTitle,
                     videoUrl = video.videoUrl,
+                    videoTitle = video.videoTitle,
                     subtitleTracks = video.subtitleTracks.map { track ->
                         if (track.url.endsWith(".m3u8")) {
                             Track(track.url.substringBeforeLast(".m3u8") + ".vtt", track.lang)
