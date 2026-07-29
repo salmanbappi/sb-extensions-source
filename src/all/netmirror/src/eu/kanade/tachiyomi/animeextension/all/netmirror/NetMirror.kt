@@ -380,7 +380,11 @@ class CNCVerseSource(
 
     override fun videoListParse(response: Response): List<Video> {
         val json = response.body.string()
-        val jsonObj = try { JSONObject(json) } catch (e: Exception) { JSONObject() }
+        val jsonObj = try {
+            JSONObject(json)
+        } catch (e: Exception) {
+            JSONObject()
+        }
         val hToken = jsonObj.optString("h")
 
         if (hToken.isEmpty()) {
@@ -390,7 +394,9 @@ class CNCVerseSource(
         val episodeId = response.request.body?.let { body ->
             if (body is FormBody) {
                 (0 until body.size).firstOrNull { body.name(it) == "id" }?.let { body.value(it) }
-            } else null
+            } else {
+                null
+            }
         } ?: ""
 
         val cookieVal = getBypassCookie()
@@ -444,7 +450,11 @@ class CNCVerseSource(
             return emptyList()
         }
 
-        val playlistArray = try { JSONArray(playlistJson) } catch (e: Exception) { return emptyList() }
+        val playlistArray = try {
+            JSONArray(playlistJson)
+        } catch (e: Exception) {
+            return emptyList()
+        }
         if (playlistArray.length() == 0) return emptyList()
 
         val firstItem = playlistArray.getJSONObject(0)
