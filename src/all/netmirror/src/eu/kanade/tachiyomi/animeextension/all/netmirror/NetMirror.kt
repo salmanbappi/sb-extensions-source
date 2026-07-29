@@ -350,34 +350,9 @@ class CNCVerseSource(
     // ============================ Video Links =============================
 
     override fun videoListRequest(episode: SEpisode): Request {
-        val apiBase = getApiUrl()
-        val url = "$apiBase/newtv/player.php?id=${episode.url}"
-
-        val ottValue = if (ott == "dp") "hs" else ott
-        val headers = Headers.Builder()
-            .add("Ott", ottValue)
-            .add("Usertoken", "")
-            .add("Cache-Control", "no-cache, no-store, must-revalidate")
-            .add("Pragma", "no-cache")
-            .add("Expires", "0")
-            .add("X-Requested-With", "NetmirrorNewTV v1.0")
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
-            .add("Accept", "application/json, text/plain, */*")
+        val formBody = FormBody.Builder()
+            .add("id", episode.url)
             .build()
-
-        return GET(url, headers)
-    }
-
-    override fun videoListParse(response: Response): List<Video> {
-        val json = response.body.string()
-        val jsonObj = JSONObject(json)
-        val status = jsonObj.optString("status")
-        val videoLink = jsonObj.optString("video_link")
-        val referer = jsonObj.optString("referer")
-
-        if ((status != "ok" && status != "otp") || videoLink.isEmpty()) {
-            return emptyList()
-        }
 
         val cookieVal = getBypassCookie()
         val cookieHeader = buildString {
@@ -391,11 +366,95 @@ class CNCVerseSource(
             }
         }
 
-        val videoHeaders = Headers.Builder()
-            .set("Referer", referer.ifEmpty { getApiUrl() })
-            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
+        val requestHeaders = headers.newBuilder()
             .set("Cookie", cookieHeader)
+            .set("Referer", "$baseUrl/home")
             .build()
+
+        return Request.Builder()
+            .url("$baseUrl/play.php")
+            .headers(requestHeaders)
+            .post(formBody)
+            .build()
+    }
+
+    override fun videoListParse(response: Response): List<Video> {
+        val json = response.body.string()
+        val jsonObj = try { JSONObject(json) } catch (e: Exception) { JSONObject() }
+        val hToken = jsonObj.optString("h")
+
+        if (hToken.isEmpty()) {
+            return emptyList()
+        }
+
+        val episodeId = response.request.body?.let { body ->
+            if (body is FormBody) {
+                (0 until body.size).firstOrNull { body.name(it) == "id" }?.let { body.value(it) }
+            } else null
+        } ?: ""
+
+        val cookieVal = getBypassCookie()
+        val cookieHeader = buildString {
+            if (cookieVal.isNotEmpty()) {
+                append("t_hash_t=$cookieVal; ")
+            }
+            append("ott=$ott; ")
+            append("hd=on")
+            if (studio.isNotEmpty()) {
+                append("; studio=$studio")
+            }
+        }
+
+        val requestHeaders = headers.newBuilder()
+            .set("Cookie", cookieHeader)
+            .set("Referer", "$baseUrl/home")
+            .build()
+
+        // 1. Fetch play iframe HTML to extract data-time and data-h signatures
+        val iframeRequest = Request.Builder()
+            .url("$baseUrl/play.php?id=$episodeId&$hToken")
+            .headers(requestHeaders)
+            .build()
+
+        var dataTime = ""
+        var dataH = ""
+
+        try {
+            client.newCall(iframeRequest).execute().use { iframeResponse ->
+                val html = iframeResponse.body.string()
+                dataTime = Regex("""data-time=["']([^"']+)["']""").find(html)?.groupValues?.get(1) ?: ""
+                dataH = Regex("""data-h=["']([^"']+)["']""").find(html)?.groupValues?.get(1) ?: ""
+            }
+        } catch (e: Exception) {
+            // Fallback
+        }
+
+        val finalH = if (dataH.isNotEmpty()) dataH else hToken
+
+        // 2. Fetch signed playlist JSON
+        val playlistUrl = "$baseUrl/playlist.php?id=$episodeId&t=&tm=$dataTime&h=$finalH"
+        val playlistRequest = Request.Builder()
+            .url(playlistUrl)
+            .headers(requestHeaders)
+            .build()
+
+        val playlistJson = try {
+            client.newCall(playlistRequest).execute().use { it.body.string() }
+        } catch (e: Exception) {
+            return emptyList()
+        }
+
+        val playlistArray = try { JSONArray(playlistJson) } catch (e: Exception) { return emptyList() }
+        if (playlistArray.length() == 0) return emptyList()
+
+        val firstItem = playlistArray.getJSONObject(0)
+        val sources = firstItem.optJSONArray("sources") ?: return emptyList()
+        if (sources.length() == 0) return emptyList()
+
+        val videoLinkFile = sources.getJSONObject(0).optString("file")
+        if (videoLinkFile.isEmpty()) return emptyList()
+
+        val videoLink = if (videoLinkFile.startsWith("http")) videoLinkFile else "$baseUrl$videoLinkFile"
 
         val playlistUtils = PlaylistUtils(client, headers)
 
@@ -420,7 +479,7 @@ class CNCVerseSource(
         val videos = try {
             playlistUtils.extractFromHls(
                 playlistUrl = videoLink,
-                referer = referer.ifEmpty { getApiUrl() },
+                referer = "$baseUrl/play.php",
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
                 videoNameGen = { "$name - $it" },
@@ -429,7 +488,7 @@ class CNCVerseSource(
             emptyList()
         }
 
-        val mappedVideos = videos.map { video ->
+        return videos.map { video ->
             if (video.subtitleTracks.isEmpty()) {
                 video
             } else {
@@ -447,9 +506,7 @@ class CNCVerseSource(
                     audioTracks = video.audioTracks,
                 )
             }
-        }
-
-        return mappedVideos.sortVideos()
+        }.sortVideos()
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
