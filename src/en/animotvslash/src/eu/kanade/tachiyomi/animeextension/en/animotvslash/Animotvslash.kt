@@ -291,7 +291,7 @@ class Animotvslash : Source() {
                 String(Base64.decode(base64Value, Base64.DEFAULT))
             }.getOrNull() ?: return@forEach
 
-            val iframeSrc = JsoupParseSrc(decodedHtml) ?: return@forEach
+            val iframeSrc = jsoupParseSrc(decodedHtml) ?: return@forEach
 
             val audioType = when {
                 label.contains("SoftSub", ignoreCase = true) -> "SOFTSUB"
@@ -404,7 +404,7 @@ class Animotvslash : Source() {
         return videoList.sortVideos()
     }
 
-    private fun JsoupParseSrc(html: String): String? {
+    private fun jsoupParseSrc(html: String): String? {
         val doc = Jsoup.parse(html)
         return doc.selectFirst("iframe")?.attr("src")
     }
