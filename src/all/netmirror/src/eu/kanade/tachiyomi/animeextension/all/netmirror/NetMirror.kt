@@ -46,7 +46,8 @@ class CNCVerseSource(
     private val ott: String,
     private val studio: String,
     override val id: Long,
-) : ConfigurableAnimeSource, Source() {
+) : Source(),
+    ConfigurableAnimeSource {
 
     private val m3u8Integration by lazy { M3u8Integration(client) }
 
