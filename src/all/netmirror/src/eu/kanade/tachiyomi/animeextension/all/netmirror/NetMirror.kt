@@ -394,6 +394,7 @@ class CNCVerseSource(
                     set("Cookie", cookieHeader)
                 }
             }.build()
+        }
         val playlistUtils = PlaylistUtils(client, headers)
 
         val videos = try {
