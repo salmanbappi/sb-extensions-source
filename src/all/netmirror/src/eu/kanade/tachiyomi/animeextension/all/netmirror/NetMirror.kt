@@ -557,80 +557,6 @@ class CNCVerseSource(
             Injekt.get<Application>().getSharedPreferences("cncverse_shared_prefs", 0)
         }
 
-        private var resolvedApiUrl = ""
-
-        @Synchronized
-        private fun getApiUrl(): String {
-            if (resolvedApiUrl.isNotEmpty()) return resolvedApiUrl
-
-            val newTvBaseHeaders = mapOf(
-                "Cache-Control" to "no-cache, no-store, must-revalidate",
-                "Pragma" to "no-cache",
-                "Expires" to "0",
-                "X-Requested-With" to "NetmirrorNewTV v1.0",
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0",
-                "Accept" to "application/json, text/plain, */*",
-            )
-
-            val newTvDomains = listOf(
-                "aHR0cHM6Ly9tb2JpbGVkZXRlY3RzLmNvbQ==",
-                "aHR0cHM6Ly9tb2JpbGVkZXRlY3QuYXBw",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmFydA==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmNj",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmNsaWNr",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lmluaw==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmxpdmU=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnBybw==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNob3A=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNpdGU=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNwYWNl",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnN0b3Jl",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnZpcA==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lndpa2k=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lnh5eg==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5hcnQ=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5jYw==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5pbmZv",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5pbms=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5saXZl",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5wcm8=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5zdG9yZQ==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy50b3A=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy54eXo=",
-            )
-
-            val directClient = OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .build()
-
-            for (encoded in newTvDomains) {
-                val base = decodeBase64(encoded).trimEnd('/')
-                try {
-                    val request = Request.Builder()
-                        .url("$base/checknewtv.php")
-                        .apply {
-                            newTvBaseHeaders.forEach { (k, v) -> addHeader(k, v) }
-                        }
-                        .build()
-
-                    directClient.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val json = response.body?.string() ?: ""
-                            val tokenHash = JSONObject(json).optString("token_hash")
-                            if (tokenHash.isNotEmpty()) {
-                                resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
-                                return resolvedApiUrl
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Try next domain
-                }
-            }
-            throw Exception("Failed to resolve NewTV API base URL")
-        }
-
         private var cookieValue = ""
         private var cookieTimestamp = 0L
 
@@ -654,58 +580,51 @@ class CNCVerseSource(
                 val directClient = OkHttpClient.Builder()
                     .followRedirects(false)
                     .followSslRedirects(false)
-                    .connectTimeout(5, TimeUnit.SECONDS)
-                    .readTimeout(5, TimeUnit.SECONDS)
+                    .connectTimeout(3, TimeUnit.SECONDS)
+                    .readTimeout(3, TimeUnit.SECONDS)
                     .build()
 
-                val verifyUrls = listOf("$MAIN_BASE_URL/verify.php", "https://net52.cc/verify.php")
-                for (vUrl in verifyUrls) {
-                    try {
-                        val request = Request.Builder()
-                            .url(vUrl)
-                            .post(formBody)
-                            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-                            .header("Accept-Encoding", "gzip, deflate, br, zstd")
-                            .header("Accept-Language", "en-US,en;q=0.9")
-                            .header("Cache-Control", "max-age=0")
-                            .header("Connection", "keep-alive")
-                            .header("Content-Type", "application/x-www-form-urlencoded")
-                            .header("Origin", MAIN_BASE_URL)
-                            .header("Referer", "$MAIN_BASE_URL/verify2")
-                            .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
-                            .header("sec-ch-ua-mobile", "?0")
-                            .header("sec-ch-ua-platform", "\"Windows\"")
-                            .header("Sec-Fetch-Dest", "document")
-                            .header("Sec-Fetch-Mode", "navigate")
-                            .header("Sec-Fetch-Site", "same-origin")
-                            .header("Sec-Fetch-User", "?1")
-                            .header("Upgrade-Insecure-Requests", "1")
-                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-                            .build()
+                val request = Request.Builder()
+                    .url("$MAIN_BASE_URL/verify.php")
+                    .post(formBody)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+                    .header("Accept-Encoding", "gzip, deflate, br, zstd")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .header("Cache-Control", "max-age=0")
+                    .header("Connection", "keep-alive")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Origin", MAIN_BASE_URL)
+                    .header("Referer", "$MAIN_BASE_URL/verify2")
+                    .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
+                    .header("sec-ch-ua-mobile", "?0")
+                    .header("sec-ch-ua-platform", "\"Windows\"")
+                    .header("Sec-Fetch-Dest", "document")
+                    .header("Sec-Fetch-Mode", "navigate")
+                    .header("Sec-Fetch-Site", "same-origin")
+                    .header("Sec-Fetch-User", "?1")
+                    .header("Upgrade-Insecure-Requests", "1")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+                    .build()
 
-                        directClient.newCall(request).execute().use { response ->
-                            val setCookieHeaders = response.headers.values("Set-Cookie")
-                            for (header in setCookieHeaders) {
-                                if (header.startsWith("t_hash_t=")) {
-                                    val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
-                                    if (cookie.isNotEmpty()) {
-                                        cookieValue = cookie
-                                        cookieTimestamp = now
-                                        sharedPreferences.edit()
-                                            .putString("nf_cookie", cookie)
-                                            .putLong("nf_cookie_timestamp", now)
-                                            .apply()
-                                        return cookie
-                                    }
-                                }
+                directClient.newCall(request).execute().use { response ->
+                    val setCookieHeaders = response.headers.values("Set-Cookie")
+                    for (header in setCookieHeaders) {
+                        if (header.startsWith("t_hash_t=")) {
+                            val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
+                            if (cookie.isNotEmpty()) {
+                                cookieValue = cookie
+                                cookieTimestamp = now
+                                sharedPreferences.edit()
+                                    .putString("nf_cookie", cookie)
+                                    .putLong("nf_cookie_timestamp", now)
+                                    .apply()
+                                return cookie
                             }
                         }
-                    } catch (e: Exception) {
-                        // Try next verify URL
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                // Silently fallback to cached or empty cookie
             }
             return cookieValue
         }
