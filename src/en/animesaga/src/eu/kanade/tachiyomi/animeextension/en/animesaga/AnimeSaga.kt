@@ -384,9 +384,9 @@ class AnimeSaga :
         val sMap = streamRes.servers ?: return emptyList()
         val allServerNames = (
             sMap.sub.mapNotNull { it.name ?: it.label } +
-            sMap.dub.mapNotNull { it.name ?: it.label } +
-            sMap.raw.mapNotNull { it.name ?: it.label }
-        ).distinct()
+                sMap.dub.mapNotNull { it.name ?: it.label } +
+                sMap.raw.mapNotNull { it.name ?: it.label }
+            ).distinct()
 
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
         val filteredServerNames = allServerNames.filter { it !in excludedServers }
@@ -582,33 +582,33 @@ class AnimeSaga :
                 val decryptedBody = parseResponseBody(responseBody)
                 val streamRes = json.decodeFromString<StreamResponse>(decryptedBody)
                 if (streamRes.success) {
-                        val embedUrl = streamRes.embedUrl ?: ""
-                        val directUrl = if (embedUrl.startsWith("/api/stream/proxy?url=")) {
-                            Uri.decode(embedUrl.substringAfter("url="))
-                        } else {
-                            embedUrl
+                    val embedUrl = streamRes.embedUrl ?: ""
+                    val directUrl = if (embedUrl.startsWith("/api/stream/proxy?url=")) {
+                        Uri.decode(embedUrl.substringAfter("url="))
+                    } else {
+                        embedUrl
+                    }
+
+                    if (directUrl.isNotEmpty()) {
+                        val tracks = streamRes.tracks.map {
+                            Track(it.file, it.label)
                         }
 
-                        if (directUrl.isNotEmpty()) {
-                            val tracks = streamRes.tracks.map {
-                                Track(it.file, it.label)
-                            }
+                        val refHeaders = Headers.Builder().set("Referer", "https://megaplay.buzz/").build()
+                        val proxiedM3u8 = localProxy.getProxyUrl(directUrl, refHeaders)
 
-                            val refHeaders = Headers.Builder().set("Referer", "https://megaplay.buzz/").build()
-                            val proxiedM3u8 = localProxy.getProxyUrl(directUrl, refHeaders)
-
-                            playlistUtils.extractFromHls(
-                                proxiedM3u8,
-                                referer = "https://megaplay.buzz/",
-                                videoNameGen = { quality -> "$audioType - $quality" },
-                                subtitleList = tracks,
-                            ).forEach { v ->
-                                videoList.add(v)
-                            }
+                        playlistUtils.extractFromHls(
+                            proxiedM3u8,
+                            referer = "https://megaplay.buzz/",
+                            videoNameGen = { quality -> "$audioType - $quality" },
+                            subtitleList = tracks,
+                        ).forEach { v ->
+                            videoList.add(v)
                         }
                     }
                 }
             }
+        }
 
         return videoList
     }
