@@ -2,13 +2,6 @@ package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
 import android.content.SharedPreferences
-import android.os.Handler
-import android.os.Looper
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -22,10 +15,6 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -38,7 +27,6 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.UUID
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
 
 class NetMirror : AnimeSourceFactory {
     override fun createSources(): List<AnimeSource> = listOf(
@@ -57,10 +45,9 @@ class CNCVerseSource(
     private val ott: String,
     private val studio: String,
     override val id: Long,
-) : Source(),
-    ConfigurableAnimeSource {
+) : Source() {
 
-    override val baseUrl = "https://net77.cc"
+    override val baseUrl = "https://net52.cc"
     override val lang = "all"
     override val supportsLatest = false
 
@@ -81,7 +68,7 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains("net77.cc") || url.contains("net52.cc") || url.contains("net11.cc") || url.contains("net22.cc")) {
+            if (url.contains("net52.cc") || url.contains("net11.cc")) {
                 var cookieVal = getBypassCookie()
                 if (cookieVal.isNotEmpty()) {
                     var cookieHeader = buildString {
@@ -99,7 +86,7 @@ class CNCVerseSource(
                         .build()
                     var response = chain.proceed(newRequest)
 
-                    if (response.request.url.toString().contains("verify")) {
+                    if (response.code == 302 || response.request.url.toString().contains("verify")) {
                         response.close()
                         clearBypassCookie()
                         cookieVal = getBypassCookie(force = true)
@@ -127,7 +114,7 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if ((url.contains(".m3u8") || url.contains(".vtt")) && request.header("Cookie") == null) {
+            if (url.contains(".m3u8") || url.contains(".vtt")) {
                 val newRequest = request.newBuilder()
                     .header("Cookie", "hd=on")
                     .build()
@@ -155,12 +142,30 @@ class CNCVerseSource(
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request {
-        val path = if (ottPath.isEmpty()) "search.php" else "$ottPath/search.php"
-        return GET("$baseUrl/mobile/$path?s=&t=${System.currentTimeMillis() / 1000}", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/mobile/home?app=1", headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val document = org.jsoup.Jsoup.parse(response.body.string())
+        val animeList = mutableListOf<SAnime>()
+        val articles = document.select(".tray-container article, #top10 .top10-post")
+        for (element in articles) {
+            val id = element.selectFirst("a")?.attr("data-post") ?: element.attr("data-post") ?: continue
+            val title = element.selectFirst("img")?.attr("alt")?.takeIf { it.isNotEmpty() }
+                ?: element.selectFirst("img")?.attr("title")?.takeIf { it.isNotEmpty() }
+                ?: element.selectFirst("a")?.attr("title")?.takeIf { it.isNotEmpty() }
+                ?: element.selectFirst(".card-title")?.text()?.takeIf { it.isNotEmpty() }
+                ?: element.selectFirst("h3")?.text()?.takeIf { it.isNotEmpty() }
+                ?: ""
+            if (id.isNotEmpty()) {
+                val anime = SAnime.create()
+                anime.title = title
+                anime.url = id
+                anime.thumbnail_url = getPosterUrl(id)
+                animeList.add(anime)
+            }
+        }
+        return AnimesPage(animeList.distinctBy { it.url }, false)
+    }
 
     // =============================== Latest ===============================
 
@@ -347,12 +352,11 @@ class CNCVerseSource(
     override fun videoListRequest(episode: SEpisode): Request {
         val apiBase = getApiUrl()
         val url = "$apiBase/newtv/player.php?id=${episode.url}"
-        val userToken = getUserToken(apiBase)
 
         val ottValue = if (ott == "dp") "hs" else ott
         val headers = Headers.Builder()
             .add("Ott", ottValue)
-            .add("Usertoken", userToken)
+            .add("Usertoken", "")
             .add("Cache-Control", "no-cache, no-store, must-revalidate")
             .add("Pragma", "no-cache")
             .add("Expires", "0")
@@ -371,8 +375,8 @@ class CNCVerseSource(
         val videoLink = jsonObj.optString("video_link")
         val referer = jsonObj.optString("referer")
 
-        if (videoLink.isEmpty() || status == "otp" || videoLink.contains("220884")) {
-            throw Exception("NetMirror rate limit / OTP check required.")
+        if (status != "ok" || videoLink.isEmpty()) {
+            return emptyList()
         }
 
         val cookieVal = getBypassCookie()
@@ -387,33 +391,36 @@ class CNCVerseSource(
             }
         }
 
-        val streamReferer = "$baseUrl/mobile/home?app=1"
+        val videoHeaders = Headers.Builder()
+            .set("Referer", referer.ifEmpty { getApiUrl() })
+            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
+            .set("Cookie", cookieHeader)
+            .build()
+
+        val playlistUtils = PlaylistUtils(client, headers)
 
         val masterHeadersGen = { baseHeaders: Headers, ref: String ->
-            baseHeaders.newBuilder().apply {
-                set("Referer", streamReferer)
-                set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
+            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
+            headers.newBuilder().apply {
                 if (cookieVal.isNotEmpty()) {
-                    set("Cookie", cookieHeader)
+                    set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
                 }
             }.build()
         }
 
         val videoHeadersGen = { baseHeaders: Headers, ref: String, videoUrl: String ->
-            baseHeaders.newBuilder().apply {
-                set("Referer", streamReferer)
-                set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
+            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
+            headers.newBuilder().apply {
                 if (cookieVal.isNotEmpty()) {
-                    set("Cookie", cookieHeader)
+                    set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
                 }
             }.build()
         }
-        val playlistUtils = PlaylistUtils(client, headers)
 
         val videos = try {
             playlistUtils.extractFromHls(
                 playlistUrl = videoLink,
-                referer = streamReferer,
+                referer = referer.ifEmpty { getApiUrl() },
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
                 videoNameGen = { "$name - $it" },
@@ -422,7 +429,27 @@ class CNCVerseSource(
             emptyList()
         }
 
-        return videos.sortVideos()
+        val mappedVideos = videos.map { video ->
+            if (video.subtitleTracks.isEmpty()) {
+                video
+            } else {
+                Video(
+                    videoUrl = video.videoUrl,
+                    videoTitle = video.videoTitle,
+                    headers = video.headers,
+                    subtitleTracks = video.subtitleTracks.map { track ->
+                        if (track.url.endsWith(".m3u8")) {
+                            Track(track.url.substringBeforeLast(".m3u8") + ".vtt", track.lang)
+                        } else {
+                            track
+                        }
+                    },
+                    audioTracks = video.audioTracks,
+                )
+            }
+        }
+
+        return mappedVideos.sortVideos()
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
@@ -541,9 +568,6 @@ class CNCVerseSource(
         @Synchronized
         private fun getBypassCookie(force: Boolean = false): String {
             val now = System.currentTimeMillis()
-            if (force && cookieValue.isNotEmpty() && now - cookieTimestamp < 60_000) {
-                return cookieValue
-            }
             val savedCookie = if (force) null else sharedPreferences.getString("nf_cookie", null)
             val savedTimestamp = if (force) 0L else sharedPreferences.getLong("nf_cookie_timestamp", 0L)
 
@@ -566,7 +590,7 @@ class CNCVerseSource(
                     .build()
 
                 val request = Request.Builder()
-                    .url("https://net77.cc/verify.php")
+                    .url("https://net52.cc/verify.php")
                     .post(formBody)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
                     .header("Accept-Encoding", "gzip, deflate, br, zstd")
@@ -618,275 +642,6 @@ class CNCVerseSource(
                 .remove("nf_cookie")
                 .remove("nf_cookie_timestamp")
                 .apply()
-        }
-
-        private var cachedUserToken = ""
-        private var cachedUserTokenTimestamp = 0L
-        private var cachedCfClearance = ""
-        private var cachedCfTimestamp = 0L
-        private const val NETMIRROR_TV_URL = "https://netmirror.gg/tv"
-
-        @Synchronized
-        private fun getUserToken(apiBase: String): String {
-            val now = System.currentTimeMillis()
-            if (cachedUserToken.isNotEmpty() && now - cachedUserTokenTimestamp < 54_000_000) {
-                return cachedUserToken
-            }
-            val savedToken = sharedPreferences.getString("nf_user_token", null)
-            val savedTimestamp = sharedPreferences.getLong("nf_user_token_ts", 0L)
-            if (!savedToken.isNullOrEmpty() && now - savedTimestamp < 54_000_000) {
-                cachedUserToken = savedToken
-                cachedUserTokenTimestamp = savedTimestamp
-                return savedToken
-            }
-
-            var currentOtp = sharedPreferences.getString("nf_otp", null) ?: "109400"
-            val directClient = OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .build()
-
-            fun tryOtp(otpVal: String): String? {
-                try {
-                    val req = Request.Builder()
-                        .url("$apiBase/newtv/otp.php")
-                        .header("accept", "application/json, text/plain, */*")
-                        .header("cache-control", "no-cache, no-store, must-revalidate")
-                        .header("Connection", "Keep-Alive")
-                        .header("expires", "0")
-                        .header("otp", otpVal)
-                        .header("pragma", "no-cache")
-                        .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.Gatu v1.0")
-                        .build()
-
-                    directClient.newCall(req).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val json = response.body?.string() ?: ""
-                            val jsonObj = JSONObject(json)
-                            val token = jsonObj.optString("usertoken")
-                            if (token.isNotEmpty()) {
-                                return token
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-                return null
-            }
-
-            // Step 1: Try cached OTP
-            var token = tryOtp(currentOtp)
-
-            // Step 2: If cached OTP fails, try HTTP scraping mirrors first
-            if (token == null) {
-                val mirrorUrls = listOf(
-                    "https://netmirror.store/tv",
-                    "https://netmirror.app/tv",
-                    "https://netmirror.cc/tv",
-                )
-
-                for (url in mirrorUrls) {
-                    try {
-                        val req = Request.Builder()
-                            .url(url)
-                            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                            .build()
-                        directClient.newCall(req).execute().use { resp ->
-                            val html = resp.body?.string() ?: ""
-                            val newOtp = extractOtpFromHtml(html)
-                            if (newOtp != null) {
-                                currentOtp = newOtp
-                                sharedPreferences.edit().putString("nf_otp", currentOtp).apply()
-                                token = tryOtp(currentOtp)
-                                if (token != null) return@use
-                            }
-                        }
-                        if (token != null) break
-                    } catch (_: Exception) {}
-                }
-            }
-
-            // Step 3: If HTTP scraping failed (Cloudflare), use WebView solver
-            if (token == null) {
-                val tvHtml = fetchNetmirrorTvHtmlWithWebView(directClient)
-                val newOtp = extractOtpFromHtml(tvHtml)
-                if (newOtp != null) {
-                    currentOtp = newOtp
-                    sharedPreferences.edit().putString("nf_otp", currentOtp).apply()
-                    token = tryOtp(currentOtp)
-                }
-            }
-
-            if (!token.isNullOrEmpty()) {
-                cachedUserToken = token
-                cachedUserTokenTimestamp = now
-                sharedPreferences.edit()
-                    .putString("nf_user_token", token)
-                    .putLong("nf_user_token_ts", now)
-                    .apply()
-                return token
-            }
-
-            return ""
-        }
-
-        private fun extractOtpFromHtml(html: String): String? {
-            val match = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(html) ?: return null
-            val extracted = Regex("""\s*,\s*""").replace(match.groupValues[1], "")
-                .replace(" ", "").replace("\"", "").replace("'", "")
-            return extracted.ifEmpty { null }
-        }
-
-        /**
-         * Fetches netmirror.gg/tv HTML by first trying with cached cf_clearance,
-         * then falling back to a WebView-based Cloudflare solver.
-         */
-        private fun fetchNetmirrorTvHtmlWithWebView(directClient: OkHttpClient): String {
-            // Try with cached cf_clearance first
-            val now = System.currentTimeMillis()
-            val savedCf = sharedPreferences.getString("nf_cf_clearance", null)
-            val savedCfTs = sharedPreferences.getLong("nf_cf_clearance_ts", 0L)
-            val cfToUse = if (!savedCf.isNullOrEmpty() && now - savedCfTs < 82_800_000) savedCf else null
-
-            if (cfToUse != null) {
-                try {
-                    val req = Request.Builder()
-                        .url(NETMIRROR_TV_URL)
-                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                        .header("Cookie", "cf_clearance=$cfToUse")
-                        .build()
-                    directClient.newCall(req).execute().use { resp ->
-                        val html = resp.body?.string() ?: ""
-                        if (!isCloudflareChallenge(html, resp.code)) {
-                            return html
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-
-            // Need to solve Cloudflare via WebView
-            val cfClearance = solveCloudflareInWebView()
-            if (cfClearance.isNullOrEmpty()) return ""
-
-            // Save cf_clearance
-            sharedPreferences.edit()
-                .putString("nf_cf_clearance", cfClearance)
-                .putLong("nf_cf_clearance_ts", System.currentTimeMillis())
-                .apply()
-
-            // Re-fetch with the new cf_clearance
-            return try {
-                val req = Request.Builder()
-                    .url(NETMIRROR_TV_URL)
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                    .header("Cookie", "cf_clearance=$cfClearance")
-                    .build()
-                directClient.newCall(req).execute().use { resp ->
-                    resp.body?.string() ?: ""
-                }
-            } catch (_: Exception) {
-                ""
-            }
-        }
-
-        private fun isCloudflareChallenge(html: String, statusCode: Int): Boolean {
-            if (statusCode == 403 || statusCode == 503) return true
-            return html.contains("cf-browser-verification", ignoreCase = true) ||
-                html.contains("Checking if the site connection is secure", ignoreCase = true) ||
-                html.contains("Just a moment", ignoreCase = true)
-        }
-
-        /**
-         * Opens a WebView to solve Cloudflare challenge on netmirror.gg/tv.
-         * Returns the cf_clearance cookie value, or null if solving failed/timed out.
-         * Uses a headless WebView approach - no UI dialog needed.
-         */
-        private fun solveCloudflareInWebView(): String? {
-            val app = Injekt.get<Application>()
-            return runBlocking {
-                withContext(Dispatchers.Main) {
-                    suspendCancellableCoroutine { cont ->
-                        try {
-                            val cookieManager = CookieManager.getInstance()
-                            cookieManager.setAcceptCookie(true)
-
-                            val wv = WebView(app)
-                            cookieManager.setAcceptThirdPartyCookies(wv, true)
-
-                            val ws = wv.settings
-                            ws.javaScriptEnabled = true
-                            ws.domStorageEnabled = true
-                            ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                            ws.userAgentString = "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-                            ws.mediaPlaybackRequiresUserGesture = false
-                            wv.webChromeClient = WebChromeClient()
-
-                            var resolved = false
-                            fun extractAndFinish() {
-                                if (resolved) return
-                                val cookies = cookieManager.getCookie(NETMIRROR_TV_URL) ?: ""
-                                val match = Regex("""cf_clearance=([^;]+)""").find(cookies)
-                                val cf = match?.groupValues?.get(1)
-                                if (!cf.isNullOrEmpty()) {
-                                    resolved = true
-                                    try {
-                                        wv.stopLoading()
-                                    } catch (_: Exception) {}
-                                    try {
-                                        wv.destroy()
-                                    } catch (_: Exception) {}
-                                    cont.resume(cf)
-                                }
-                            }
-
-                            wv.webViewClient = object : WebViewClient() {
-                                override fun onPageFinished(view: WebView?, url: String?) {
-                                    super.onPageFinished(view, url)
-                                    extractAndFinish()
-                                    if (!resolved) {
-                                        val handler = Handler(Looper.getMainLooper())
-                                        handler.postDelayed(
-                                            object : Runnable {
-                                                override fun run() {
-                                                    if (!resolved) {
-                                                        extractAndFinish()
-                                                        if (!resolved) {
-                                                            handler.postDelayed(this, 1000L)
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                            1000L,
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Auto-timeout after 30 seconds
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                if (!resolved) {
-                                    resolved = true
-                                    try {
-                                        wv.stopLoading()
-                                    } catch (_: Exception) {}
-                                    try {
-                                        wv.destroy()
-                                    } catch (_: Exception) {}
-                                    try {
-                                        cont.resume(null)
-                                    } catch (_: Exception) {}
-                                }
-                            }, 30_000L)
-
-                            wv.loadUrl(NETMIRROR_TV_URL)
-                        } catch (_: Exception) {
-                            cont.resume(null)
-                        }
-                    }
-                }
-            }
         }
 
         private fun decodeBase64(value: String): String = String(android.util.Base64.decode(value, android.util.Base64.DEFAULT))
