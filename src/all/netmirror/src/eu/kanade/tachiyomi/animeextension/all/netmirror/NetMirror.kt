@@ -119,6 +119,27 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
+            val response = chain.proceed(request)
+
+            if (response.isSuccessful && (url.contains("/hls/") || url.contains(".m3u8")) && !url.contains("nm-cdn")) {
+                val originalBody = response.body?.string() ?: ""
+                val epIdFromUrl = url.substringAfter("/hls/").substringBefore(".m3u8").substringBefore("?")
+                val fixedBody = originalBody
+                    .replace("s21.nm-cdn4.top", "s23.nm-cdn9.top")
+                    .replace("nm-cdn4.top", "nm-cdn9.top")
+                    .replace("nm-cdn.top", "nm-cdn9.top")
+                    .replace("220884", epIdFromUrl)
+                val mediaType = response.body?.contentType()
+                return@addInterceptor response.newBuilder()
+                    .body(okhttp3.ResponseBody.create(mediaType, fixedBody))
+                    .build()
+            }
+
+            response
+        }
+        .addInterceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
             if (url.contains(".m3u8") || url.contains(".jpg") || url.contains(".ts") || url.contains(".vtt") || url.contains("nm-cdn")) {
                 val newRequest = request.newBuilder()
                     .header("Referer", "https://net52.cc/")
@@ -487,7 +508,10 @@ class CNCVerseSource(
         val videoLinkFile = sources.getJSONObject(0).optString("file")
         if (videoLinkFile.isEmpty()) return emptyList()
 
-        val videoLink = if (videoLinkFile.startsWith("http")) videoLinkFile else "$workingDomain$videoLinkFile"
+        val cleanToken = finalH.removePrefix("in=").substringBefore("&")
+        val fixedVideoLinkFile = videoLinkFile.replace("unknown::db", cleanToken)
+
+        val videoLink = if (fixedVideoLinkFile.startsWith("http")) fixedVideoLinkFile else "$workingDomain$fixedVideoLinkFile"
 
         val playlistUtils = PlaylistUtils(client, headers)
 
