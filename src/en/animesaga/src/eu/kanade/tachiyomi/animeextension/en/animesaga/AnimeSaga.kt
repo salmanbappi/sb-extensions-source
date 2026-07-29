@@ -303,8 +303,7 @@ class AnimeSaga :
         }
 
         val responseBody = response.body.string()
-        val cipherRes = json.decodeFromString<CipherResponse>(responseBody)
-        val decryptedBody = cipherRes.ciphertext?.let { decrypt(it) } ?: return emptyList()
+        val decryptedBody = parseResponseBody(responseBody)
 
         val episodesRes = json.decodeFromString<EpisodesResponse>(decryptedBody)
         if (!episodesRes.success) return emptyList()
@@ -377,14 +376,17 @@ class AnimeSaga :
         }
 
         val responseBody = response.body.string()
-        val cipherRes = json.decodeFromString<CipherResponse>(responseBody)
-        val decryptedBody = cipherRes.ciphertext?.let { decrypt(it) } ?: return emptyList()
+        val decryptedBody = parseResponseBody(responseBody)
 
         val streamRes = json.decodeFromString<StreamResponse>(decryptedBody)
         if (!streamRes.success) return emptyList()
 
         val sMap = streamRes.servers ?: return emptyList()
-        val allServerNames = (sMap.sub.mapNotNull { it.name ?: it.label } + sMap.dub.mapNotNull { it.name ?: it.label }).distinct()
+        val allServerNames = (
+            sMap.sub.mapNotNull { it.name ?: it.label } +
+            sMap.dub.mapNotNull { it.name ?: it.label } +
+            sMap.raw.mapNotNull { it.name ?: it.label }
+        ).distinct()
 
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
         val filteredServerNames = allServerNames.filter { it !in excludedServers }
@@ -394,15 +396,17 @@ class AnimeSaga :
         filteredServerNames.forEach { serverName ->
             val subItem = sMap.sub.firstOrNull { (it.name ?: it.label) == serverName }
             val dubItem = sMap.dub.firstOrNull { (it.name ?: it.label) == serverName }
+            val rawItem = sMap.raw.firstOrNull { (it.name ?: it.label) == serverName }
 
             val subIdVal = subItem?.let { it.url ?: it.linkId } ?: ""
             val dubIdVal = dubItem?.let { it.url ?: it.linkId } ?: ""
+            val rawIdVal = rawItem?.let { it.url ?: it.linkId } ?: ""
 
-            if (subIdVal.isNotEmpty() || dubIdVal.isNotEmpty()) {
+            if (subIdVal.isNotEmpty() || dubIdVal.isNotEmpty() || rawIdVal.isNotEmpty()) {
                 hosterList.add(
                     Hoster(
                         hosterName = serverName,
-                        hosterUrl = "$serverName|$subIdVal|$dubIdVal|${payload.provider}|${payload.title}|${payload.romaji}|${payload.anilistId}|${payload.malId}",
+                        hosterUrl = "$serverName|$subIdVal|$dubIdVal|$rawIdVal|${payload.provider}|${payload.title}|${payload.romaji}|${payload.anilistId}|${payload.malId}",
                     ),
                 )
             }
@@ -423,11 +427,12 @@ class AnimeSaga :
         val serverName = parts[0]
         val subUrl = parts[1]
         val dubUrl = parts[2]
-        val provider = parts[3]
-        val title = parts[4]
-        val romaji = parts[5]
-        val anilistId = parts[6]
-        val malId = parts[7]
+        val (rawUrl, providerIdx) = if (parts.size >= 9) Pair(parts[3], 4) else Pair("", 3)
+        val provider = parts[providerIdx]
+        val title = parts[providerIdx + 1]
+        val romaji = parts[providerIdx + 2]
+        val anilistId = parts[providerIdx + 3]
+        val malId = parts[providerIdx + 4]
 
         val videoList = mutableListOf<Video>()
 
@@ -455,6 +460,23 @@ class AnimeSaga :
                     urlOrLinkId = dubUrl,
                     serverName = serverName,
                     audioType = "DUB",
+                    title = title,
+                    romaji = romaji,
+                    anilistId = anilistId,
+                    malId = malId,
+                ).forEach { v ->
+                    videoList.add(v)
+                }
+            }
+        }
+
+        if (rawUrl.isNotEmpty()) {
+            runCatching {
+                extractVideos(
+                    provider = provider,
+                    urlOrLinkId = rawUrl,
+                    serverName = serverName,
+                    audioType = "RAW",
                     title = title,
                     romaji = romaji,
                     anilistId = anilistId,
@@ -557,11 +579,9 @@ class AnimeSaga :
             val response = client.newCall(GET(streamUrl, headers)).execute()
             if (response.isSuccessful) {
                 val responseBody = response.body.string()
-                val cipherRes = json.decodeFromString<CipherResponse>(responseBody)
-                val decryptedBody = cipherRes.ciphertext?.let { decrypt(it) }
-                if (decryptedBody != null) {
-                    val streamRes = json.decodeFromString<StreamResponse>(decryptedBody)
-                    if (streamRes.success) {
+                val decryptedBody = parseResponseBody(responseBody)
+                val streamRes = json.decodeFromString<StreamResponse>(decryptedBody)
+                if (streamRes.success) {
                         val embedUrl = streamRes.embedUrl ?: ""
                         val directUrl = if (embedUrl.startsWith("/api/stream/proxy?url=")) {
                             Uri.decode(embedUrl.substringAfter("url="))
@@ -664,6 +684,11 @@ class AnimeSaga :
     }
 
     // ============================ Utilities =============================
+
+    private fun parseResponseBody(responseBody: String): String {
+        val cipherRes = runCatching { json.decodeFromString<CipherResponse>(responseBody) }.getOrNull()
+        return cipherRes?.ciphertext?.let { decrypt(it) } ?: responseBody
+    }
 
     private fun decrypt(ciphertext: String, key: String = "as-secure-stream-key"): String {
         val decoded = Base64.decode(ciphertext, Base64.DEFAULT)
@@ -1173,6 +1198,7 @@ data class TrackItem(
 data class ServerMap(
     val sub: List<ServerItem> = emptyList(),
     val dub: List<ServerItem> = emptyList(),
+    val raw: List<ServerItem> = emptyList(),
 )
 
 @Serializable
