@@ -66,28 +66,13 @@ class CNCVerseSource(
         else -> "https://imgcdn.kim/hs/v/$id.jpg"
     }
 
-    private val noNet50Dns = Dns { hostname ->
-        if (hostname.contains("net50.cc")) {
-            return@Dns listOf(
-                InetAddress.getByAddress(hostname, byteArrayOf(172.toByte(), 67.toByte(), 73.toByte(), 17.toByte())),
-                InetAddress.getByAddress(hostname, byteArrayOf(104.toByte(), 26.toByte(), 11.toByte(), 139.toByte())),
-            )
-        }
-        Dns.SYSTEM.lookup(hostname)
-    }
-
     override val client: OkHttpClient = network.client.newBuilder()
-        .dns(noNet50Dns)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .addInterceptor { chain ->
-            var request = chain.request()
-            var url = request.url.toString()
-            if (url.contains("net50.cc")) {
-                url = url.replace("net50.cc", "net77.cc")
-                request = request.newBuilder().url(url).build()
-            }
-            if (url.contains("net77.cc") || url.contains("net52.cc") || url.contains("net11.cc")) {
+            val request = chain.request()
+            val url = request.url.toString()
+            if (url.contains("net77.cc") || url.contains("net11.cc")) {
                 var cookieVal = getBypassCookie()
                 if (cookieVal.isNotEmpty()) {
                     var cookieHeader = buildString {
@@ -435,7 +420,7 @@ class CNCVerseSource(
             .set("Referer", "$baseUrl/home")
             .build()
 
-        val playerDomains = listOf("https://net52.cc", baseUrl, "https://net11.cc")
+        val playerDomains = listOf(baseUrl)
         var workingDomain = baseUrl
         var dataTime = ""
         var dataH = ""
