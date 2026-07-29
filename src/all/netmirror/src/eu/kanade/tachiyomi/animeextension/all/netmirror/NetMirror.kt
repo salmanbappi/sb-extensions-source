@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
 import android.content.SharedPreferences
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -45,7 +46,9 @@ class CNCVerseSource(
     private val ott: String,
     private val studio: String,
     override val id: Long,
-) : Source() {
+) : ConfigurableAnimeSource, Source() {
+
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override val baseUrl = "https://net52.cc"
     override val lang = "all"
@@ -114,7 +117,7 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains(".m3u8") || url.contains(".vtt")) {
+            if ((url.contains(".m3u8") || url.contains(".vtt")) && request.header("Cookie") == null) {
                 val newRequest = request.newBuilder()
                     .header("Cookie", "hd=on")
                     .build()
@@ -431,7 +434,8 @@ class CNCVerseSource(
             }
         }
 
-        return mappedVideos.sortVideos()
+        val sorted = mappedVideos.sortVideos()
+        return m3u8Integration.processVideoList(sorted)
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
