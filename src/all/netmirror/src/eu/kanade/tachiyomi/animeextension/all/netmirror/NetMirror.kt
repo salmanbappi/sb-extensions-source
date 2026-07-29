@@ -652,47 +652,54 @@ class CNCVerseSource(
                 val directClient = OkHttpClient.Builder()
                     .followRedirects(false)
                     .followSslRedirects(false)
-                    .connectTimeout(15, TimeUnit.SECONDS)
-                    .readTimeout(15, TimeUnit.SECONDS)
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(5, TimeUnit.SECONDS)
                     .build()
 
-                val request = Request.Builder()
-                    .url("https://net52.cc/verify.php")
-                    .post(formBody)
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-                    .header("Accept-Encoding", "gzip, deflate, br, zstd")
-                    .header("Accept-Language", "en-US,en;q=0.9")
-                    .header("Cache-Control", "max-age=0")
-                    .header("Connection", "keep-alive")
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Origin", "https://net22.cc")
-                    .header("Referer", "https://net22.cc/verify2")
-                    .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
-                    .header("sec-ch-ua-mobile", "?0")
-                    .header("sec-ch-ua-platform", "\"Windows\"")
-                    .header("Sec-Fetch-Dest", "document")
-                    .header("Sec-Fetch-Mode", "navigate")
-                    .header("Sec-Fetch-Site", "same-origin")
-                    .header("Sec-Fetch-User", "?1")
-                    .header("Upgrade-Insecure-Requests", "1")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-                    .build()
+                val verifyUrls = listOf("$baseUrl/verify.php", "https://net52.cc/verify.php")
+                for (vUrl in verifyUrls) {
+                    try {
+                        val request = Request.Builder()
+                            .url(vUrl)
+                            .post(formBody)
+                            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+                            .header("Accept-Encoding", "gzip, deflate, br, zstd")
+                            .header("Accept-Language", "en-US,en;q=0.9")
+                            .header("Cache-Control", "max-age=0")
+                            .header("Connection", "keep-alive")
+                            .header("Content-Type", "application/x-www-form-urlencoded")
+                            .header("Origin", baseUrl)
+                            .header("Referer", "$baseUrl/verify2")
+                            .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
+                            .header("sec-ch-ua-mobile", "?0")
+                            .header("sec-ch-ua-platform", "\"Windows\"")
+                            .header("Sec-Fetch-Dest", "document")
+                            .header("Sec-Fetch-Mode", "navigate")
+                            .header("Sec-Fetch-Site", "same-origin")
+                            .header("Sec-Fetch-User", "?1")
+                            .header("Upgrade-Insecure-Requests", "1")
+                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+                            .build()
 
-                directClient.newCall(request).execute().use { response ->
-                    val setCookieHeaders = response.headers.values("Set-Cookie")
-                    for (header in setCookieHeaders) {
-                        if (header.startsWith("t_hash_t=")) {
-                            val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
-                            if (cookie.isNotEmpty()) {
-                                cookieValue = cookie
-                                cookieTimestamp = now
-                                sharedPreferences.edit()
-                                    .putString("nf_cookie", cookie)
-                                    .putLong("nf_cookie_timestamp", now)
-                                    .apply()
-                                return cookie
+                        directClient.newCall(request).execute().use { response ->
+                            val setCookieHeaders = response.headers.values("Set-Cookie")
+                            for (header in setCookieHeaders) {
+                                if (header.startsWith("t_hash_t=")) {
+                                    val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
+                                    if (cookie.isNotEmpty()) {
+                                        cookieValue = cookie
+                                        cookieTimestamp = now
+                                        sharedPreferences.edit()
+                                            .putString("nf_cookie", cookie)
+                                            .putLong("nf_cookie_timestamp", now)
+                                            .apply()
+                                        return cookie
+                                    }
+                                }
                             }
                         }
+                    } catch (e: Exception) {
+                        // Try next verify URL
                     }
                 }
             } catch (e: Exception) {
