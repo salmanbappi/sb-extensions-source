@@ -379,7 +379,10 @@ class CNCVerseSource(
             return emptyList()
         }
 
-        val cookieVal = getBypassCookie()
+        var cookieVal = getBypassCookie()
+        if (cookieVal.isEmpty()) {
+            cookieVal = getBypassCookie(force = true)
+        }
         val cookieHeader = buildString {
             if (cookieVal.isNotEmpty()) {
                 append("t_hash_t=$cookieVal; ")
@@ -571,7 +574,7 @@ class CNCVerseSource(
             val savedCookie = if (force) null else sharedPreferences.getString("nf_cookie", null)
             val savedTimestamp = if (force) 0L else sharedPreferences.getLong("nf_cookie_timestamp", 0L)
 
-            if (!savedCookie.isNullOrEmpty() && now - savedTimestamp < 54_000_000) {
+            if (!savedCookie.isNullOrEmpty() && now - savedTimestamp < 7_200_000) {
                 cookieValue = savedCookie
                 cookieTimestamp = savedTimestamp
                 return savedCookie
@@ -598,8 +601,8 @@ class CNCVerseSource(
                     .header("Cache-Control", "max-age=0")
                     .header("Connection", "keep-alive")
                     .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Origin", "https://net22.cc")
-                    .header("Referer", "https://net22.cc/verify2")
+                    .header("Origin", "https://net52.cc")
+                    .header("Referer", "https://net52.cc/verify2")
                     .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
                     .header("sec-ch-ua-mobile", "?0")
                     .header("sec-ch-ua-platform", "\"Windows\"")
