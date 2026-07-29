@@ -786,7 +786,9 @@ class CNCVerseSource(
                 directClient.newCall(req).execute().use { resp ->
                     resp.body?.string() ?: ""
                 }
-            } catch (_: Exception) { "" }
+            } catch (_: Exception) {
+                ""
+            }
         }
 
         private fun isCloudflareChallenge(html: String, statusCode: Int): Boolean {
@@ -829,8 +831,12 @@ class CNCVerseSource(
                                 val cf = match?.groupValues?.get(1)
                                 if (!cf.isNullOrEmpty()) {
                                     resolved = true
-                                    try { wv.stopLoading() } catch (_: Exception) {}
-                                    try { wv.destroy() } catch (_: Exception) {}
+                                    try {
+                                        wv.stopLoading()
+                                    } catch (_: Exception) {}
+                                    try {
+                                        wv.destroy()
+                                    } catch (_: Exception) {}
                                     cont.resume(cf)
                                 }
                             }
@@ -841,16 +847,19 @@ class CNCVerseSource(
                                     extractAndFinish()
                                     if (!resolved) {
                                         val handler = Handler(Looper.getMainLooper())
-                                        handler.postDelayed(object : Runnable {
-                                            override fun run() {
-                                                if (!resolved) {
-                                                    extractAndFinish()
+                                        handler.postDelayed(
+                                            object : Runnable {
+                                                override fun run() {
                                                     if (!resolved) {
-                                                        handler.postDelayed(this, 1000L)
+                                                        extractAndFinish()
+                                                        if (!resolved) {
+                                                            handler.postDelayed(this, 1000L)
+                                                        }
                                                     }
                                                 }
-                                            }
-                                        }, 1000L)
+                                            },
+                                            1000L,
+                                        )
                                     }
                                 }
                             }
@@ -859,9 +868,15 @@ class CNCVerseSource(
                             Handler(Looper.getMainLooper()).postDelayed({
                                 if (!resolved) {
                                     resolved = true
-                                    try { wv.stopLoading() } catch (_: Exception) {}
-                                    try { wv.destroy() } catch (_: Exception) {}
-                                    try { cont.resume(null) } catch (_: Exception) {}
+                                    try {
+                                        wv.stopLoading()
+                                    } catch (_: Exception) {}
+                                    try {
+                                        wv.destroy()
+                                    } catch (_: Exception) {}
+                                    try {
+                                        cont.resume(null)
+                                    } catch (_: Exception) {}
                                 }
                             }, 30_000L)
 
