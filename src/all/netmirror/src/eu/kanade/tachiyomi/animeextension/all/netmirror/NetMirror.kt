@@ -375,7 +375,7 @@ class CNCVerseSource(
         val videoLink = jsonObj.optString("video_link")
         val referer = jsonObj.optString("referer")
 
-        if (status != "ok" || videoLink.isEmpty()) {
+        if (videoLink.isEmpty()) {
             return emptyList()
         }
 
