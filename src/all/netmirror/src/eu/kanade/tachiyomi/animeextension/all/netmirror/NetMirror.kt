@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
+import android.content.SharedPreferences
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -407,27 +408,7 @@ class CNCVerseSource(
             emptyList()
         }
 
-        val mappedVideos = videos.map { video ->
-            if (video.subtitleTracks.isEmpty()) {
-                video
-            } else {
-                Video(
-                    videoUrl = video.videoUrl,
-                    videoTitle = video.videoTitle,
-                    headers = video.headers,
-                    subtitleTracks = video.subtitleTracks.map { track ->
-                        if (track.url.endsWith(".m3u8")) {
-                            Track(track.url.substringBeforeLast(".m3u8") + ".vtt", track.lang)
-                        } else {
-                            track
-                        }
-                    },
-                    audioTracks = video.audioTracks,
-                )
-            }
-        }
-
-        return mappedVideos.sortVideos()
+        return videos.sortVideos()
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
