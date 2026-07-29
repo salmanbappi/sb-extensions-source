@@ -551,6 +551,8 @@ class CNCVerseSource(
     override fun getFilterList(): AnimeFilterList = AnimeFilterList()
 
     companion object {
+        private const val MAIN_BASE_URL = "https://net77.cc"
+
         private val sharedPreferences: SharedPreferences by lazy {
             Injekt.get<Application>().getSharedPreferences("cncverse_shared_prefs", 0)
         }
@@ -656,7 +658,7 @@ class CNCVerseSource(
                     .readTimeout(5, TimeUnit.SECONDS)
                     .build()
 
-                val verifyUrls = listOf("$baseUrl/verify.php", "https://net52.cc/verify.php")
+                val verifyUrls = listOf("$MAIN_BASE_URL/verify.php", "https://net52.cc/verify.php")
                 for (vUrl in verifyUrls) {
                     try {
                         val request = Request.Builder()
@@ -668,8 +670,8 @@ class CNCVerseSource(
                             .header("Cache-Control", "max-age=0")
                             .header("Connection", "keep-alive")
                             .header("Content-Type", "application/x-www-form-urlencoded")
-                            .header("Origin", baseUrl)
-                            .header("Referer", "$baseUrl/verify2")
+                            .header("Origin", MAIN_BASE_URL)
+                            .header("Referer", "$MAIN_BASE_URL/verify2")
                             .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
                             .header("sec-ch-ua-mobile", "?0")
                             .header("sec-ch-ua-platform", "\"Windows\"")
