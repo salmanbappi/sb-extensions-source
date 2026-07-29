@@ -68,7 +68,7 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains("net52.cc") || url.contains("net11.cc")) {
+            if (url.contains("net77.cc") || url.contains("net52.cc") || url.contains("net11.cc")) {
                 var cookieVal = getBypassCookie()
                 if (cookieVal.isNotEmpty()) {
                     var cookieHeader = buildString {
@@ -416,55 +416,7 @@ class CNCVerseSource(
             .set("Referer", "$baseUrl/home")
             .build()
 
-        // 1. Fetch play iframe HTML to extract data-time and data-h signatures
-        val iframeRequest = Request.Builder()
-            .url("https://net52.cc/play.php?id=$episodeId&$hToken")
-            .headers(requestHeaders)
-            .build()
-
-        var dataTime = ""
-        var dataH = ""
-
-        try {
-            client.newCall(iframeRequest).execute().use { iframeResponse ->
-                val html = iframeResponse.body.string()
-                dataTime = Regex("""data-time=["']([^"']+)["']""").find(html)?.groupValues?.get(1) ?: ""
-                dataH = Regex("""data-h=["']([^"']+)["']""").find(html)?.groupValues?.get(1) ?: ""
-            }
-        } catch (e: Exception) {
-            // Fallback
-        }
-
-        val finalH = if (dataH.isNotEmpty()) dataH else hToken
-
-        // 2. Fetch signed playlist JSON
-        val playlistUrl = "https://net52.cc/playlist.php?id=$episodeId&t=&tm=$dataTime&h=$finalH"
-        val playlistRequest = Request.Builder()
-            .url(playlistUrl)
-            .headers(requestHeaders)
-            .build()
-
-        val playlistJson = try {
-            client.newCall(playlistRequest).execute().use { it.body.string() }
-        } catch (e: Exception) {
-            return emptyList()
-        }
-
-        val playlistArray = try {
-            JSONArray(playlistJson)
-        } catch (e: Exception) {
-            return emptyList()
-        }
-        if (playlistArray.length() == 0) return emptyList()
-
-        val firstItem = playlistArray.getJSONObject(0)
-        val sources = firstItem.optJSONArray("sources") ?: return emptyList()
-        if (sources.length() == 0) return emptyList()
-
-        val videoLinkFile = sources.getJSONObject(0).optString("file")
-        if (videoLinkFile.isEmpty()) return emptyList()
-
-        val videoLink = if (videoLinkFile.startsWith("http")) videoLinkFile else "https://net52.cc$videoLinkFile"
+        val videoLink = "$baseUrl/hls/$episodeId.m3u8?q=720p&$hToken"
 
         val playlistUtils = PlaylistUtils(client, headers)
 
@@ -489,7 +441,7 @@ class CNCVerseSource(
         val videos = try {
             playlistUtils.extractFromHls(
                 playlistUrl = videoLink,
-                referer = "https://net52.cc/play.php",
+                referer = "$baseUrl/home",
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
                 videoNameGen = { "$name - $it" },
