@@ -66,46 +66,9 @@ class CNCVerseSource(
         else -> "https://imgcdn.kim/hs/v/$id.jpg"
     }
 
-    private val net52Dns = Dns { hostname ->
-        if (hostname.contains("net52.cc") || hostname.contains("net50.cc")) {
-            return@Dns listOf(
-                InetAddress.getByAddress(hostname, byteArrayOf(172.toByte(), 67.toByte(), 71.toByte(), 108.toByte())),
-                InetAddress.getByAddress(hostname, byteArrayOf(104.toByte(), 26.toByte(), 1.toByte(), 214.toByte())),
-                InetAddress.getByAddress(hostname, byteArrayOf(104.toByte(), 26.toByte(), 0.toByte(), 214.toByte())),
-            )
-        }
-        Dns.SYSTEM.lookup(hostname)
-    }
-
     override val client: OkHttpClient = network.client.newBuilder()
-        .dns(net52Dns)
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .addInterceptor { chain ->
-            var request = chain.request()
-            val url = request.url.toString()
-            if (url.contains("nm-cdn")) {
-                val newUrl = url.replace("nm-cdn4.top", "freecdn4.top")
-                    .replace("nm-cdn3.top", "freecdn3.top")
-                    .replace("nm-cdn2.top", "freecdn2.top")
-                    .replace("nm-cdn.top", "freecdn.top")
-                request = request.newBuilder().url(newUrl).build()
-            }
-            val response = chain.proceed(request)
-            if (response.isRedirect) {
-                val location = response.header("Location")
-                if (location != null && location.contains("nm-cdn")) {
-                    val newLocation = location.replace("nm-cdn4.top", "freecdn4.top")
-                        .replace("nm-cdn3.top", "freecdn3.top")
-                        .replace("nm-cdn2.top", "freecdn2.top")
-                        .replace("nm-cdn.top", "freecdn.top")
-                    response.close()
-                    val redirectRequest = request.newBuilder().url(newLocation).build()
-                    return@addInterceptor chain.proceed(redirectRequest)
-                }
-            }
-            response
-        }
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
