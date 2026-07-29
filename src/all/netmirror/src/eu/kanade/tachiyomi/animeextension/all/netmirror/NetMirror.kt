@@ -150,7 +150,7 @@ class CNCVerseSource(
         .set("Sec-Fetch-Site", "same-origin")
         .set("Sec-Fetch-User", "?1")
         .set("Upgrade-Insecure-Requests", "1")
-        .set("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0")
+        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .set("X-Requested-With", "XMLHttpRequest")
 
     // ============================== Popular ===============================
@@ -430,6 +430,8 @@ class CNCVerseSource(
         val masterHeadersGen = { baseHeaders: Headers, ref: String ->
             val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
             headers.newBuilder().apply {
+                set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                set("Referer", "https://net52.cc/")
                 if (cookieVal.isNotEmpty()) {
                     set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
                 }
@@ -439,6 +441,8 @@ class CNCVerseSource(
         val videoHeadersGen = { baseHeaders: Headers, ref: String, videoUrl: String ->
             val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
             headers.newBuilder().apply {
+                set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                set("Referer", "https://net52.cc/")
                 if (cookieVal.isNotEmpty()) {
                     set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
                 }
