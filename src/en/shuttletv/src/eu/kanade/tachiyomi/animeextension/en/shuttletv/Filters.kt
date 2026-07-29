@@ -5,43 +5,47 @@ import java.util.Calendar
 
 object Filters {
 
-    class TypeFilter : UriPartFilter(
-        "Media Type",
-        arrayOf(
-            Pair("All", "all"),
-            Pair("Movie", "movie"),
-            Pair("TV Show", "tv")
+    class TypeFilter :
+        UriPartFilter(
+            "Media Type",
+            arrayOf(
+                Pair("All", "all"),
+                Pair("Movie", "movie"),
+                Pair("TV Show", "tv"),
+            ),
         )
-    )
 
-    class CategoryFilter : UriPartFilter(
-        "Category",
-        arrayOf(
-            Pair("Trending", "trending"),
-            Pair("Popular", "popular"),
-            Pair("Award Winners", "award_winners"),
-            Pair("Discover", "discover")
+    class CategoryFilter :
+        UriPartFilter(
+            "Category",
+            arrayOf(
+                Pair("Trending", "trending"),
+                Pair("Popular", "popular"),
+                Pair("Award Winners", "award_winners"),
+                Pair("Discover", "discover"),
+            ),
         )
-    )
 
-    class SortFilter : UriPartFilter(
-        "Sort By",
-        arrayOf(
-            Pair("Popularity (Desc)", "popularity.desc"),
-            Pair("Popularity (Asc)", "popularity.asc"),
-            Pair("Release Date (Desc)", "primary_release_date.desc"),
-            Pair("Release Date (Asc)", "primary_release_date.asc"),
-            Pair("Vote Average (Desc)", "vote_average.desc"),
-            Pair("Vote Average (Asc)", "vote_average.asc"),
-            Pair("Title (AZ)", "title.asc"),
-            Pair("Title (ZA)", "title.desc")
+    class SortFilter :
+        UriPartFilter(
+            "Sort By",
+            arrayOf(
+                Pair("Popularity (Desc)", "popularity.desc"),
+                Pair("Popularity (Asc)", "popularity.asc"),
+                Pair("Release Date (Desc)", "primary_release_date.desc"),
+                Pair("Release Date (Asc)", "primary_release_date.asc"),
+                Pair("Vote Average (Desc)", "vote_average.desc"),
+                Pair("Vote Average (Asc)", "vote_average.asc"),
+                Pair("Title (AZ)", "title.asc"),
+                Pair("Title (ZA)", "title.desc"),
+            ),
         )
-    )
 
-    class YearFilter : UriPartFilter(
-        "Year",
-        YEARS
-    ) {
+    class YearFilter :
+        UriPartFilter(
+            "Year",
+            YEARS,
+        ) {
         companion object {
             private val CURRENT_YEAR by lazy {
                 Calendar.getInstance().get(Calendar.YEAR)
@@ -56,10 +60,11 @@ object Filters {
 
     class GenreCheckBox(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
 
-    class GenreFilter : AnimeFilter.Group<AnimeFilter.CheckBox>(
-        "Genres",
-        GENRES.map { GenreCheckBox(it.first, it.second) }
-    ) {
+    class GenreFilter :
+        AnimeFilter.Group<AnimeFilter.CheckBox>(
+            "Genres",
+            GENRES.map { GenreCheckBox(it.first, it.second) },
+        ) {
         fun selectedIds(): List<String> = state.filter { it.state }.map { (it as GenreCheckBox).id }
 
         companion object {
@@ -89,15 +94,16 @@ object Filters {
                 Pair("Thriller", "53"),
                 Pair("War", "10752"),
                 Pair("War & Politics", "10768"),
-                Pair("Western", "37")
+                Pair("Western", "37"),
             )
         }
     }
 
-    class CountryFilter : UriPartFilter(
-        "Country",
-        COUNTRIES
-    ) {
+    class CountryFilter :
+        UriPartFilter(
+            "Country",
+            COUNTRIES,
+        ) {
         companion object {
             private val COUNTRIES = arrayOf(
                 Pair("All", ""),
@@ -125,17 +131,17 @@ object Filters {
                 Pair("Turkey", "TR"),
                 Pair("Thailand", "TH"),
                 Pair("Hong Kong", "HK"),
-                Pair("Taiwan", "TW")
+                Pair("Taiwan", "TW"),
             )
         }
     }
 
     open class UriPartFilter(
         displayName: String,
-        private val vals: Array<Pair<String, String>>
+        private val vals: Array<Pair<String, String>>,
     ) : AnimeFilter.Select<String>(
         displayName,
-        vals.map { it.first }.toTypedArray()
+        vals.map { it.first }.toTypedArray(),
     ) {
         fun toUriPart() = vals[state].second
         fun isDefault() = state == 0
