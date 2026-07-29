@@ -1,8 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
-import android.content.SharedPreferences
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -48,8 +46,6 @@ class CNCVerseSource(
     override val id: Long,
 ) : Source(),
     ConfigurableAnimeSource {
-
-    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override val baseUrl = "https://net52.cc"
     override val lang = "all"
@@ -377,28 +373,24 @@ class CNCVerseSource(
             }
         }
 
-        val videoHeaders = Headers.Builder()
-            .set("Referer", referer.ifEmpty { getApiUrl() })
-            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
-            .set("Cookie", cookieHeader)
-            .build()
-
-        val playlistUtils = PlaylistUtils(client, headers)
+        val streamReferer = "$baseUrl/mobile/home?app=1"
 
         val masterHeadersGen = { baseHeaders: Headers, ref: String ->
-            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
-            headers.newBuilder().apply {
+            baseHeaders.newBuilder().apply {
+                set("Referer", streamReferer)
+                set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
                 if (cookieVal.isNotEmpty()) {
-                    set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
+                    set("Cookie", cookieHeader)
                 }
             }.build()
         }
 
         val videoHeadersGen = { baseHeaders: Headers, ref: String, videoUrl: String ->
-            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
-            headers.newBuilder().apply {
+            baseHeaders.newBuilder().apply {
+                set("Referer", streamReferer)
+                set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
                 if (cookieVal.isNotEmpty()) {
-                    set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
+                    set("Cookie", cookieHeader)
                 }
             }.build()
         }
@@ -406,7 +398,7 @@ class CNCVerseSource(
         val videos = try {
             playlistUtils.extractFromHls(
                 playlistUrl = videoLink,
-                referer = referer.ifEmpty { getApiUrl() },
+                referer = streamReferer,
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
                 videoNameGen = { "$name - $it" },
@@ -435,8 +427,7 @@ class CNCVerseSource(
             }
         }
 
-        val sorted = mappedVideos.sortVideos()
-        return m3u8Integration.processVideoList(sorted)
+        return mappedVideos.sortVideos()
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
