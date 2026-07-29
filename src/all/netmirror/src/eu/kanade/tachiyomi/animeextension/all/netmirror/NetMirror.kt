@@ -2,6 +2,13 @@ package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -15,6 +22,10 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -27,17 +38,6 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.UUID
 import java.util.concurrent.TimeUnit
-import android.os.Handler
-import android.os.Looper
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 class NetMirror : AnimeSourceFactory {
@@ -773,7 +773,9 @@ class CNCVerseSource(
                             val cf = match?.groupValues?.get(1)
                             if (!cf.isNullOrEmpty()) {
                                 resolved = true
-                                try { wv.destroy() } catch (_: Exception) {}
+                                try {
+                                    wv.destroy()
+                                } catch (_: Exception) {}
                                 cont.resume(cf)
                             }
                         }
@@ -784,16 +786,19 @@ class CNCVerseSource(
                                 extractAndFinish()
                                 if (!resolved) {
                                     val handler = Handler(Looper.getMainLooper())
-                                    handler.postDelayed(object : Runnable {
-                                        override fun run() {
-                                            if (!resolved) {
-                                                extractAndFinish()
+                                    handler.postDelayed(
+                                        object : Runnable {
+                                            override fun run() {
                                                 if (!resolved) {
-                                                    handler.postDelayed(this, 1000L)
+                                                    extractAndFinish()
+                                                    if (!resolved) {
+                                                        handler.postDelayed(this, 1000L)
+                                                    }
                                                 }
                                             }
-                                        }
-                                    }, 1000L)
+                                        },
+                                        1000L,
+                                    )
                                 }
                             }
                         }
