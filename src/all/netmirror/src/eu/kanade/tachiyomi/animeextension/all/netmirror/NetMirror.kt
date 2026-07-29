@@ -86,7 +86,7 @@ class CNCVerseSource(
                         .build()
                     var response = chain.proceed(newRequest)
 
-                    if (response.code == 302 || response.request.url.toString().contains("verify")) {
+                    if (response.request.url.toString().contains("verify")) {
                         response.close()
                         clearBypassCookie()
                         cookieVal = getBypassCookie(force = true)
@@ -142,30 +142,12 @@ class CNCVerseSource(
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/mobile/home?app=1", headers)
-
-    override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = org.jsoup.Jsoup.parse(response.body.string())
-        val animeList = mutableListOf<SAnime>()
-        val articles = document.select(".tray-container article, #top10 .top10-post")
-        for (element in articles) {
-            val id = element.selectFirst("a")?.attr("data-post") ?: element.attr("data-post") ?: continue
-            val title = element.selectFirst("img")?.attr("alt")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("img")?.attr("title")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("a")?.attr("title")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst(".card-title")?.text()?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("h3")?.text()?.takeIf { it.isNotEmpty() }
-                ?: ""
-            if (id.isNotEmpty()) {
-                val anime = SAnime.create()
-                anime.title = title
-                anime.url = id
-                anime.thumbnail_url = getPosterUrl(id)
-                animeList.add(anime)
-            }
-        }
-        return AnimesPage(animeList.distinctBy { it.url }, false)
+    override fun popularAnimeRequest(page: Int): Request {
+        val path = if (ottPath.isEmpty()) "search.php" else "$ottPath/search.php"
+        return GET("$baseUrl/mobile/$path?s=&t=${System.currentTimeMillis() / 1000}", headers)
     }
+
+    override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
 
     // =============================== Latest ===============================
 
@@ -568,6 +550,9 @@ class CNCVerseSource(
         @Synchronized
         private fun getBypassCookie(force: Boolean = false): String {
             val now = System.currentTimeMillis()
+            if (force && cookieValue.isNotEmpty() && now - cookieTimestamp < 60_000) {
+                return cookieValue
+            }
             val savedCookie = if (force) null else sharedPreferences.getString("nf_cookie", null)
             val savedTimestamp = if (force) 0L else sharedPreferences.getLong("nf_cookie_timestamp", 0L)
 
