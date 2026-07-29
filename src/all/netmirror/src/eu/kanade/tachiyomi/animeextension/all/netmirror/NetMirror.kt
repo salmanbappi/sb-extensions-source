@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
 import android.content.SharedPreferences
-import android.webkit.CookieManager
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -22,7 +21,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import uy.kohesive.injekt.Injekt
@@ -70,7 +68,7 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains("net52.cc") || url.contains("net77.cc") || url.contains("net11.cc")) {
+            if (url.contains("net52.cc") || url.contains("net11.cc")) {
                 var cookieVal = getBypassCookie()
                 if (cookieVal.isNotEmpty()) {
                     var cookieHeader = buildString {
@@ -116,46 +114,11 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains(".m3u8") || url.contains(".vtt") || url.contains("userver.net52.cc")) {
-                val existingCookie = request.header("Cookie")
-                val cookieVal = getBypassCookie()
-                val cookieHeader = buildString {
-                    if (!existingCookie.isNullOrEmpty()) {
-                        append(existingCookie)
-                        if (!existingCookie.contains("hd=on")) append("; hd=on")
-                        if (!existingCookie.contains("t_hash_t=") && cookieVal.isNotEmpty()) append("; t_hash_t=$cookieVal")
-                    } else {
-                        if (cookieVal.isNotEmpty()) append("t_hash_t=$cookieVal; ")
-                        append("ott=$ott; hd=on")
-                    }
-                }
+            if (url.contains(".m3u8") || url.contains(".vtt")) {
                 val newRequest = request.newBuilder()
-                    .header("Cookie", cookieHeader)
+                    .header("Cookie", "hd=on")
                     .build()
-
-                val response = chain.proceed(newRequest)
-                if (url.contains(".m3u8") && response.isSuccessful) {
-                    val bodyString = response.body.string()
-                    val inToken = if (url.contains("in=")) url.substringAfter("in=").substringBefore("&") else ""
-                    val epId = if (url.contains("/hls/")) url.substringAfter("/hls/").substringBefore(".m3u8").substringBefore("?") else ""
-
-                    if (bodyString.contains("220884") || bodyString.contains("https:///")) {
-                        var fixedBody = bodyString.replace("https:///", "https://s23.nm-cdn9.top/")
-                        if (epId.isNotEmpty()) {
-                            fixedBody = fixedBody.replace("220884", epId)
-                        }
-                        if (inToken.isNotEmpty() && fixedBody.contains("in=unknown::db")) {
-                            fixedBody = fixedBody.replace("in=unknown::db", "in=$inToken")
-                        }
-                        return@addInterceptor response.newBuilder()
-                            .body(fixedBody.toResponseBody(response.body.contentType()))
-                            .build()
-                    }
-                    return@addInterceptor response.newBuilder()
-                        .body(bodyString.toResponseBody(response.body.contentType()))
-                        .build()
-                }
-                return@addInterceptor response
+                return@addInterceptor chain.proceed(newRequest)
             }
             chain.proceed(request)
         }
@@ -174,7 +137,7 @@ class CNCVerseSource(
         .set("Sec-Fetch-Site", "same-origin")
         .set("Sec-Fetch-User", "?1")
         .set("Upgrade-Insecure-Requests", "1")
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .set("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0")
         .set("X-Requested-With", "XMLHttpRequest")
 
     // ============================== Popular ===============================
@@ -387,21 +350,19 @@ class CNCVerseSource(
     // ============================ Video Links =============================
 
     override fun videoListRequest(episode: SEpisode): Request {
-        var cookieVal = getBypassCookie()
-        if (cookieVal.isEmpty()) {
-            cookieVal = getBypassCookie(force = true)
-        }
-        val path = when (ott) {
-            "hs", "dp" -> "/mobile/hs/playlist.php"
-            "pv" -> "/mobile/pv/playlist.php"
-            else -> "/mobile/playlist.php"
-        }
-        val url = "$baseUrl$path?id=${episode.url}"
+        val apiBase = getApiUrl()
+        val url = "$apiBase/newtv/player.php?id=${episode.url}"
 
+        val ottValue = if (ott == "dp") "hs" else ott
         val headers = Headers.Builder()
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .add("Referer", "$baseUrl/mobile/home?app=1")
-            .add("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
+            .add("Ott", ottValue)
+            .add("Usertoken", "")
+            .add("Cache-Control", "no-cache, no-store, must-revalidate")
+            .add("Pragma", "no-cache")
+            .add("Expires", "0")
+            .add("X-Requested-With", "NetmirrorNewTV v1.0")
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
+            .add("Accept", "application/json, text/plain, */*")
             .build()
 
         return GET(url, headers)
@@ -409,35 +370,16 @@ class CNCVerseSource(
 
     override fun videoListParse(response: Response): List<Video> {
         val json = response.body.string()
-        if (json.isEmpty()) return emptyList()
+        val jsonObj = JSONObject(json)
+        val status = jsonObj.optString("status")
+        val videoLink = jsonObj.optString("video_link")
+        val referer = jsonObj.optString("referer")
 
-        val videoLink: String
-        val referer: String
-        if (json.trimStart().startsWith("[")) {
-            val jsonArr = JSONArray(json)
-            if (jsonArr.length() == 0) return emptyList()
-            val item = jsonArr.getJSONObject(0)
-            val sources = item.optJSONArray("sources") ?: return emptyList()
-            if (sources.length() == 0) return emptyList()
-            val fileRel = sources.getJSONObject(0).optString("file")
-            if (fileRel.isEmpty()) return emptyList()
-            videoLink = if (fileRel.startsWith("http")) fileRel else "$baseUrl$fileRel"
-            referer = "$baseUrl/mobile/home?app=1"
-        } else {
-            val jsonObj = JSONObject(json)
-            val status = jsonObj.optString("status")
-            val vLink = jsonObj.optString("video_link")
-            if ((status != "ok" && status != "otp") || vLink.isEmpty()) {
-                return emptyList()
-            }
-            videoLink = vLink
-            referer = jsonObj.optString("referer").ifEmpty { getApiUrl() }
+        if ((status != "ok" && status != "otp") || videoLink.isEmpty()) {
+            return emptyList()
         }
 
-        var cookieVal = getBypassCookie()
-        if (cookieVal.isEmpty()) {
-            cookieVal = getBypassCookie(force = true)
-        }
+        val cookieVal = getBypassCookie()
         val cookieHeader = buildString {
             if (cookieVal.isNotEmpty()) {
                 append("t_hash_t=$cookieVal; ")
@@ -449,13 +391,17 @@ class CNCVerseSource(
             }
         }
 
+        val videoHeaders = Headers.Builder()
+            .set("Referer", referer.ifEmpty { getApiUrl() })
+            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
+            .set("Cookie", cookieHeader)
+            .build()
+
         val playlistUtils = PlaylistUtils(client, headers)
 
         val masterHeadersGen = { baseHeaders: Headers, ref: String ->
             val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
             headers.newBuilder().apply {
-                set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                set("Referer", "https://net52.cc/")
                 if (cookieVal.isNotEmpty()) {
                     set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
                 }
@@ -465,8 +411,6 @@ class CNCVerseSource(
         val videoHeadersGen = { baseHeaders: Headers, ref: String, videoUrl: String ->
             val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
             headers.newBuilder().apply {
-                set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                set("Referer", "https://net52.cc/")
                 if (cookieVal.isNotEmpty()) {
                     set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
                 }
@@ -476,7 +420,7 @@ class CNCVerseSource(
         val videos = try {
             playlistUtils.extractFromHls(
                 playlistUrl = videoLink,
-                referer = referer,
+                referer = referer.ifEmpty { getApiUrl() },
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
                 videoNameGen = { "$name - $it" },
@@ -627,61 +571,10 @@ class CNCVerseSource(
             val savedCookie = if (force) null else sharedPreferences.getString("nf_cookie", null)
             val savedTimestamp = if (force) 0L else sharedPreferences.getLong("nf_cookie_timestamp", 0L)
 
-            if (!savedCookie.isNullOrEmpty() && now - savedTimestamp < 7_200_000) {
+            if (!savedCookie.isNullOrEmpty() && now - savedTimestamp < 54_000_000) {
                 cookieValue = savedCookie
                 cookieTimestamp = savedTimestamp
                 return savedCookie
-            }
-
-            try {
-                val cm = CookieManager.getInstance()
-                val wvCookies = cm.getCookie("https://net77.cc")
-                    ?: cm.getCookie("https://net52.cc")
-                    ?: cm.getCookie("https://net11.cc")
-                if (!wvCookies.isNullOrEmpty() && wvCookies.contains("t_hash_t=")) {
-                    val cookie = wvCookies.substringAfter("t_hash_t=").substringBefore(";")
-                    if (cookie.isNotEmpty()) {
-                        cookieValue = cookie
-                        cookieTimestamp = now
-                        sharedPreferences.edit()
-                            .putString("nf_cookie", cookie)
-                            .putLong("nf_cookie_timestamp", now)
-                            .apply()
-                        return cookie
-                    }
-                }
-            } catch (e: Exception) {
-                // Ignore WebView CookieManager exceptions
-            }
-
-            try {
-                val directClient = OkHttpClient.Builder()
-                    .followRedirects(true)
-                    .connectTimeout(10, TimeUnit.SECONDS)
-                    .readTimeout(10, TimeUnit.SECONDS)
-                    .build()
-
-                val v2Req = Request.Builder()
-                    .url("https://net52.cc/mobile/verify2.php")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .header("Referer", "https://net52.cc/mobile/home?app=1")
-                    .build()
-
-                directClient.newCall(v2Req).execute().use { resp ->
-                    val html = resp.body.string()
-                    val hash = html.substringAfter("data-addhash=\"", "").substringBefore("\"")
-                    if (hash.isNotEmpty()) {
-                        cookieValue = hash
-                        cookieTimestamp = now
-                        sharedPreferences.edit()
-                            .putString("nf_cookie", hash)
-                            .putLong("nf_cookie_timestamp", now)
-                            .apply()
-                        return hash
-                    }
-                }
-            } catch (e: Exception) {
-                // Fallback to verify.php
             }
 
             try {
@@ -705,8 +598,8 @@ class CNCVerseSource(
                     .header("Cache-Control", "max-age=0")
                     .header("Connection", "keep-alive")
                     .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Origin", "https://net52.cc")
-                    .header("Referer", "https://net52.cc/verify2")
+                    .header("Origin", "https://net22.cc")
+                    .header("Referer", "https://net22.cc/verify2")
                     .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
                     .header("sec-ch-ua-mobile", "?0")
                     .header("sec-ch-ua-platform", "\"Windows\"")
