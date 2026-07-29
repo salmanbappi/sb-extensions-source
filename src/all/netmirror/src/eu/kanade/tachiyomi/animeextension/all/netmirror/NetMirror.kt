@@ -68,7 +68,7 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains("net52.cc") || url.contains("net11.cc")) {
+            if (url.contains("net52.cc") || url.contains("net77.cc") || url.contains("net11.cc")) {
                 var cookieVal = getBypassCookie()
                 if (cookieVal.isNotEmpty()) {
                     var cookieHeader = buildString {
@@ -115,8 +115,20 @@ class CNCVerseSource(
             val request = chain.request()
             val url = request.url.toString()
             if (url.contains(".m3u8") || url.contains(".vtt")) {
+                val existingCookie = request.header("Cookie")
+                val cookieVal = getBypassCookie()
+                val cookieHeader = buildString {
+                    if (!existingCookie.isNullOrEmpty()) {
+                        append(existingCookie)
+                        if (!existingCookie.contains("hd=on")) append("; hd=on")
+                        if (!existingCookie.contains("t_hash_t=") && cookieVal.isNotEmpty()) append("; t_hash_t=$cookieVal")
+                    } else {
+                        if (cookieVal.isNotEmpty()) append("t_hash_t=$cookieVal; ")
+                        append("ott=$ott; hd=on")
+                    }
+                }
                 val newRequest = request.newBuilder()
-                    .header("Cookie", "hd=on")
+                    .header("Cookie", cookieHeader)
                     .build()
                 return@addInterceptor chain.proceed(newRequest)
             }
