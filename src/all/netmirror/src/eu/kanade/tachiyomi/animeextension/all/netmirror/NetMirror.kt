@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
+import okhttp3.Dns
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -25,6 +26,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.net.InetAddress
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -64,7 +66,24 @@ class CNCVerseSource(
         else -> "https://imgcdn.kim/hs/v/$id.jpg"
     }
 
+    private val cloudflareDns = Dns { hostname ->
+        if (hostname.contains("net52.cc") || hostname.contains("net50.cc")) {
+            return@Dns listOf(
+                InetAddress.getByAddress(hostname, byteArrayOf(104.toByte(), 26.toByte(), 1.toByte(), 214.toByte())),
+                InetAddress.getByAddress(hostname, byteArrayOf(104.toByte(), 26.toByte(), 0.toByte(), 214.toByte())),
+                InetAddress.getByAddress(hostname, byteArrayOf(172.toByte(), 67.toByte(), 71.toByte(), 108.toByte())),
+            )
+        }
+        val addresses = try {
+            Dns.SYSTEM.lookup(hostname)
+        } catch (e: Exception) {
+            emptyList()
+        }
+        addresses.filterNot { it.hostAddress == "143.198.68.197" }.ifEmpty { addresses }
+    }
+
     override val client: OkHttpClient = network.client.newBuilder()
+        .dns(cloudflareDns)
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
         .writeTimeout(5, TimeUnit.SECONDS)
