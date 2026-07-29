@@ -662,9 +662,9 @@ class CNCVerseSource(
                     .build()
 
                 val v2Req = Request.Builder()
-                    .url("$baseUrl/mobile/verify2.php")
+                    .url("https://net52.cc/mobile/verify2.php")
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .header("Referer", "$baseUrl/mobile/home?app=1")
+                    .header("Referer", "https://net52.cc/mobile/home?app=1")
                     .build()
 
                 directClient.newCall(v2Req).execute().use { resp ->
