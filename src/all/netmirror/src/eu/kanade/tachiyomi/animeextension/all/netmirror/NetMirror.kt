@@ -634,6 +634,10 @@ class CNCVerseSource(
         private var cookieValue = ""
         private var cookieTimestamp = 0L
 
+        private val verifyClient by lazy {
+            OkHttpClient.Builder().followRedirects(false).build()
+        }
+
         @Synchronized
         private fun getBypassCookie(force: Boolean = false): String {
             val now = System.currentTimeMillis()
@@ -673,8 +677,8 @@ class CNCVerseSource(
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
                     .build()
 
-                network.client.newCall(request).execute().use { response ->
-                    val setCookieHeaders = response.headers.values("Set-Cookie")
+                verifyClient.newCall(request).execute().use { response ->
+                    val setCookieHeaders = response.headers("Set-Cookie")
                     for (header in setCookieHeaders) {
                         if (header.startsWith("t_hash_t=")) {
                             val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
