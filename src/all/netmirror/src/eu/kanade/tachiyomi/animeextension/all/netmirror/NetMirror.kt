@@ -335,11 +335,12 @@ class CNCVerseSource(
     override fun videoListRequest(episode: SEpisode): Request {
         val apiBase = getApiUrl()
         val url = "$apiBase/newtv/player.php?id=${episode.url}"
+        val userToken = getUserToken(apiBase)
 
         val ottValue = if (ott == "dp") "hs" else ott
         val headers = Headers.Builder()
             .add("Ott", ottValue)
-            .add("Usertoken", "")
+            .add("Usertoken", userToken)
             .add("Cache-Control", "no-cache, no-store, must-revalidate")
             .add("Pragma", "no-cache")
             .add("Expires", "0")
@@ -605,6 +606,107 @@ class CNCVerseSource(
                 .remove("nf_cookie")
                 .remove("nf_cookie_timestamp")
                 .apply()
+        }
+
+        private var cachedUserToken = ""
+        private var cachedUserTokenTimestamp = 0L
+
+        @Synchronized
+        private fun getUserToken(apiBase: String): String {
+            val now = System.currentTimeMillis()
+            if (cachedUserToken.isNotEmpty() && now - cachedUserTokenTimestamp < 54_000_000) {
+                return cachedUserToken
+            }
+            val savedToken = sharedPreferences.getString("nf_user_token", null)
+            val savedTimestamp = sharedPreferences.getLong("nf_user_token_ts", 0L)
+            if (!savedToken.isNullOrEmpty() && now - savedTimestamp < 54_000_000) {
+                cachedUserToken = savedToken
+                cachedUserTokenTimestamp = savedTimestamp
+                return savedToken
+            }
+
+            var currentOtp = sharedPreferences.getString("nf_otp", null) ?: "109400"
+            val directClient = OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .build()
+
+            fun tryOtp(otpVal: String): String? {
+                try {
+                    val req = Request.Builder()
+                        .url("$apiBase/newtv/otp.php")
+                        .header("accept", "application/json, text/plain, */*")
+                        .header("cache-control", "no-cache, no-store, must-revalidate")
+                        .header("Connection", "Keep-Alive")
+                        .header("expires", "0")
+                        .header("otp", otpVal)
+                        .header("pragma", "no-cache")
+                        .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.Gatu v1.0")
+                        .build()
+
+                    directClient.newCall(req).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val json = response.body?.string() ?: ""
+                            val jsonObj = JSONObject(json)
+                            val token = jsonObj.optString("usertoken")
+                            if (token.isNotEmpty()) {
+                                return token
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignore
+                }
+                return null
+            }
+
+            var token = tryOtp(currentOtp)
+
+            if (token == null) {
+                val mirrorUrls = listOf(
+                    "https://netmirror.store/tv",
+                    "https://netmirror.app/tv",
+                    "https://netmirror.gg/tv",
+                    "https://netmirror.cc/tv"
+                )
+
+                for (url in mirrorUrls) {
+                    try {
+                        val req = Request.Builder()
+                            .url(url)
+                            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                            .build()
+                        directClient.newCall(req).execute().use { resp ->
+                            val html = resp.body?.string() ?: ""
+                            val match = Regex("""(?m)^\s*const\s+otp\s*=\s*\[(.*?)]""").find(html)
+                            if (match != null) {
+                                val extractedDigits = Regex("""\s*,\s*""").replace(match.groupValues[1], "").replace(" ", "").replace("\"", "").replace("'", "")
+                                if (extractedDigits.isNotEmpty()) {
+                                    currentOtp = extractedDigits
+                                    sharedPreferences.edit().putString("nf_otp", currentOtp).apply()
+                                    token = tryOtp(currentOtp)
+                                    if (token != null) return@for
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Try next mirror
+                    }
+                }
+            }
+
+            if (!token.isNullOrEmpty()) {
+                cachedUserToken = token
+                cachedUserTokenTimestamp = now
+                sharedPreferences.edit()
+                    .putString("nf_user_token", token)
+                    .putLong("nf_user_token_ts", now)
+                    .apply()
+                return token
+            }
+
+            return ""
         }
 
         private fun decodeBase64(value: String): String = String(android.util.Base64.decode(value, android.util.Base64.DEFAULT))
