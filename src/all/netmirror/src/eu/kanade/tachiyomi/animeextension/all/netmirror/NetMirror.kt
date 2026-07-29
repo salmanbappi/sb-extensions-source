@@ -507,6 +507,7 @@ class CNCVerseSource(
         val sources = firstItem.optJSONArray("sources") ?: return emptyList()
         if (sources.length() == 0) return emptyList()
 
+        val videoLinkFile = sources.optJSONObject(0)?.optString("file") ?: ""
         val cleanToken = finalH.removePrefix("in=").substringBefore("&")
         var videoLink = ""
         if (videoLinkFile.isNotEmpty()) {
@@ -651,7 +652,7 @@ class CNCVerseSource(
                     .build()
 
                 val request = Request.Builder()
-                    .url("$baseUrl/verify.php")
+                    .url("$MAIN_BASE_URL/verify.php")
                     .post(formBody)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
                     .header("Accept-Encoding", "gzip, deflate, br, zstd")
@@ -659,8 +660,8 @@ class CNCVerseSource(
                     .header("Cache-Control", "max-age=0")
                     .header("Connection", "keep-alive")
                     .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Origin", baseUrl)
-                    .header("Referer", "$baseUrl/verify2")
+                    .header("Origin", MAIN_BASE_URL)
+                    .header("Referer", "$MAIN_BASE_URL/verify2")
                     .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
                     .header("sec-ch-ua-mobile", "?0")
                     .header("sec-ch-ua-platform", "\"Windows\"")
