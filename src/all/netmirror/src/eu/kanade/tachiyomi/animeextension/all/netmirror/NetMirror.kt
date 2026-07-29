@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.webkit.CookieManager
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -590,6 +591,27 @@ class CNCVerseSource(
                 cookieValue = savedCookie
                 cookieTimestamp = savedTimestamp
                 return savedCookie
+            }
+
+            try {
+                val cm = CookieManager.getInstance()
+                val wvCookies = cm.getCookie("https://net77.cc")
+                    ?: cm.getCookie("https://net52.cc")
+                    ?: cm.getCookie("https://net11.cc")
+                if (!wvCookies.isNullOrEmpty() && wvCookies.contains("t_hash_t=")) {
+                    val cookie = wvCookies.substringAfter("t_hash_t=").substringBefore(";")
+                    if (cookie.isNotEmpty()) {
+                        cookieValue = cookie
+                        cookieTimestamp = now
+                        sharedPreferences.edit()
+                            .putString("nf_cookie", cookie)
+                            .putLong("nf_cookie_timestamp", now)
+                            .apply()
+                        return cookie
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore WebView CookieManager exceptions
             }
 
             try {
