@@ -70,8 +70,12 @@ class CNCVerseSource(
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .addInterceptor { chain ->
-            val request = chain.request()
-            val url = request.url.toString()
+            var request = chain.request()
+            var url = request.url.toString()
+            if (url.contains("net50.cc")) {
+                url = url.replace("net50.cc", "net77.cc")
+                request = request.newBuilder().url(url).build()
+            }
             if (url.contains("net77.cc") || url.contains("net52.cc") || url.contains("net11.cc")) {
                 var cookieVal = getBypassCookie()
                 if (cookieVal.isNotEmpty()) {
