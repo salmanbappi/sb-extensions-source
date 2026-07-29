@@ -667,7 +667,7 @@ class CNCVerseSource(
                     "https://netmirror.store/tv",
                     "https://netmirror.app/tv",
                     "https://netmirror.gg/tv",
-                    "https://netmirror.cc/tv"
+                    "https://netmirror.cc/tv",
                 )
 
                 for (url in mirrorUrls) {
