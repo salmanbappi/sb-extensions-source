@@ -1,5 +1,13 @@
 package eu.kanade.tachiyomi.animeextension.en.shuttletv
 
+import android.annotation.SuppressLint
+import android.app.Application
+import android.os.Handler
+import android.os.Looper
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -7,11 +15,15 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.doubleOrNull
@@ -25,8 +37,12 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.resume
 
 class ShuttleTV : Source() {
 
@@ -42,8 +58,14 @@ class ShuttleTV : Source() {
 
     private val tmdbApiKey = "ea021b3b0775c8531592713ab727f254"
 
+    private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+
+    private val cineSrcResolver by lazy { CineSrcResolver(context) }
+
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .set("User-Agent", userAgent)
         .set("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
@@ -92,15 +114,10 @@ class ShuttleTV : Source() {
                     val part = filter.toUriPart()
                     if (part != "all") mediaType = part
                 }
-
                 is Filters.SortFilter -> sort = filter.toUriPart()
-
                 is Filters.YearFilter -> year = filter.toUriPart()
-
                 is Filters.CountryFilter -> country = filter.toUriPart()
-
                 is Filters.GenreFilter -> genres.addAll(filter.selectedIds())
-
                 else -> {}
             }
         }
@@ -137,7 +154,7 @@ class ShuttleTV : Source() {
         Filters.SortFilter(),
         Filters.YearFilter(),
         Filters.GenreFilter(),
-        Filters.CountryFilter(),
+        Filters.CountryFilter()
     )
 
     private fun parseTmdbMediaList(response: Response): AnimesPage {
@@ -203,18 +220,14 @@ class ShuttleTV : Source() {
             "Completed"
         }
 
-        val releaseYear = (
-            obj["release_date"]?.jsonPrimitive?.content
-                ?: obj["first_air_date"]?.jsonPrimitive?.content ?: ""
-            ).take(4)
+        val releaseYear = (obj["release_date"]?.jsonPrimitive?.content
+            ?: obj["first_air_date"]?.jsonPrimitive?.content ?: "").take(4)
 
         val trailerKey = obj["videos"]?.jsonObject?.get("results")?.jsonArray?.mapNotNull {
             val vObj = it.jsonObject
             if (vObj["site"]?.jsonPrimitive?.content == "YouTube" && vObj["type"]?.jsonPrimitive?.content == "Trailer") {
                 vObj["key"]?.jsonPrimitive?.content
-            } else {
-                null
-            }
+            } else null
         }?.firstOrNull()
 
         return SAnime.create().apply {
@@ -255,7 +268,7 @@ class ShuttleTV : Source() {
                     name = "Movie"
                     setUrlWithoutDomain("/watch/$id?type=movie")
                     episode_number = 1.0f
-                },
+                }
             )
         }
 
@@ -298,7 +311,7 @@ class ShuttleTV : Source() {
                             episode_number = (seasonNum * 1000 + epNum).toFloat()
                             if (stillUrl.isNotBlank()) preview_url = stillUrl
                             if (overviewStr.isNotBlank()) summary = overviewStr
-                        },
+                        }
                     )
                 }
             }
@@ -317,137 +330,58 @@ class ShuttleTV : Source() {
 
         val mediaType = if (isTv) "tv" else "movie"
 
-        val challengeToken = generateChallengeToken(mediaType, id, season, ep)
-        val providers = getProviderList(mediaType, id)
-
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
 
+        val embedUrl = if (mediaType == "tv") {
+            "$cineSrcUrl/embed/tv/$id?s=$season&e=$ep"
+        } else {
+            "$cineSrcUrl/embed/movie/$id"
+        }
+
+        val providers = listOf(
+            Pair("auto", "Auto (Best Server)"),
+            Pair("febbox-hls", "Feb HLS"),
+            Pair("febbox-mp4", "Feb MP4")
+        )
+
         val hosters = providers.filter { it.first !in excludedServers }.map { (providerId, providerName) ->
+            val finalEmbedUrl = if (providerId != "auto") "$embedUrl&lastserver=$providerId" else embedUrl
             Hoster(
                 hosterName = providerName,
-                hosterUrl = "$mediaType|$id|$season|$ep|$challengeToken|$providerId",
+                hosterUrl = finalEmbedUrl
             )
         }
 
         return sortHostersByPreference(hosters)
     }
 
-    private fun generateChallengeToken(mediaType: String, id: String, season: String?, episode: String?): String {
-        val arrayJson = buildString {
-            append("[\"").append(mediaType).append("\",\"").append(id).append("\",")
-            if (season != null) append("\"").append(season).append("\",") else append("null,")
-            if (episode != null) append("\"").append(episode).append("\"]") else append("null]")
-        }
-
-        val b64Query = Base64.getUrlEncoder().withoutPadding().encodeToString(arrayJson.toByteArray(StandardCharsets.UTF_8))
-
-        val req = Request.Builder()
-            .url("$cineSrcUrl/api/c/bootstrap")
-            .post("{}".toRequestBody("application/json".toMediaType()))
-            .headers(headersBuilder().set("x-cs-q", b64Query).build())
-            .build()
-
-        return runCatching {
-            val res = client.newCall(req).execute()
-            val obj = json.parseToJsonElement(res.body.string()).jsonObject
-            val r = obj["r"]?.jsonPrimitive?.content ?: ""
-            "e_ok::c2_ok::$r"
-        }.getOrDefault("e_ok::c2_ok::")
-    }
-
-    private fun getProviderList(mediaType: String, id: String): List<Pair<String, String>> {
-        return runCatching {
-            val embedPath = if (mediaType == "tv") "embed/tv/$id" else "embed/movie/$id"
-            val req = Request.Builder()
-                .url("$cineSrcUrl/$embedPath")
-                .post("[]".toRequestBody("text/plain".toMediaType()))
-                .headers(headersBuilder().set("Next-Action", "009ae233b6f5dd27b41a46896cad785bff36e42f4d").build())
-                .build()
-
-            val res = client.newCall(req).execute()
-            val text = res.body.string()
-
-            val jsonStr = text.substringAfter("1:0:").trim()
-            val list = json.parseToJsonElement(jsonStr).jsonArray
-
-            list.mapNotNull { elem ->
-                val o = elem.jsonObject
-                val pId = o["id"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                val pName = o["name"]?.jsonPrimitive?.content ?: pId
-                Pair(pId, pName)
-            }
-        }.getOrDefault(
-            listOf(
-                Pair("febbox-hls", "Feb HLS"),
-                Pair("febbox-mp4", "Feb MP4"),
-                Pair("auto", "Auto (Best Server)"),
-            ),
-        )
-    }
-
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val parts = hoster.hosterUrl.split("|")
-        if (parts.size < 6) return emptyList()
+        val embedUrl = hoster.hosterUrl
+        val resolvedUrl = cineSrcResolver.resolveStreamUrl(embedUrl, userAgent) ?: return emptyList()
 
-        val mediaType = parts[0]
-        val id = parts[1]
-        val season = parts[2].takeIf { it.isNotEmpty() && it != "null" }
-        val ep = parts[3].takeIf { it.isNotEmpty() && it != "null" }
-        val challengeToken = parts[4]
-        val providerId = parts[5]
-
-        val embedPath = if (mediaType == "tv") "embed/tv/$id" else "embed/movie/$id"
-
-        val payload = buildString {
-            append("[\"").append(id).append("\",\"").append(mediaType).append("\",")
-            if (season != null) append("\"").append(season).append("\",") else append("null,")
-            if (ep != null) append("\"").append(ep).append("\",") else append("null,")
-            append("\"").append(challengeToken).append("\",\"").append(providerId).append("\"]")
+        if (resolvedUrl.contains(".m3u8")) {
+            return playlistUtils.extractFromHls(
+                playlistUrl = resolvedUrl,
+                referer = "$cineSrcUrl/",
+                masterHeaders = headers,
+                videoHeaders = headers,
+                videoNameGen = { quality -> "${hoster.hosterName} - $quality" }
+            ).sortVideos()
         }
 
-        val req = Request.Builder()
-            .url("$cineSrcUrl/$embedPath")
-            .post(payload.toRequestBody("text/plain".toMediaType()))
-            .headers(headersBuilder().set("Next-Action", "7ee2ce6e276d24a29d32ee843aa18f1560caba9034").build())
-            .build()
+        val video = Video(
+            videoUrl = resolvedUrl,
+            videoTitle = hoster.hosterName,
+            headers = headersBuilder().set("Referer", "$cineSrcUrl/").build()
+        )
 
-        return runCatching {
-            val response = client.newCall(req).execute()
-            val bodyText = response.body.string()
-            val encToken = bodyText.substringAfter("1:0:").trim().removeSurrounding("\"")
-
-            val decryptedJson = decryptToken(encToken)
-            val rootObj = json.parseToJsonElement(decryptedJson).jsonObject
-            val urlArray = rootObj["url"]?.jsonArray ?: return emptyList()
-
-            val videos = urlArray.mapNotNull { elem ->
-                val vObj = elem.jsonObject
-                val videoUrl = vObj["url"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                val sourceLabel = vObj["source"]?.jsonPrimitive?.content ?: hoster.hosterName
-
-                Video(
-                    videoUrl = videoUrl,
-                    videoTitle = "$sourceLabel - ${hoster.hosterName}",
-                    headers = headersBuilder().set("Referer", "$cineSrcUrl/").build(),
-                )
-            }
-
-            videos.sortVideos()
-        }.getOrDefault(emptyList())
+        return listOf(video).sortVideos()
     }
-
-    private fun decryptToken(encToken: String): String = runCatching {
-        val clean = encToken.trim().removeSurrounding("\"")
-        val b64 = clean.replace("-", "+").replace("_", "/")
-        val rawBytes = Base64.getDecoder().decode(b64)
-        val decBytes = ByteArray(rawBytes.size) { i -> (rawBytes[i].toInt().inv() and 0xFF).toByte() }
-        String(decBytes, StandardCharsets.UTF_8)
-    }.getOrDefault("{\"url\":[]}")
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) },
+            compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) }
         )
     }
 
@@ -472,7 +406,9 @@ class ShuttleTV : Source() {
         return GET(url, headers)
     }
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> = parseTmdbMediaList(response).animes
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
+        return parseTmdbMediaList(response).animes
+    }
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
@@ -482,7 +418,7 @@ class ShuttleTV : Source() {
             summary = "%s",
             entries = listOf("Auto", "1080p", "720p", "480p", "360p"),
             entryValues = listOf("Auto", "1080", "720", "480", "360"),
-            default = PREF_QUALITY_DEFAULT,
+            default = PREF_QUALITY_DEFAULT
         )
 
         screen.addListPreference(
@@ -491,7 +427,7 @@ class ShuttleTV : Source() {
             summary = "%s",
             entries = listOf("Auto", "Feb HLS", "Feb MP4", "Default"),
             entryValues = listOf("auto", "Feb HLS", "Feb MP4", "Default"),
-            default = PREF_SERVER_DEFAULT,
+            default = PREF_SERVER_DEFAULT
         )
 
         screen.addListPreference(
@@ -500,21 +436,21 @@ class ShuttleTV : Source() {
             summary = "%s",
             entries = listOf("English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian", "Japanese", "Korean", "Chinese", "Hindi", "Arabic", "Turkish"),
             entryValues = listOf("English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian", "Japanese", "Korean", "Chinese", "Hindi", "Arabic", "Turkish"),
-            default = PREF_SUB_LANG_DEFAULT,
+            default = PREF_SUB_LANG_DEFAULT
         )
 
         screen.addSwitchPreference(
             key = PREF_AUTO_SKIP_KEY,
             title = "Auto Skip Intro",
             summary = "Automatically skip intro segments when supported",
-            default = true,
+            default = true
         )
 
         screen.addSwitchPreference(
             key = PREF_DISABLE_ADS_KEY,
             title = "Disable Ads Parameter",
             summary = "Request ad-free stream token from player API",
-            default = true,
+            default = true
         )
 
         screen.addSetPreference(
@@ -523,7 +459,7 @@ class ShuttleTV : Source() {
             summary = "Select servers to exclude from video list",
             entries = listOf("Feb HLS", "Feb MP4", "Default"),
             entryValues = listOf("Feb HLS", "Feb MP4", "Default"),
-            default = emptySet(),
+            default = emptySet()
         )
     }
 
@@ -540,5 +476,62 @@ class ShuttleTV : Source() {
         private const val PREF_AUTO_SKIP_KEY = "pref_auto_skip"
         private const val PREF_DISABLE_ADS_KEY = "pref_disable_ads"
         private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
+    }
+}
+
+class CineSrcResolver(private val context: Application) {
+
+    @SuppressLint("SetJavaScriptEnabled")
+    suspend fun resolveStreamUrl(embedUrl: String, userAgent: String): String? = withContext(Dispatchers.Main) {
+        suspendCancellableCoroutine { continuation ->
+            var webView: WebView? = null
+            val isResumed = AtomicBoolean(false)
+
+            fun cleanup() {
+                try {
+                    webView?.stopLoading()
+                    webView?.destroy()
+                    webView = null
+                } catch (_: Throwable) {}
+            }
+
+            continuation.invokeOnCancellation {
+                Handler(Looper.getMainLooper()).post { cleanup() }
+            }
+
+            try {
+                webView = WebView(context).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    settings.userAgentString = userAgent
+
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView?,
+                            request: WebResourceRequest?
+                        ): WebResourceResponse? {
+                            val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
+
+                            if ((url.contains(".m3u8") || url.contains(".mp4") || url.contains("t-line.org") || url.contains("/play/")) &&
+                                !url.contains("cinesrc.st") && !url.contains("shuttletv.su")
+                            ) {
+                                if (isResumed.compareAndSet(false, true)) {
+                                    Handler(Looper.getMainLooper()).post { cleanup() }
+                                    continuation.resume(url)
+                                }
+                            }
+                            return super.shouldInterceptRequest(view, request)
+                        }
+                    }
+
+                    loadUrl(embedUrl)
+                }
+            } catch (t: Throwable) {
+                if (isResumed.compareAndSet(false, true)) {
+                    continuation.resume(null)
+                }
+            }
+        }
     }
 }
