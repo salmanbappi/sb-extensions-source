@@ -10,7 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import keiyoushi.utils.addListPreference
-import keiyoushi.utils.addMultiSelectListPreference
+import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -480,8 +480,8 @@ class ShuttleTV : Source() {
             key = PREF_QUALITY_KEY,
             title = "Preferred Quality",
             summary = "%s",
-            entries = arrayOf("Auto", "1080p", "720p", "480p", "360p"),
-            entryValues = arrayOf("Auto", "1080", "720", "480", "360"),
+            entries = listOf("Auto", "1080p", "720p", "480p", "360p"),
+            entryValues = listOf("Auto", "1080", "720", "480", "360"),
             default = PREF_QUALITY_DEFAULT,
         )
 
@@ -489,8 +489,8 @@ class ShuttleTV : Source() {
             key = PREF_SERVER_KEY,
             title = "Preferred Server",
             summary = "%s",
-            entries = arrayOf("Auto", "Feb HLS", "Feb MP4", "Default"),
-            entryValues = arrayOf("auto", "Feb HLS", "Feb MP4", "Default"),
+            entries = listOf("Auto", "Feb HLS", "Feb MP4", "Default"),
+            entryValues = listOf("auto", "Feb HLS", "Feb MP4", "Default"),
             default = PREF_SERVER_DEFAULT,
         )
 
@@ -498,8 +498,8 @@ class ShuttleTV : Source() {
             key = PREF_SUB_LANG_KEY,
             title = "Preferred Subtitle Language",
             summary = "%s",
-            entries = arrayOf("English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian", "Japanese", "Korean", "Chinese", "Hindi", "Arabic", "Turkish"),
-            entryValues = arrayOf("English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian", "Japanese", "Korean", "Chinese", "Hindi", "Arabic", "Turkish"),
+            entries = listOf("English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian", "Japanese", "Korean", "Chinese", "Hindi", "Arabic", "Turkish"),
+            entryValues = listOf("English", "Spanish", "French", "German", "Italian", "Portuguese", "Russian", "Japanese", "Korean", "Chinese", "Hindi", "Arabic", "Turkish"),
             default = PREF_SUB_LANG_DEFAULT,
         )
 
@@ -517,12 +517,12 @@ class ShuttleTV : Source() {
             default = true,
         )
 
-        screen.addMultiSelectListPreference(
+        screen.addSetPreference(
             key = PREF_EXCLUDE_SERVERS_KEY,
             title = "Exclude Servers",
             summary = "Select servers to exclude from video list",
-            entries = arrayOf("Feb HLS", "Feb MP4", "Default"),
-            entryValues = arrayOf("Feb HLS", "Feb MP4", "Default"),
+            entries = listOf("Feb HLS", "Feb MP4", "Default"),
+            entryValues = listOf("Feb HLS", "Feb MP4", "Default"),
             default = emptySet(),
         )
     }
