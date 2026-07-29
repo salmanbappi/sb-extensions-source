@@ -22,6 +22,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import uy.kohesive.injekt.Injekt
@@ -131,7 +132,30 @@ class CNCVerseSource(
                 val newRequest = request.newBuilder()
                     .header("Cookie", cookieHeader)
                     .build()
-                return@addInterceptor chain.proceed(newRequest)
+
+                val response = chain.proceed(newRequest)
+                if (url.contains(".m3u8") && response.isSuccessful) {
+                    val bodyString = response.body.string()
+                    val inToken = if (url.contains("in=")) url.substringAfter("in=").substringBefore("&") else ""
+                    val epId = if (url.contains("/hls/")) url.substringAfter("/hls/").substringBefore(".m3u8").substringBefore("?") else ""
+
+                    if (bodyString.contains("220884") || bodyString.contains("https:///")) {
+                        var fixedBody = bodyString.replace("https:///", "https://s23.nm-cdn9.top/")
+                        if (epId.isNotEmpty()) {
+                            fixedBody = fixedBody.replace("220884", epId)
+                        }
+                        if (inToken.isNotEmpty() && fixedBody.contains("in=unknown::db")) {
+                            fixedBody = fixedBody.replace("in=unknown::db", "in=$inToken")
+                        }
+                        return@addInterceptor response.newBuilder()
+                            .body(fixedBody.toResponseBody(response.body.contentType()))
+                            .build()
+                    }
+                    return@addInterceptor response.newBuilder()
+                        .body(bodyString.toResponseBody(response.body.contentType()))
+                        .build()
+                }
+                return@addInterceptor response
             }
             chain.proceed(request)
         }
@@ -628,6 +652,36 @@ class CNCVerseSource(
                 }
             } catch (e: Exception) {
                 // Ignore WebView CookieManager exceptions
+            }
+
+            try {
+                val directClient = OkHttpClient.Builder()
+                    .followRedirects(true)
+                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .readTimeout(10, TimeUnit.SECONDS)
+                    .build()
+
+                val v2Req = Request.Builder()
+                    .url("$baseUrl/mobile/verify2.php")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("Referer", "$baseUrl/mobile/home?app=1")
+                    .build()
+
+                directClient.newCall(v2Req).execute().use { resp ->
+                    val html = resp.body.string()
+                    val hash = html.substringAfter("data-addhash=\"", "").substringBefore("\"")
+                    if (hash.isNotEmpty()) {
+                        cookieValue = hash
+                        cookieTimestamp = now
+                        sharedPreferences.edit()
+                            .putString("nf_cookie", hash)
+                            .putLong("nf_cookie_timestamp", now)
+                            .apply()
+                        return hash
+                    }
+                }
+            } catch (e: Exception) {
+                // Fallback to verify.php
             }
 
             try {
