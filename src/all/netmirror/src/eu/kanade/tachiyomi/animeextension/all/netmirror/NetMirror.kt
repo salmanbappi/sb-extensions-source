@@ -580,7 +580,7 @@ class CNCVerseSource(
                     quality = "$name - Direct Stream",
                     videoUrl = videoLink,
                     headers = vHeaders,
-                )
+                ),
             )
         } else {
             videos
