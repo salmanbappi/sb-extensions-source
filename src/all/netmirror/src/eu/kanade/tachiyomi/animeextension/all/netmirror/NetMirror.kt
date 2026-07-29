@@ -626,15 +626,8 @@ class CNCVerseSource(
                     .add("g-recaptcha-response", UUID.randomUUID().toString())
                     .build()
 
-                val directClient = OkHttpClient.Builder()
-                    .followRedirects(false)
-                    .followSslRedirects(false)
-                    .connectTimeout(3, TimeUnit.SECONDS)
-                    .readTimeout(3, TimeUnit.SECONDS)
-                    .build()
-
                 val request = Request.Builder()
-                    .url("$MAIN_BASE_URL/verify.php")
+                    .url("$baseUrl/verify.php")
                     .post(formBody)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
                     .header("Accept-Encoding", "gzip, deflate, br, zstd")
@@ -642,8 +635,8 @@ class CNCVerseSource(
                     .header("Cache-Control", "max-age=0")
                     .header("Connection", "keep-alive")
                     .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Origin", MAIN_BASE_URL)
-                    .header("Referer", "$MAIN_BASE_URL/verify2")
+                    .header("Origin", baseUrl)
+                    .header("Referer", "$baseUrl/verify2")
                     .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
                     .header("sec-ch-ua-mobile", "?0")
                     .header("sec-ch-ua-platform", "\"Windows\"")
@@ -655,7 +648,7 @@ class CNCVerseSource(
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
                     .build()
 
-                directClient.newCall(request).execute().use { response ->
+                network.client.newCall(request).execute().use { response ->
                     val setCookieHeaders = response.headers.values("Set-Cookie")
                     for (header in setCookieHeaders) {
                         if (header.startsWith("t_hash_t=")) {
