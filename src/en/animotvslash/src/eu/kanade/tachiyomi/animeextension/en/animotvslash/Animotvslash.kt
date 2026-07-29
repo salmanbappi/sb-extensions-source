@@ -94,20 +94,25 @@ class Animotvslash : Source() {
                 is Filters.TypeFilter -> {
                     if (!filter.isDefault()) urlBuilder.addQueryParameter("type", filter.toUriPart())
                 }
+
                 is Filters.StatusFilter -> {
                     if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
                 }
+
                 is Filters.OrderFilter -> {
                     if (!filter.isDefault()) urlBuilder.addQueryParameter("order", filter.toUriPart())
                 }
+
                 is Filters.YearFilter -> {
                     if (!filter.isDefault()) urlBuilder.addQueryParameter("year", filter.toUriPart())
                 }
+
                 is Filters.GenreFilter -> {
                     filter.selectedGenres().forEach { genre ->
                         urlBuilder.addQueryParameter("genre[]", genre)
                     }
                 }
+
                 else -> {}
             }
         }
@@ -353,6 +358,7 @@ class Animotvslash : Source() {
                             )
                         }
                     }
+
                     embedUrl.contains("streamwish") || embedUrl.contains("bysezoxexe") || embedUrl.contains("filemoon") -> {
                         val extracted = streamWishExtractor.videosFromUrl(embedUrl) { quality -> "$audioType - Moon:$quality" }
                         if (extracted.isNotEmpty()) {
@@ -361,16 +367,19 @@ class Animotvslash : Source() {
                             videoList.addAll(filemoonExtractor.videosFromUrl(embedUrl, "$audioType - Moon:"))
                         }
                     }
+
                     embedUrl.contains("vidhide") || embedUrl.contains("minochinos") -> {
                         videoList.addAll(
                             vidHideExtractor.videosFromUrl(embedUrl) { quality -> "$audioType - VidHide:$quality" },
                         )
                     }
+
                     embedUrl.contains("vidara") -> {
                         videoList.addAll(
                             vidaraExtractor.videosFromUrl(embedUrl, "$audioType - "),
                         )
                     }
+
                     embedUrl.contains("p2pplay") -> {
                         val html = client.newCall(GET(embedUrl, headers)).execute().body.string()
                         val m3u8Url = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""").find(html)?.groupValues?.get(1)
@@ -384,6 +393,7 @@ class Animotvslash : Source() {
                             )
                         }
                     }
+
                     else -> {
                         val html = client.newCall(GET(embedUrl, headers)).execute().body.string()
                         val m3u8Url = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""").find(html)?.groupValues?.get(1)
