@@ -65,6 +65,9 @@ class CNCVerseSource(
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .writeTimeout(5, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
@@ -416,7 +419,65 @@ class CNCVerseSource(
             .set("Referer", "$baseUrl/home")
             .build()
 
-        val videoLink = "$baseUrl/hls/$episodeId.m3u8?q=720p&$hToken"
+        val playerDomains = listOf("https://net52.cc", baseUrl, "https://net11.cc")
+        var workingDomain = baseUrl
+        var dataTime = ""
+        var dataH = ""
+
+        for (domain in playerDomains) {
+            val iframeRequest = Request.Builder()
+                .url("$domain/play.php?id=$episodeId&$hToken")
+                .headers(requestHeaders)
+                .build()
+
+            try {
+                client.newCall(iframeRequest).execute().use { iframeResponse ->
+                    if (iframeResponse.isSuccessful) {
+                        val html = iframeResponse.body.string()
+                        val foundTime = Regex("""data-time=["']([^"']+)["']""").find(html)?.groupValues?.get(1) ?: ""
+                        val foundH = Regex("""data-h=["']([^"']+)["']""").find(html)?.groupValues?.get(1) ?: ""
+                        if (foundTime.isNotEmpty()) {
+                            dataTime = foundTime
+                            dataH = foundH
+                            workingDomain = domain
+                        }
+                    }
+                }
+                if (dataTime.isNotEmpty()) break
+            } catch (e: Exception) {
+                // Try next domain
+            }
+        }
+
+        val finalH = if (dataH.isNotEmpty()) dataH else hToken
+
+        val playlistUrl = "$workingDomain/playlist.php?id=$episodeId&t=&tm=$dataTime&h=$finalH"
+        val playlistRequest = Request.Builder()
+            .url(playlistUrl)
+            .headers(requestHeaders)
+            .build()
+
+        val playlistJson = try {
+            client.newCall(playlistRequest).execute().use { it.body.string() }
+        } catch (e: Exception) {
+            return emptyList()
+        }
+
+        val playlistArray = try {
+            JSONArray(playlistJson)
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        if (playlistArray.length() == 0) return emptyList()
+
+        val firstItem = playlistArray.getJSONObject(0)
+        val sources = firstItem.optJSONArray("sources") ?: return emptyList()
+        if (sources.length() == 0) return emptyList()
+
+        val videoLinkFile = sources.getJSONObject(0).optString("file")
+        if (videoLinkFile.isEmpty()) return emptyList()
+
+        val videoLink = if (videoLinkFile.startsWith("http")) videoLinkFile else "$workingDomain$videoLinkFile"
 
         val playlistUtils = PlaylistUtils(client, headers)
 
@@ -441,7 +502,7 @@ class CNCVerseSource(
         val videos = try {
             playlistUtils.extractFromHls(
                 playlistUrl = videoLink,
-                referer = "$baseUrl/home",
+                referer = "$workingDomain/play.php",
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
                 videoNameGen = { "$name - $it" },
