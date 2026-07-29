@@ -2,7 +2,7 @@ ext {
     extName = 'NetMirror'
     extClass = '.NetMirror'
     author = '@salmanbappi'
-    extVersionCode = 1052
+    extVersionCode = 1053
 }
 
 apply from: "$rootDir/common.gradle"
@@ -10,4 +10,3 @@ apply from: "$rootDir/common.gradle"
 dependencies {
     implementation(project(":lib:playlist-utils"))
 }
-
