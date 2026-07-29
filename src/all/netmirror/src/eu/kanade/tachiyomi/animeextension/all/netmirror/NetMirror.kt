@@ -123,9 +123,11 @@ class CNCVerseSource(
 
             if (response.isSuccessful && (url.contains("/hls/") || url.contains(".m3u8")) && !url.contains("nm-cdn")) {
                 val originalBody = response.body?.string() ?: ""
-                val epIdFromUrl = url.substringAfter("/hls/").substringBefore(".m3u8").substringBefore("?")
+                val epIdFromUrl = url.substringAfter("/hls/").substringBefore(".m3u8").substringBefore("?").substringAfterLast("/")
                 val fixedBody = originalBody
+                    .replace("s21.freecdn4.top", "s23.nm-cdn9.top")
                     .replace("s21.nm-cdn4.top", "s23.nm-cdn9.top")
+                    .replace("freecdn4.top", "nm-cdn9.top")
                     .replace("nm-cdn4.top", "nm-cdn9.top")
                     .replace("nm-cdn.top", "nm-cdn9.top")
                     .replace("220884", epIdFromUrl)
@@ -505,13 +507,35 @@ class CNCVerseSource(
         val sources = firstItem.optJSONArray("sources") ?: return emptyList()
         if (sources.length() == 0) return emptyList()
 
-        val videoLinkFile = sources.getJSONObject(0).optString("file")
-        if (videoLinkFile.isEmpty()) return emptyList()
-
         val cleanToken = finalH.removePrefix("in=").substringBefore("&")
-        val fixedVideoLinkFile = videoLinkFile.replace("unknown::db", cleanToken)
+        var videoLink = ""
+        if (videoLinkFile.isNotEmpty()) {
+            val fixedVideoLinkFile = videoLinkFile.replace("unknown::db", cleanToken)
+            videoLink = if (fixedVideoLinkFile.startsWith("http")) fixedVideoLinkFile else "$workingDomain$fixedVideoLinkFile"
+        }
 
-        val videoLink = if (fixedVideoLinkFile.startsWith("http")) fixedVideoLinkFile else "$workingDomain$fixedVideoLinkFile"
+        if (videoLink.isEmpty() || videoLink.contains("unknown")) {
+            // NewTV API Fallback
+            try {
+                val newTvPlayerReq = Request.Builder()
+                    .url("https://tv.imgcdn.kim/newtv/player.php?id=$episodeId")
+                    .header("X-Requested-With", "NetmirrorNewTV v1.0")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
+                    .header("Ott", ott)
+                    .build()
+                client.newCall(newTvPlayerReq).execute().use { newTvResp ->
+                    if (newTvResp.isSuccessful) {
+                        val newTvJson = JSONObject(newTvResp.body.string())
+                        val link = newTvJson.optString("video_link")
+                        if (link.isNotEmpty()) {
+                            videoLink = if (cleanToken.isNotEmpty() && !link.contains("in=")) "$link?in=$cleanToken" else link
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore fallback error
+            }
+        }
 
         val playlistUtils = PlaylistUtils(client, headers)
 
