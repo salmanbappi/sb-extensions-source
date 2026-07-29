@@ -66,7 +66,18 @@ class CNCVerseSource(
         else -> "https://imgcdn.kim/hs/v/$id.jpg"
     }
 
+    private val noNet50Dns = Dns { hostname ->
+        if (hostname.contains("net50.cc")) {
+            return@Dns listOf(
+                InetAddress.getByAddress(hostname, byteArrayOf(172.toByte(), 67.toByte(), 73.toByte(), 17.toByte())),
+                InetAddress.getByAddress(hostname, byteArrayOf(104.toByte(), 26.toByte(), 11.toByte(), 139.toByte())),
+            )
+        }
+        Dns.SYSTEM.lookup(hostname)
+    }
+
     override val client: OkHttpClient = network.client.newBuilder()
+        .dns(noNet50Dns)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .addInterceptor { chain ->
