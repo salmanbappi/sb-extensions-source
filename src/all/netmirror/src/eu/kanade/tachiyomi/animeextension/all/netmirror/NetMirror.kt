@@ -47,7 +47,7 @@ class CNCVerseSource(
     override val id: Long,
 ) : Source() {
 
-    override val baseUrl = "https://net52.cc"
+    override val baseUrl = "https://net77.cc"
     override val lang = "all"
     override val supportsLatest = false
 
@@ -418,7 +418,7 @@ class CNCVerseSource(
 
         // 1. Fetch play iframe HTML to extract data-time and data-h signatures
         val iframeRequest = Request.Builder()
-            .url("$baseUrl/play.php?id=$episodeId&$hToken")
+            .url("https://net52.cc/play.php?id=$episodeId&$hToken")
             .headers(requestHeaders)
             .build()
 
@@ -438,7 +438,7 @@ class CNCVerseSource(
         val finalH = if (dataH.isNotEmpty()) dataH else hToken
 
         // 2. Fetch signed playlist JSON
-        val playlistUrl = "$baseUrl/playlist.php?id=$episodeId&t=&tm=$dataTime&h=$finalH"
+        val playlistUrl = "https://net52.cc/playlist.php?id=$episodeId&t=&tm=$dataTime&h=$finalH"
         val playlistRequest = Request.Builder()
             .url(playlistUrl)
             .headers(requestHeaders)
@@ -464,7 +464,7 @@ class CNCVerseSource(
         val videoLinkFile = sources.getJSONObject(0).optString("file")
         if (videoLinkFile.isEmpty()) return emptyList()
 
-        val videoLink = if (videoLinkFile.startsWith("http")) videoLinkFile else "$baseUrl$videoLinkFile"
+        val videoLink = if (videoLinkFile.startsWith("http")) videoLinkFile else "https://net52.cc$videoLinkFile"
 
         val playlistUtils = PlaylistUtils(client, headers)
 
@@ -489,7 +489,7 @@ class CNCVerseSource(
         val videos = try {
             playlistUtils.extractFromHls(
                 playlistUrl = videoLink,
-                referer = "$baseUrl/play.php",
+                referer = "https://net52.cc/play.php",
                 masterHeadersGen = masterHeadersGen,
                 videoHeadersGen = videoHeadersGen,
                 videoNameGen = { "$name - $it" },
