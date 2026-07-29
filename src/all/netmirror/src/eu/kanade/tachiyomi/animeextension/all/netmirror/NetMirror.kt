@@ -60,7 +60,7 @@ class CNCVerseSource(
 ) : Source(),
     ConfigurableAnimeSource {
 
-    override val baseUrl = "https://net52.cc"
+    override val baseUrl = "https://net77.cc"
     override val lang = "all"
     override val supportsLatest = false
 
@@ -81,7 +81,7 @@ class CNCVerseSource(
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains("net52.cc") || url.contains("net11.cc")) {
+            if (url.contains("net77.cc") || url.contains("net52.cc") || url.contains("net11.cc") || url.contains("net22.cc")) {
                 var cookieVal = getBypassCookie()
                 if (cookieVal.isNotEmpty()) {
                     var cookieHeader = buildString {
@@ -566,7 +566,7 @@ class CNCVerseSource(
                     .build()
 
                 val request = Request.Builder()
-                    .url("https://net52.cc/verify.php")
+                    .url("https://net77.cc/verify.php")
                     .post(formBody)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
                     .header("Accept-Encoding", "gzip, deflate, br, zstd")
