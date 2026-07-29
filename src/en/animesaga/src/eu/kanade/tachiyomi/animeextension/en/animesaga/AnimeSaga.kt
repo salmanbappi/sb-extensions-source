@@ -609,7 +609,6 @@ class AnimeSaga :
                     }
                 }
             }
-        }
 
         return videoList
     }
