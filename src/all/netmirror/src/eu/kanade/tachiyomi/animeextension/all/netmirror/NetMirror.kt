@@ -170,7 +170,7 @@ class CNCVerseSource(
             val title = element.selectFirst("a[aria-label]")?.attr("aria-label")
                 ?.takeIf { it.isNotBlank() && it != "Loading" }
                 ?: element.selectFirst("img")?.attr("alt")
-                ?.takeIf { it.isNotBlank() }
+                    ?.takeIf { it.isNotBlank() }
                 ?: id
             anime.title = title
             anime.url = id
