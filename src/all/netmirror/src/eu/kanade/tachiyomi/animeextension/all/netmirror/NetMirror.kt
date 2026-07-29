@@ -574,7 +574,14 @@ class CNCVerseSource(
 
         val finalVideos = if (videos.isEmpty() && videoLink.isNotEmpty()) {
             val vHeaders = masterHeadersGen(headers, "$workingDomain/play.php")
-            listOf(Video(videoLink, "$name - Direct Stream", videoLink, headers = vHeaders))
+            listOf(
+                Video(
+                    url = videoLink,
+                    quality = "$name - Direct Stream",
+                    videoUrl = videoLink,
+                    headers = vHeaders,
+                )
+            )
         } else {
             videos
         }
@@ -584,9 +591,9 @@ class CNCVerseSource(
                 video
             } else {
                 Video(
+                    url = video.videoUrl,
+                    quality = video.videoTitle,
                     videoUrl = video.videoUrl,
-                    videoTitle = video.videoTitle,
-                    headers = video.headers,
                     subtitleTracks = video.subtitleTracks.map { track ->
                         if (track.url.endsWith(".m3u8")) {
                             Track(track.url.substringBeforeLast(".m3u8") + ".vtt", track.lang)
@@ -595,6 +602,7 @@ class CNCVerseSource(
                         }
                     },
                     audioTracks = video.audioTracks,
+                    headers = video.headers,
                 )
             }
         }.sortVideos()
