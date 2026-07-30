@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.shuttletv
 
 import android.annotation.SuppressLint
-import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.webkit.WebResourceRequest
@@ -35,6 +34,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -419,7 +420,7 @@ class ShuttleTV : Source() {
             extractedUrl.contains("playlist", ignoreCase = true) ||
             extractedUrl.contains("master", ignoreCase = true)
 
-        val videos = if (isPlaylist) {
+        return if (isPlaylist) {
             playlistUtils.extractFromHls(
                 playlistUrl = extractedUrl,
                 referer = "$cineSrcUrl/",
@@ -444,8 +445,6 @@ class ShuttleTV : Source() {
                 ),
             ).sortVideos()
         }
-
-        return ShuttleHlsServer.processVideoList(client, videos, videoHeaders)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -473,11 +472,9 @@ class ShuttleTV : Source() {
                             val path = request.url?.path?.lowercase() ?: ""
                             val isStream = url.contains(".m3u8") || url.contains(".mp4") || path.contains(".ts") ||
                                 path.contains("playlist") || path.contains("master") || path.contains("/hls/") ||
-                                (
-                                    (path.endsWith(".jpg") || path.endsWith(".png") || path.endsWith(".jpeg")) &&
-                                        !url.contains("tmdb.org") && !url.contains("flagcdn") && !url.contains("next/static") &&
-                                        !url.contains("image") && !url.contains("logo") && !url.contains("icon")
-                                    )
+                                ((path.endsWith(".jpg") || path.endsWith(".png") || path.endsWith(".jpeg")) &&
+                                    !url.contains("tmdb.org") && !url.contains("flagcdn") && !url.contains("next/static") &&
+                                    !url.contains("image") && !url.contains("logo") && !url.contains("icon"))
                             if (isStream && !url.contains("favicon") && !cancelled.get()) {
                                 streamUrl = url
                                 latch.countDown()
@@ -490,15 +487,12 @@ class ShuttleTV : Source() {
                             val triggerJs = """
                                 (function() {
                                     var interval = setInterval(function() {
+                                        var btns = document.querySelectorAll('button, [role="button"], video, svg');
+                                        btns.forEach(function(b) { try { b.click(); } catch(e) {} });
                                         var v = document.querySelector('video');
-                                        if (v) {
-                                            if (v.paused) { try { v.play(); } catch(e) {} }
-                                        } else {
-                                            var playBtn = document.querySelector('.vjs-big-play-button, [aria-label*="Play"], [title*="Play"], button.play');
-                                            if (playBtn) { try { playBtn.click(); } catch(e) {} }
-                                        }
-                                    }, 1000);
-                                    setTimeout(function() { clearInterval(interval); }, 20000);
+                                        if (v && v.paused) { try { v.play(); } catch(e) {} }
+                                    }, 500);
+                                    setTimeout(function() { clearInterval(interval); }, 15000);
                                 })();
                             """.trimIndent()
                             view?.evaluateJavascript(triggerJs, null)
@@ -524,7 +518,7 @@ class ShuttleTV : Source() {
         }
 
         try {
-            latch.await(60, TimeUnit.SECONDS)
+            latch.await(25, TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
             // ignore
         } finally {
