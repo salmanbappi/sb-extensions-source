@@ -398,7 +398,9 @@ class ShuttleTV : Source() {
         val season = parts[2].takeIf { it.isNotBlank() }
         val ep = parts[3].takeIf { it.isNotBlank() }
 
-        val embedPath = if (mediaType == "tv" && season != null && ep != null) {
+        val providerId = parts[4]
+
+        val baseEmbedPath = if (mediaType == "tv" && season != null && ep != null) {
             "embed/tv/$id?s=$season&e=$ep"
         } else if (mediaType == "tv") {
             "embed/tv/$id"
@@ -406,7 +408,8 @@ class ShuttleTV : Source() {
             "embed/movie/$id"
         }
 
-        val embedUrl = "$cineSrcUrl/$embedPath"
+        val separator = if (baseEmbedPath.contains("?")) "&" else "?"
+        val embedUrl = "$cineSrcUrl/$baseEmbedPath${separator}server=$providerId"
 
         val videoHeaders = headersBuilder()
             .set("Referer", "$cineSrcUrl/")
@@ -467,6 +470,8 @@ class ShuttleTV : Source() {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
+                    settings.allowFileAccess = true
+                    settings.allowContentAccess = true
                     settings.mediaPlaybackRequiresUserGesture = false
                     settings.userAgentString = userAgent
 
@@ -502,12 +507,12 @@ class ShuttleTV : Source() {
                             val triggerJs = """
                                 (function() {
                                     var interval = setInterval(function() {
-                                        var btns = document.querySelectorAll('button, [role="button"], video, svg');
-                                        btns.forEach(function(b) { try { b.click(); } catch(e) {} });
+                                        var playBtn = document.querySelector('.vjs-big-play-button, [aria-label*="Play"], [title*="Play"], .play-button, button.play, svg.play');
+                                        if (playBtn) { try { playBtn.click(); } catch(e) {} }
                                         var v = document.querySelector('video');
                                         if (v && v.paused) { try { v.play(); } catch(e) {} }
-                                    }, 500);
-                                    setTimeout(function() { clearInterval(interval); }, 15000);
+                                    }, 1000);
+                                    setTimeout(function() { clearInterval(interval); }, 25000);
                                 })();
                             """.trimIndent()
                             view?.evaluateJavascript(triggerJs, null)
