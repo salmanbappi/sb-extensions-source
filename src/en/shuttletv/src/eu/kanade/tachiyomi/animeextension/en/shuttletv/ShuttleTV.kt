@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.shuttletv
 
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.webkit.WebResourceRequest
