@@ -490,12 +490,15 @@ class ShuttleTV : Source() {
                             val triggerJs = """
                                 (function() {
                                     var interval = setInterval(function() {
-                                        var btns = document.querySelectorAll('button, [role="button"], video, svg');
-                                        btns.forEach(function(b) { try { b.click(); } catch(e) {} });
                                         var v = document.querySelector('video');
-                                        if (v && v.paused) { try { v.play(); } catch(e) {} }
-                                    }, 500);
-                                    setTimeout(function() { clearInterval(interval); }, 15000);
+                                        if (v) {
+                                            if (v.paused) { try { v.play(); } catch(e) {} }
+                                        } else {
+                                            var playBtn = document.querySelector('.vjs-big-play-button, [aria-label*="Play"], [title*="Play"], button.play');
+                                            if (playBtn) { try { playBtn.click(); } catch(e) {} }
+                                        }
+                                    }, 1000);
+                                    setTimeout(function() { clearInterval(interval); }, 20000);
                                 })();
                             """.trimIndent()
                             view?.evaluateJavascript(triggerJs, null)
