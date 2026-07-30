@@ -646,16 +646,14 @@ class CineplexBD : Source() {
         return videoList
     }
 
-    private fun transformVodUrl(url: String): String {
-        return if (url.contains("vod.cineplexbd.net:8081")) {
-            url
-                .replace("http://vod.cineplexbd.net:8081/tv-series/", "/hls/t/")
-                .replace("http://vod.cineplexbd.net:8081/movies/", "/hls/m/")
-                .replace("http://vod.cineplexbd.net:8081/", "/hls/")
-                .replace("/index.m3u8", "/master.m3u8")
-        } else {
-            url
-        }
+    private fun transformVodUrl(url: String): String = if (url.contains("vod.cineplexbd.net:8081")) {
+        url
+            .replace("http://vod.cineplexbd.net:8081/tv-series/", "/hls/t/")
+            .replace("http://vod.cineplexbd.net:8081/movies/", "/hls/m/")
+            .replace("http://vod.cineplexbd.net:8081/", "/hls/")
+            .replace("/index.m3u8", "/master.m3u8")
+    } else {
+        url
     }
 
     // ================= Relation/Suggestions =================
