@@ -393,11 +393,6 @@ class ShuttleTV : Source() {
         val parts = hoster.hosterUrl.split("|")
         if (parts.size < 5) return emptyList()
 
-        val mediaType = parts[0]
-        val id = parts[1]
-        val season = parts[2].takeIf { it.isNotBlank() }
-        val ep = parts[3].takeIf { it.isNotBlank() }
-
         val providerId = parts[4]
 
         val baseEmbedPath = if (mediaType == "tv" && season != null && ep != null) {
@@ -490,11 +485,9 @@ class ShuttleTV : Source() {
                             val path = request.url?.path?.lowercase() ?: ""
                             val isStream = path.contains(".m3u8") || path.contains(".mp4") || path.contains(".ts") ||
                                 path.contains("playlist") || path.contains("master") || path.contains("/hls/") ||
-                                (
-                                    (path.endsWith(".jpg") || path.endsWith(".png") || path.endsWith(".jpeg")) &&
-                                        !url.contains("tmdb.org") && !url.contains("flagcdn") && !url.contains("next/static") &&
-                                        !url.contains("image") && !url.contains("logo") && !url.contains("icon")
-                                    )
+                                ((path.endsWith(".jpg") || path.endsWith(".png") || path.endsWith(".jpeg")) &&
+                                    !url.contains("tmdb.org") && !url.contains("flagcdn") && !url.contains("next/static") &&
+                                    !url.contains("image") && !url.contains("logo") && !url.contains("icon"))
                             if (isStream && !url.contains("favicon") && !cancelled.get()) {
                                 streamUrl = url
                                 latch.countDown()

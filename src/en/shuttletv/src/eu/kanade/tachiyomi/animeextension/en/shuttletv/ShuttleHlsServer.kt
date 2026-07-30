@@ -154,7 +154,6 @@ object ShuttleHlsServer : NanoHTTPD(0) {
         session.headers.forEach { (key, value) ->
             when (key.lowercase()) {
                 "user-agent", "origin", "accept", "accept-language", "accept-encoding", "cache-control", "pragma", "range", "cookie" -> add(key, value)
-
                 "referer" -> {
                     add(key, value)
                     hasReferer = true
