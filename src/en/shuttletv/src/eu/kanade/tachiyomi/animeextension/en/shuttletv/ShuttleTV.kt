@@ -53,7 +53,7 @@ class ShuttleTV : Source() {
 
     private val tmdbApiKey = "ea021b3b0775c8531592713ab727f254"
 
-    private val userAgent = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+    private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
@@ -326,9 +326,9 @@ class ShuttleTV : Source() {
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val urlStr = episode.url
         val id = urlStr.substringAfter("/watch/").substringBefore("?")
-        val isTv = urlStr.contains("type=tv") || (urlStr.contains("s=") && urlStr.contains("e="))
-        val season = if (isTv) urlStr.substringAfter("s=", "1").substringBefore("&").ifBlank { "1" } else null
-        val ep = if (isTv) urlStr.substringAfter("e=", "1").substringBefore("&").ifBlank { "1" } else null
+        val isTv = urlStr.contains("type=tv")
+        val season = if (isTv) urlStr.substringAfter("s=", "1").substringBefore("&") else null
+        val ep = if (isTv) urlStr.substringAfter("e=", "1").substringBefore("&") else null
 
         val mediaType = if (isTv) "tv" else "movie"
 
@@ -397,9 +397,8 @@ class ShuttleTV : Source() {
         val id = parts[1]
         val season = parts[2].takeIf { it.isNotBlank() }
         val ep = parts[3].takeIf { it.isNotBlank() }
-        val providerId = parts[4]
 
-        val baseEmbedPath = if (mediaType == "tv" && season != null && ep != null) {
+        val embedPath = if (mediaType == "tv" && season != null && ep != null) {
             "embed/tv/$id?s=$season&e=$ep"
         } else if (mediaType == "tv") {
             "embed/tv/$id"
@@ -407,42 +406,23 @@ class ShuttleTV : Source() {
             "embed/movie/$id"
         }
 
-        val separator = if (baseEmbedPath.contains("?")) "&" else "?"
-        val embedUrl = "$cineSrcUrl/$baseEmbedPath${separator}server=$providerId"
+        val embedUrl = "$cineSrcUrl/$embedPath"
 
         val videoHeaders = headersBuilder()
             .set("Referer", "$cineSrcUrl/")
             .set("Origin", cineSrcUrl)
-            .apply {
-                val cookies = runCatching { android.webkit.CookieManager.getInstance().getCookie(cineSrcUrl) }.getOrNull()
-                if (!cookies.isNullOrBlank()) {
-                    set("Cookie", cookies)
-                }
-            }
             .build()
 
         val extractedUrl = fetchStreamUrlWithWebView(embedUrl) ?: return emptyList()
 
-        val isPlaylist = extractedUrl.contains(".m3u8", ignoreCase = true) ||
-            extractedUrl.contains("playlist", ignoreCase = true) ||
-            extractedUrl.contains("master", ignoreCase = true)
-
-        val videos = if (isPlaylist) {
+        val videos = if (extractedUrl.contains(".m3u8")) {
             playlistUtils.extractFromHls(
                 playlistUrl = extractedUrl,
                 referer = "$cineSrcUrl/",
                 masterHeaders = videoHeaders,
                 videoHeaders = videoHeaders,
                 videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
-            ).ifEmpty {
-                listOf(
-                    Video(
-                        videoUrl = extractedUrl,
-                        videoTitle = hoster.hosterName,
-                        headers = videoHeaders,
-                    ),
-                )
-            }.sortVideos()
+            ).sortVideos()
         } else {
             listOf(
                 Video(
@@ -469,16 +449,8 @@ class ShuttleTV : Source() {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
-                    settings.allowFileAccess = true
-                    settings.allowContentAccess = true
                     settings.mediaPlaybackRequiresUserGesture = false
                     settings.userAgentString = userAgent
-
-                    runCatching {
-                        val cookieManager = android.webkit.CookieManager.getInstance()
-                        cookieManager.setAcceptCookie(true)
-                        cookieManager.setAcceptThirdPartyCookies(this, true)
-                    }
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(
@@ -486,15 +458,7 @@ class ShuttleTV : Source() {
                             request: WebResourceRequest?,
                         ): WebResourceResponse? {
                             val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
-                            val path = request.url?.path?.lowercase() ?: ""
-                            val isStream = path.contains(".m3u8") || path.contains(".mp4") || path.contains(".ts") ||
-                                path.contains("playlist") || path.contains("master") || path.contains("/hls/") ||
-                                (
-                                    (path.endsWith(".jpg") || path.endsWith(".png") || path.endsWith(".jpeg")) &&
-                                        !url.contains("tmdb.org") && !url.contains("flagcdn") && !url.contains("next/static") &&
-                                        !url.contains("image") && !url.contains("logo") && !url.contains("icon")
-                                    )
-                            if (isStream && !url.contains("favicon") && !cancelled.get()) {
+                            if ((url.contains(".m3u8") || url.contains(".mp4")) && !url.contains("favicon") && !cancelled.get()) {
                                 streamUrl = url
                                 latch.countDown()
                             }
@@ -506,12 +470,12 @@ class ShuttleTV : Source() {
                             val triggerJs = """
                                 (function() {
                                     var interval = setInterval(function() {
-                                        var playBtn = document.querySelector('.vjs-big-play-button, [aria-label*="Play"], [title*="Play"], .play-button, button.play, svg.play');
-                                        if (playBtn) { try { playBtn.click(); } catch(e) {} }
+                                        var btns = document.querySelectorAll('button, [role="button"], video, svg');
+                                        btns.forEach(function(b) { try { b.click(); } catch(e) {} });
                                         var v = document.querySelector('video');
                                         if (v && v.paused) { try { v.play(); } catch(e) {} }
-                                    }, 1000);
-                                    setTimeout(function() { clearInterval(interval); }, 25000);
+                                    }, 500);
+                                    setTimeout(function() { clearInterval(interval); }, 15000);
                                 })();
                             """.trimIndent()
                             view?.evaluateJavascript(triggerJs, null)
