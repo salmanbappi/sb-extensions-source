@@ -53,7 +53,7 @@ class ShuttleTV : Source() {
 
     private val tmdbApiKey = "ea021b3b0775c8531592713ab727f254"
 
-    private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    private val userAgent = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
@@ -411,6 +411,12 @@ class ShuttleTV : Source() {
         val videoHeaders = headersBuilder()
             .set("Referer", "$cineSrcUrl/")
             .set("Origin", cineSrcUrl)
+            .apply {
+                val cookies = runCatching { android.webkit.CookieManager.getInstance().getCookie(cineSrcUrl) }.getOrNull()
+                if (!cookies.isNullOrBlank()) {
+                    set("Cookie", cookies)
+                }
+            }
             .build()
 
         val extractedUrl = fetchStreamUrlWithWebView(embedUrl) ?: return emptyList()
@@ -463,6 +469,12 @@ class ShuttleTV : Source() {
                     settings.databaseEnabled = true
                     settings.mediaPlaybackRequiresUserGesture = false
                     settings.userAgentString = userAgent
+
+                    runCatching {
+                        val cookieManager = android.webkit.CookieManager.getInstance()
+                        cookieManager.setAcceptCookie(true)
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
+                    }
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(
