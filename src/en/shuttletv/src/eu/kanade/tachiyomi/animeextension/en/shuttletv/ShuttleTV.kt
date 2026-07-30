@@ -97,10 +97,15 @@ class ShuttleTV : Source() {
                     val part = filter.toUriPart()
                     if (part != "all") mediaType = part
                 }
+
                 is Filters.SortFilter -> sort = filter.toUriPart()
+
                 is Filters.YearFilter -> year = filter.toUriPart()
+
                 is Filters.CountryFilter -> country = filter.toUriPart()
+
                 is Filters.GenreFilter -> genres.addAll(filter.selectedIds())
+
                 else -> {}
             }
         }
@@ -203,14 +208,18 @@ class ShuttleTV : Source() {
             "Completed"
         }
 
-        val releaseYear = (obj["release_date"]?.jsonPrimitive?.content
-            ?: obj["first_air_date"]?.jsonPrimitive?.content ?: "").take(4)
+        val releaseYear = (
+            obj["release_date"]?.jsonPrimitive?.content
+                ?: obj["first_air_date"]?.jsonPrimitive?.content ?: ""
+            ).take(4)
 
         val trailerKey = obj["videos"]?.jsonObject?.get("results")?.jsonArray?.mapNotNull {
             val vObj = it.jsonObject
             if (vObj["site"]?.jsonPrimitive?.content == "YouTube" && vObj["type"]?.jsonPrimitive?.content == "Trailer") {
                 vObj["key"]?.jsonPrimitive?.content
-            } else null
+            } else {
+                null
+            }
         }?.firstOrNull()
 
         return SAnime.create().apply {
@@ -489,15 +498,13 @@ class ShuttleTV : Source() {
         return videos.sortVideos()
     }
 
-    private fun decryptToken(encToken: String): String {
-        return runCatching {
-            val clean = encToken.trim().removeSurrounding("\"")
-            val b64 = clean.replace("-", "+").replace("_", "/")
-            val rawBytes = Base64.getDecoder().decode(b64)
-            val decBytes = ByteArray(rawBytes.size) { i -> (rawBytes[i].toInt().inv() and 0xFF).toByte() }
-            String(decBytes, StandardCharsets.UTF_8)
-        }.getOrDefault("{\"url\":[]}")
-    }
+    private fun decryptToken(encToken: String): String = runCatching {
+        val clean = encToken.trim().removeSurrounding("\"")
+        val b64 = clean.replace("-", "+").replace("_", "/")
+        val rawBytes = Base64.getDecoder().decode(b64)
+        val decBytes = ByteArray(rawBytes.size) { i -> (rawBytes[i].toInt().inv() and 0xFF).toByte() }
+        String(decBytes, StandardCharsets.UTF_8)
+    }.getOrDefault("{\"url\":[]}")
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
