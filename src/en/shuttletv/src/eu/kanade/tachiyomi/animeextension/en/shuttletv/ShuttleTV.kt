@@ -400,7 +400,7 @@ class ShuttleTV : Source() {
         val ep = parts[3].takeIf { it.isNotBlank() }
 
         val embedPath = if (mediaType == "tv" && season != null && ep != null) {
-            "embed/tv/$id/$season/$ep"
+            "embed/tv/$id?s=$season&e=$ep"
         } else if (mediaType == "tv") {
             "embed/tv/$id"
         } else {
