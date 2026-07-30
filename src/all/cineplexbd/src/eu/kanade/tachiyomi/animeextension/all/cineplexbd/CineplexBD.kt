@@ -148,8 +148,7 @@ class CineplexBD : Source() {
         url = when {
             rawUrl.contains("series_id=") -> "/watch.php?series_id=$id"
             rawUrl.contains("tview.php") -> "/tview.php?id=$id"
-            rawUrl.contains("watch.php") && rawUrl.contains("series_id=") -> "/watch.php?series_id=$id"
-            rawUrl.contains("watch.php") && !rawUrl.contains("series_id=") -> "/view.php?id=$id"
+            rawUrl.contains("watch.php") -> "/watch.php?id=$id"
             else -> "/view.php?id=$id"
         }
 
@@ -181,10 +180,7 @@ class CineplexBD : Source() {
     }
 
     override fun animeDetailsRequest(anime: SAnime): Request {
-        var url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
-        if (url.contains("watch.php?id=") && !url.contains("series_id=")) {
-            url = url.replace("watch.php?id=", "view.php?id=")
-        }
+        val url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
         return GET(baseUrl + url, headers)
     }
 
@@ -325,10 +321,7 @@ class CineplexBD : Source() {
     }
 
     override fun episodeListRequest(anime: SAnime): Request {
-        var url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
-        if (url.contains("watch.php?id=") && !url.contains("series_id=")) {
-            url = url.replace("watch.php?id=", "view.php?id=")
-        }
+        val url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
         return GET(baseUrl + url, headers)
     }
 
@@ -483,7 +476,7 @@ class CineplexBD : Source() {
                                         ?: epJson["overview"]?.jsonPrimitive?.content
                                 } catch (e: Exception) {}
 
-                                val epWatchUrl = if (epPath.contains("watch.php")) {
+                                val epWatchUrl = if (epPath.startsWith("http") || epPath.contains("/Data/") || epPath.endsWith(".mkv") || epPath.endsWith(".mp4") || epPath.endsWith(".m3u8") || epPath.contains("watch.php")) {
                                     epPath
                                 } else {
                                     "/watch.php?$paramName=$id&season=$season&ep=${epNum.toInt()}"
@@ -576,13 +569,9 @@ class CineplexBD : Source() {
     }
 
     override fun videoListRequest(episode: SEpisode): Request {
-        var url = episode.url
-        if (url.contains("watch.php?id=") && !url.contains("series_id=")) {
-            url = url.replace("watch.php?id=", "view.php?id=")
-        }
-        if (url.startsWith("http")) return GET(url, headers)
-        val path = if (url.startsWith("/")) url else "/$url"
-        return GET(baseUrl + path, headers)
+        if (episode.url.startsWith("http")) return GET(episode.url, headers)
+        val url = if (episode.url.startsWith("/")) episode.url else "/${episode.url}"
+        return GET(baseUrl + url, headers)
     }
 
     override fun videoListParse(response: Response): List<Video> {
