@@ -553,6 +553,18 @@ class CineplexBD : Source() {
                 } catch (e: Exception) {}
             }
         }
+        if (episodes.isEmpty() && url.contains("id=")) {
+            val id = url.substringAfter("id=").substringBefore("&").trimEnd('/').trim()
+            if (id.isNotEmpty()) {
+                episodes.add(
+                    SEpisode.create().apply {
+                        name = "Movie / Stream"
+                        episode_number = 1f
+                        this.url = "/player.php?id=$id"
+                    }
+                )
+            }
+        }
         return episodes.reversed()
     }
 
@@ -594,7 +606,22 @@ class CineplexBD : Source() {
 
         // Fallback to Jsoup (legacy/other pages)
         if (videoUrl.isNullOrBlank()) {
-            videoUrl = Jsoup.parse(html).selectFirst("source[type='video/mp4'], source[type='application/x-mpegURL'], source")?.attr("src")
+            val doc = Jsoup.parse(html)
+            videoUrl = doc.selectFirst("source[type='video/mp4'], source[type='application/x-mpegURL'], source")?.attr("src")
+
+            if (videoUrl.isNullOrBlank()) {
+                val iframeSrc = doc.selectFirst("iframe[src]")?.attr("src")
+                if (!iframeSrc.isNullOrBlank()) {
+                    val iframeUrl = if (iframeSrc.startsWith("http")) iframeSrc else "$baseUrl/${iframeSrc.trimStart('/')}"
+                    try {
+                        val iframeResponse = client.newCall(GET(iframeUrl, videoHeaders)).execute()
+                        val iframeHtml = iframeResponse.body.string()
+                        iframeResponse.close()
+                        videoUrl = Regex("""const videoSrc\s*=\s*["'](.*?)["']""").find(iframeHtml)?.groupValues?.get(1)
+                            ?: Jsoup.parse(iframeHtml).selectFirst("source[type='video/mp4'], source[type='application/x-mpegURL'], source")?.attr("src")
+                    } catch (e: Exception) {}
+                }
+            }
         }
 
         if (!videoUrl.isNullOrBlank()) {
