@@ -116,15 +116,10 @@ class ShuttleTV : Source() {
                     val part = filter.toUriPart()
                     if (part != "all") mediaType = part
                 }
-
                 is Filters.SortFilter -> sort = filter.toUriPart()
-
                 is Filters.YearFilter -> year = filter.toUriPart()
-
                 is Filters.CountryFilter -> country = filter.toUriPart()
-
                 is Filters.GenreFilter -> genres.addAll(filter.selectedIds())
-
                 else -> {}
             }
         }
@@ -161,7 +156,7 @@ class ShuttleTV : Source() {
         Filters.SortFilter(),
         Filters.YearFilter(),
         Filters.GenreFilter(),
-        Filters.CountryFilter(),
+        Filters.CountryFilter()
     )
 
     private fun parseTmdbMediaList(response: Response): AnimesPage {
@@ -227,18 +222,14 @@ class ShuttleTV : Source() {
             "Completed"
         }
 
-        val releaseYear = (
-            obj["release_date"]?.jsonPrimitive?.content
-                ?: obj["first_air_date"]?.jsonPrimitive?.content ?: ""
-            ).take(4)
+        val releaseYear = (obj["release_date"]?.jsonPrimitive?.content
+            ?: obj["first_air_date"]?.jsonPrimitive?.content ?: "").take(4)
 
         val trailerKey = obj["videos"]?.jsonObject?.get("results")?.jsonArray?.mapNotNull {
             val vObj = it.jsonObject
             if (vObj["site"]?.jsonPrimitive?.content == "YouTube" && vObj["type"]?.jsonPrimitive?.content == "Trailer") {
                 vObj["key"]?.jsonPrimitive?.content
-            } else {
-                null
-            }
+            } else null
         }?.firstOrNull()
 
         return SAnime.create().apply {
@@ -279,7 +270,7 @@ class ShuttleTV : Source() {
                     name = "Movie"
                     setUrlWithoutDomain("/watch/$id?type=movie")
                     episode_number = 1.0f
-                },
+                }
             )
         }
 
@@ -322,7 +313,7 @@ class ShuttleTV : Source() {
                             episode_number = (seasonNum * 1000 + epNum).toFloat()
                             if (stillUrl.isNotBlank()) preview_url = stillUrl
                             if (overviewStr.isNotBlank()) summary = overviewStr
-                        },
+                        }
                     )
                 }
             }
@@ -356,7 +347,7 @@ class ShuttleTV : Source() {
             val finalEmbedUrl = if (providerId != "auto") "$baseEmbedUrl${sep}server=$providerId" else baseEmbedUrl
             Hoster(
                 hosterName = providerName,
-                hosterUrl = finalEmbedUrl,
+                hosterUrl = finalEmbedUrl
             )
         }
 
@@ -368,7 +359,13 @@ class ShuttleTV : Source() {
         val req = Request.Builder()
             .url("$cineSrcUrl/$embedPath")
             .post("[]".toRequestBody("text/plain".toMediaType()))
-            .headers(headersBuilder().set("Next-Action", "009ae233b6f5dd27b41a46896cad785bff36e42f4d").build())
+            .headers(
+                headersBuilder()
+                    .set("Referer", "$baseUrl/")
+                    .set("Origin", baseUrl)
+                    .set("Next-Action", "009ae233b6f5dd27b41a46896cad785bff36e42f4d")
+                    .build(),
+            )
             .build()
 
         return runCatching {
@@ -401,12 +398,17 @@ class ShuttleTV : Source() {
         val embedUrl = hoster.hosterUrl
         val resolvedUrl = cineSrcResolver.resolveStreamUrl(embedUrl, userAgent) ?: return emptyList()
 
+        val videoHeaders = headersBuilder()
+            .set("Referer", "$cineSrcUrl/")
+            .set("Origin", cineSrcUrl)
+            .build()
+
         if (resolvedUrl.contains(".m3u8")) {
             return playlistUtils.extractFromHls(
                 playlistUrl = resolvedUrl,
                 referer = "$cineSrcUrl/",
-                masterHeaders = headers,
-                videoHeaders = headers,
+                masterHeaders = videoHeaders,
+                videoHeaders = videoHeaders,
                 videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
             ).sortVideos()
         }
@@ -414,7 +416,7 @@ class ShuttleTV : Source() {
         val video = Video(
             videoUrl = resolvedUrl,
             videoTitle = hoster.hosterName,
-            headers = headersBuilder().set("Referer", "$cineSrcUrl/").build(),
+            headers = videoHeaders,
         )
 
         return listOf(video).sortVideos()
@@ -547,9 +549,14 @@ class CineSrcResolver(private val context: Application) {
                     if (continuation.isActive) continuation.resume(null)
                 }
             }
-            mainHandler.postDelayed(timeoutRunnable, 25000)
+            mainHandler.postDelayed(timeoutRunnable, 15000)
 
             try {
+                val headersMap = mapOf(
+                    "Referer" to "https://shuttletv.su/",
+                    "Origin" to "https://shuttletv.su",
+                )
+
                 webView = WebView(context).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
@@ -563,7 +570,7 @@ class CineSrcResolver(private val context: Application) {
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(
                             view: WebView?,
-                            request: WebResourceRequest?,
+                            request: WebResourceRequest?
                         ): WebResourceResponse? {
                             val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
                             val lower = url.lowercase()
@@ -587,7 +594,7 @@ class CineSrcResolver(private val context: Application) {
                         }
                     }
 
-                    loadUrl(embedUrl)
+                    loadUrl(embedUrl, headersMap)
                 }
             } catch (t: Throwable) {
                 if (isResumed.compareAndSet(false, true)) {
