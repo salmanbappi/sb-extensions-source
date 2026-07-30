@@ -1,7 +1,7 @@
 ext {
     extName = 'ShuttleTV'
     extClass = '.ShuttleTV'
-    extVersionCode = 20
+    extVersionCode = 21
     isNsfw = false
 }
 
@@ -9,5 +9,4 @@ apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation(project(':lib:playlist-utils'))
-    implementation("com.github.NanoHttpd.nanohttpd:nanohttpd:nanohttpd-project-2.3.1")
 }
