@@ -35,8 +35,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import java.nio.charset.StandardCharsets
-import java.util.Base64
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -327,11 +325,10 @@ class ShuttleTV : Source() {
     // ============================ Video Links =============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val urlStr = episode.url
-        val uri = Uri.parse(if (urlStr.startsWith("/")) "$baseUrl$urlStr" else urlStr)
-        val id = uri.path?.substringAfter("/watch/")?.substringBefore("?") ?: urlStr.substringAfter("/watch/").substringBefore("?")
-        val isTv = uri.getQueryParameter("type") == "tv" || (uri.getQueryParameter("s") != null && uri.getQueryParameter("e") != null)
-        val season = if (isTv) uri.getQueryParameter("s")?.ifBlank { "1" } ?: "1" else null
-        val ep = if (isTv) uri.getQueryParameter("e")?.ifBlank { "1" } ?: "1" else null
+        val id = urlStr.substringAfter("/watch/").substringBefore("?")
+        val isTv = urlStr.contains("type=tv")
+        val season = if (isTv) urlStr.substringAfter("s=", "1").substringBefore("&") else null
+        val ep = if (isTv) urlStr.substringAfter("e=", "1").substringBefore("&") else null
 
         val mediaType = if (isTv) "tv" else "movie"
 
@@ -418,26 +415,14 @@ class ShuttleTV : Source() {
 
         val extractedUrl = fetchStreamUrlWithWebView(embedUrl) ?: return emptyList()
 
-        val isPlaylist = extractedUrl.contains(".m3u8", ignoreCase = true) ||
-            extractedUrl.contains("playlist", ignoreCase = true) ||
-            extractedUrl.contains("master", ignoreCase = true)
-
-        return if (isPlaylist) {
+        val videos = if (extractedUrl.contains(".m3u8")) {
             playlistUtils.extractFromHls(
                 playlistUrl = extractedUrl,
                 referer = "$cineSrcUrl/",
                 masterHeaders = videoHeaders,
                 videoHeaders = videoHeaders,
                 videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
-            ).ifEmpty {
-                listOf(
-                    Video(
-                        videoUrl = extractedUrl,
-                        videoTitle = hoster.hosterName,
-                        headers = videoHeaders,
-                    ),
-                )
-            }.sortVideos()
+            ).sortVideos()
         } else {
             listOf(
                 Video(
@@ -447,6 +432,8 @@ class ShuttleTV : Source() {
                 ),
             ).sortVideos()
         }
+
+        return ShuttleHlsServer.processVideoList(client, videos, videoHeaders)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -471,15 +458,7 @@ class ShuttleTV : Source() {
                             request: WebResourceRequest?,
                         ): WebResourceResponse? {
                             val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
-                            val path = request.url?.path?.lowercase() ?: ""
-                            val isStream = url.contains(".m3u8") || url.contains(".mp4") || path.contains(".ts") ||
-                                path.contains("playlist") || path.contains("master") || path.contains("/hls/") ||
-                                (
-                                    (path.endsWith(".jpg") || path.endsWith(".png") || path.endsWith(".jpeg")) &&
-                                        !url.contains("tmdb.org") && !url.contains("flagcdn") && !url.contains("next/static") &&
-                                        !url.contains("image") && !url.contains("logo") && !url.contains("icon")
-                                    )
-                            if (isStream && !url.contains("favicon") && !cancelled.get()) {
+                            if ((url.contains(".m3u8") || url.contains(".mp4")) && !url.contains("favicon") && !cancelled.get()) {
                                 streamUrl = url
                                 latch.countDown()
                             }
@@ -522,7 +501,7 @@ class ShuttleTV : Source() {
         }
 
         try {
-            latch.await(25, TimeUnit.SECONDS)
+            latch.await(60, TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
             // ignore
         } finally {
