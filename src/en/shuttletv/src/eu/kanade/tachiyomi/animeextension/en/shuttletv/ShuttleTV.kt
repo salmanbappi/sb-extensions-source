@@ -485,9 +485,11 @@ class ShuttleTV : Source() {
                             val path = request.url?.path?.lowercase() ?: ""
                             val isStream = path.contains(".m3u8") || path.contains(".mp4") || path.contains(".ts") ||
                                 path.contains("playlist") || path.contains("master") || path.contains("/hls/") ||
-                                ((path.endsWith(".jpg") || path.endsWith(".png") || path.endsWith(".jpeg")) &&
-                                    !url.contains("tmdb.org") && !url.contains("flagcdn") && !url.contains("next/static") &&
-                                    !url.contains("image") && !url.contains("logo") && !url.contains("icon"))
+                                (
+                                    (path.endsWith(".jpg") || path.endsWith(".png") || path.endsWith(".jpeg")) &&
+                                        !url.contains("tmdb.org") && !url.contains("flagcdn") && !url.contains("next/static") &&
+                                        !url.contains("image") && !url.contains("logo") && !url.contains("icon")
+                                    )
                             if (isStream && !url.contains("favicon") && !cancelled.get()) {
                                 streamUrl = url
                                 latch.countDown()
