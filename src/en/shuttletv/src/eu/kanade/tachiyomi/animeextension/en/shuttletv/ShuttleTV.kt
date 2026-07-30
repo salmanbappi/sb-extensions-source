@@ -108,10 +108,15 @@ class ShuttleTV : Source() {
                     val part = filter.toUriPart()
                     if (part != "all") mediaType = part
                 }
+
                 is Filters.SortFilter -> sort = filter.toUriPart()
+
                 is Filters.YearFilter -> year = filter.toUriPart()
+
                 is Filters.CountryFilter -> country = filter.toUriPart()
+
                 is Filters.GenreFilter -> genres.addAll(filter.selectedIds())
+
                 else -> {}
             }
         }
@@ -214,14 +219,18 @@ class ShuttleTV : Source() {
             "Completed"
         }
 
-        val releaseYear = (obj["release_date"]?.jsonPrimitive?.content
-            ?: obj["first_air_date"]?.jsonPrimitive?.content ?: "").take(4)
+        val releaseYear = (
+            obj["release_date"]?.jsonPrimitive?.content
+                ?: obj["first_air_date"]?.jsonPrimitive?.content ?: ""
+            ).take(4)
 
         val trailerKey = obj["videos"]?.jsonObject?.get("results")?.jsonArray?.mapNotNull {
             val vObj = it.jsonObject
             if (vObj["site"]?.jsonPrimitive?.content == "YouTube" && vObj["type"]?.jsonPrimitive?.content == "Trailer") {
                 vObj["key"]?.jsonPrimitive?.content
-            } else null
+            } else {
+                null
+            }
         }?.firstOrNull()
 
         return SAnime.create().apply {
