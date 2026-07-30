@@ -476,30 +476,18 @@ class CineplexBD : Source() {
                                         ?: epJson["overview"]?.jsonPrimitive?.content
                                 } catch (e: Exception) {}
 
-                                // Fetch upload date from player page
-                                var epDate = 0L
-                                try {
-                                    val playerUrl = if (epPath.startsWith("http")) epPath else "$baseUrl/${epPath.trimStart('/')}"
-                                    val playerResponse = client.newCall(GET(playerUrl, headers)).execute()
-                                    val playerHtml = playerResponse.body.string()
-                                    playerResponse.close()
-                                    val playerDoc = Jsoup.parse(playerHtml)
-                                    val dateSpan = playerDoc.selectFirst("span:contains(Uploaded:)")
-                                    if (dateSpan != null) {
-                                        val dateStr = dateSpan.text().substringAfter("Uploaded:").trim()
-                                        epDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(dateStr)?.time ?: 0L
-                                    }
-                                } catch (e: Exception) {}
+                                val epWatchUrl = if (epPath.contains("watch.php")) {
+                                    epPath
+                                } else {
+                                    "/watch.php?$paramName=$id&season=$season&ep=${epNum.toInt()}"
+                                }
 
                                 SEpisode.create().apply {
                                     name = if (seasons.size > 1) "S$season $epName" else epName
                                     episode_number = epNum
-                                    this.url = epPath
+                                    this.url = epWatchUrl
                                     if (showStats && epViews != null) {
                                         scanlator = epViews
-                                    }
-                                    if (epDate != 0L) {
-                                        date_upload = epDate
                                     }
                                     if (!thumbnail.isNullOrBlank()) {
                                         preview_url = thumbnail
@@ -537,30 +525,12 @@ class CineplexBD : Source() {
 
                                 val epViews = if (showStats) card.selectFirst(".meta-views")?.text()?.trim() else null
 
-                                // Fetch upload date from player page
-                                var epDate = 0L
-                                try {
-                                    val playerUrl = if (epPath.startsWith("http")) epPath else "$baseUrl/${epPath.trimStart('/')}"
-                                    val playerResponse = client.newCall(GET(playerUrl, headers)).execute()
-                                    val playerHtml = playerResponse.body.string()
-                                    playerResponse.close()
-                                    val playerDoc = Jsoup.parse(playerHtml)
-                                    val dateSpan = playerDoc.selectFirst("span:contains(Uploaded:)")
-                                    if (dateSpan != null) {
-                                        val dateStr = dateSpan.text().substringAfter("Uploaded:").trim()
-                                        epDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(dateStr)?.time ?: 0L
-                                    }
-                                } catch (e: Exception) {}
-
                                 SEpisode.create().apply {
                                     name = if (seasons.size > 1) "S$season $epName" else epName
                                     episode_number = epNum
                                     this.url = epPath
                                     if (showStats && epViews != null) {
                                         scanlator = epViews
-                                    }
-                                    if (epDate != 0L) {
-                                        date_upload = epDate
                                     }
                                     if (!thumbnail.isNullOrBlank()) {
                                         preview_url = thumbnail
@@ -612,8 +582,9 @@ class CineplexBD : Source() {
             .build()
 
         if (url.endsWith(".mp4") || url.endsWith(".mkv") || url.contains("/Data/") || url.contains(".m3u8")) {
-            val quality = if (url.contains(".m3u8")) "HLS" else "Direct"
-            return listOf(Video(videoUrl = url, videoTitle = quality, headers = videoHeaders))
+            val finalUrl = transformVodUrl(url)
+            val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Direct"
+            return listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
         }
 
         val html = response.body.string()
@@ -623,15 +594,24 @@ class CineplexBD : Source() {
 
         // Fallback to Jsoup (legacy/other pages)
         if (videoUrl.isNullOrBlank()) {
-            videoUrl = Jsoup.parse(html).selectFirst("source[type='video/mp4'], source")?.attr("src")
+            videoUrl = Jsoup.parse(html).selectFirst("source[type='video/mp4'], source[type='application/x-mpegURL'], source")?.attr("src")
         }
 
         if (!videoUrl.isNullOrBlank()) {
-            val finalUrl = if (videoUrl.startsWith("http")) videoUrl else "$baseUrl/${videoUrl.trimStart('/')}"
+            val transformed = transformVodUrl(videoUrl)
+            val finalUrl = if (transformed.startsWith("http")) transformed else "$baseUrl/${transformed.trimStart('/')}"
             val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
             return listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
         }
         return emptyList()
+    }
+
+    private fun transformVodUrl(url: String): String {
+        return url
+            .replace("http://vod.cineplexbd.net:8081/tv-series/", "/hls/t/")
+            .replace("http://vod.cineplexbd.net:8081/movies/", "/hls/m/")
+            .replace("http://vod.cineplexbd.net:8081/", "/hls/")
+            .replace("/index.m3u8", "/master.m3u8")
     }
 
     // ================= Relation/Suggestions =================
