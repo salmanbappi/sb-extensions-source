@@ -561,7 +561,7 @@ class CineplexBD : Source() {
                         name = "Movie / Stream"
                         episode_number = 1f
                         this.url = "/player.php?id=$id"
-                    }
+                    },
                 )
             }
         }
