@@ -415,14 +415,26 @@ class ShuttleTV : Source() {
 
         val extractedUrl = fetchStreamUrlWithWebView(embedUrl) ?: return emptyList()
 
-        val videos = if (extractedUrl.contains(".m3u8")) {
+        val isPlaylist = extractedUrl.contains(".m3u8", ignoreCase = true) ||
+            extractedUrl.contains("playlist", ignoreCase = true) ||
+            extractedUrl.contains("master", ignoreCase = true)
+
+        val videos = if (isPlaylist) {
             playlistUtils.extractFromHls(
                 playlistUrl = extractedUrl,
                 referer = "$cineSrcUrl/",
                 masterHeaders = videoHeaders,
                 videoHeaders = videoHeaders,
                 videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
-            ).sortVideos()
+            ).ifEmpty {
+                listOf(
+                    Video(
+                        videoUrl = extractedUrl,
+                        videoTitle = hoster.hosterName,
+                        headers = videoHeaders,
+                    ),
+                )
+            }.sortVideos()
         } else {
             listOf(
                 Video(
@@ -458,7 +470,13 @@ class ShuttleTV : Source() {
                             request: WebResourceRequest?,
                         ): WebResourceResponse? {
                             val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
-                            if ((url.contains(".m3u8") || url.contains(".mp4")) && !url.contains("favicon") && !cancelled.get()) {
+                            val path = request.url?.path?.lowercase() ?: ""
+                            val isStream = url.contains(".m3u8") || url.contains(".mp4") || path.contains(".ts") ||
+                                path.contains("playlist") || path.contains("master") || path.contains("/hls/") ||
+                                ((path.endsWith(".jpg") || path.endsWith(".png") || path.endsWith(".jpeg")) &&
+                                    !url.contains("tmdb.org") && !url.contains("flagcdn") && !url.contains("next/static") &&
+                                    !url.contains("image") && !url.contains("logo") && !url.contains("icon"))
+                            if (isStream && !url.contains("favicon") && !cancelled.get()) {
                                 streamUrl = url
                                 latch.countDown()
                             }
