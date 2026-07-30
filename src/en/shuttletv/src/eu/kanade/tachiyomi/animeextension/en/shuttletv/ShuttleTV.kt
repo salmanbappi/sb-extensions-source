@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
+import android.net.Uri
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
@@ -21,6 +22,8 @@ import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.applicationContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.doubleOrNull
@@ -31,12 +34,18 @@ import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import java.io.OutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -57,6 +66,32 @@ class ShuttleTV : Source() {
     private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+
+    private var proxy: LocalProxyServer? = null
+
+    private fun getProxyUrl(url: String, sourceHeaders: Headers? = null): String {
+        if (proxy == null) {
+            proxy = LocalProxyServer(client, json).apply { start() }
+        }
+        val encodedUrl = android.util.Base64.encodeToString(url.toByteArray(), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+        val encodedHeaders = encodeHeaders(sourceHeaders)
+        val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
+        val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
+        return "http://127.0.0.1:${proxy!!.port}/$path?$query"
+    }
+
+    private fun encodeHeaders(hdrs: Headers?): String? {
+        if (hdrs == null || hdrs.size == 0) return null
+        val map = mutableMapOf<String, String>()
+        for (i in 0 until hdrs.size) {
+            map[hdrs.name(i)] = hdrs.value(i)
+        }
+        return try {
+            android.util.Base64.encodeToString(json.encodeToString(map).toByteArray(), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("User-Agent", userAgent)
@@ -418,7 +453,7 @@ class ShuttleTV : Source() {
 
         return if (extractedUrl.contains(".m3u8")) {
             playlistUtils.extractFromHls(
-                playlistUrl = extractedUrl,
+                playlistUrl = getProxyUrl(extractedUrl, videoHeaders),
                 referer = "$cineSrcUrl/",
                 masterHeaders = videoHeaders,
                 videoHeaders = videoHeaders,
@@ -427,7 +462,7 @@ class ShuttleTV : Source() {
         } else {
             listOf(
                 Video(
-                    videoUrl = extractedUrl,
+                    videoUrl = getProxyUrl(extractedUrl, videoHeaders),
                     videoTitle = hoster.hosterName,
                     headers = videoHeaders,
                 ),
@@ -613,5 +648,257 @@ class ShuttleTV : Source() {
         private const val PREF_AUTO_SKIP_KEY = "pref_auto_skip"
         private const val PREF_DISABLE_ADS_KEY = "pref_disable_ads"
         private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
+    }
+}
+
+// ========================= Local Proxy Server =============================
+
+private class LocalProxyServer(
+    private val client: OkHttpClient,
+    private val json: Json,
+) {
+    private val executor = Executors.newCachedThreadPool()
+    private val running = AtomicBoolean(false)
+    private var serverSocket: ServerSocket? = null
+
+    val port: Int
+        get() = serverSocket?.let { if (it.isClosed) 0 else it.localPort } ?: 0
+
+    fun start() {
+        if (running.get() && serverSocket?.isClosed == false) return
+        running.set(false)
+        try {
+            serverSocket?.close()
+        } catch (_: Exception) {}
+        try {
+            serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
+            running.set(true)
+            executor.execute {
+                while (running.get() && serverSocket?.isClosed == false) {
+                    try {
+                        val socket = serverSocket?.accept() ?: break
+                        executor.execute { handleClient(socket) }
+                    } catch (_: Exception) {
+                        if (serverSocket?.isClosed == true || !running.get()) break
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            running.set(false)
+        }
+    }
+
+    private fun handleClient(socket: Socket) {
+        socket.use { s ->
+            val input = s.getInputStream()
+            val output = s.getOutputStream()
+            val firstLine = input.bufferedReader().readLine() ?: return
+            val parts = firstLine.split(" ")
+            if (parts.size >= 2 && parts[0] == "GET") {
+                routeRequest(parts[1], output)
+            }
+        }
+    }
+
+    private fun routeRequest(path: String, output: OutputStream) {
+        val uri = Uri.parse("http://127.0.0.1$path")
+        val encodedUrl = uri.getQueryParameter("url") ?: return
+        val encodedHeaders = uri.getQueryParameter("headers")
+        val targetUrl = try {
+            String(android.util.Base64.decode(encodedUrl, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING))
+        } catch (_: Exception) {
+            return
+        }
+        val hdrs = decodeHeaders(encodedHeaders)
+
+        try {
+            when {
+                path.contains("playlist.m3u8") -> servePlaylist(targetUrl, hdrs, encodedHeaders, output)
+                path.contains("key.bin") -> serveKey(targetUrl, hdrs, output)
+                else -> serveSegment(targetUrl, hdrs, output)
+            }
+        } catch (_: Exception) {
+            try {
+                output.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n".toByteArray())
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun decodeHeaders(encoded: String?): Headers {
+        val fallback = Headers.Builder()
+            .set("User-Agent", UA)
+            .set("Referer", "https://cinesrc.st/")
+            .build()
+        if (encoded.isNullOrEmpty()) return fallback
+        return try {
+            val jsonStr = String(android.util.Base64.decode(encoded, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING))
+            val map = json.decodeFromString<Map<String, String>>(jsonStr)
+            Headers.Builder().apply { for ((k, v) in map) set(k, v) }.build()
+        } catch (_: Exception) {
+            fallback
+        }
+    }
+
+    private fun getProxyUrl(url: String, headersStr: String?, isKey: Boolean = false): String {
+        val encoded = android.util.Base64.encodeToString(url.toByteArray(), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+        val path = when {
+            isKey || url.contains(".key") || url.contains("key.bin") -> "key.bin"
+            url.contains(".m3u8") -> "playlist.m3u8"
+            else -> "segment.ts"
+        }
+        val query = "url=$encoded" + if (!headersStr.isNullOrEmpty()) "&headers=$headersStr" else ""
+        return "http://127.0.0.1:$port/$path?$query"
+    }
+
+    private fun fetchWithRetry(targetUrl: String, hdrs: Headers): Response {
+        var response = client.newCall(GET(targetUrl, hdrs)).execute()
+        if (response.code == 403) {
+            response.close()
+            val fallback = hdrs.newBuilder().set("Referer", "https://cinesrc.st/").build()
+            response = client.newCall(GET(targetUrl, fallback)).execute()
+        }
+        return response
+    }
+
+    private fun servePlaylist(targetUrl: String, hdrs: Headers, encodedHeaders: String?, output: OutputStream) {
+        val response = fetchWithRetry(targetUrl, hdrs)
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
+            return
+        }
+        val content = response.body.string()
+        response.close()
+        val lines = content.split(Regex("""\r?\n"""))
+        val builder = StringBuilder(content.length * 2)
+
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) {
+                builder.append("\n")
+                continue
+            }
+            if (trimmed.startsWith("#")) {
+                val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
+                uriRegex.find(trimmed)?.let { match ->
+                    val uriValue = match.groupValues[1]
+                    val resolved = when {
+                        uriValue.startsWith("//") -> "https:$uriValue"
+                        else -> targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
+                    }
+                    val isKeyLine = trimmed.contains("#EXT-X-KEY") || resolved.contains(".key")
+                    builder.append(trimmed.replace(uriValue, getProxyUrl(resolved, encodedHeaders, isKey = isKeyLine)))
+                } ?: builder.append(trimmed)
+            } else {
+                val resolved = when {
+                    trimmed.startsWith("//") -> "https:$trimmed"
+                    else -> targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
+                }
+                builder.append(getProxyUrl(resolved, encodedHeaders, isKey = resolved.contains(".key")))
+            }
+            builder.append("\n")
+        }
+
+        val bodyBytes = builder.toString().toByteArray()
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: ${bodyBytes.size}\r\n".toByteArray())
+        output.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        output.write(bodyBytes)
+        output.flush()
+    }
+
+    private fun serveKey(targetUrl: String, hdrs: Headers, output: OutputStream) {
+        val response = fetchWithRetry(targetUrl, hdrs)
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
+            return
+        }
+        val bytes = response.body.bytes()
+        response.close()
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: ${bytes.size}\r\n".toByteArray())
+        output.write("Content-Type: application/octet-stream\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        output.write(bytes)
+        output.flush()
+    }
+
+    private fun serveSegment(targetUrl: String, hdrs: Headers, output: OutputStream) {
+        val response = fetchWithRetry(targetUrl, hdrs)
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
+            return
+        }
+        val body = response.body
+        val inputStream = body.byteStream()
+
+        val headerBuffer = ByteArray(131072)
+        var totalRead = 0
+        while (totalRead < headerBuffer.size) {
+            val read = inputStream.read(headerBuffer, totalRead, headerBuffer.size - totalRead)
+            if (read == -1) break
+            totalRead += read
+        }
+
+        val sample = if (totalRead == headerBuffer.size) headerBuffer else headerBuffer.copyOf(totalRead)
+        val skipBytes = detectSkipBytes(sample)
+        val contentLength = body.contentLength()
+        val payloadLength = if (contentLength > 0) contentLength - skipBytes else -1L
+
+        val headerBuilder = StringBuilder("HTTP/1.1 200 OK\r\n")
+        if (payloadLength >= 0) headerBuilder.append("Content-Length: $payloadLength\r\n")
+        headerBuilder.append("Content-Type: video/mp2t\r\n")
+        headerBuilder.append("Connection: close\r\n\r\n")
+        output.write(headerBuilder.toString().toByteArray())
+
+        if (totalRead > skipBytes) output.write(sample, skipBytes, totalRead - skipBytes)
+
+        val buffer = ByteArray(8192)
+        var bytesRead: Int
+        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+            output.write(buffer, 0, bytesRead)
+        }
+        output.flush()
+        response.close()
+    }
+
+    private fun detectSkipBytes(data: ByteArray): Int {
+        if (data.size < 4) return 0
+        val isPng = data[0] == 0x89.toByte() && data[1] == 0x50.toByte() && data[2] == 0x4E.toByte() && data[3] == 0x47.toByte()
+        val isJpeg = data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte() && data[2] == 0xFF.toByte()
+        val isGif = data[0] == 0x47.toByte() && data[1] == 0x49.toByte() && data[2] == 0x46.toByte()
+        if (!isPng && !isGif && !isJpeg) return 0
+
+        val maxScan = minOf(data.size, 131072)
+        if (isPng) {
+            val iend = byteArrayOf(0x49.toByte(), 0x45.toByte(), 0x4E.toByte(), 0x44.toByte())
+            val maxIend = minOf(data.size - iend.size, maxScan)
+            for (i in 0..maxIend) {
+                if (data[i] == iend[0] && data[i + 1] == iend[1] && data[i + 2] == iend[2] && data[i + 3] == iend[3]) {
+                    if (i + 8 <= data.size) return i + 8
+                }
+            }
+        }
+        val maxTs = minOf(data.size - 188 * 2, maxScan)
+        for (i in 0..maxTs) {
+            if (data[i] == 0x47.toByte()) {
+                var validCount = 0
+                val limit = minOf(data.size, i + 188 * 4)
+                var j = i
+                while (j < limit) {
+                    if (data[j] == 0x47.toByte()) validCount++
+                    j += 188
+                }
+                if (validCount >= 3) return i
+            }
+        }
+        return 0
+    }
+
+    companion object {
+        private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 }
