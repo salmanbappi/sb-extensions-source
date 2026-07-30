@@ -326,10 +326,11 @@ class ShuttleTV : Source() {
     // ============================ Video Links =============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val urlStr = episode.url
-        val id = urlStr.substringAfter("/watch/").substringBefore("?")
-        val isTv = urlStr.contains("type=tv") || (urlStr.contains("s=") && urlStr.contains("e="))
-        val season = if (isTv) urlStr.substringAfter("s=", "1").substringBefore("&").ifBlank { "1" } else null
-        val ep = if (isTv) urlStr.substringAfter("e=", "1").substringBefore("&").ifBlank { "1" } else null
+        val uri = Uri.parse(if (urlStr.startsWith("/")) "$baseUrl$urlStr" else urlStr)
+        val id = uri.path?.substringAfter("/watch/")?.substringBefore("?") ?: urlStr.substringAfter("/watch/").substringBefore("?")
+        val isTv = uri.getQueryParameter("type") == "tv" || (uri.getQueryParameter("s") != null && uri.getQueryParameter("e") != null)
+        val season = if (isTv) uri.getQueryParameter("s")?.ifBlank { "1" } ?: "1" else null
+        val ep = if (isTv) uri.getQueryParameter("e")?.ifBlank { "1" } ?: "1" else null
 
         val mediaType = if (isTv) "tv" else "movie"
 
