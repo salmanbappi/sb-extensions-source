@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import extensions.utils.Source
+import aniyomi.lib.m3u8server.M3u8Integration
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -32,6 +33,8 @@ import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 
 class CineplexBD : Source() {
+
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override val name = "Cineplex BD"
     override val baseUrl = "http://cineplexbd.net"
@@ -584,7 +587,8 @@ class CineplexBD : Source() {
         if (url.endsWith(".mp4") || url.endsWith(".mkv") || url.contains("/Data/") || url.contains(".m3u8")) {
             val finalUrl = transformVodUrl(url)
             val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Direct"
-            return listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
+            val videos = listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
+            return m3u8Integration.processVideoList(videos)
         }
 
         val html = response.body.string()
@@ -601,7 +605,8 @@ class CineplexBD : Source() {
             val transformed = transformVodUrl(videoUrl)
             val finalUrl = if (transformed.startsWith("http")) transformed else "$baseUrl/${transformed.trimStart('/')}"
             val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
-            return listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
+            val videos = listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
+            return m3u8Integration.processVideoList(videos)
         }
 
         return emptyList()

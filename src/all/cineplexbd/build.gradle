@@ -1,8 +1,12 @@
 ext {
     extName = 'Cineplexbd'
     extClass = '.CineplexBD'
-    extVersionCode = 1061
+    extVersionCode = 1062
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:m3u8server"))
+}

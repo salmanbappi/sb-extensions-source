@@ -322,6 +322,15 @@ class M3u8HttpServer(
             }
         }
 
+        if (segmentCount > 0) {
+            if (modifiedLines.none { it.startsWith("#EXT-X-PLAYLIST-TYPE") }) {
+                modifiedLines.add(1, "#EXT-X-PLAYLIST-TYPE:VOD")
+            }
+            if (modifiedLines.none { it.trim() == "#EXT-X-ENDLIST" }) {
+                modifiedLines.add("#EXT-X-ENDLIST")
+            }
+        }
+
         Log.d(tag, "Modified M3U8 content: $segmentCount segments redirected to local server")
         return modifiedLines.joinToString("\n")
     }
