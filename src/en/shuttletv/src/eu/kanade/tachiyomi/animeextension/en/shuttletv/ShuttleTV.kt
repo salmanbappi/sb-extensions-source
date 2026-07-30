@@ -464,6 +464,22 @@ class ShuttleTV : Source() {
                             return super.shouldInterceptRequest(view, request)
                         }
 
+                        override fun onPageFinished(view: WebView?, loadedUrl: String?) {
+                            if (cancelled.get()) return
+                            val triggerJs = """
+                                (function() {
+                                    var interval = setInterval(function() {
+                                        var btns = document.querySelectorAll('button, [role="button"], video, svg');
+                                        btns.forEach(function(b) { try { b.click(); } catch(e) {} });
+                                        var v = document.querySelector('video');
+                                        if (v && v.paused) { try { v.play(); } catch(e) {} }
+                                    }, 500);
+                                    setTimeout(function() { clearInterval(interval); }, 15000);
+                                })();
+                            """.trimIndent()
+                            view?.evaluateJavascript(triggerJs, null)
+                        }
+
                         override fun onRenderProcessGone(
                             view: WebView?,
                             detail: android.webkit.RenderProcessGoneDetail?,
