@@ -1,7 +1,7 @@
 ext {
     extName = 'Cineplexbd'
     extClass = '.CineplexBD'
-    extVersionCode = 1056
+    extVersionCode = 1057
     isNsfw = false
 }
 

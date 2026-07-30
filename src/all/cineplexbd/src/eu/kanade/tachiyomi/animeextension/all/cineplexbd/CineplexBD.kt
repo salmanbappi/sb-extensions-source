@@ -628,7 +628,28 @@ class CineplexBD : Source() {
             val transformed = transformVodUrl(videoUrl)
             val finalUrl = if (transformed.startsWith("http")) transformed else "$baseUrl/${transformed.trimStart('/')}"
             val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
-            return listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
+
+            // Re-load cookies for the actual stream URL path (e.g. /ondemand/) which may be path-scoped
+            val finalHttpUrl = finalUrl.toHttpUrlOrNull()
+            val streamCookies = if (finalHttpUrl != null) {
+                val streamJarCookies = client.cookieJar.loadForRequest(finalHttpUrl)
+                (responseCookies + jarCookies + streamJarCookies)
+                    .distinctBy { it.name }
+                    .joinToString("; ") { "${it.name}=${it.value}" }
+            } else {
+                cookies
+            }
+
+            val streamHeaders = headers.newBuilder()
+                .apply {
+                    if (streamCookies.isNotEmpty()) {
+                        add("Cookie", streamCookies)
+                    }
+                    add("Referer", url)
+                }
+                .build()
+
+            return listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = streamHeaders))
         }
         return emptyList()
     }
