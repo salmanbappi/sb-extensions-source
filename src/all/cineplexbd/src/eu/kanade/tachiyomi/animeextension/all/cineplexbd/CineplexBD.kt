@@ -476,7 +476,7 @@ class CineplexBD : Source() {
                                         ?: epJson["overview"]?.jsonPrimitive?.content
                                 } catch (e: Exception) {}
 
-                                val epWatchUrl = if (epPath.startsWith("http") || epPath.contains("/Data/") || epPath.endsWith(".mkv") || epPath.endsWith(".mp4") || epPath.endsWith(".m3u8") || epPath.contains("watch.php")) {
+                                val epWatchUrl = if (epPath.contains("watch.php")) {
                                     epPath
                                 } else {
                                     "/watch.php?$paramName=$id&season=$season&ep=${epNum.toInt()}"
@@ -553,18 +553,6 @@ class CineplexBD : Source() {
                 } catch (e: Exception) {}
             }
         }
-        if (episodes.isEmpty() && url.contains("id=")) {
-            val id = url.substringAfter("id=").substringBefore("&").trimEnd('/').trim()
-            if (id.isNotEmpty()) {
-                episodes.add(
-                    SEpisode.create().apply {
-                        name = "Movie / Stream"
-                        episode_number = 1f
-                        this.url = "/player.php?id=$id"
-                    },
-                )
-            }
-        }
         return episodes.reversed()
     }
 
@@ -577,29 +565,18 @@ class CineplexBD : Source() {
     override fun videoListParse(response: Response): List<Video> {
         val url = response.request.url.toString()
 
-        // Parse ALL Set-Cookie headers from the response directly (ignoring path-scoping)
-        // This ensures /ondemand/ and /hls/ path-scoped cookies are captured
-        val rawCookieMap = mutableMapOf<String, String>()
-
-        // First seed with any existing jar cookies (broad path)
-        client.cookieJar.loadForRequest(response.request.url).forEach {
-            rawCookieMap[it.name] = it.value
-        }
-
-        // Then override/add from Set-Cookie response headers (these are the fresh, path-scoped ones)
-        response.headers.values("Set-Cookie").forEach { header ->
-            val nameValue = header.substringBefore(";").trim()
-            val eq = nameValue.indexOf('=')
-            if (eq > 0) {
-                rawCookieMap[nameValue.substring(0, eq).trim()] = nameValue.substring(eq + 1).trim()
-            }
-        }
-
-        val cookieString = rawCookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        val responseCookies = response.headers("Set-Cookie")
+            .mapNotNull { okhttp3.Cookie.parse(response.request.url, it) }
+        val jarCookies = client.cookieJar.loadForRequest(response.request.url)
+        val cookies = (responseCookies + jarCookies)
+            .distinctBy { it.name }
+            .joinToString("; ") { "${it.name}=${it.value}" }
 
         val videoHeaders = headers.newBuilder()
             .apply {
-                if (cookieString.isNotEmpty()) add("Cookie", cookieString)
+                if (cookies.isNotEmpty()) {
+                    add("Cookie", cookies)
+                }
                 add("Referer", url)
             }
             .build()
@@ -617,53 +594,25 @@ class CineplexBD : Source() {
 
         // Fallback to Jsoup (legacy/other pages)
         if (videoUrl.isNullOrBlank()) {
-            val doc = Jsoup.parse(html)
-            videoUrl = doc.selectFirst("source[type='video/mp4'], source[type='application/x-mpegURL'], source")?.attr("src")
-
-            if (videoUrl.isNullOrBlank()) {
-                val iframeSrc = doc.selectFirst("iframe[src]")?.attr("src")
-                if (!iframeSrc.isNullOrBlank()) {
-                    val iframeUrl = if (iframeSrc.startsWith("http")) iframeSrc else "$baseUrl/${iframeSrc.trimStart('/')}"
-                    try {
-                        val iframeResponse = client.newCall(GET(iframeUrl, videoHeaders)).execute()
-                        val iframeHtml = iframeResponse.body.string()
-                        // Also grab any new cookies from the iframe response
-                        iframeResponse.headers.values("Set-Cookie").forEach { header ->
-                            val nameValue = header.substringBefore(";").trim()
-                            val eq = nameValue.indexOf('=')
-                            if (eq > 0) rawCookieMap[nameValue.substring(0, eq).trim()] = nameValue.substring(eq + 1).trim()
-                        }
-                        iframeResponse.close()
-                        videoUrl = Regex("""const videoSrc\s*=\s*["'](.*?)["']""").find(iframeHtml)?.groupValues?.get(1)
-                            ?: Jsoup.parse(iframeHtml).selectFirst("source[type='video/mp4'], source[type='application/x-mpegURL'], source")?.attr("src")
-                    } catch (e: Exception) {}
-                }
-            }
+            videoUrl = Jsoup.parse(html).selectFirst("source[type='video/mp4'], source[type='application/x-mpegURL'], source")?.attr("src")
         }
 
         if (!videoUrl.isNullOrBlank()) {
             val transformed = transformVodUrl(videoUrl)
             val finalUrl = if (transformed.startsWith("http")) transformed else "$baseUrl/${transformed.trimStart('/')}"
             val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
-
-            val finalCookieString = rawCookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
-            val streamHeaders = headers.newBuilder()
-                .apply {
-                    if (finalCookieString.isNotEmpty()) add("Cookie", finalCookieString)
-                    add("Referer", url)
-                }
-                .build()
-
-            return listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = streamHeaders))
+            return listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
         }
         return emptyList()
     }
 
-    private fun transformVodUrl(url: String): String = url
-        .replace("http://vod.cineplexbd.net:8081/tv-series/", "/hls/t/")
-        .replace("http://vod.cineplexbd.net:8081/movies/", "/hls/m/")
-        .replace("http://vod.cineplexbd.net:8081/", "/hls/")
-        .replace("/index.m3u8", "/master.m3u8")
+    private fun transformVodUrl(url: String): String {
+        return url
+            .replace("http://vod.cineplexbd.net:8081/tv-series/", "/hls/t/")
+            .replace("http://vod.cineplexbd.net:8081/movies/", "/hls/m/")
+            .replace("http://vod.cineplexbd.net:8081/", "/hls/")
+            .replace("/index.m3u8", "/master.m3u8")
+    }
 
     // ================= Relation/Suggestions =================
     fun relatedAnimeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
