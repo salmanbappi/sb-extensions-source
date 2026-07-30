@@ -577,18 +577,29 @@ class CineplexBD : Source() {
     override fun videoListParse(response: Response): List<Video> {
         val url = response.request.url.toString()
 
-        val responseCookies = response.headers("Set-Cookie")
-            .mapNotNull { okhttp3.Cookie.parse(response.request.url, it) }
-        val jarCookies = client.cookieJar.loadForRequest(response.request.url)
-        val cookies = (responseCookies + jarCookies)
-            .distinctBy { it.name }
-            .joinToString("; ") { "${it.name}=${it.value}" }
+        // Parse ALL Set-Cookie headers from the response directly (ignoring path-scoping)
+        // This ensures /ondemand/ and /hls/ path-scoped cookies are captured
+        val rawCookieMap = mutableMapOf<String, String>()
+
+        // First seed with any existing jar cookies (broad path)
+        client.cookieJar.loadForRequest(response.request.url).forEach {
+            rawCookieMap[it.name] = it.value
+        }
+
+        // Then override/add from Set-Cookie response headers (these are the fresh, path-scoped ones)
+        response.headers.values("Set-Cookie").forEach { header ->
+            val nameValue = header.substringBefore(";").trim()
+            val eq = nameValue.indexOf('=')
+            if (eq > 0) {
+                rawCookieMap[nameValue.substring(0, eq).trim()] = nameValue.substring(eq + 1).trim()
+            }
+        }
+
+        val cookieString = rawCookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
         val videoHeaders = headers.newBuilder()
             .apply {
-                if (cookies.isNotEmpty()) {
-                    add("Cookie", cookies)
-                }
+                if (cookieString.isNotEmpty()) add("Cookie", cookieString)
                 add("Referer", url)
             }
             .build()
@@ -616,6 +627,12 @@ class CineplexBD : Source() {
                     try {
                         val iframeResponse = client.newCall(GET(iframeUrl, videoHeaders)).execute()
                         val iframeHtml = iframeResponse.body.string()
+                        // Also grab any new cookies from the iframe response
+                        iframeResponse.headers.values("Set-Cookie").forEach { header ->
+                            val nameValue = header.substringBefore(";").trim()
+                            val eq = nameValue.indexOf('=')
+                            if (eq > 0) rawCookieMap[nameValue.substring(0, eq).trim()] = nameValue.substring(eq + 1).trim()
+                        }
                         iframeResponse.close()
                         videoUrl = Regex("""const videoSrc\s*=\s*["'](.*?)["']""").find(iframeHtml)?.groupValues?.get(1)
                             ?: Jsoup.parse(iframeHtml).selectFirst("source[type='video/mp4'], source[type='application/x-mpegURL'], source")?.attr("src")
@@ -629,22 +646,10 @@ class CineplexBD : Source() {
             val finalUrl = if (transformed.startsWith("http")) transformed else "$baseUrl/${transformed.trimStart('/')}"
             val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
 
-            // Re-load cookies for the actual stream URL path (e.g. /ondemand/) which may be path-scoped
-            val finalHttpUrl = finalUrl.toHttpUrlOrNull()
-            val streamCookies = if (finalHttpUrl != null) {
-                val streamJarCookies = client.cookieJar.loadForRequest(finalHttpUrl)
-                (responseCookies + jarCookies + streamJarCookies)
-                    .distinctBy { it.name }
-                    .joinToString("; ") { "${it.name}=${it.value}" }
-            } else {
-                cookies
-            }
-
+            val finalCookieString = rawCookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
             val streamHeaders = headers.newBuilder()
                 .apply {
-                    if (streamCookies.isNotEmpty()) {
-                        add("Cookie", streamCookies)
-                    }
+                    if (finalCookieString.isNotEmpty()) add("Cookie", finalCookieString)
                     add("Referer", url)
                 }
                 .build()
