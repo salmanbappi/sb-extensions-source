@@ -116,10 +116,15 @@ class ShuttleTV : Source() {
                     val part = filter.toUriPart()
                     if (part != "all") mediaType = part
                 }
+
                 is Filters.SortFilter -> sort = filter.toUriPart()
+
                 is Filters.YearFilter -> year = filter.toUriPart()
+
                 is Filters.CountryFilter -> country = filter.toUriPart()
+
                 is Filters.GenreFilter -> genres.addAll(filter.selectedIds())
+
                 else -> {}
             }
         }
@@ -156,7 +161,7 @@ class ShuttleTV : Source() {
         Filters.SortFilter(),
         Filters.YearFilter(),
         Filters.GenreFilter(),
-        Filters.CountryFilter()
+        Filters.CountryFilter(),
     )
 
     private fun parseTmdbMediaList(response: Response): AnimesPage {
@@ -222,14 +227,18 @@ class ShuttleTV : Source() {
             "Completed"
         }
 
-        val releaseYear = (obj["release_date"]?.jsonPrimitive?.content
-            ?: obj["first_air_date"]?.jsonPrimitive?.content ?: "").take(4)
+        val releaseYear = (
+            obj["release_date"]?.jsonPrimitive?.content
+                ?: obj["first_air_date"]?.jsonPrimitive?.content ?: ""
+            ).take(4)
 
         val trailerKey = obj["videos"]?.jsonObject?.get("results")?.jsonArray?.mapNotNull {
             val vObj = it.jsonObject
             if (vObj["site"]?.jsonPrimitive?.content == "YouTube" && vObj["type"]?.jsonPrimitive?.content == "Trailer") {
                 vObj["key"]?.jsonPrimitive?.content
-            } else null
+            } else {
+                null
+            }
         }?.firstOrNull()
 
         return SAnime.create().apply {
@@ -270,7 +279,7 @@ class ShuttleTV : Source() {
                     name = "Movie"
                     setUrlWithoutDomain("/watch/$id?type=movie")
                     episode_number = 1.0f
-                }
+                },
             )
         }
 
@@ -313,7 +322,7 @@ class ShuttleTV : Source() {
                             episode_number = (seasonNum * 1000 + epNum).toFloat()
                             if (stillUrl.isNotBlank()) preview_url = stillUrl
                             if (overviewStr.isNotBlank()) summary = overviewStr
-                        }
+                        },
                     )
                 }
             }
@@ -347,7 +356,7 @@ class ShuttleTV : Source() {
             val finalEmbedUrl = if (providerId != "auto") "$baseEmbedUrl${sep}server=$providerId" else baseEmbedUrl
             Hoster(
                 hosterName = providerName,
-                hosterUrl = finalEmbedUrl
+                hosterUrl = finalEmbedUrl,
             )
         }
 
@@ -570,7 +579,7 @@ class CineSrcResolver(private val context: Application) {
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(
                             view: WebView?,
-                            request: WebResourceRequest?
+                            request: WebResourceRequest?,
                         ): WebResourceResponse? {
                             val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
                             val lower = url.lowercase()
