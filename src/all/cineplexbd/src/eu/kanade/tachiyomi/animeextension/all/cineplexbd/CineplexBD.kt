@@ -148,7 +148,8 @@ class CineplexBD : Source() {
         url = when {
             rawUrl.contains("series_id=") -> "/watch.php?series_id=$id"
             rawUrl.contains("tview.php") -> "/tview.php?id=$id"
-            rawUrl.contains("watch.php") -> "/watch.php?id=$id"
+            rawUrl.contains("watch.php") && rawUrl.contains("series_id=") -> "/watch.php?series_id=$id"
+            rawUrl.contains("watch.php") && !rawUrl.contains("series_id=") -> "/view.php?id=$id"
             else -> "/view.php?id=$id"
         }
 
@@ -180,7 +181,10 @@ class CineplexBD : Source() {
     }
 
     override fun animeDetailsRequest(anime: SAnime): Request {
-        val url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
+        var url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
+        if (url.contains("watch.php?id=") && !url.contains("series_id=")) {
+            url = url.replace("watch.php?id=", "view.php?id=")
+        }
         return GET(baseUrl + url, headers)
     }
 
@@ -321,7 +325,10 @@ class CineplexBD : Source() {
     }
 
     override fun episodeListRequest(anime: SAnime): Request {
-        val url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
+        var url = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
+        if (url.contains("watch.php?id=") && !url.contains("series_id=")) {
+            url = url.replace("watch.php?id=", "view.php?id=")
+        }
         return GET(baseUrl + url, headers)
     }
 
@@ -569,9 +576,13 @@ class CineplexBD : Source() {
     }
 
     override fun videoListRequest(episode: SEpisode): Request {
-        if (episode.url.startsWith("http")) return GET(episode.url, headers)
-        val url = if (episode.url.startsWith("/")) episode.url else "/${episode.url}"
-        return GET(baseUrl + url, headers)
+        var url = episode.url
+        if (url.contains("watch.php?id=") && !url.contains("series_id=")) {
+            url = url.replace("watch.php?id=", "view.php?id=")
+        }
+        if (url.startsWith("http")) return GET(url, headers)
+        val path = if (url.startsWith("/")) url else "/$url"
+        return GET(baseUrl + path, headers)
     }
 
     override fun videoListParse(response: Response): List<Video> {
