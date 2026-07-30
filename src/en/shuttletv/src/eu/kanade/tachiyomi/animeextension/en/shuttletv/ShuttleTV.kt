@@ -393,6 +393,10 @@ class ShuttleTV : Source() {
         val parts = hoster.hosterUrl.split("|")
         if (parts.size < 5) return emptyList()
 
+        val mediaType = parts[0]
+        val id = parts[1]
+        val season = parts[2].takeIf { it.isNotBlank() }
+        val ep = parts[3].takeIf { it.isNotBlank() }
         val providerId = parts[4]
 
         val baseEmbedPath = if (mediaType == "tv" && season != null && ep != null) {
