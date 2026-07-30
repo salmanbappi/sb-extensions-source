@@ -1,5 +1,12 @@
 package eu.kanade.tachiyomi.animeextension.en.shuttletv
 
+import android.annotation.SuppressLint
+import android.os.Handler
+import android.os.Looper
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -13,6 +20,7 @@ import extensions.utils.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
+import keiyoushi.utils.applicationContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.doubleOrNull
@@ -28,6 +36,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class ShuttleTV : Source() {
 
@@ -97,15 +108,10 @@ class ShuttleTV : Source() {
                     val part = filter.toUriPart()
                     if (part != "all") mediaType = part
                 }
-
                 is Filters.SortFilter -> sort = filter.toUriPart()
-
                 is Filters.YearFilter -> year = filter.toUriPart()
-
                 is Filters.CountryFilter -> country = filter.toUriPart()
-
                 is Filters.GenreFilter -> genres.addAll(filter.selectedIds())
-
                 else -> {}
             }
         }
@@ -208,18 +214,14 @@ class ShuttleTV : Source() {
             "Completed"
         }
 
-        val releaseYear = (
-            obj["release_date"]?.jsonPrimitive?.content
-                ?: obj["first_air_date"]?.jsonPrimitive?.content ?: ""
-            ).take(4)
+        val releaseYear = (obj["release_date"]?.jsonPrimitive?.content
+            ?: obj["first_air_date"]?.jsonPrimitive?.content ?: "").take(4)
 
         val trailerKey = obj["videos"]?.jsonObject?.get("results")?.jsonArray?.mapNotNull {
             val vObj = it.jsonObject
             if (vObj["site"]?.jsonPrimitive?.content == "YouTube" && vObj["type"]?.jsonPrimitive?.content == "Trailer") {
                 vObj["key"]?.jsonPrimitive?.content
-            } else {
-                null
-            }
+            } else null
         }?.firstOrNull()
 
         return SAnime.create().apply {
@@ -387,124 +389,108 @@ class ShuttleTV : Source() {
         val id = parts[1]
         val season = parts[2].takeIf { it.isNotBlank() }
         val ep = parts[3].takeIf { it.isNotBlank() }
-        val providerId = parts[4]
 
-        val baseHeaders = headersBuilder()
-            .set("Referer", "$baseUrl/")
-            .set("Origin", baseUrl)
-
-        // 1. Bootstrap
-        val queryArrayJson = buildString {
-            append("[\"").append(mediaType).append("\",\"").append(id).append("\",")
-            if (season != null) append("\"").append(season).append("\",") else append("null,")
-            if (ep != null) append("\"").append(ep).append("\"]") else append("null]")
+        val embedPath = if (mediaType == "tv" && season != null && ep != null) {
+            "embed/tv/$id/$season/$ep"
+        } else if (mediaType == "tv") {
+            "embed/tv/$id"
+        } else {
+            "embed/movie/$id"
         }
 
-        val b64Query = Base64.getUrlEncoder().withoutPadding().encodeToString(queryArrayJson.toByteArray(StandardCharsets.UTF_8))
-
-        val bootReq = Request.Builder()
-            .url("$cineSrcUrl/api/c/bootstrap")
-            .post("{}".toRequestBody("application/json".toMediaType()))
-            .headers(
-                baseHeaders
-                    .set("x-cs-q", b64Query)
-                    .build(),
-            )
-            .build()
-
-        val bootRes = client.newCall(bootReq).execute()
-        val bootObj = json.parseToJsonElement(bootRes.body.string()).jsonObject
-        val rVal = bootObj["r"]?.jsonPrimitive?.content ?: return emptyList()
-        val pVal = bootObj["p"]?.jsonPrimitive?.content ?: return emptyList()
-
-        // 2. Issue Token
-        val issuePayload = "{\"r\":\"$rVal\"}"
-        val issueReq = Request.Builder()
-            .url("$cineSrcUrl/api/c/issue")
-            .post(issuePayload.toRequestBody("application/json".toMediaType()))
-            .headers(
-                baseHeaders
-                    .set("x-cs-q", b64Query)
-                    .set("x-cs-r", rVal)
-                    .set("x-cs-p", pVal)
-                    .build(),
-            )
-            .build()
-
-        val issueRes = client.newCall(issueReq).execute()
-        val issueObj = json.parseToJsonElement(issueRes.body.string()).jsonObject
-        val issueToken = issueObj["token"]?.jsonPrimitive?.content ?: return emptyList()
-
-        // 3. getStream Next-Action
-        val embedPath = if (mediaType == "tv") "embed/tv/$id" else "embed/movie/$id"
-        val streamPayload = buildString {
-            append("[\"").append(id).append("\",\"").append(mediaType).append("\",")
-            if (season != null) append("\"").append(season).append("\",") else append("null,")
-            if (ep != null) append("\"").append(ep).append("\",") else append("null,")
-            append("\"").append(issueToken).append("\",\"").append(providerId).append("\"]")
-        }
-
-        val streamReq = Request.Builder()
-            .url("$cineSrcUrl/$embedPath")
-            .post(streamPayload.toRequestBody("text/plain".toMediaType()))
-            .headers(
-                baseHeaders
-                    .set("Next-Action", "7ee2ce6e276d24a29d32ee843aa18f1560caba9034")
-                    .build(),
-            )
-            .build()
-
-        val streamRes = client.newCall(streamReq).execute()
-        val bodyText = streamRes.body.string()
-        if (!bodyText.contains("1:0:")) return emptyList()
-
-        val encToken = bodyText.substringAfter("1:0:").trim().removeSurrounding("\"")
-        val decryptedJson = decryptToken(encToken)
-        val rootObj = json.parseToJsonElement(decryptedJson).jsonObject
-        val urlArray = rootObj["url"]?.jsonArray ?: return emptyList()
+        val embedUrl = "$cineSrcUrl/$embedPath"
 
         val videoHeaders = headersBuilder()
             .set("Referer", "$cineSrcUrl/")
             .set("Origin", cineSrcUrl)
             .build()
 
-        val videos = mutableListOf<Video>()
+        val extractedUrl = fetchStreamUrlWithWebView(embedUrl) ?: return emptyList()
 
-        for (elem in urlArray) {
-            val vObj = elem.jsonObject
-            val videoUrl = vObj["url"]?.jsonPrimitive?.content ?: continue
-            val sourceLabel = vObj["source"]?.jsonPrimitive?.content ?: hoster.hosterName
+        return if (extractedUrl.contains(".m3u8")) {
+            playlistUtils.extractFromHls(
+                playlistUrl = extractedUrl,
+                referer = "$cineSrcUrl/",
+                masterHeaders = videoHeaders,
+                videoHeaders = videoHeaders,
+                videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
+            ).sortVideos()
+        } else {
+            listOf(
+                Video(
+                    videoUrl = extractedUrl,
+                    videoTitle = hoster.hosterName,
+                    headers = videoHeaders,
+                ),
+            ).sortVideos()
+        }
+    }
 
-            if (videoUrl.contains(".m3u8")) {
-                val hlsVideos = playlistUtils.extractFromHls(
-                    playlistUrl = videoUrl,
-                    referer = "$cineSrcUrl/",
-                    masterHeaders = videoHeaders,
-                    videoHeaders = videoHeaders,
-                    videoNameGen = { quality -> "$sourceLabel - $quality" },
-                )
-                videos.addAll(hlsVideos)
-            } else {
-                videos.add(
-                    Video(
-                        videoUrl = videoUrl,
-                        videoTitle = sourceLabel,
-                        headers = videoHeaders,
-                    ),
-                )
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun fetchStreamUrlWithWebView(targetUrl: String): String? {
+        val latch = CountDownLatch(1)
+        var streamUrl: String? = null
+        var webView: WebView? = null
+        val cancelled = AtomicBoolean(false)
+
+        Handler(Looper.getMainLooper()).post {
+            try {
+                webView = WebView(applicationContext).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    settings.mediaPlaybackRequiresUserGesture = false
+                    settings.userAgentString = userAgent
+
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView?,
+                            request: WebResourceRequest?,
+                        ): WebResourceResponse? {
+                            val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
+                            if ((url.contains(".m3u8") || url.contains(".mp4")) && !url.contains("favicon") && !cancelled.get()) {
+                                streamUrl = url
+                                latch.countDown()
+                            }
+                            return super.shouldInterceptRequest(view, request)
+                        }
+
+                        override fun onRenderProcessGone(
+                            view: WebView?,
+                            detail: android.webkit.RenderProcessGoneDetail?,
+                        ): Boolean {
+                            if (view == webView) {
+                                webView?.destroy()
+                                webView = null
+                            }
+                            latch.countDown()
+                            return true
+                        }
+                    }
+                    loadUrl(targetUrl)
+                }
+            } catch (e: Exception) {
+                latch.countDown()
             }
         }
 
-        return videos.sortVideos()
-    }
+        try {
+            latch.await(25, TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            // ignore
+        } finally {
+            cancelled.set(true)
+            Handler(Looper.getMainLooper()).post {
+                runCatching {
+                    webView?.stopLoading()
+                    webView?.destroy()
+                    webView = null
+                }
+            }
+        }
 
-    private fun decryptToken(encToken: String): String = runCatching {
-        val clean = encToken.trim().removeSurrounding("\"")
-        val b64 = clean.replace("-", "+").replace("_", "/")
-        val rawBytes = Base64.getDecoder().decode(b64)
-        val decBytes = ByteArray(rawBytes.size) { i -> (rawBytes[i].toInt().inv() and 0xFF).toByte() }
-        String(decBytes, StandardCharsets.UTF_8)
-    }.getOrDefault("{\"url\":[]}")
+        return streamUrl
+    }
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
