@@ -588,6 +588,7 @@ class CineplexBD : Source() {
         }
 
         val html = response.body.string()
+        val videoList = mutableListOf<Video>()
 
         // Try regex first (modern player style)
         var videoUrl = Regex("""const videoSrc\s*=\s*["'](.*?)["']""").find(html)?.groupValues?.get(1)
@@ -601,16 +602,61 @@ class CineplexBD : Source() {
             val transformed = transformVodUrl(videoUrl)
             val finalUrl = if (transformed.startsWith("http")) transformed else "$baseUrl/${transformed.trimStart('/')}"
             val quality = if (finalUrl.contains(".m3u8")) "HLS" else "Original"
-            return listOf(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
+            videoList.add(Video(videoUrl = finalUrl, videoTitle = quality, headers = videoHeaders))
         }
-        return emptyList()
+
+        if (url.contains("watch.php")) {
+            try {
+                val paramName = if (url.contains("series_id=")) "series_id" else "id"
+                val id = if (url.contains("series_id=")) {
+                    url.substringAfter("series_id=").substringBefore("&")
+                } else {
+                    url.substringAfter("id=").substringBefore("&")
+                }.trimEnd('/').trim()
+
+                val season = if (url.contains("season=")) {
+                    url.substringAfter("season=").substringBefore("&").trimEnd('/').trim()
+                } else {
+                    "1"
+                }
+
+                val epNum = if (url.contains("ep=")) {
+                    url.substringAfter("ep=").substringBefore("&").trimEnd('/').trim()
+                } else {
+                    "1"
+                }
+
+                val metaUrl = "$baseUrl/watch.php?$paramName=$id&season=$season&meta=1"
+                val metaResponse = client.newCall(GET(metaUrl, headers)).execute()
+                val responseBodyString = metaResponse.body.string()
+                metaResponse.close()
+                val metaJson = json.decodeFromString<JsonObject>(responseBodyString)
+
+                val epPath = metaJson["episodes"]?.jsonObject?.get(epNum)?.jsonObject?.get("path")?.jsonPrimitive?.content
+                if (!epPath.isNullOrBlank()) {
+                    val finalDirectUrl = if (epPath.startsWith("http")) epPath else "$baseUrl/${epPath.trimStart('/')}"
+                    if (videoList.none { it.videoUrl == finalDirectUrl }) {
+                        val quality = if (finalDirectUrl.contains(".m3u8")) "HLS Direct" else "Direct File"
+                        videoList.add(Video(videoUrl = finalDirectUrl, videoTitle = quality, headers = videoHeaders))
+                    }
+                }
+            } catch (e: Exception) {}
+        }
+
+        return videoList
     }
 
-    private fun transformVodUrl(url: String): String = url
-        .replace("http://vod.cineplexbd.net:8081/tv-series/", "/hls/t/")
-        .replace("http://vod.cineplexbd.net:8081/movies/", "/hls/m/")
-        .replace("http://vod.cineplexbd.net:8081/", "/hls/")
-        .replace("/index.m3u8", "/master.m3u8")
+    private fun transformVodUrl(url: String): String {
+        return if (url.contains("vod.cineplexbd.net:8081")) {
+            url
+                .replace("http://vod.cineplexbd.net:8081/tv-series/", "/hls/t/")
+                .replace("http://vod.cineplexbd.net:8081/movies/", "/hls/m/")
+                .replace("http://vod.cineplexbd.net:8081/", "/hls/")
+                .replace("/index.m3u8", "/master.m3u8")
+        } else {
+            url
+        }
+    }
 
     // ================= Relation/Suggestions =================
     fun relatedAnimeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
