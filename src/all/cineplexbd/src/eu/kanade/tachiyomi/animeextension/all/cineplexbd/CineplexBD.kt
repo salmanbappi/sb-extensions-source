@@ -606,13 +606,11 @@ class CineplexBD : Source() {
         return emptyList()
     }
 
-    private fun transformVodUrl(url: String): String {
-        return url
-            .replace("http://vod.cineplexbd.net:8081/tv-series/", "/hls/t/")
-            .replace("http://vod.cineplexbd.net:8081/movies/", "/hls/m/")
-            .replace("http://vod.cineplexbd.net:8081/", "/hls/")
-            .replace("/index.m3u8", "/master.m3u8")
-    }
+    private fun transformVodUrl(url: String): String = url
+        .replace("http://vod.cineplexbd.net:8081/tv-series/", "/hls/t/")
+        .replace("http://vod.cineplexbd.net:8081/movies/", "/hls/m/")
+        .replace("http://vod.cineplexbd.net:8081/", "/hls/")
+        .replace("/index.m3u8", "/master.m3u8")
 
     // ================= Relation/Suggestions =================
     fun relatedAnimeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
