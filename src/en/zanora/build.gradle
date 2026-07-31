@@ -1,0 +1,13 @@
+ext {
+    extName = 'Zanora'
+    extClass = '.Zanora'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:megacloud-extractor"))
+}
