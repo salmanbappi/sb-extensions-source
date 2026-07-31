@@ -21,7 +21,7 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
-import uy.kohesive.injekt.injectLazy
+import uy.kohesive.injekt.Injekt
 
 class Zanora : Source() {
 
@@ -32,8 +32,6 @@ class Zanora : Source() {
     override val lang = "en"
 
     override val supportsLatest = true
-
-    private val json: Json by injectLazy()
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
