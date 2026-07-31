@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.animesource.model.Track
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import uy.kohesive.injekt.api.get
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
@@ -20,7 +21,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 import kotlin.math.min
-import uy.kohesive.injekt.api.get
 
 class LocalProxyServer(
     client: OkHttpClient,
