@@ -113,6 +113,14 @@ class UniversalExtractor(private val client: OkHttpClient) {
         }
         // terabox special case end
 
+        handler.post {
+            webView?.stopLoading()
+            webView?.destroy()
+            webView = null
+        }
+
+        if (resultUrl.isBlank()) return emptyList()
+
         return when {
             "m3u8" in resultUrl -> {
                 Log.d("UniversalExtractor", "m3u8 URL: $resultUrl")
@@ -149,7 +157,9 @@ class UniversalExtractor(private val client: OkHttpClient) {
     }
 
     companion object {
-        const val TIMEOUT_SEC: Long = 10
-        private val VIDEO_REGEX by lazy { Regex("(?:\\.(?:mp4|m3u8|mpd)|videoplayback|googleusercontent|googlevideo|action=stream)", RegexOption.IGNORE_CASE) }
+        const val TIMEOUT_SEC: Long = 15
+        private val VIDEO_REGEX by lazy {
+            Regex("(?:\\.(?:mp4|m3u8|mpd|ts|m4s)|m3u8|videoplayback|googleusercontent|googlevideo|action=stream|/hls/|/stream/)", RegexOption.IGNORE_CASE)
+        }
     }
 }
