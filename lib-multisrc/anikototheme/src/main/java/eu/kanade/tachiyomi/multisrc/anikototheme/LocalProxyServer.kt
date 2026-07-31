@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 import kotlin.math.min
+import uy.kohesive.injekt.api.get
 
 class LocalProxyServer(
     client: OkHttpClient,
