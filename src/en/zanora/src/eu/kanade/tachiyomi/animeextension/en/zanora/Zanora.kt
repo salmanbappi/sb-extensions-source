@@ -274,7 +274,10 @@ class Zanora : Source() {
             val rawHost = el.selectFirst("button")?.text()?.trim()
                 ?.ifBlank { null }
                 ?: el.attr("data-server-id")
-            val hostName = rawHost.removeSuffix("-sub").removeSuffix("-dub").trim().ifBlank { "Server" }
+            val hostName = rawHost
+                .replace(Regex("(?i)-(sub|dub)$"), "")
+                .trim()
+                .ifBlank { "Server" }
 
             if (serverDataId.isNotBlank() && hostName !in excludedServers) {
                 groupedServers.getOrPut(hostName) { mutableListOf() }.add(Pair(audioType, serverDataId))
@@ -342,8 +345,28 @@ class Zanora : Source() {
 
         val sorted = videos.sortVideos()
 
+        // Force local NanoHTTPD proxy on 127.0.0.1 for Aika and Levi to strip PNG/JPEG obfuscation
         return if (hostName.equals("Aika", ignoreCase = true) || hostName.equals("Levi", ignoreCase = true)) {
-            m3u8Integration.processVideoList(sorted)
+            m3u8Integration.processVideoList(
+                sorted.map { video ->
+                    if (!video.videoUrl.contains(".m3u8", ignoreCase = true)) {
+                        val m3u8Url = if (video.videoUrl.contains("?")) {
+                            video.videoUrl.replace("?", ".m3u8?")
+                        } else {
+                            "${video.videoUrl}#.m3u8"
+                        }
+                        Video(
+                            videoUrl = m3u8Url,
+                            videoTitle = video.videoTitle,
+                            subtitleTracks = video.subtitleTracks,
+                            audioTracks = video.audioTracks,
+                            headers = video.headers,
+                        )
+                    } else {
+                        video
+                    }
+                },
+            )
         } else {
             sorted
         }
