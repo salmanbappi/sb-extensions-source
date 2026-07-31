@@ -10,18 +10,17 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.megacloudextractor.MegaCloudExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
+import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
-import uy.kohesive.injekt.Injekt
 
 class Zanora : Source() {
 
@@ -38,6 +37,8 @@ class Zanora : Source() {
     private val megaCloudExtractor by lazy {
         MegaCloudExtractor(client, headers, "https://megacloud-decrypter.vercel.app/api/dec")
     }
+
+    private val universalExtractor by lazy { UniversalExtractor(client) }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -64,38 +65,33 @@ class Zanora : Source() {
 
     // =============================== Search ===============================
 
-    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage = if (query.isNotBlank()) {
-        val response = client.newCall(GET("$baseUrl/search?keyword=$query&page=$page", headers)).execute()
-        parseAnimeListPage(response)
-    } else {
-        val urlBuilder = "$baseUrl/filter".toHttpUrl().newBuilder()
-        filters.forEach { filter ->
-            when (filter) {
-                is Filters.TypeFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("type", filter.toUriPart())
-
-                is Filters.StatusFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
-
-                is Filters.RatedFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("rated", filter.toUriPart())
-
-                is Filters.SeasonFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
-
-                is Filters.LanguageFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("language", filter.toUriPart())
-
-                is Filters.SortFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
-
-                is Filters.GenreFilter -> {
-                    val selectedGenres = filter.toQueries()
-                    if (selectedGenres.isNotEmpty()) {
-                        urlBuilder.addQueryParameter("genre", selectedGenres.joinToString(","))
+    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
+        return if (query.isNotBlank()) {
+            val response = client.newCall(GET("$baseUrl/search?keyword=$query&page=$page", headers)).execute()
+            parseAnimeListPage(response)
+        } else {
+            val urlBuilder = "$baseUrl/filter".toHttpUrl().newBuilder()
+            filters.forEach { filter ->
+                when (filter) {
+                    is Filters.TypeFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("type", filter.toUriPart())
+                    is Filters.StatusFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
+                    is Filters.RatedFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("rated", filter.toUriPart())
+                    is Filters.SeasonFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
+                    is Filters.LanguageFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("language", filter.toUriPart())
+                    is Filters.SortFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
+                    is Filters.GenreFilter -> {
+                        val selectedGenres = filter.toQueries()
+                        if (selectedGenres.isNotEmpty()) {
+                            urlBuilder.addQueryParameter("genre", selectedGenres.joinToString(","))
+                        }
                     }
+                    else -> {}
                 }
-
-                else -> {}
             }
+            urlBuilder.addQueryParameter("page", page.toString())
+            val response = client.newCall(GET(urlBuilder.build(), headers)).execute()
+            parseAnimeListPage(response)
         }
-        urlBuilder.addQueryParameter("page", page.toString())
-        val response = client.newCall(GET(urlBuilder.build(), headers)).execute()
-        parseAnimeListPage(response)
     }
 
     override fun getFilterList() = AnimeFilterList(
@@ -111,19 +107,36 @@ class Zanora : Source() {
 
     private fun parseAnimeListPage(response: Response): AnimesPage {
         val doc = response.asJsoup()
-        val animeElements = doc.select("div.film_list-wrap div.flw-item, div.film_list div.film-poster")
+        val animeElements = doc.select("div.film_list-wrap div.flw-item, div.film_list div.film-poster, div.flw-item")
 
         val animeList = animeElements.mapNotNull { element ->
-            val linkEl = element.selectFirst("a[href*=/watch/]") ?: return@mapNotNull null
+            val linkEl = element.selectFirst("a.film-poster-ahref, h3.film-name a, div.film-name a, a[href]") ?: return@mapNotNull null
             val titleEl = element.selectFirst("h3.film-name a, div.film-name a, a.dynamic-name") ?: linkEl
 
-            SAnime.create().apply {
-                title = titleEl.text().trim()
-                setUrlWithoutDomain(linkEl.attr("href"))
-                thumbnail_url = element.selectFirst("img")?.attr("abs:src")
-                    ?: element.selectFirst("img")?.attr("src")
+            val rawTitle = titleEl.attr("data-title").ifBlank { titleEl.text() }.trim()
+            if (rawTitle.isBlank()) return@mapNotNull null
+
+            val rawHref = linkEl.attr("href")
+            if (rawHref.isBlank() || rawHref == "#") return@mapNotNull null
+            val cleanUrl = if (rawHref.startsWith("/watch/")) {
+                rawHref
+            } else {
+                val id = rawHref.substringAfterLast("/").substringBefore("?")
+                if (id.isNotBlank()) "/watch/$id" else rawHref
             }
-        }
+
+            val imgEl = element.selectFirst("img")
+            val thumbnail = imgEl?.attr("abs:data-src")?.ifBlank { null }
+                ?: imgEl?.attr("data-src")?.ifBlank { null }
+                ?: imgEl?.attr("abs:src")?.ifBlank { null }
+                ?: imgEl?.attr("src")?.ifBlank { null }
+
+            SAnime.create().apply {
+                title = rawTitle
+                setUrlWithoutDomain(cleanUrl)
+                thumbnail_url = thumbnail
+            }
+        }.distinctBy { it.url }
 
         val hasNextPage = doc.select("ul.pagination li.active + li").isNotEmpty() ||
             doc.select("a[rel=next]").isNotEmpty()
@@ -137,10 +150,10 @@ class Zanora : Source() {
         val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
         val doc = response.asJsoup()
 
-        val synopsis = doc.selectFirst("div.anid-info div.text, div.film-description div.text")?.text()?.trim().orEmpty()
-        val genres = doc.select("div.anid-info a[href*=/genre/]").joinToString { it.text().trim() }
+        val synopsis = doc.selectFirst("div.anid-info div.text, div.film-description div.text, div.description")?.text()?.trim().orEmpty()
+        val genres = doc.select("div.anid-info a[href*=/genre/], div.genres a").joinToString { it.text().trim() }
 
-        val statusText = doc.select("div.anid-info:contains(Status), div.film-stats:contains(Status)").text()
+        val statusText = doc.select("div.anid-info:contains(Status), div.film-stats:contains(Status), div.fd-infor").text()
         val animeStatus = when {
             statusText.contains("Currently Airing", ignoreCase = true) || statusText.contains("Airing", ignoreCase = true) -> SAnime.ONGOING
             statusText.contains("Finished Airing", ignoreCase = true) || statusText.contains("Completed", ignoreCase = true) -> SAnime.COMPLETED
@@ -148,10 +161,16 @@ class Zanora : Source() {
         }
 
         val studio = doc.select("div.anid-info:contains(Studios) a, div.anid-info:contains(Studio) a").text().trim()
+        val imgEl = doc.selectFirst("div.film-poster img, div.anid-poster img")
+        val thumbnail = imgEl?.attr("abs:data-src")?.ifBlank { null }
+            ?: imgEl?.attr("data-src")?.ifBlank { null }
+            ?: imgEl?.attr("abs:src")?.ifBlank { null }
+            ?: imgEl?.attr("src")?.ifBlank { null }
+            ?: anime.thumbnail_url
 
         return SAnime.create().apply {
             title = anime.title
-            thumbnail_url = anime.thumbnail_url
+            thumbnail_url = thumbnail
             genre = genres.ifBlank { null }
             author = studio.ifBlank { null }
             status = animeStatus
@@ -174,11 +193,11 @@ class Zanora : Source() {
     )
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val movieId = anime.url.substringAfter("/watch/").substringBefore("?")
+        val movieId = anime.url.substringAfterLast("/").substringBefore("?")
         if (movieId.isBlank()) return emptyList()
 
         val epListUrl = "$baseUrl/ajax/v2/episode/list/$movieId"
-        val req = GET(epListUrl, ajaxHeaders("$baseUrl${anime.url}"))
+        val req = GET(epListUrl, ajaxHeaders("$baseUrl/watch/$movieId"))
         val response = client.newCall(req).execute().body.string()
 
         val dto = runCatching {
@@ -199,7 +218,7 @@ class Zanora : Source() {
             SEpisode.create().apply {
                 name = "Episode $epNumStr: $epName".removeSuffix(":")
                 episode_number = epNum
-                setUrlWithoutDomain("${anime.url}?ep=$epId")
+                setUrlWithoutDomain("/watch/$movieId?ep=$epId")
             }
         }.reversed()
     }
@@ -225,7 +244,7 @@ class Zanora : Source() {
         if (animeId.isBlank() || epId.isBlank()) return emptyList()
 
         val serversUrl = "$baseUrl/ajax/v2/episode/servers?episodeId=$animeId-$epId"
-        val req = GET(serversUrl, ajaxHeaders("$baseUrl${episode.url}"))
+        val req = GET(serversUrl, ajaxHeaders("$baseUrl/watch/$animeId?ep=$epId"))
         val response = client.newCall(req).execute().body.string()
 
         val dto = runCatching {
@@ -249,7 +268,7 @@ class Zanora : Source() {
             if (serverName in excludedServers || audioType in excludedAudios) return@mapNotNull null
 
             val sourceUrl = "$baseUrl/ajax/v2/episode/sources?id=$serverDataId"
-            val srcReq = GET(sourceUrl, ajaxHeaders("$baseUrl${episode.url}"))
+            val srcReq = GET(sourceUrl, ajaxHeaders("$baseUrl/watch/$animeId?ep=$epId"))
             val srcRespStr = runCatching { client.newCall(srcReq).execute().body.string() }.getOrNull() ?: return@mapNotNull null
 
             val srcDto = runCatching { json.decodeFromString<SourceResponseDto>(srcRespStr) }.getOrNull() ?: return@mapNotNull null
@@ -273,8 +292,16 @@ class Zanora : Source() {
             val videos = mutableListOf<Video>()
 
             if (embedUrl.contains("player.zanora.lol") || embedUrl.contains("megacloud")) {
-                val extracted = megaCloudExtractor.getVideosFromUrl(embedUrl, type = audioType, name = hoster.hosterName)
-                videos.addAll(extracted)
+                val extracted = runCatching {
+                    megaCloudExtractor.getVideosFromUrl(embedUrl, type = audioType, name = hoster.hosterName)
+                }.getOrDefault(emptyList())
+
+                if (extracted.isNotEmpty()) {
+                    videos.addAll(extracted)
+                } else {
+                    val univExtracted = universalExtractor.videosFromUrl(embedUrl, headers, prefix = hoster.hosterName)
+                    videos.addAll(univExtracted)
+                }
             } else if (embedUrl.contains(".m3u8")) {
                 val m3u8Videos = playlistUtils.extractFromHls(
                     embedUrl,
@@ -282,6 +309,9 @@ class Zanora : Source() {
                     referer = "$baseUrl/",
                 )
                 videos.addAll(m3u8Videos)
+            } else {
+                val univExtracted = universalExtractor.videosFromUrl(embedUrl, headers, prefix = hoster.hosterName)
+                videos.addAll(univExtracted)
             }
 
             videos.sortVideos()
@@ -294,16 +324,30 @@ class Zanora : Source() {
 
     fun relatedAnimeListParse(response: Response): List<SAnime> {
         val doc = response.asJsoup()
-        val relatedElements = doc.select("div.film-related div.flw-item, div.related-anime a")
+        val relatedElements = doc.select("div.film-related div.flw-item, div.related-anime a, div.flw-item")
         return relatedElements.mapNotNull { el ->
-            val linkEl = el.selectFirst("a[href*=/watch/]") ?: el
+            val linkEl = el.selectFirst("a.film-poster-ahref, a[href]") ?: el
             val titleEl = el.selectFirst("h3.film-name, div.film-name") ?: linkEl
+            val rawHref = linkEl.attr("href")
+            if (rawHref.isBlank() || rawHref == "#") return@mapNotNull null
+            val cleanUrl = if (rawHref.startsWith("/watch/")) {
+                rawHref
+            } else {
+                val id = rawHref.substringAfterLast("/").substringBefore("?")
+                if (id.isNotBlank()) "/watch/$id" else rawHref
+            }
+            val imgEl = el.selectFirst("img")
+            val thumbnail = imgEl?.attr("abs:data-src")?.ifBlank { null }
+                ?: imgEl?.attr("data-src")?.ifBlank { null }
+                ?: imgEl?.attr("abs:src")?.ifBlank { null }
+                ?: imgEl?.attr("src")?.ifBlank { null }
+
             SAnime.create().apply {
                 title = titleEl.text().trim()
-                setUrlWithoutDomain(linkEl.attr("href"))
-                thumbnail_url = el.selectFirst("img")?.attr("abs:src")
+                setUrlWithoutDomain(cleanUrl)
+                thumbnail_url = thumbnail
             }
-        }
+        }.distinctBy { it.url }
     }
 
     // ============================== Settings ==============================
@@ -315,7 +359,7 @@ class Zanora : Source() {
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefAudio, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
-                .thenByDescending { it.resolution },
+                .thenByDescending { it.resolution }
         )
     }
 
