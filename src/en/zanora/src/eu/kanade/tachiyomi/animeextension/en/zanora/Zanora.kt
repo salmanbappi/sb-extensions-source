@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.zanora
 
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -39,6 +40,8 @@ class Zanora : Source() {
     }
 
     private val universalExtractor by lazy { UniversalExtractor(client) }
+
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -262,26 +265,24 @@ class Zanora : Source() {
         val serverElements = doc.select("div.server-item")
 
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
-        val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
 
-        val hosters = serverElements.mapNotNull { el ->
+        val groupedServers = mutableMapOf<String, MutableList<Pair<String, String>>>()
+
+        serverElements.forEach { el ->
             val serverDataId = el.attr("data-id")
             val audioType = el.attr("data-type").uppercase()
-            val serverName = el.attr("data-server-id").ifBlank { "Server" }
+            val hostName = el.attr("data-server-id").ifBlank { "Server" }
 
-            if (serverDataId.isBlank()) return@mapNotNull null
-            if (serverName in excludedServers || audioType in excludedAudios) return@mapNotNull null
+            if (serverDataId.isNotBlank() && hostName !in excludedServers) {
+                groupedServers.getOrPut(hostName) { mutableListOf() }.add(Pair(audioType, serverDataId))
+            }
+        }
 
-            val sourceUrl = "$baseUrl/ajax/v2/episode/sources?id=$serverDataId"
-            val srcReq = GET(sourceUrl, ajaxHeaders("$baseUrl/watch/$animeId?ep=$epId"))
-            val srcRespStr = runCatching { client.newCall(srcReq).execute().body.string() }.getOrNull() ?: return@mapNotNull null
-
-            val srcDto = runCatching { json.decodeFromString<SourceResponseDto>(srcRespStr) }.getOrNull() ?: return@mapNotNull null
-            if (!srcDto.success || srcDto.link.isBlank()) return@mapNotNull null
-
+        val hosters = groupedServers.map { (hostName, serverPairs) ->
+            val payload = serverPairs.joinToString(",") { "${it.first}:${it.second}" }
             Hoster(
-                hosterName = "$audioType - $serverName",
-                hosterUrl = "$audioType|${srcDto.link}",
+                hosterName = hostName,
+                hosterUrl = "$hostName|$animeId|$epId|$payload",
             )
         }
 
@@ -290,18 +291,38 @@ class Zanora : Source() {
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val parts = hoster.hosterUrl.split("|")
-        val audioType = parts.getOrNull(0) ?: "SUB"
-        val embedUrl = parts.getOrNull(1) ?: return emptyList()
+        val hostName = parts.getOrNull(0) ?: hoster.hosterName
+        val animeId = parts.getOrNull(1) ?: return emptyList()
+        val epId = parts.getOrNull(2) ?: return emptyList()
+        val payload = parts.getOrNull(3) ?: return emptyList()
 
-        return runCatching {
-            val videos = mutableListOf<Video>()
+        val serverPairs = payload.split(",").mapNotNull { p ->
+            val subParts = p.split(":")
+            if (subParts.size == 2) Pair(subParts[0], subParts[1]) else null
+        }
 
-            val megaCloudVideos = runCatching {
-                megaCloudExtractor.getVideosFromUrl(embedUrl, type = audioType, name = hoster.hosterName)
+        val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
+        val videos = mutableListOf<Video>()
+
+        serverPairs.forEach { (audioType, serverDataId) ->
+            if (audioType in excludedAudios) return@forEach
+
+            val sourceUrl = "$baseUrl/ajax/v2/episode/sources?id=$serverDataId"
+            val srcReq = GET(sourceUrl, ajaxHeaders("$baseUrl/watch/$animeId?ep=$epId"))
+            val srcRespStr = runCatching { client.newCall(srcReq).execute().body.string() }.getOrNull() ?: return@forEach
+
+            val srcDto = runCatching { json.decodeFromString<SourceResponseDto>(srcRespStr) }.getOrNull() ?: return@forEach
+            if (!srcDto.success || srcDto.link.isBlank()) return@forEach
+
+            val embedUrl = srcDto.link
+            val prefix = "$hostName - $audioType"
+
+            val extracted = runCatching {
+                megaCloudExtractor.getVideosFromUrl(embedUrl, type = audioType, name = prefix)
             }.getOrDefault(emptyList())
 
-            if (megaCloudVideos.isNotEmpty()) {
-                videos.addAll(megaCloudVideos)
+            if (extracted.isNotEmpty()) {
+                videos.addAll(extracted)
             } else {
                 val embedHeaders = headers.newBuilder()
                     .set("Referer", embedUrl)
@@ -310,13 +331,19 @@ class Zanora : Source() {
                 val univVideos = universalExtractor.videosFromUrl(
                     origRequestUrl = embedUrl,
                     origRequestHeader = embedHeaders,
-                    prefix = hoster.hosterName,
+                    prefix = prefix,
                 )
                 videos.addAll(univVideos)
             }
+        }
 
-            videos.sortVideos()
-        }.getOrDefault(emptyList())
+        val sorted = videos.sortVideos()
+
+        return if (hostName.equals("Aika", ignoreCase = true) || hostName.equals("Levi", ignoreCase = true)) {
+            m3u8Integration.processVideoList(sorted)
+        } else {
+            sorted
+        }
     }
 
     // ============================ Recommendations =============================
