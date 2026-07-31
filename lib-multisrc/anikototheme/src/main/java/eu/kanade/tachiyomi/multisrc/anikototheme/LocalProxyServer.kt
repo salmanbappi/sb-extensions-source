@@ -6,6 +6,7 @@ import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
@@ -27,7 +28,7 @@ class LocalProxyServer(
 ) {
     companion object {
         private const val IDLE_TIMEOUT_MS = 600000L
-        private const val MAX_CACHE_ENTRIES = 200
+        private const val MAX_CACHE_ENTRIES = 30
         private const val MAX_CONCURRENT_PREFETCHES = 5
         private const val SOCKET_READ_TIMEOUT_MS = 120000
         private const val TAG = "AnikotoProxy"
@@ -47,13 +48,19 @@ class LocalProxyServer(
         isDaemon = true
     }
 
-    private data class CachedSegment(
-        val data: ByteArray,
-        val offset: Int,
-    ) {
-        val size: Int
-            get() = data.size - offset
+    private val proxyCacheDir: File by lazy {
+        val baseDir = try {
+            uy.kohesive.injekt.Injekt.get<android.app.Application>().cacheDir
+        } catch (_: Exception) {
+            File(System.getProperty("java.io.tmpdir") ?: "/tmp")
+        }
+        File(baseDir, "anikoto_proxy_cache").apply { mkdirs() }
     }
+
+    private data class CachedSegment(
+        val file: File,
+        val size: Long,
+    )
 
     private val segmentCache = ConcurrentHashMap<String, CachedSegment>()
     private val cacheOrder = Collections.synchronizedList(mutableListOf<String>())
@@ -108,8 +115,20 @@ class LocalProxyServer(
         val streams: List<AudioStream>,
     )
 
+    fun clearCache() {
+        synchronized(cacheOrder) {
+            segmentCache.values.forEach { runCatching { it.file.delete() } }
+            segmentCache.clear()
+            cacheOrder.clear()
+        }
+        runCatching {
+            proxyCacheDir.listFiles()?.forEach { it.delete() }
+        }
+    }
+
     fun start() {
         if (running.get()) return
+        clearCache()
         val ss = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
         ss.soTimeout = 0
         serverSocket = ss
@@ -130,8 +149,7 @@ class LocalProxyServer(
             runCatching { serverSocket?.close() }
             runCatching { acceptThread?.interrupt() }
             runCatching { executor.shutdownNow() }
-            segmentCache.clear()
-            cacheOrder.clear()
+            clearCache()
             fetching.clear()
             prefetchGeneration.incrementAndGet()
             activePrefetches.set(0L)
@@ -270,9 +288,9 @@ class LocalProxyServer(
         val cacheKey = "$audioType/$quality/$index"
         touchActivity()
         val cached = segmentCache[cacheKey]
-        if (cached != null) {
+        if (cached != null && cached.file.exists()) {
             logi("CACHE HIT: $cacheKey (${cached.size} bytes)")
-            sendBytes(output, "video/MP2T", cached.data, cached.offset)
+            sendFile(output, "video/MP2T", cached.file)
             triggerPrefetch(stream, variant, audioType, quality, index)
             return
         }
@@ -284,10 +302,10 @@ class LocalProxyServer(
                 Thread.sleep(50L)
                 waited += 50
             }
-            val waitedBytes = segmentCache[cacheKey]
-            if (waitedBytes != null) {
-                logi("FETCH WAIT SUCCEEDED: $cacheKey (${waitedBytes.size} bytes)")
-                sendBytes(output, "video/MP2T", waitedBytes.data, waitedBytes.offset)
+            val waitedSegment = segmentCache[cacheKey]
+            if (waitedSegment != null && waitedSegment.file.exists()) {
+                logi("FETCH WAIT SUCCEEDED: $cacheKey (${waitedSegment.size} bytes)")
+                sendFile(output, "video/MP2T", waitedSegment.file)
                 triggerPrefetch(stream, variant, audioType, quality, index)
                 return
             }
@@ -310,7 +328,12 @@ class LocalProxyServer(
                 logw("WARNING: segment $cacheKey doesn't start with 0x47! First 8 bytes: $hexStr")
             }
             cacheSegment(cacheKey, segBytes, offset)
-            sendBytes(output, "video/MP2T", segBytes, offset)
+            val newlyCached = segmentCache[cacheKey]
+            if (newlyCached != null && newlyCached.file.exists()) {
+                sendFile(output, "video/MP2T", newlyCached.file)
+            } else {
+                sendBytes(output, "video/MP2T", segBytes, offset)
+            }
             triggerPrefetch(stream, variant, audioType, quality, index)
         } catch (e: Exception) {
             loge("Segment fetch failed ($cacheKey): ${e.message}")
@@ -479,22 +502,53 @@ class LocalProxyServer(
     }
 
     private fun cacheSegment(key: String, data: ByteArray, offset: Int) {
-        val cached = CachedSegment(data, offset)
-        if (cached.size <= 0) return
+        val servedSize = data.size - offset
+        if (servedSize <= 0) return
 
-        synchronized(cacheOrder) {
-            val existing = segmentCache.remove(key)
-            if (existing != null) {
-                cacheOrder.remove(key)
+        try {
+            val safeKey = key.replace("/", "_")
+            val tempFile = File(proxyCacheDir, "seg_${safeKey}_${System.currentTimeMillis()}.tmp")
+            tempFile.outputStream().use { os ->
+                os.write(data, offset, servedSize)
             }
 
-            while (cacheOrder.isNotEmpty() && segmentCache.size >= MAX_CACHE_ENTRIES) {
-                val evictedKey = cacheOrder.removeAt(0)
-                segmentCache.remove(evictedKey)
-            }
+            val cached = CachedSegment(tempFile, servedSize.toLong())
 
-            segmentCache[key] = cached
-            cacheOrder.add(key)
+            synchronized(cacheOrder) {
+                val existing = segmentCache.remove(key)
+                if (existing != null) {
+                    cacheOrder.remove(key)
+                    existing.file.delete()
+                }
+
+                while (cacheOrder.isNotEmpty() && segmentCache.size >= MAX_CACHE_ENTRIES) {
+                    val evictedKey = cacheOrder.removeAt(0)
+                    segmentCache.remove(evictedKey)?.file?.delete()
+                }
+
+                segmentCache[key] = cached
+                cacheOrder.add(key)
+            }
+        } catch (e: Exception) {
+            logw("Failed to write segment to disk cache: ${e.message}")
+        }
+    }
+
+    private fun sendFile(output: OutputStream, contentType: String, file: File) {
+        val length = file.length()
+        val header = "HTTP/1.1 200 OK\r\nContent-Type: $contentType\r\nContent-Length: $length\r\nConnection: close\r\nAccept-Ranges: bytes\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
+        try {
+            output.write(header.toByteArray(Charsets.UTF_8))
+            file.inputStream().use { input ->
+                val buffer = ByteArray(16384)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    output.write(buffer, 0, bytesRead)
+                }
+            }
+            output.flush()
+        } catch (e: Exception) {
+            logw("sendFile failed: ${e.message}")
         }
     }
 
