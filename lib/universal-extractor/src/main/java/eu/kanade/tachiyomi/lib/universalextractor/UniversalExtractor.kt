@@ -65,9 +65,14 @@ class UniversalExtractor(private val client: OkHttpClient) {
                             view.evaluateJavascript(
                                 """
                                 (function() {
+                                    try {
+                                        if (window.jwplayer && typeof window.jwplayer === 'function') {
+                                            window.jwplayer().play();
+                                        }
+                                    } catch (e) {}
                                     var v = document.querySelector('video');
                                     if (v) { v.play(); }
-                                    var btns = document.querySelectorAll('.ZHnjvd, .kFwPee, button, [role="button"], [jsaction]');
+                                    var btns = document.querySelectorAll('.ZHnjvd, .kFwPee, .jw-icon-display, .jw-display-icon-container, #player, .play-button, button, [role="button"], [jsaction]');
                                     btns.forEach(function(b) { b.click(); });
                                 })();
                                 """.trimIndent(),

@@ -296,27 +296,19 @@ class Zanora : Source() {
         return runCatching {
             val videos = mutableListOf<Video>()
 
-            if (embedUrl.contains("player.zanora.lol") || embedUrl.contains("megacloud")) {
-                val extracted = runCatching {
-                    megaCloudExtractor.getVideosFromUrl(embedUrl, type = audioType, name = hoster.hosterName)
-                }.getOrDefault(emptyList())
+            val megaCloudVideos = runCatching {
+                megaCloudExtractor.getVideosFromUrl(embedUrl, type = audioType, name = hoster.hosterName)
+            }.getOrDefault(emptyList())
 
-                if (extracted.isNotEmpty()) {
-                    videos.addAll(extracted)
-                } else {
-                    val univExtracted = universalExtractor.videosFromUrl(embedUrl, headers, prefix = hoster.hosterName)
-                    videos.addAll(univExtracted)
-                }
-            } else if (embedUrl.contains(".m3u8")) {
-                val m3u8Videos = playlistUtils.extractFromHls(
-                    embedUrl,
-                    videoNameGen = { "${hoster.hosterName} - $it" },
-                    referer = "$baseUrl/",
-                )
-                videos.addAll(m3u8Videos)
+            if (megaCloudVideos.isNotEmpty()) {
+                videos.addAll(megaCloudVideos)
             } else {
-                val univExtracted = universalExtractor.videosFromUrl(embedUrl, headers, prefix = hoster.hosterName)
-                videos.addAll(univExtracted)
+                val univVideos = universalExtractor.videosFromUrl(
+                    origRequestUrl = embedUrl,
+                    origRequestHeader = headers.newBuilder().set("Referer", "$baseUrl/").build(),
+                    prefix = hoster.hosterName,
+                )
+                videos.addAll(univVideos)
             }
 
             videos.sortVideos()
