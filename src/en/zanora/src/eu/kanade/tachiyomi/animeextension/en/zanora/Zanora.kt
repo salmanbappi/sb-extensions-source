@@ -68,38 +68,33 @@ class Zanora : Source() {
 
     // =============================== Search ===============================
 
-    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage = if (query.isNotBlank()) {
-        val response = client.newCall(GET("$baseUrl/search?keyword=$query&page=$page", headers)).execute()
-        parseAnimeListPage(response)
-    } else {
-        val urlBuilder = "$baseUrl/filter".toHttpUrl().newBuilder()
-        filters.forEach { filter ->
-            when (filter) {
-                is Filters.TypeFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("type", filter.toUriPart())
-
-                is Filters.StatusFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
-
-                is Filters.RatedFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("rated", filter.toUriPart())
-
-                is Filters.SeasonFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
-
-                is Filters.LanguageFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("language", filter.toUriPart())
-
-                is Filters.SortFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
-
-                is Filters.GenreFilter -> {
-                    val selectedGenres = filter.toQueries()
-                    if (selectedGenres.isNotEmpty()) {
-                        urlBuilder.addQueryParameter("genre", selectedGenres.joinToString(","))
+    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
+        return if (query.isNotBlank()) {
+            val response = client.newCall(GET("$baseUrl/search?keyword=$query&page=$page", headers)).execute()
+            parseAnimeListPage(response)
+        } else {
+            val urlBuilder = "$baseUrl/filter".toHttpUrl().newBuilder()
+            filters.forEach { filter ->
+                when (filter) {
+                    is Filters.TypeFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("type", filter.toUriPart())
+                    is Filters.StatusFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
+                    is Filters.RatedFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("rated", filter.toUriPart())
+                    is Filters.SeasonFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
+                    is Filters.LanguageFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("language", filter.toUriPart())
+                    is Filters.SortFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
+                    is Filters.GenreFilter -> {
+                        val selectedGenres = filter.toQueries()
+                        if (selectedGenres.isNotEmpty()) {
+                            urlBuilder.addQueryParameter("genre", selectedGenres.joinToString(","))
+                        }
                     }
+                    else -> {}
                 }
-
-                else -> {}
             }
+            urlBuilder.addQueryParameter("page", page.toString())
+            val response = client.newCall(GET(urlBuilder.build(), headers)).execute()
+            parseAnimeListPage(response)
         }
-        urlBuilder.addQueryParameter("page", page.toString())
-        val response = client.newCall(GET(urlBuilder.build(), headers)).execute()
-        parseAnimeListPage(response)
     }
 
     override fun getFilterList() = AnimeFilterList(
@@ -345,28 +340,35 @@ class Zanora : Source() {
 
         val sorted = videos.sortVideos()
 
-        // Force local NanoHTTPD proxy on 127.0.0.1 for Aika and Levi to strip PNG/JPEG obfuscation
+        // Pass Aika and Levi stream URLs through 127.0.0.1 NanoHTTPD proxy using fragment tag #.m3u8 to prevent CDN 404/500 errors
         return if (hostName.equals("Aika", ignoreCase = true) || hostName.equals("Levi", ignoreCase = true)) {
-            m3u8Integration.processVideoList(
-                sorted.map { video ->
-                    if (!video.videoUrl.contains(".m3u8", ignoreCase = true)) {
-                        val m3u8Url = if (video.videoUrl.contains("?")) {
-                            video.videoUrl.replace("?", ".m3u8?")
-                        } else {
-                            "${video.videoUrl}#.m3u8"
-                        }
+            sorted.map { video ->
+                val proxyInputUrl = if (video.videoUrl.contains(".m3u8", ignoreCase = true)) {
+                    video.videoUrl
+                } else {
+                    "${video.videoUrl}#.m3u8"
+                }
+
+                val proxiedVideo = m3u8Integration.processVideoList(
+                    listOf(
                         Video(
-                            videoUrl = m3u8Url,
+                            videoUrl = proxyInputUrl,
                             videoTitle = video.videoTitle,
                             subtitleTracks = video.subtitleTracks,
                             audioTracks = video.audioTracks,
                             headers = video.headers,
-                        )
-                    } else {
-                        video
-                    }
-                },
-            )
+                        ),
+                    ),
+                ).firstOrNull() ?: video
+
+                Video(
+                    videoUrl = proxiedVideo.videoUrl,
+                    videoTitle = video.videoTitle,
+                    subtitleTracks = video.subtitleTracks,
+                    audioTracks = video.audioTracks,
+                    headers = video.headers,
+                )
+            }
         } else {
             sorted
         }
@@ -413,7 +415,7 @@ class Zanora : Source() {
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefAudio, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
-                .thenByDescending { it.resolution },
+                .thenByDescending { it.resolution }
         )
     }
 
