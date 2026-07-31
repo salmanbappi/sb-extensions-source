@@ -68,38 +68,33 @@ class Zanora : Source() {
 
     // =============================== Search ===============================
 
-    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage = if (query.isNotBlank()) {
-        val response = client.newCall(GET("$baseUrl/search?keyword=$query&page=$page", headers)).execute()
-        parseAnimeListPage(response)
-    } else {
-        val urlBuilder = "$baseUrl/filter".toHttpUrl().newBuilder()
-        filters.forEach { filter ->
-            when (filter) {
-                is Filters.TypeFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("type", filter.toUriPart())
-
-                is Filters.StatusFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
-
-                is Filters.RatedFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("rated", filter.toUriPart())
-
-                is Filters.SeasonFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
-
-                is Filters.LanguageFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("language", filter.toUriPart())
-
-                is Filters.SortFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
-
-                is Filters.GenreFilter -> {
-                    val selectedGenres = filter.toQueries()
-                    if (selectedGenres.isNotEmpty()) {
-                        urlBuilder.addQueryParameter("genre", selectedGenres.joinToString(","))
+    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
+        return if (query.isNotBlank()) {
+            val response = client.newCall(GET("$baseUrl/search?keyword=$query&page=$page", headers)).execute()
+            parseAnimeListPage(response)
+        } else {
+            val urlBuilder = "$baseUrl/filter".toHttpUrl().newBuilder()
+            filters.forEach { filter ->
+                when (filter) {
+                    is Filters.TypeFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("type", filter.toUriPart())
+                    is Filters.StatusFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
+                    is Filters.RatedFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("rated", filter.toUriPart())
+                    is Filters.SeasonFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
+                    is Filters.LanguageFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("language", filter.toUriPart())
+                    is Filters.SortFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
+                    is Filters.GenreFilter -> {
+                        val selectedGenres = filter.toQueries()
+                        if (selectedGenres.isNotEmpty()) {
+                            urlBuilder.addQueryParameter("genre", selectedGenres.joinToString(","))
+                        }
                     }
+                    else -> {}
                 }
-
-                else -> {}
             }
+            urlBuilder.addQueryParameter("page", page.toString())
+            val response = client.newCall(GET(urlBuilder.build(), headers)).execute()
+            parseAnimeListPage(response)
         }
-        urlBuilder.addQueryParameter("page", page.toString())
-        val response = client.newCall(GET(urlBuilder.build(), headers)).execute()
-        parseAnimeListPage(response)
     }
 
     override fun getFilterList() = AnimeFilterList(
@@ -271,7 +266,10 @@ class Zanora : Source() {
         serverElements.forEach { el ->
             val serverDataId = el.attr("data-id")
             val audioType = el.attr("data-type").uppercase()
-            val hostName = el.attr("data-server-id").ifBlank { "Server" }
+            val rawHost = el.selectFirst("button")?.text()?.trim()
+                ?.ifBlank { null }
+                ?: el.attr("data-server-id")
+            val hostName = rawHost.removeSuffix("-sub").removeSuffix("-dub").trim().ifBlank { "Server" }
 
             if (serverDataId.isNotBlank() && hostName !in excludedServers) {
                 groupedServers.getOrPut(hostName) { mutableListOf() }.add(Pair(audioType, serverDataId))
@@ -387,7 +385,7 @@ class Zanora : Source() {
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefAudio, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
-                .thenByDescending { it.resolution },
+                .thenByDescending { it.resolution }
         )
     }
 
@@ -424,8 +422,8 @@ class Zanora : Source() {
             default = PREF_SERVER_DEFAULT,
             title = "Preferred server",
             summary = "Which video server to try first. Currently: %s",
-            entries = listOf("Auto", "Aika", "Levi", "Envy", "MegaCloud"),
-            entryValues = listOf("auto", "Aika", "Levi", "Envy", "MegaCloud"),
+            entries = listOf("Auto", "Aika", "Levi", "Envy", "Yuki"),
+            entryValues = listOf("auto", "Aika", "Levi", "Envy", "Yuki"),
         )
 
         screen.addSetPreference(
@@ -433,8 +431,8 @@ class Zanora : Source() {
             default = emptySet(),
             title = "Exclude Servers",
             summary = "Select servers to exclude from video list",
-            entries = listOf("Aika", "Levi", "Envy", "MegaCloud"),
-            entryValues = listOf("Aika", "Levi", "Envy", "MegaCloud"),
+            entries = listOf("Aika", "Levi", "Envy", "Yuki"),
+            entryValues = listOf("Aika", "Levi", "Envy", "Yuki"),
         )
 
         screen.addSetPreference(
