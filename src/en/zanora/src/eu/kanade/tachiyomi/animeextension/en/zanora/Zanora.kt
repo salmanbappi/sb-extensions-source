@@ -329,14 +329,35 @@ class Zanora : Source() {
             val srcDto = runCatching { json.decodeFromString<SourceResponseDto>(srcRespStr) }.getOrNull() ?: return@forEach
             if (!srcDto.success || srcDto.link.isBlank()) return@forEach
 
-            val zanoraSubtitles = srcDto.tracks
-                ?.filter { it.kind == "captions" || it.kind == "subtitles" }
-                ?.map { Track(it.file, it.label) }
-                .orEmpty()
-                .let(playlistUtils::fixSubtitles)
-
             val embedUrl = srcDto.link
             val prefix = "$hostName - $audioType"
+
+            val zanoraSubtitles = if (!srcDto.tracks.isNullOrEmpty()) {
+                srcDto.tracks
+                    .filter { it.kind == "captions" || it.kind == "subtitles" }
+                    .map { Track(it.file, it.label) }
+                    .let(playlistUtils::fixSubtitles)
+            } else {
+                // Fallback: scrape embed page for inline track definitions (Aika/Levi/Yuki custom players)
+                val embedPageHtml = runCatching {
+                    val embedReq = GET(embedUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())
+                    client.newCall(embedReq).execute().body.string()
+                }.getOrNull() ?: ""
+
+                val trackPattern = Regex("""["']?file["']?\s*:\s*["']([^"']+\.vtt[^"']*)["'][^}]*["']?label["']?\s*:\s*["']([^"']*)["']""")
+                val altPattern = Regex("""["']?label["']?\s*:\s*["']([^"']*)["'][^}]*["']?file["']?\s*:\s*["']([^"']+\.vtt[^"']*)["']""")
+
+                val tracks = mutableListOf<Track>()
+                trackPattern.findAll(embedPageHtml).forEach { m ->
+                    tracks.add(Track(m.groupValues[1], m.groupValues[2]))
+                }
+                if (tracks.isEmpty()) {
+                    altPattern.findAll(embedPageHtml).forEach { m ->
+                        tracks.add(Track(m.groupValues[2], m.groupValues[1]))
+                    }
+                }
+                tracks.let(playlistUtils::fixSubtitles)
+            }
 
             val extracted = runCatching {
                 megaCloudExtractor.getVideosFromUrl(embedUrl, type = audioType, name = prefix)
