@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.megacloudextractor.MegaCloudExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
@@ -244,6 +245,14 @@ class Zanora : Source() {
         val success: Boolean = false,
         val type: String = "",
         val link: String = "",
+        val tracks: List<TrackDto>? = null,
+    )
+
+    @Serializable
+    private data class TrackDto(
+        val file: String = "",
+        val label: String = "",
+        val kind: String = "",
     )
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
@@ -320,6 +329,12 @@ class Zanora : Source() {
             val srcDto = runCatching { json.decodeFromString<SourceResponseDto>(srcRespStr) }.getOrNull() ?: return@forEach
             if (!srcDto.success || srcDto.link.isBlank()) return@forEach
 
+            val zanoraSubtitles = srcDto.tracks
+                ?.filter { it.kind == "captions" || it.kind == "subtitles" }
+                ?.map { Track(it.file, it.label) }
+                .orEmpty()
+                .let(playlistUtils::fixSubtitles)
+
             val embedUrl = srcDto.link
             val prefix = "$hostName - $audioType"
 
@@ -327,20 +342,32 @@ class Zanora : Source() {
                 megaCloudExtractor.getVideosFromUrl(embedUrl, type = audioType, name = prefix)
             }.getOrDefault(emptyList())
 
-            if (extracted.isNotEmpty()) {
-                videos.addAll(extracted)
+            val rawVideos = if (extracted.isNotEmpty()) {
+                extracted
             } else {
                 val embedHeaders = headers.newBuilder()
                     .set("Referer", embedUrl)
                     .build()
 
-                val univVideos = universalExtractor.videosFromUrl(
+                universalExtractor.videosFromUrl(
                     origRequestUrl = embedUrl,
                     origRequestHeader = embedHeaders,
                     prefix = prefix,
                 )
-                videos.addAll(univVideos)
             }
+
+            val videosWithSubtitles = rawVideos.map { video ->
+                val combinedSubtitles = (video.subtitleTracks + zanoraSubtitles).distinctBy { it.url }
+                Video(
+                    videoUrl = video.videoUrl,
+                    videoTitle = video.videoTitle,
+                    subtitleTracks = combinedSubtitles,
+                    audioTracks = video.audioTracks,
+                    headers = video.headers,
+                )
+            }
+
+            videos.addAll(videosWithSubtitles)
         }
 
         val sorted = videos.sortVideos()
@@ -369,8 +396,8 @@ class Zanora : Source() {
                 Video(
                     videoUrl = proxiedVideo.videoUrl,
                     videoTitle = video.videoTitle,
-                    subtitleTracks = video.subtitleTracks,
-                    audioTracks = video.audioTracks,
+                    subtitleTracks = proxiedVideo.subtitleTracks,
+                    audioTracks = proxiedVideo.audioTracks,
                     headers = video.headers,
                 )
             }
