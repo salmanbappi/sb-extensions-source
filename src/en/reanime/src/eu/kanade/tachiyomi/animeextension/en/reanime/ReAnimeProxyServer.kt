@@ -31,10 +31,10 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
     private const val MIME_OCTET = "application/octet-stream"
     private const val ORIGIN = "https://flixcloud.cc"
 
-    private val segmentXorKey = byteArrayOf(
-        157, 42, 241, 71, 179, 142, 92, 112,
-        166, 25, 228, 59, 216, 98, 15, 197,
-    )
+    private val segmentXorKey = ubyteArrayOf(
+        157u, 42u, 241u, 71u, 179u, 142u, 92u, 112u,
+        166u, 25u, 228u, 59u, 216u, 98u, 15u, 197u,
+    ).toByteArray()
 
     @Volatile
     private var isRunning = false
