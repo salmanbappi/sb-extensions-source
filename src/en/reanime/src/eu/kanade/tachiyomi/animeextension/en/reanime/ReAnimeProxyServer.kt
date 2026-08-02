@@ -112,7 +112,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
                     ?: return newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Empty upstream body")
                 handleBody(url, body, pk, pkHex, referer)
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
         }
     }
@@ -122,8 +122,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
 
         // Segments: image-wrapped TS
         if (lower.contains(".webp") || lower.contains(".png")) {
-            val ts = decodeSegment(body) ?: body
-            return bytesResponse(ts, MIME_MP2T)
+            return handleSegment(body)
         }
 
         // Manifests
@@ -145,10 +144,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
                 return textResponse(MIME_MPEGURL, rewritePlaylist(plain, url, pkHex, referer))
             }
         }
-        decodeSegment(body)?.let { ts ->
-            return bytesResponse(ts, MIME_MP2T)
-        }
-        return bytesResponse(body, MIME_OCTET)
+        return handleSegment(body)
     }
 
     /**
@@ -188,10 +184,9 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
 
     /**
      * Segments are TS data wrapped in a WEBP or PNG container, optionally XOR'd
-     * with a fixed 16-byte key. Returns the decoded TS bytes or null when the
-     * body isn't an image-wrapped segment.
+     * with a fixed 16-byte key. Decodes in-place with zero memory allocation.
      */
-    private fun decodeSegment(body: ByteArray): ByteArray? {
+    private fun handleSegment(body: ByteArray): Response {
         var offset = -1
         var needsXor = true
         if (body.size >= 12 &&
@@ -211,15 +206,20 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
             offset = 8
             needsXor = body.size <= 8 || body[8] != 'G'.code.toByte()
         }
-        if (offset < 0) return null
 
-        val out = body.copyOfRange(offset, body.size)
-        if (needsXor) {
-            for (i in out.indices) {
-                out[i] = (out[i].toInt() xor (segmentXorKey[i and 15].toInt() and 0xff)).toByte()
+        if (offset >= 0) {
+            if (needsXor) {
+                var j = 0
+                for (i in offset until body.size) {
+                    body[i] = (body[i].toInt() xor (segmentXorKey[j and 15].toInt() and 0xff)).toByte()
+                    j++
+                }
             }
+            val len = body.size - offset
+            return newFixedLengthResponse(Status.OK, MIME_MP2T, ByteArrayInputStream(body, offset, len), len.toLong())
         }
-        return out
+
+        return bytesResponse(body, MIME_MP2T)
     }
 
     /**
