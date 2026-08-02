@@ -157,6 +157,9 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
      */
     private fun decryptManifest(body: ByteArray, pk: ByteArray): String? {
         val rawStr = String(body, StandardCharsets.UTF_8).trim()
+        if (rawStr.startsWith("#EXTM3U")) {
+            return rawStr
+        }
         val decoded = safeDecodeB64(rawStr) ?: return null
         if (decoded.isEmpty()) return null
         val plain = xorBytes(decoded, pk)
