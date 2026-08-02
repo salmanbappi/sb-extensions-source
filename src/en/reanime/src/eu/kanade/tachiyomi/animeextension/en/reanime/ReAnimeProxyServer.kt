@@ -198,6 +198,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
             val trimmed = line.trim()
             when {
                 trimmed.isEmpty() -> line
+
                 trimmed.startsWith("#") -> {
                     val match = uriRegex.find(trimmed)
                     if (match != null) {
@@ -240,9 +241,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
         return out
     }
 
-    private fun textResponse(mimeType: String, text: String): Response =
-        newFixedLengthResponse(Status.OK, mimeType, text)
+    private fun textResponse(mimeType: String, text: String): Response = newFixedLengthResponse(Status.OK, mimeType, text)
 
-    private fun bytesResponse(data: ByteArray, mimeType: String): Response =
-        newFixedLengthResponse(Status.OK, mimeType, ByteArrayInputStream(data), data.size.toLong())
+    private fun bytesResponse(data: ByteArray, mimeType: String): Response = newFixedLengthResponse(Status.OK, mimeType, ByteArrayInputStream(data), data.size.toLong())
 }
