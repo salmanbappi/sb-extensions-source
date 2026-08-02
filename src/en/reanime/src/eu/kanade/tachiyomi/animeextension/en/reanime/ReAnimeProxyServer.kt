@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.en.reanime
 
 import android.util.Base64
+import android.webkit.CookieManager
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoHTTPD.Response.Status
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -61,7 +63,9 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
     }
 
     fun startProxy(client: OkHttpClient, pk: ByteArray, embedUrl: String) {
-        this.client = client.newBuilder().cache(null).build()
+        val builder = client.newBuilder().cache(null)
+        builder.interceptors().removeAll { it is CloudflareInterceptor }
+        this.client = builder.build()
         this.pk = pk
         this.embedUrl = embedUrl
         if (!isRunning) {
@@ -235,12 +239,21 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
 
     private fun buildUpstreamRequest(url: String): Request {
         val referer = embedUrl ?: "$ORIGIN/"
-        return Request.Builder()
+        val builder = Request.Builder()
             .url(url)
             .header("Accept", "*/*")
             .header("Origin", ORIGIN)
             .header("Referer", referer)
-            .build()
+
+        try {
+            val cookieManager = CookieManager.getInstance()
+            val cookies = cookieManager.getCookie(url)
+            if (!cookies.isNullOrBlank()) {
+                builder.header("Cookie", cookies)
+            }
+        } catch (_: Throwable) {}
+
+        return builder.build()
     }
 
     private fun xorBytes(data: ByteArray, key: ByteArray): ByteArray {
