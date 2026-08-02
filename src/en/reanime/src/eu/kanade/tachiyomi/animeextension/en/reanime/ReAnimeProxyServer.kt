@@ -72,9 +72,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
         }
     }
 
-    fun proxyUrl(target: String, pk: ByteArray, embedUrl: String): String {
-        return proxyUrl(target, pk.toHex(), embedUrl)
-    }
+    fun proxyUrl(target: String, pk: ByteArray, embedUrl: String): String = proxyUrl(target, pk.toHex(), embedUrl)
 
     private fun proxyUrl(target: String, pkHex: String, embedUrl: String): String {
         val encUrl = URLEncoder.encode(target, StandardCharsets.UTF_8.name())
@@ -92,7 +90,9 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
 
         val pk = try {
             pkHex?.hexToByteArray()
-        } catch (_: Exception) { null }
+        } catch (_: Exception) {
+            null
+        }
 
         val referer = refererParam ?: "$ORIGIN/"
 
