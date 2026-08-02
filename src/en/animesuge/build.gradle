@@ -2,7 +2,7 @@ ext {
     extName = 'AnimeSuge'
     extClass = '.AnimeSuge'
     themePkg = 'anikototheme'
-    overrideVersionCode = 11
+    overrideVersionCode = 12
 }
 
 apply from: "$rootDir/common.gradle"
