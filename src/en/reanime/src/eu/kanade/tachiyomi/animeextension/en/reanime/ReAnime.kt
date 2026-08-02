@@ -284,6 +284,7 @@ class ReAnime : Source() {
                 servers.add(server)
             }
         }
+        servers.sortByDescending { it.dataLink.contains("v=2") }
 
         val exceptions = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
         val videos = withContext(Dispatchers.IO) {

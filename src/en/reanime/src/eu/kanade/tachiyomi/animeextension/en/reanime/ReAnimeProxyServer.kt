@@ -102,8 +102,13 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val code = response.code
+                    val status = when (code) {
+                        403 -> Status.FORBIDDEN
+                        404 -> Status.NOT_FOUND
+                        else -> Status.lookup(code) ?: Status.INTERNAL_ERROR
+                    }
                     return newFixedLengthResponse(
-                        Status.lookup(code) ?: Status.INTERNAL_ERROR,
+                        status,
                         MIME_PLAINTEXT,
                         "Upstream HTTP $code",
                     )
