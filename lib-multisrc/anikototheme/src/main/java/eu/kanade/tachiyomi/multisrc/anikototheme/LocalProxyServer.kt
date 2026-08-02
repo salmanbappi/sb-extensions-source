@@ -29,19 +29,19 @@ class LocalProxyServer(
 ) {
     companion object {
         private const val IDLE_TIMEOUT_MS = 600000L
-        private const val MAX_CACHE_ENTRIES = 15
-        private const val MAX_CONCURRENT_PREFETCHES = 2
+        private const val MAX_CACHE_ENTRIES = 30
+        private const val MAX_CONCURRENT_PREFETCHES = 5
         private const val SOCKET_READ_TIMEOUT_MS = 120000
         private const val TAG = "AnikotoProxy"
         private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    private val fetchClient: OkHttpClient = client.newBuilder().cache(null).build()
+    private val fetchClient: OkHttpClient = client
 
     var prefetchCount: Int = 10
     private val running = AtomicBoolean(false)
     private val lastActivityMs = AtomicLong(System.currentTimeMillis())
-    private val executor = Executors.newFixedThreadPool(2) { runnable ->
+    private val executor = Executors.newCachedThreadPool { runnable ->
         Thread(runnable, "AnikotoProxy-Worker").apply { isDaemon = true }
     }
 
