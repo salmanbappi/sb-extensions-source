@@ -356,13 +356,18 @@ class ReAnime : Source() {
                         val ciphertext = safeDecodeB64(v)
 
                         val decryptedUrl = decryptAes(ciphertext, aesKey, iv)
+                        val playHeaders = buildPlaybackHeaders(decryptedUrl, server.dataLink)
+
+                        // Warm up Cloudflare clearance on Tachiyomi's client (which supports WebView solver)
+                        try {
+                            val warmupReq = GET(decryptedUrl, playHeaders)
+                            client.newCall(warmupReq).execute().close()
+                        } catch (_: Throwable) {}
 
                         // PK key from the WASM interpreter — the local proxy uses it to
                         // decrypt manifests (base64 + XOR) and unwrap image-wrapped segments.
                         val pk = interpreter.getPkBytes(funcs)
                         ReAnimeProxyServer.ensureStarted(client)
-
-                        val playHeaders = buildPlaybackHeaders(decryptedUrl, server.dataLink)
 
                         playlistUtils.extractFromHls(
                             playlistUrl = ReAnimeProxyServer.proxyUrl(decryptedUrl, pk, server.dataLink),
