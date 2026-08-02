@@ -333,12 +333,12 @@ class ReAnime : Source() {
                             ?: error("ivField (${mappings.ivField}) not found")
 
                         // Decryption
-                        val frag1 = Base64.decode(frag1B64, Base64.DEFAULT)
-                        val frag2 = Base64.decode(frag2B64, Base64.DEFAULT)
-                        val keyPart = Base64.decode(t, Base64.DEFAULT)
+                        val frag1 = safeDecodeB64(frag1B64)
+                        val frag2 = safeDecodeB64(frag2B64)
+                        val keyPart = safeDecodeB64(t)
                         val seedInt = seed.substring(0, 8).toLong(16).toInt()
 
-                        val wasmBytes = Base64.decode(wPayload, Base64.DEFAULT)
+                        val wasmBytes = safeDecodeB64(wPayload)
                         val interpreter = MiniWasmInterpreter(wasmBytes)
                         val funcs = interpreter.parseWasm()
                         val derivedBaseKey = interpreter.executeWasm(funcs, frag1, frag2, keyPart, seedInt)
@@ -352,8 +352,8 @@ class ReAnime : Source() {
                         }
 
                         val aesKey = getSha256Bytes(finalKey)
-                        val iv = Base64.decode(ivB64, Base64.DEFAULT)
-                        val ciphertext = Base64.decode(v, Base64.DEFAULT)
+                        val iv = safeDecodeB64(ivB64)
+                        val ciphertext = safeDecodeB64(v)
 
                         val decryptedUrl = decryptAes(ciphertext, aesKey, iv)
 
@@ -460,6 +460,20 @@ class ReAnime : Source() {
         cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec)
         val decrypted = cipher.doFinal(ciphertext)
         return String(decrypted, Charsets.UTF_8)
+    }
+
+    private fun safeDecodeB64(str: String): ByteArray {
+        val clean = str.trim()
+        return try {
+            Base64.decode(clean, Base64.DEFAULT)
+        } catch (_: Exception) {
+            try {
+                Base64.decode(clean, Base64.URL_SAFE)
+            } catch (_: Exception) {
+                val normalized = clean.replace('-', '+').replace('_', '/')
+                Base64.decode(normalized, Base64.DEFAULT)
+            }
+        }
     }
 
     private fun buildPlaybackHeaders(videoUrl: String, embedUrl: String): Headers {
