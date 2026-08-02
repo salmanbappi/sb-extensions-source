@@ -25,7 +25,6 @@ import java.util.Locale
  */
 object ReAnimeProxyServer : NanoHTTPD(0) {
 
-    private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     private const val MIME_MPEGURL = "application/vnd.apple.mpegurl"
     private const val MIME_MP2T = "video/mp2t"
     private const val MIME_OCTET = "application/octet-stream"
@@ -235,14 +234,9 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
     }
 
     private fun buildUpstreamRequest(url: String): Request {
-        val httpUrl = url.toHttpUrlOrNull()
-        // Mirror browser referrer behavior: same-site (fetch.flixcloud.cc) gets
-        // the full embed URL, cross-site (segment vault) gets origin-only.
-        val isSameSite = httpUrl?.host?.endsWith("flixcloud.cc") == true
-        val referer = if (isSameSite) (embedUrl ?: "$ORIGIN/") else "$ORIGIN/"
+        val referer = embedUrl ?: "$ORIGIN/"
         return Request.Builder()
             .url(url)
-            .header("User-Agent", USER_AGENT)
             .header("Accept", "*/*")
             .header("Origin", ORIGIN)
             .header("Referer", referer)
