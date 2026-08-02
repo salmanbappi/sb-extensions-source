@@ -44,10 +44,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
     private var isRunning = false
 
     @Volatile
-    private var m3u8Client: OkHttpClient? = null
-
-    @Volatile
-    private var segmentClient: OkHttpClient? = null
+    private var client: OkHttpClient? = null
 
     val port: Int
         get() = super.getListeningPort()
@@ -63,12 +60,10 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
     }
 
     fun ensureStarted(client: OkHttpClient) {
-        if (this.m3u8Client == null) {
-            this.m3u8Client = client.newBuilder().cache(null).build()
-
-            val segBuilder = client.newBuilder().cache(null)
-            segBuilder.interceptors().removeAll { it is CloudflareInterceptor }
-            this.segmentClient = segBuilder.build()
+        if (this.client == null) {
+            val builder = client.newBuilder().cache(null)
+            builder.interceptors().removeAll { it is CloudflareInterceptor }
+            this.client = builder.build()
         }
         if (!isRunning) {
             try {
@@ -91,9 +86,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
         val pkHex = session.parameters["pk"]?.firstOrNull()
         val refererParam = session.parameters["ref"]?.firstOrNull()
 
-        val m3u8Client = this.m3u8Client
-            ?: return newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Server client not initialized")
-        val segmentClient = this.segmentClient
+        val client = this.client
             ?: return newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Server client not initialized")
 
         val pk = try {
@@ -103,14 +96,10 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
         }
 
         val referer = refererParam ?: "$ORIGIN/"
-        val lowerUrl = url.lowercase(Locale.US)
-        val isSegment = lowerUrl.contains(".webp") || lowerUrl.contains(".png")
-
-        val activeClient = if (isSegment) segmentClient else m3u8Client
 
         return try {
             val request = buildUpstreamRequest(url, referer)
-            activeClient.newCall(request).execute().use { response ->
+            client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val code = response.code
                     return newFixedLengthResponse(
