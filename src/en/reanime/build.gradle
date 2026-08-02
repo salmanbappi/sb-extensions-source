@@ -1,7 +1,7 @@
 ext {
     extName = 'ReAnime'
     extClass = '.ReAnime'
-    extVersionCode = 27
+    extVersionCode = 28
     isNsfw = false
 }
 
@@ -11,5 +11,5 @@ dependencies {
     implementation(project(':lib:playlist-utils'))
     implementation(project(':lib:cloudflare-interceptor'))
     implementation(project(':lib:m3u8server'))
-    implementation("com.github.NanoHttpd.nanohttpd:nanohttpd:nanohttpd-project-2.3.1")
+    implementation("com.github.NanoHttpd.nanohttpd:nanohttpd:-SNAPSHOT")
 }
