@@ -62,7 +62,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
     }
 
     fun startProxy(client: OkHttpClient, pk: ByteArray, embedUrl: String) {
-        this.client = client
+        this.client = client.newBuilder().cache(null).build()
         this.pk = pk
         this.embedUrl = embedUrl
         if (!isRunning) {
