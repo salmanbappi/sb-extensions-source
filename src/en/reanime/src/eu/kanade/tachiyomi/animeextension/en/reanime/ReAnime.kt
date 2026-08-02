@@ -357,10 +357,15 @@ class ReAnime : Source() {
 
                         val decryptedUrl = decryptAes(ciphertext, aesKey, iv)
 
+                        // PK key from the WASM interpreter — the local proxy uses it to
+                        // decrypt manifests (base64 + XOR) and unwrap image-wrapped segments.
+                        val pk = interpreter.getPkBytes(funcs)
+                        ReAnimeProxyServer.startProxy(client, pk, server.dataLink)
+
                         val playHeaders = buildPlaybackHeaders(decryptedUrl, server.dataLink)
 
                         playlistUtils.extractFromHls(
-                            playlistUrl = decryptedUrl,
+                            playlistUrl = ReAnimeProxyServer.proxyUrl(decryptedUrl),
                             referer = server.dataLink,
                             masterHeaders = playHeaders,
                             videoHeaders = playHeaders,
