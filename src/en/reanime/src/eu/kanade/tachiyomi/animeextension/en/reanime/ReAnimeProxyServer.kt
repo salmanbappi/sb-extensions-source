@@ -140,15 +140,31 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
      * playlist or null when the body isn't an encrypted manifest.
      */
     private fun decryptManifest(body: ByteArray, pk: ByteArray): String? {
-        val decoded = try {
-            Base64.decode(String(body, StandardCharsets.UTF_8), Base64.DEFAULT)
-        } catch (_: Exception) {
-            return null
-        }
+        val rawStr = String(body, StandardCharsets.UTF_8).trim()
+        val decoded = safeDecodeB64(rawStr) ?: return null
         if (decoded.isEmpty()) return null
         val plain = xorBytes(decoded, pk)
         val text = String(plain, StandardCharsets.UTF_8)
         return if (text.trimStart().startsWith("#EXTM3U")) text else null
+    }
+
+    private fun safeDecodeB64(str: String): ByteArray? {
+        val clean = str.trim()
+        if (clean.isEmpty()) return null
+        return try {
+            Base64.decode(clean, Base64.DEFAULT)
+        } catch (_: Exception) {
+            try {
+                Base64.decode(clean, Base64.URL_SAFE)
+            } catch (_: Exception) {
+                val normalized = clean.replace('-', '+').replace('_', '/')
+                try {
+                    Base64.decode(normalized, Base64.DEFAULT)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
     }
 
     /**
