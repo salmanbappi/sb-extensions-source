@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
@@ -303,6 +304,11 @@ class ReAnime : Source() {
 
                         val mappings = resolveMappings(seed)
 
+                        val subtitleTracks = Regex("""\burl:"([^"]+)",\s*language:"([^"]+)",\s*format:"([^"]+)""""")
+                            .findAll(embedHtml)
+                            .map { Track(url = it.groupValues[1], lang = it.groupValues[2]) }
+                            .toList()
+
                         val w = Regex(""""?${mappings.tokenField}"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
                             ?: error("tokenField (${mappings.tokenField}) not found — seed=$seed")
 
@@ -369,6 +375,7 @@ class ReAnime : Source() {
                             referer = server.dataLink,
                             masterHeaders = playHeaders,
                             videoHeaders = playHeaders,
+                            subtitleList = subtitleTracks,
                             videoNameGen = { quality -> "${server.serverName} (${server.dataType}) - $quality" },
                         )
                     } catch (e: Throwable) {
