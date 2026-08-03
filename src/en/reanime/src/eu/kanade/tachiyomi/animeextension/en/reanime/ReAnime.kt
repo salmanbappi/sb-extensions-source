@@ -363,6 +363,24 @@ class ReAnime : Source() {
                         // PK key from the WASM interpreter — the local proxy uses it to
                         // decrypt manifests (base64 + XOR) and unwrap image-wrapped segments.
                         val pk = interpreter.getPkBytes(funcs)
+
+                        // HD-1 segments are served from slopnet.site which has Cloudflare
+                        // protection. Warm up CF clearance on the main client (which has a
+                        // WebView-backed solver) before the proxy starts fetching segments.
+                        // We use a subtitle URL as the warmup target — it never carries a
+                        // video token, so it cannot invalidate the session.
+                        // HD-2 (dataLink contains "v=2") uses a different CDN — skip.
+                        if (!server.dataLink.contains("v=2")) {
+                            val slopnetOrigin = Regex("""(https://[^/]*slopnet\.site)""").find(embedHtml)?.groupValues?.get(1)
+                            if (slopnetOrigin != null) {
+                                try {
+                                    client.newCall(
+                                        GET("$slopnetOrigin/", headersBuilder().set("Referer", server.dataLink).build()),
+                                    ).execute().close()
+                                } catch (_: Throwable) {}
+                            }
+                        }
+
                         ReAnimeProxyServer.ensureStarted(client)
 
                         val subtitleTracks = Regex("""\burl:"([^"]+)",\s*language:"([^"]+)",\s*format:"([^"]+)"""")
