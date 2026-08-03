@@ -33,6 +33,8 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
     private const val MIME_MPEGURL = "application/vnd.apple.mpegurl"
     private const val MIME_MP2T = "video/mp2t"
     private const val MIME_OCTET = "application/octet-stream"
+    private const val MIME_SRT = "application/x-subrip"
+    private const val MIME_VTT = "text/vtt"
     private const val ORIGIN = "https://flixcloud.cc"
 
     private val segmentXorKey = ubyteArrayOf(
@@ -80,6 +82,16 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
         return "http://127.0.0.1:$port/proxy?url=$encUrl&pk=$pkHex&ref=$encRef"
     }
 
+    /**
+     * Returns a proxy URL for a subtitle file (SRT/VTT) that only needs the proper
+     * Origin/Referer headers — no manifest decryption or segment unwrapping.
+     */
+    fun subtitleProxyUrl(target: String, embedUrl: String): String {
+        val encUrl = URLEncoder.encode(target, StandardCharsets.UTF_8.name())
+        val encRef = URLEncoder.encode(embedUrl, StandardCharsets.UTF_8.name())
+        return "http://127.0.0.1:$port/proxy?url=$encUrl&ref=$encRef"
+    }
+
     override fun serve(session: IHTTPSession): Response {
         val url = session.parameters["url"]?.firstOrNull()
             ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url parameter")
@@ -124,6 +136,12 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
 
     private fun handleBody(url: String, body: ByteArray, pk: ByteArray?, pkHex: String?, referer: String): Response {
         val lower = url.lowercase(Locale.US)
+
+        // Subtitle text files — pass through as-is with correct MIME type
+        if (lower.contains(".srt") || lower.contains(".vtt")) {
+            val mime = if (lower.contains(".vtt")) MIME_VTT else MIME_SRT
+            return textResponse(mime, String(body, StandardCharsets.UTF_8))
+        }
 
         // Segments: image-wrapped TS
         if (lower.contains(".webp") || lower.contains(".png")) {

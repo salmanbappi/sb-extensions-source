@@ -304,10 +304,6 @@ class ReAnime : Source() {
 
                         val mappings = resolveMappings(seed)
 
-                        val subtitleTracks = Regex("""\burl:"([^"]+)",\s*language:"([^"]+)",\s*format:"([^"]+)""""")
-                            .findAll(embedHtml)
-                            .map { Track(url = it.groupValues[1], lang = it.groupValues[2]) }
-                            .toList()
 
                         val w = Regex(""""?${mappings.tokenField}"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
                             ?: error("tokenField (${mappings.tokenField}) not found — seed=$seed")
@@ -369,6 +365,16 @@ class ReAnime : Source() {
                         // decrypt manifests (base64 + XOR) and unwrap image-wrapped segments.
                         val pk = interpreter.getPkBytes(funcs)
                         ReAnimeProxyServer.ensureStarted(client)
+
+                        val subtitleTracks = Regex("""\burl:"([^"]+)",\s*language:"([^"]+)",\s*format:"([^"]+)"""")
+                            .findAll(embedHtml)
+                            .map {
+                                Track(
+                                    url = ReAnimeProxyServer.subtitleProxyUrl(it.groupValues[1], server.dataLink),
+                                    lang = it.groupValues[2],
+                                )
+                            }
+                            .toList()
 
                         playlistUtils.extractFromHls(
                             playlistUrl = ReAnimeProxyServer.proxyUrl(decryptedUrl, pk, server.dataLink),
