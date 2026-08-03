@@ -304,7 +304,6 @@ class ReAnime : Source() {
 
                         val mappings = resolveMappings(seed)
 
-
                         val w = Regex(""""?${mappings.tokenField}"?\s*:\s*"([^"]+)"""").find(embedHtml)?.groupValues?.get(1)
                             ?: error("tokenField (${mappings.tokenField}) not found — seed=$seed")
 
