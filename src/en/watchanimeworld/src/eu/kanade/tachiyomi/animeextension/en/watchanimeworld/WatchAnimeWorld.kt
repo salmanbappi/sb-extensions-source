@@ -248,7 +248,9 @@ class WatchAnimeWorld : Source() {
             }
 
             SEpisode.create().apply {
-                url = link.attr("abs:href").substringAfter(baseUrl)
+                val rawHref = link.attr("href").takeIf { it.startsWith("/") }
+                    ?: link.attr("abs:href").substringAfter(baseUrl)
+                url = rawHref
                 name = displayTitle
                 episode_number = episodeNum
 
