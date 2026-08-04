@@ -574,8 +574,8 @@ class WatchAnimeWorld : Source() {
         title = titleElement?.text()?.trim() ?: ""
 
         val linkElement = element.selectFirst("a.lnk-blk, a")
-        val linkUrl = linkElement?.attr("abs:href") ?: ""
-        val relativeUrl = linkUrl.substringAfter(baseUrl)
+        val relativeUrl = linkElement?.attr("href")?.takeIf { it.startsWith("/") }
+            ?: (linkElement?.attr("abs:href") ?: "").substringAfter(baseUrl)
 
         if (relativeUrl.contains("/episode/")) {
             val slug = relativeUrl.trim('/').substringAfterLast('/')
