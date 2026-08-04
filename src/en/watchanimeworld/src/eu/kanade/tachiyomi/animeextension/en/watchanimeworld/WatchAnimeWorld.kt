@@ -93,7 +93,10 @@ class WatchAnimeWorld : Source() {
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, headers)
+    private fun SAnime.fullUrl() = if (url.startsWith("http")) url else baseUrl + url
+    private fun SEpisode.fullUrl() = if (url.startsWith("http")) url else baseUrl + url
+
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(anime.fullUrl(), headers)
 
     override fun episodeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
 
@@ -275,7 +278,7 @@ class WatchAnimeWorld : Source() {
     override fun videoListParse(response: Response): List<Video> = error("Not used")
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val response = client.newCall(GET(baseUrl + episode.url, headers)).execute()
+        val response = client.newCall(GET(episode.fullUrl(), headers)).execute()
         val html = response.bodyString()
         val doc = org.jsoup.Jsoup.parse(html, response.request.url.toString())
         val hosters = mutableListOf<Hoster>()
