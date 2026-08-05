@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSwitchPreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -33,6 +34,7 @@ import okhttp3.Response
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
 import javax.crypto.Cipher
@@ -87,10 +89,17 @@ data class LatestResponseDto(
 )
 
 @Serializable
+data class StudioDto(
+    val name: String? = null,
+    val is_main: Boolean? = null,
+)
+
+@Serializable
 data class DetailAnimeDto(
     val description: String? = null,
     val status: String? = null,
     val genres: List<String> = emptyList(),
+    val studios: List<StudioDto> = emptyList(),
     val cover_image: CoverImageDto? = null,
     val anilist_id: Int? = null,
     val subbed: Int? = null,
@@ -102,6 +111,9 @@ data class EpisodeDto(
     val episode_number: Float,
     val title: String? = null,
     val aired: String? = null,
+    val description: String? = null,
+    val thumbnail: String? = null,
+    val is_filler: Boolean? = null,
 )
 
 class ReAnime : Source() {
@@ -133,7 +145,10 @@ class ReAnime : Source() {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/v1/top/anime?period=week&limit=20", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        val offset = (page - 1) * 20
+        return GET("$baseUrl/api/v1/top/anime?period=week&limit=20&offset=$offset", headers)
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val data = response.parseAs<LatestResponseDto>()
@@ -144,7 +159,7 @@ class ReAnime : Source() {
                 thumbnail_url = it.cover_image.large
             }
         }
-        return AnimesPage(animes, hasNextPage = false)
+        return AnimesPage(animes, hasNextPage = animes.size == 20)
     }
 
     // ============================== Latest ================================
@@ -167,8 +182,37 @@ class ReAnime : Source() {
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val offset = (page - 1) * 20
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        return GET("$baseUrl/api/v1/search?q=$encodedQuery&limit=20&offset=$offset", headers)
+        val urlBuilder = "$baseUrl/api/v1/search".toHttpUrl().newBuilder().apply {
+            addQueryParameter("q", query)
+            filters.forEach { filter ->
+                when (filter) {
+                    is FormatFilter -> {
+                        val value = filter.toUriPart()
+                        if (value.isNotBlank()) addQueryParameter("format", value)
+                    }
+                    is GenreFilter -> {
+                        val value = filter.toUriPart()
+                        if (value.isNotBlank()) addQueryParameter("genre", value)
+                    }
+                    is StatusFilter -> {
+                        val value = filter.toUriPart()
+                        if (value.isNotBlank()) addQueryParameter("status", value)
+                    }
+                    is SeasonFilter -> {
+                        val value = filter.toUriPart()
+                        if (value.isNotBlank()) addQueryParameter("season", value)
+                    }
+                    is YearFilter -> {
+                        val value = filter.toUriPart()
+                        if (value.isNotBlank()) addQueryParameter("year", value)
+                    }
+                    else -> {}
+                }
+            }
+            addQueryParameter("limit", "20")
+            addQueryParameter("offset", offset.toString())
+        }
+        return GET(urlBuilder.build(), headers)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
@@ -182,6 +226,15 @@ class ReAnime : Source() {
         }
         return AnimesPage(animes, hasNextPage = animes.size == 20)
     }
+
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        AnimeFilter.Header("Search filters"),
+        FormatFilter(),
+        GenreFilter(),
+        StatusFilter(),
+        SeasonFilter(),
+        YearFilter(),
+    )
 
     // ============================== Details ===============================
 
@@ -197,7 +250,38 @@ class ReAnime : Source() {
                 else -> SAnime.UNKNOWN
             }
             genre = anime.genres.joinToString(", ")
+            author = anime.studios.firstOrNull { it.is_main == true }?.name ?: anime.studios.firstOrNull()?.name
             thumbnail_url = anime.cover_image?.large
+        }
+    }
+
+    // =============================== Relation / Suggestions ===============================
+
+    fun relatedAnimeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
+
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
+        val jsonElement = response.parseAs<JsonElement>()
+        val obj = jsonElement.jsonObject
+        val relationsArray = obj["relations"] as? JsonArray ?: return emptyList()
+
+        return relationsArray.mapNotNull { element ->
+            val item = element.jsonObject
+            val animeId = item["anime_id"]?.jsonPrimitive?.content ?: return@mapNotNull null
+            val titleObj = item["title"]?.jsonObject
+            val titleStr = titleObj?.get("english")?.jsonPrimitive?.content
+                ?: titleObj?.get("user_preferred")?.jsonPrimitive?.content
+                ?: titleObj?.get("romaji")?.jsonPrimitive?.content
+                ?: return@mapNotNull null
+
+            val coverObj = item["cover_image"]?.jsonObject
+            val imgUrl = coverObj?.get("large")?.jsonPrimitive?.content
+                ?: coverObj?.get("extra_large")?.jsonPrimitive?.content
+
+            SAnime.create().apply {
+                url = animeId
+                title = titleStr
+                thumbnail_url = imgUrl
+            }
         }
     }
 
@@ -216,13 +300,34 @@ class ReAnime : Source() {
             } ?: emptyList()
         }
 
-        epList.map {
+        val prefNaming = preferences.getString(PREF_EPISODE_TITLE_FORMAT_KEY, PREF_EPISODE_TITLE_FORMAT_DEFAULT)
+            ?: PREF_EPISODE_TITLE_FORMAT_DEFAULT
+        val showThumbnails = preferences.getBoolean(PREF_SHOW_EPISODE_THUMBNAILS_KEY, true)
+
+        epList.map { ep ->
             SEpisode.create().apply {
-                url = "${anime.url}?ep=${it.episode_number}"
-                val numStr = if (it.episode_number % 1 == 0f) it.episode_number.toInt().toString() else it.episode_number.toString()
-                name = it.title?.takeIf { it.isNotBlank() } ?: "Episode $numStr"
-                episode_number = it.episode_number
-                date_upload = parseDate(it.aired)
+                url = "${anime.url}?ep=${ep.episode_number}"
+                val numStr = if (ep.episode_number % 1 == 0f) ep.episode_number.toInt().toString() else ep.episode_number.toString()
+                val title = ep.title?.trim()?.takeIf { it.isNotBlank() }
+
+                name = when (prefNaming) {
+                    PREF_EPISODE_TITLE_FORMAT_NUMBER_AND_TITLE -> {
+                        if (title != null && !title.startsWith("Episode ", ignoreCase = true)) {
+                            "Episode $numStr: $title"
+                        } else {
+                            title ?: "Episode $numStr"
+                        }
+                    }
+                    else -> "Episode $numStr"
+                }
+
+                episode_number = ep.episode_number
+                date_upload = parseDate(ep.aired)
+                if (showThumbnails) {
+                    preview_url = ep.thumbnail?.takeIf { it.isNotBlank() }
+                }
+                summary = ep.description?.takeIf { it.isNotBlank() }
+                fillermark = ep.is_filler ?: false
             }
         }.reversed() // Ascending order
     }
@@ -539,34 +644,166 @@ class ReAnime : Source() {
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
-        val order = listOf("1080p", "720p", "480p", "360p")
+        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val type = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
+        val server = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+
+        val qualityOrder = listOf("1080p", "720p", "480p", "360p")
+
         return this.sortedWith(
-            compareBy(
-                { !it.videoTitle.contains(quality) },
-                { video ->
-                    val index = order.indexOfFirst { video.videoTitle.contains(it) }
-                    if (index == -1) order.size else index
+            compareByDescending<Video> { it.videoTitle.contains(type, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(server, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) }
+                .thenBy { video ->
+                    val index = qualityOrder.indexOfFirst { video.videoTitle.contains(it) }
+                    if (index == -1) qualityOrder.size else index
                 },
-            ),
         )
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
-            title = PREF_QUALITY_TITLE,
+            title = "Preferred Quality",
             entries = PREF_QUALITY_ENTRIES,
             entryValues = PREF_QUALITY_ENTRIES,
             default = PREF_QUALITY_DEFAULT,
             summary = "%s",
         )
+        screen.addListPreference(
+            key = PREF_TYPE_KEY,
+            title = "Preferred Type",
+            entries = listOf("Sub", "Dub"),
+            entryValues = listOf("sub", "dub"),
+            default = PREF_TYPE_DEFAULT,
+            summary = "%s",
+        )
+        screen.addListPreference(
+            key = PREF_SERVER_KEY,
+            title = "Preferred Server",
+            entries = listOf("HD-1", "HD-2"),
+            entryValues = listOf("HD-1", "HD-2"),
+            default = PREF_SERVER_DEFAULT,
+            summary = "%s",
+        )
+        screen.addListPreference(
+            key = PREF_EPISODE_TITLE_FORMAT_KEY,
+            title = "Episode Title Format",
+            entries = listOf("Episode 1, Episode 2...", "Episode 1: Title"),
+            entryValues = listOf(
+                PREF_EPISODE_TITLE_FORMAT_NUMBER_ONLY,
+                PREF_EPISODE_TITLE_FORMAT_NUMBER_AND_TITLE,
+            ),
+            default = PREF_EPISODE_TITLE_FORMAT_DEFAULT,
+            summary = "%s",
+        )
+        screen.addSwitchPreference(
+            key = PREF_SHOW_EPISODE_THUMBNAILS_KEY,
+            title = "Show episode thumbnails",
+            summary = "Display preview images in the episode list.",
+            default = true,
+        )
     }
+
+    // ============================== Filter Classes ==============================
+
+    private open class UriPartFilter(
+        displayName: String,
+        private val vals: Array<Pair<String, String>>,
+    ) : AnimeFilter.Select<String>(
+        displayName,
+        vals.map { it.first }.toTypedArray(),
+    ) {
+        fun toUriPart() = vals[state].second
+    }
+
+    private class FormatFilter : UriPartFilter(
+        "Format",
+        arrayOf(
+            Pair("All", ""),
+            Pair("TV", "TV"),
+            Pair("Movie", "MOVIE"),
+            Pair("OVA", "OVA"),
+            Pair("ONA", "ONA"),
+            Pair("Special", "SPECIAL"),
+            Pair("Music", "MUSIC"),
+            Pair("TV Short", "TV_SHORT"),
+        ),
+    )
+
+    private class GenreFilter : UriPartFilter(
+        "Genre",
+        arrayOf(
+            Pair("All", ""),
+            Pair("Action", "Action"),
+            Pair("Adventure", "Adventure"),
+            Pair("Comedy", "Comedy"),
+            Pair("Drama", "Drama"),
+            Pair("Ecchi", "Ecchi"),
+            Pair("Fantasy", "Fantasy"),
+            Pair("Horror", "Horror"),
+            Pair("Mahou Shoujo", "Mahou Shoujo"),
+            Pair("Mecha", "Mecha"),
+            Pair("Music", "Music"),
+            Pair("Mystery", "Mystery"),
+            Pair("Psychological", "Psychological"),
+            Pair("Romance", "Romance"),
+            Pair("Sci-Fi", "Sci-Fi"),
+            Pair("Slice of Life", "Slice of Life"),
+            Pair("Sports", "Sports"),
+            Pair("Supernatural", "Supernatural"),
+            Pair("Thriller", "Thriller"),
+        ),
+    )
+
+    private class StatusFilter : UriPartFilter(
+        "Status",
+        arrayOf(
+            Pair("All", ""),
+            Pair("Finished", "FINISHED"),
+            Pair("Releasing", "RELEASING"),
+            Pair("Not Yet Released", "NOT_YET_RELEASED"),
+            Pair("Cancelled", "CANCELLED"),
+            Pair("Hiatus", "HIATUS"),
+        ),
+    )
+
+    private class SeasonFilter : UriPartFilter(
+        "Season",
+        arrayOf(
+            Pair("All", ""),
+            Pair("Winter", "WINTER"),
+            Pair("Spring", "SPRING"),
+            Pair("Summer", "SUMMER"),
+            Pair("Fall", "FALL"),
+        ),
+    )
+
+    private class YearFilter : UriPartFilter(
+        "Year",
+        buildList {
+            add(Pair("All", ""))
+            val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+            addAll((currentYear downTo 1970).map { Pair(it.toString(), it.toString()) })
+        }.toTypedArray(),
+    )
 
     companion object {
         private const val PREF_QUALITY_KEY = "preferred_quality"
-        private const val PREF_QUALITY_TITLE = "Calidad preferida"
         private const val PREF_QUALITY_DEFAULT = "1080p"
         private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "480p", "360p")
+
+        private const val PREF_TYPE_KEY = "preferred_type"
+        private const val PREF_TYPE_DEFAULT = "sub"
+
+        private const val PREF_SERVER_KEY = "preferred_server"
+        private const val PREF_SERVER_DEFAULT = "HD-1"
+
+        private const val PREF_EPISODE_TITLE_FORMAT_KEY = "pref_episode_title_format"
+        private const val PREF_EPISODE_TITLE_FORMAT_DEFAULT = "number_only"
+        private const val PREF_EPISODE_TITLE_FORMAT_NUMBER_ONLY = "number_only"
+        private const val PREF_EPISODE_TITLE_FORMAT_NUMBER_AND_TITLE = "number_and_title"
+
+        private const val PREF_SHOW_EPISODE_THUMBNAILS_KEY = "pref_show_episode_thumbnails"
     }
 }
