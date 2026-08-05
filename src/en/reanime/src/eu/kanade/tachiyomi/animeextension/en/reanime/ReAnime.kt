@@ -190,22 +190,27 @@ class ReAnime : Source() {
                         val value = filter.toUriPart()
                         if (value.isNotBlank()) addQueryParameter("format", value)
                     }
+
                     is GenreFilter -> {
                         val value = filter.toUriPart()
                         if (value.isNotBlank()) addQueryParameter("genre", value)
                     }
+
                     is StatusFilter -> {
                         val value = filter.toUriPart()
                         if (value.isNotBlank()) addQueryParameter("status", value)
                     }
+
                     is SeasonFilter -> {
                         val value = filter.toUriPart()
                         if (value.isNotBlank()) addQueryParameter("season", value)
                     }
+
                     is YearFilter -> {
                         val value = filter.toUriPart()
                         if (value.isNotBlank()) addQueryParameter("year", value)
                     }
+
                     else -> {}
                 }
             }
@@ -318,6 +323,7 @@ class ReAnime : Source() {
                             title ?: "Episode $numStr"
                         }
                     }
+
                     else -> "Episode $numStr"
                 }
 
@@ -717,76 +723,81 @@ class ReAnime : Source() {
         fun toUriPart() = vals[state].second
     }
 
-    private class FormatFilter : UriPartFilter(
-        "Format",
-        arrayOf(
-            Pair("All", ""),
-            Pair("TV", "TV"),
-            Pair("Movie", "MOVIE"),
-            Pair("OVA", "OVA"),
-            Pair("ONA", "ONA"),
-            Pair("Special", "SPECIAL"),
-            Pair("Music", "MUSIC"),
-            Pair("TV Short", "TV_SHORT"),
-        ),
-    )
+    private class FormatFilter :
+        UriPartFilter(
+            "Format",
+            arrayOf(
+                Pair("All", ""),
+                Pair("TV", "TV"),
+                Pair("Movie", "MOVIE"),
+                Pair("OVA", "OVA"),
+                Pair("ONA", "ONA"),
+                Pair("Special", "SPECIAL"),
+                Pair("Music", "MUSIC"),
+                Pair("TV Short", "TV_SHORT"),
+            ),
+        )
 
-    private class GenreFilter : UriPartFilter(
-        "Genre",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Action", "Action"),
-            Pair("Adventure", "Adventure"),
-            Pair("Comedy", "Comedy"),
-            Pair("Drama", "Drama"),
-            Pair("Ecchi", "Ecchi"),
-            Pair("Fantasy", "Fantasy"),
-            Pair("Horror", "Horror"),
-            Pair("Mahou Shoujo", "Mahou Shoujo"),
-            Pair("Mecha", "Mecha"),
-            Pair("Music", "Music"),
-            Pair("Mystery", "Mystery"),
-            Pair("Psychological", "Psychological"),
-            Pair("Romance", "Romance"),
-            Pair("Sci-Fi", "Sci-Fi"),
-            Pair("Slice of Life", "Slice of Life"),
-            Pair("Sports", "Sports"),
-            Pair("Supernatural", "Supernatural"),
-            Pair("Thriller", "Thriller"),
-        ),
-    )
+    private class GenreFilter :
+        UriPartFilter(
+            "Genre",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Action", "Action"),
+                Pair("Adventure", "Adventure"),
+                Pair("Comedy", "Comedy"),
+                Pair("Drama", "Drama"),
+                Pair("Ecchi", "Ecchi"),
+                Pair("Fantasy", "Fantasy"),
+                Pair("Horror", "Horror"),
+                Pair("Mahou Shoujo", "Mahou Shoujo"),
+                Pair("Mecha", "Mecha"),
+                Pair("Music", "Music"),
+                Pair("Mystery", "Mystery"),
+                Pair("Psychological", "Psychological"),
+                Pair("Romance", "Romance"),
+                Pair("Sci-Fi", "Sci-Fi"),
+                Pair("Slice of Life", "Slice of Life"),
+                Pair("Sports", "Sports"),
+                Pair("Supernatural", "Supernatural"),
+                Pair("Thriller", "Thriller"),
+            ),
+        )
 
-    private class StatusFilter : UriPartFilter(
-        "Status",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Finished", "FINISHED"),
-            Pair("Releasing", "RELEASING"),
-            Pair("Not Yet Released", "NOT_YET_RELEASED"),
-            Pair("Cancelled", "CANCELLED"),
-            Pair("Hiatus", "HIATUS"),
-        ),
-    )
+    private class StatusFilter :
+        UriPartFilter(
+            "Status",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Finished", "FINISHED"),
+                Pair("Releasing", "RELEASING"),
+                Pair("Not Yet Released", "NOT_YET_RELEASED"),
+                Pair("Cancelled", "CANCELLED"),
+                Pair("Hiatus", "HIATUS"),
+            ),
+        )
 
-    private class SeasonFilter : UriPartFilter(
-        "Season",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Winter", "WINTER"),
-            Pair("Spring", "SPRING"),
-            Pair("Summer", "SUMMER"),
-            Pair("Fall", "FALL"),
-        ),
-    )
+    private class SeasonFilter :
+        UriPartFilter(
+            "Season",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Winter", "WINTER"),
+                Pair("Spring", "SPRING"),
+                Pair("Summer", "SUMMER"),
+                Pair("Fall", "FALL"),
+            ),
+        )
 
-    private class YearFilter : UriPartFilter(
-        "Year",
-        buildList {
-            add(Pair("All", ""))
-            val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-            addAll((currentYear downTo 1970).map { Pair(it.toString(), it.toString()) })
-        }.toTypedArray(),
-    )
+    private class YearFilter :
+        UriPartFilter(
+            "Year",
+            buildList {
+                add(Pair("All", ""))
+                val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+                addAll((currentYear downTo 1970).map { Pair(it.toString(), it.toString()) })
+            }.toTypedArray(),
+        )
 
     companion object {
         private const val PREF_QUALITY_KEY = "preferred_quality"
