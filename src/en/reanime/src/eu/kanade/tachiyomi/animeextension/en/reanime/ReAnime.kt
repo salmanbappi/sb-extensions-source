@@ -148,20 +148,10 @@ class ReAnime : Source() {
 
     override fun popularAnimeRequest(page: Int): Request {
         val offset = (page - 1) * 20
-        return GET("$baseUrl/api/v1/top/anime?period=week&limit=20&offset=$offset", headers)
+        return GET("$baseUrl/api/v1/search?q=&limit=20&offset=$offset", headers)
     }
 
-    override fun popularAnimeParse(response: Response): AnimesPage {
-        val data = response.parseAs<LatestResponseDto>()
-        val animes = data.data.map {
-            SAnime.create().apply {
-                url = it.anime_id
-                title = it.title.english ?: it.title.user_preferred ?: it.title.romaji ?: ""
-                thumbnail_url = it.cover_image.large
-            }
-        }
-        return AnimesPage(animes, hasNextPage = animes.size == 20)
-    }
+    override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
 
     // ============================== Latest ================================
 
@@ -193,8 +183,9 @@ class ReAnime : Source() {
                     }
 
                     is GenreFilter -> {
-                        val value = filter.toUriPart()
-                        if (value.isNotBlank()) addQueryParameter("genre", value)
+                        filter.getSelected().forEach { genre ->
+                            if (genre.isNotBlank()) addQueryParameter("genre", genre)
+                        }
                     }
 
                     is StatusFilter -> {
@@ -208,7 +199,7 @@ class ReAnime : Source() {
                     }
 
                     is YearFilter -> {
-                        val value = filter.toUriPart()
+                        val value = filter.state.trim()
                         if (value.isNotBlank()) addQueryParameter("year", value)
                     }
 
@@ -714,6 +705,15 @@ class ReAnime : Source() {
 
     // ============================== Filter Classes ==============================
 
+    private class CheckBoxVal(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
+
+    private open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) :
+        AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first) }) {
+        fun getSelected(): List<String> = state.mapIndexedNotNull { index, filter ->
+            if (filter.state) vals[index].second else null
+        }
+    }
+
     private open class UriPartFilter(
         displayName: String,
         private val vals: Array<Pair<String, String>>,
@@ -739,31 +739,7 @@ class ReAnime : Source() {
             ),
         )
 
-    private class GenreFilter :
-        UriPartFilter(
-            "Genre",
-            arrayOf(
-                Pair("All", ""),
-                Pair("Action", "Action"),
-                Pair("Adventure", "Adventure"),
-                Pair("Comedy", "Comedy"),
-                Pair("Drama", "Drama"),
-                Pair("Ecchi", "Ecchi"),
-                Pair("Fantasy", "Fantasy"),
-                Pair("Horror", "Horror"),
-                Pair("Mahou Shoujo", "Mahou Shoujo"),
-                Pair("Mecha", "Mecha"),
-                Pair("Music", "Music"),
-                Pair("Mystery", "Mystery"),
-                Pair("Psychological", "Psychological"),
-                Pair("Romance", "Romance"),
-                Pair("Sci-Fi", "Sci-Fi"),
-                Pair("Slice of Life", "Slice of Life"),
-                Pair("Sports", "Sports"),
-                Pair("Supernatural", "Supernatural"),
-                Pair("Thriller", "Thriller"),
-            ),
-        )
+    private class GenreFilter : CheckBoxFilterList("Genres", GENRES)
 
     private class StatusFilter :
         UriPartFilter(
@@ -790,15 +766,7 @@ class ReAnime : Source() {
             ),
         )
 
-    private class YearFilter :
-        UriPartFilter(
-            "Year",
-            buildList {
-                add(Pair("All", ""))
-                val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-                addAll((currentYear downTo 1970).map { Pair(it.toString(), it.toString()) })
-            }.toTypedArray(),
-        )
+    private class YearFilter : AnimeFilter.Text("Year", "")
 
     companion object {
         private const val PREF_QUALITY_KEY = "preferred_quality"
@@ -817,5 +785,26 @@ class ReAnime : Source() {
         private const val PREF_EPISODE_TITLE_FORMAT_NUMBER_AND_TITLE = "number_and_title"
 
         private const val PREF_SHOW_EPISODE_THUMBNAILS_KEY = "pref_show_episode_thumbnails"
+
+        private val GENRES = arrayOf(
+            Pair("Action", "Action"),
+            Pair("Adventure", "Adventure"),
+            Pair("Comedy", "Comedy"),
+            Pair("Drama", "Drama"),
+            Pair("Ecchi", "Ecchi"),
+            Pair("Fantasy", "Fantasy"),
+            Pair("Horror", "Horror"),
+            Pair("Mahou Shoujo", "Mahou Shoujo"),
+            Pair("Mecha", "Mecha"),
+            Pair("Music", "Music"),
+            Pair("Mystery", "Mystery"),
+            Pair("Psychological", "Psychological"),
+            Pair("Romance", "Romance"),
+            Pair("Sci-Fi", "Sci-Fi"),
+            Pair("Slice of Life", "Slice of Life"),
+            Pair("Sports", "Sports"),
+            Pair("Supernatural", "Supernatural"),
+            Pair("Thriller", "Thriller"),
+        )
     }
 }
