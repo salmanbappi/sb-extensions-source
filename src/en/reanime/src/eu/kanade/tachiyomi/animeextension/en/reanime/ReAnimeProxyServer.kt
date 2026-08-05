@@ -145,7 +145,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
 
         // Segments: image-wrapped TS
         if (lower.contains(".webp") || lower.contains(".png")) {
-            return handleSegment(body)
+            return handleSegment(url, body, referer)
         }
 
         // Manifests
@@ -167,7 +167,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
                 return textResponse(MIME_MPEGURL, rewritePlaylist(plain, url, pkHex, referer))
             }
         }
-        return handleSegment(body)
+        return handleSegment(url, body, referer)
     }
 
     /**
@@ -205,11 +205,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
         }
     }
 
-    /**
-     * Segments are TS data wrapped in a WEBP or PNG container, optionally XOR'd
-     * with a fixed 16-byte key. Decodes in-place with zero memory allocation.
-     */
-    private fun handleSegment(body: ByteArray): Response {
+    private fun unwrapSegmentBytes(body: ByteArray): ByteArray {
         var offset = -1
         var needsXor = true
         if (body.size >= 12 &&
@@ -231,18 +227,52 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
         }
 
         if (offset >= 0) {
+            val unwrapped = body.copyOfRange(offset, body.size)
             if (needsXor) {
                 var j = 0
-                for (i in offset until body.size) {
-                    body[i] = (body[i].toInt() xor (segmentXorKey[j and 15].toInt() and 0xff)).toByte()
+                for (i in unwrapped.indices) {
+                    unwrapped[i] = (unwrapped[i].toInt() xor (segmentXorKey[j and 15].toInt() and 0xff)).toByte()
                     j++
                 }
             }
-            val len = body.size - offset
-            return newFixedLengthResponse(Status.OK, MIME_MP2T, ByteArrayInputStream(body, offset, len), len.toLong())
+            return unwrapped
+        }
+        return body
+    }
+
+    /**
+     * Segments are TS data wrapped in a WEBP or PNG container, optionally XOR'd
+     * with a fixed 16-byte key. Automatically fetches and appends the corresponding
+     * audio TS segment when servicing demuxed video segment requests.
+     */
+    private fun handleSegment(url: String, body: ByteArray, referer: String): Response {
+        val videoTs = unwrapSegmentBytes(body)
+
+        if (url.contains("/seg-") && url.contains("-v1-a0.")) {
+            val audioUrl = url.replace(Regex("""/seg-(\d+)-f(\d+)-v\d+-a0\."""), "/audio/seg-$1-f$2-a0-a1.")
+            if (audioUrl != url) {
+                try {
+                    val client = this.client
+                    if (client != null) {
+                        val request = buildUpstreamRequest(audioUrl, referer)
+                        client.newCall(request).execute().use { response ->
+                            if (response.isSuccessful) {
+                                val audioBody = response.body?.bytes()
+                                if (audioBody != null && audioBody.isNotEmpty()) {
+                                    val audioTs = unwrapSegmentBytes(audioBody)
+                                    val combined = ByteArray(videoTs.size + audioTs.size)
+                                    System.arraycopy(videoTs, 0, combined, 0, videoTs.size)
+                                    System.arraycopy(audioTs, 0, combined, videoTs.size, audioTs.size)
+                                    return bytesResponse(combined, MIME_MP2T)
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Throwable) {}
+            }
         }
 
-        return bytesResponse(body, MIME_MP2T)
+        return bytesResponse(videoTs, MIME_MP2T)
     }
 
     /**
