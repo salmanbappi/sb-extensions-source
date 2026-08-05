@@ -382,8 +382,13 @@ class ReAnime : Source() {
         val flixResponse = client.newCall(flixRequest).execute()
         val flixData = flixResponse.parseAs<FlixResponseDto>()
 
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+
         val servers = mutableListOf<FlixServerDto>()
         flixData.servers.forEach { server ->
+            if (server.serverName == "HD-1" && prefServer != "HD-1") {
+                return@forEach
+            }
             if (servers.none { it.dataLink == server.dataLink }) {
                 servers.add(server)
             }
@@ -679,8 +684,8 @@ class ReAnime : Source() {
         screen.addListPreference(
             key = PREF_SERVER_KEY,
             title = "Preferred Server",
-            entries = listOf("HD-1", "HD-2"),
-            entryValues = listOf("HD-1", "HD-2"),
+            entries = listOf("HD-2", "HD-1 (Currently Broken)"),
+            entryValues = listOf("HD-2", "HD-1"),
             default = PREF_SERVER_DEFAULT,
             summary = "%s",
         )
@@ -776,7 +781,7 @@ class ReAnime : Source() {
         private const val PREF_TYPE_DEFAULT = "sub"
 
         private const val PREF_SERVER_KEY = "preferred_server"
-        private const val PREF_SERVER_DEFAULT = "HD-1"
+        private const val PREF_SERVER_DEFAULT = "HD-2"
 
         private const val PREF_EPISODE_TITLE_FORMAT_KEY = "pref_episode_title_format"
         private const val PREF_EPISODE_TITLE_FORMAT_DEFAULT = "number_only"
