@@ -407,7 +407,7 @@ class ReAnime : Source() {
                                 videoUrl = masterProxyUrl,
                                 videoTitle = video.videoTitle,
                                 subtitleTracks = video.subtitleTracks,
-                                audioTracks = video.audioTracks,
+                                audioTracks = emptyList(),
                                 headers = video.headers,
                             )
                         }
