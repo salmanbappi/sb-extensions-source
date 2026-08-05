@@ -707,8 +707,7 @@ class ReAnime : Source() {
 
     private class CheckBoxVal(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
 
-    private open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) :
-        AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first) }) {
+    private open class CheckBoxFilterList(name: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>(name, vals.map { CheckBoxVal(it.first) }) {
         fun getSelected(): List<String> = state.mapIndexedNotNull { index, filter ->
             if (filter.state) vals[index].second else null
         }
