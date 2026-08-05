@@ -393,14 +393,24 @@ class ReAnime : Source() {
                             }
                             .toList()
 
+                        val masterProxyUrl = ReAnimeProxyServer.proxyUrl(decryptedUrl, pk, server.dataLink)
+
                         playlistUtils.extractFromHls(
-                            playlistUrl = ReAnimeProxyServer.proxyUrl(decryptedUrl, pk, server.dataLink),
+                            playlistUrl = masterProxyUrl,
                             referer = server.dataLink,
                             masterHeaders = playHeaders,
                             videoHeaders = playHeaders,
                             subtitleList = subtitleTracks,
                             videoNameGen = { quality -> "${server.serverName} (${server.dataType}) - $quality" },
-                        )
+                        ).map { video ->
+                            Video(
+                                videoUrl = masterProxyUrl,
+                                videoTitle = video.videoTitle,
+                                subtitleTracks = video.subtitleTracks,
+                                audioTracks = video.audioTracks,
+                                headers = video.headers,
+                            )
+                        }
                     } catch (e: Throwable) {
                         exceptions.add(e)
                         emptyList()
@@ -412,7 +422,7 @@ class ReAnime : Source() {
         if (videos.isEmpty() && exceptions.isNotEmpty()) {
             throw exceptions.first()
         }
-        return m3u8Integration.processVideoList(videos)
+        return videos
     }
 
     // ============================ Utilities ===============================
