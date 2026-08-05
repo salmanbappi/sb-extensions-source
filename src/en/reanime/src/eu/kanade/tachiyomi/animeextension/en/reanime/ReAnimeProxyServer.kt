@@ -252,8 +252,13 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
     private fun rewritePlaylist(content: String, originalUrl: String, pkHex: String, referer: String): String {
         val base = originalUrl.toHttpUrlOrNull()
         val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
+        val hasExternalAudio = content.contains("#EXT-X-MEDIA:TYPE=AUDIO")
         return content.lines().joinToString("\n") { line ->
-            val trimmed = line.trim()
+            var trimmed = line.trim()
+            if (hasExternalAudio && trimmed.startsWith("#EXT-X-STREAM-INF")) {
+                trimmed = trimmed.replace(Regex("""mp4a\.[^",]+,"""), "")
+                    .replace(Regex(""",\s*mp4a\.[^",]+"""), "")
+            }
             when {
                 trimmed.isEmpty() -> line
 
@@ -264,7 +269,7 @@ object ReAnimeProxyServer : NanoHTTPD(0) {
                         val resolved = base?.resolve(uriValue)?.toString() ?: uriValue
                         trimmed.replace(uriValue, proxyUrl(resolved, pkHex, referer))
                     } else {
-                        line
+                        trimmed
                     }
                 }
 
