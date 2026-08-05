@@ -393,8 +393,10 @@ class ReAnime : Source() {
                             }
                             .toList()
 
+                        val masterProxyUrl = ReAnimeProxyServer.proxyUrl(decryptedUrl, pk, server.dataLink)
+
                         playlistUtils.extractFromHls(
-                            playlistUrl = ReAnimeProxyServer.proxyUrl(decryptedUrl, pk, server.dataLink),
+                            playlistUrl = masterProxyUrl,
                             referer = server.dataLink,
                             masterHeaders = playHeaders,
                             videoHeaders = playHeaders,
@@ -402,7 +404,7 @@ class ReAnime : Source() {
                             videoNameGen = { quality -> "${server.serverName} (${server.dataType}) - $quality" },
                         ).map { video ->
                             Video(
-                                videoUrl = video.videoUrl,
+                                videoUrl = masterProxyUrl,
                                 videoTitle = video.videoTitle,
                                 subtitleTracks = video.subtitleTracks,
                                 audioTracks = emptyList(),
