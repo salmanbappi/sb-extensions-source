@@ -16,6 +16,19 @@ object Filters {
         fun isDefault() = state == 0
     }
 
+    class SortFilter :
+        UriPartFilter(
+            "Sort By",
+            arrayOf(
+                Pair("Default / Latest Update", ""),
+                Pair("Popularity", "field_popularity"),
+                Pair("Latest Created", "date_create"),
+                Pair("Latest Updated", "date_update"),
+                Pair("Score / Rating", "score"),
+                Pair("Views", "views"),
+            ),
+        )
+
     private class GenreCheckBox(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
 
     class GenreFilter :
@@ -121,6 +134,7 @@ object Filters {
 
     fun getFilterList() = AnimeFilterList(
         AnimeFilter.Header("Text search ignores filters below"),
+        SortFilter(),
         GenreFilter(),
     )
 }

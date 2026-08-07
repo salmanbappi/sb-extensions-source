@@ -19,10 +19,12 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
@@ -50,40 +52,57 @@ class Xanime : Source() {
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/latest", headers)).execute()
-        return parseAnimeListPage(response)
+        val response = client.newCall(GET("$baseUrl/search?sortby=field_popularity&page=$page", headers)).execute()
+        return parseAnimeListPage(response, page)
     }
 
     // ============================== Latest ================================
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/latest", headers)).execute()
-        return parseAnimeListPage(response)
+        val response = client.newCall(GET("$baseUrl/search?page=$page", headers)).execute()
+        return parseAnimeListPage(response, page)
     }
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        val url = if (query.isNotBlank()) {
-            "$baseUrl/search?word=$query"
+        val urlBuilder = if (query.isNotBlank()) {
+            "$baseUrl/search".toHttpUrl().newBuilder().apply {
+                addQueryParameter("word", query)
+            }
         } else {
+            val sortFilter = filters.filterIsInstance<Filters.SortFilter>().firstOrNull()
+            val sortValue = sortFilter?.getSelectedValue() ?: ""
+
             val genreFilter = filters.filterIsInstance<Filters.GenreFilter>().firstOrNull()
             val selectedGenres = genreFilter?.getSelected() ?: emptyList()
-            when {
-                selectedGenres.size == 1 -> "$baseUrl/latest/${selectedGenres.first()}"
-                selectedGenres.size > 1 -> "$baseUrl/latest?genre=${selectedGenres.joinToString(",")}"
-                else -> "$baseUrl/latest"
+
+            if (selectedGenres.size == 1 && sortValue.isBlank()) {
+                "$baseUrl/latest/${selectedGenres.first()}".toHttpUrl().newBuilder()
+            } else {
+                "$baseUrl/search".toHttpUrl().newBuilder().apply {
+                    if (sortValue.isNotBlank()) {
+                        addQueryParameter("sortby", sortValue)
+                    }
+                    if (selectedGenres.isNotEmpty()) {
+                        addQueryParameter("genre", selectedGenres.joinToString(","))
+                    }
+                }
             }
         }
 
-        val response = client.newCall(GET(url, headers)).execute()
-        return parseAnimeListPage(response)
+        urlBuilder.addQueryParameter("page", page.toString())
+
+        val response = client.newCall(GET(urlBuilder.build(), headers)).execute()
+        return parseAnimeListPage(response, page)
     }
 
     override fun getFilterList() = Filters.getFilterList()
 
-    private fun parseAnimeListPage(response: Response): AnimesPage {
+    private fun parseAnimeListPage(response: Response, defaultPage: Int): AnimesPage {
         val html = response.body.string()
         val qwikMatch = QWIK_JSON_REGEX.find(html)?.groupValues?.get(1)
         val animeList = mutableListOf<SAnime>()
+        var totalPages = 1
+        var currentPage = defaultPage
 
         if (!qwikMatch.isNullOrBlank()) {
             runCatching {
@@ -92,6 +111,16 @@ class Xanime : Source() {
 
                 for (element in objs) {
                     val obj = element as? JsonObject ?: continue
+
+                    if (obj.containsKey("pages") && obj.containsKey("page")) {
+                        val tot = obj["pages"]?.jsonPrimitive?.intOrNull
+                            ?: getJsonString(obj["pages"])?.let { resolveString(obj["pages"], objs)?.toIntOrNull() }
+                        val cur = obj["page"]?.jsonPrimitive?.intOrNull
+                            ?: getJsonString(obj["page"])?.let { resolveString(obj["page"], objs)?.toIntOrNull() }
+                        if (tot != null && tot > 0) totalPages = tot
+                        if (cur != null && cur > 0) currentPage = cur
+                    }
+
                     if (obj.containsKey("aniPath") && obj.containsKey("info_title")) {
                         val titleStr = resolveString(obj["info_title"], objs) ?: continue
                         val pathStr = resolveString(obj["aniPath"], objs) ?: continue
@@ -135,7 +164,8 @@ class Xanime : Source() {
         }
 
         val distinctList = animeList.distinctBy { it.url }
-        return AnimesPage(distinctList, hasNextPage = false)
+        val hasNext = currentPage < totalPages && distinctList.isNotEmpty()
+        return AnimesPage(distinctList, hasNextPage = hasNext)
     }
 
     // =========================== Anime Details ============================
