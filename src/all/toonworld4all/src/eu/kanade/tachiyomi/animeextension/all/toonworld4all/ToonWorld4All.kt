@@ -332,7 +332,6 @@ class ToonWorld4All :
                 link.contains("dood.") -> {
                     return DoodExtractor(client).videosFromUrl(link, "DoodStream")
                 }
-
                 else -> {
                     val extracted = runCatching { universalExtractor.videosFromUrl(link, headers) }.getOrDefault(emptyList())
                     if (extracted.isNotEmpty()) return extracted
@@ -469,7 +468,23 @@ class ToonWorld4All :
                         )
                     }
                 } catch (e: Exception) {
-                    // ignore
+                    // Always add targetUrl & destination as fallbacks if extraction fails
+                    videos.add(
+                        Video(
+                            videoUrl = targetHoster.targetUrl,
+                            videoTitle = "$hostName$qualitySuffix",
+                            headers = headers,
+                        ),
+                    )
+                    if (targetHoster.destination.isNotBlank() && targetHoster.destination != targetHoster.targetUrl) {
+                        videos.add(
+                            Video(
+                                videoUrl = targetHoster.destination,
+                                videoTitle = "$hostName (Mirror)$qualitySuffix",
+                                headers = headers,
+                            ),
+                        )
+                    }
                 }
             }
             videos
@@ -516,22 +531,24 @@ class ToonWorld4All :
 
     private fun resolveHubCloudWithCode(code: String, rawTargetUrl: String, suffix: String): List<Video> {
         val list = mutableListOf<Video>()
+
+        // Fast path 1: Try raw target URL first if valid
+        if (rawTargetUrl.isNotBlank() && !rawTargetUrl.contains(".cx/")) {
+            val extracted = extractHubCloudFromUrl(rawTargetUrl, suffix)
+            if (extracted.isNotEmpty()) return extracted
+        }
+
+        // Fast path 2: Active HubCloud domains prioritized
         val hubcloudDomains = listOf(
             "hubcloud.work",
+            "hubcloud.ink",
             "hubcloud.club",
             "hubcloud.link",
-            "hubcloud.foo",
-            "hubcloud.lol",
-            "hubcloud.one",
-            "hubcloud.vip",
-            "hubcloud.ink",
-            "hubcloud.website",
             "hubcloud.co",
-            "hubcloud.biz",
         )
 
         for (domain in hubcloudDomains) {
-            for (path in listOf("drive", "video", "file")) {
+            for (path in listOf("video", "drive")) {
                 val testUrl = "https://$domain/$path/$code"
                 val extracted = extractHubCloudFromUrl(testUrl, suffix)
                 if (extracted.isNotEmpty()) {
