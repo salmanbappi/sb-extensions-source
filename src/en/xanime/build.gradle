@@ -1,7 +1,7 @@
 ext {
     extName = 'Xanime'
     extClass = '.Xanime'
-    extVersionCode = 2
+    extVersionCode = 3
     isNsfw = false
 }
 
