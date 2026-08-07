@@ -184,14 +184,12 @@ class AnimeHeaven : Source() {
     }
 
     // ============================ Video Links =============================
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        return listOf(
-            Hoster(
-                hosterName = "AnimeHeaven",
-                hosterUrl = episode.url,
-            )
-        )
-    }
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(
+        Hoster(
+            hosterName = "AnimeHeaven",
+            hosterUrl = episode.url,
+        ),
+    )
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val epUrl = hoster.hosterUrl
@@ -205,7 +203,7 @@ class AnimeHeaven : Source() {
                 headers.newBuilder()
                     .add("Cookie", "key=$gateKey")
                     .set("Referer", animeReferer)
-                    .build()
+                    .build(),
             )
             .build()
 
@@ -246,7 +244,7 @@ class AnimeHeaven : Source() {
         val videoHeaders = Headers.headersOf(
             "Referer", "$baseUrl/",
             "Origin", baseUrl,
-            "User-Agent", DEFAULT_USER_AGENT
+            "User-Agent", DEFAULT_USER_AGENT,
         )
 
         // Deduplicate URLs while prioritizing URLs without &error
@@ -273,7 +271,7 @@ class AnimeHeaven : Source() {
     override fun List<Video>.sortVideos(): List<Video> {
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) }
+            compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) },
         )
     }
 
@@ -307,9 +305,7 @@ class AnimeHeaven : Source() {
         )
     }
 
-    private fun String.encodeForQuery(): String {
-        return java.net.URLEncoder.encode(this, "UTF-8")
-    }
+    private fun String.encodeForQuery(): String = java.net.URLEncoder.encode(this, "UTF-8")
 
     companion object {
         private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
