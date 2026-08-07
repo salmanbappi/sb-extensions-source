@@ -15,6 +15,7 @@ import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.jsonArray
@@ -24,6 +25,8 @@ import kotlinx.serialization.json.longOrNull
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
+import kotlin.getValue
+import kotlin.text.RegexOption
 
 class Xanime : Source() {
 
@@ -40,7 +43,10 @@ class Xanime : Source() {
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     override fun headersBuilder() = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+        .add(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        )
         .add("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
@@ -387,9 +393,10 @@ class Xanime : Source() {
     fun relatedAnimeListParse(response: Response): List<SAnime> {
         val html = response.body.string()
         val doc = Jsoup.parse(html, response.request.url.toString())
+        val currentPath = response.request.url.encodedPath
         return doc.select("a[href*=/title/]").mapNotNull { a ->
             val href = a.attr("href")
-            if (href.contains("/title/") && !href.contains("/episode-") && href != anime.url) {
+            if (href.contains("/title/") && !href.contains("/episode-") && href != currentPath) {
                 val titleText = a.selectFirst("h3, h4, .title, span")?.text() ?: a.text()
                 val img = a.selectFirst("img")?.attr("abs:src")
                 if (titleText.isNotBlank()) {
@@ -463,8 +470,6 @@ class Xanime : Source() {
         private const val PREF_TYPE_DEFAULT = "SUB"
         private const val PREF_EXCLUDE_TYPE_KEY = "pref_exclude_type"
 
-        private val QWIK_JSON_REGEX by lazy {
-            Regex("""<script[^>]*type="qwik/json"[^>]*>(.*?)</script>""", RegexOption.DOTALL)
-        }
+        private val QWIK_JSON_REGEX = Regex("""<script[^>]*type="qwik/json"[^>]*>(.*?)</script>""", RegexOption.DOTALL)
     }
 }
