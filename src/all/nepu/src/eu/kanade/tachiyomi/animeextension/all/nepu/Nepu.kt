@@ -47,7 +47,7 @@ class Nepu : ParsedAnimeHttpSource() {
     override val supportsLatest = true
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
+        .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36")
         .add("Cookie", getBestCookie())
 
     fun getBestCookie(): String {
@@ -660,7 +660,7 @@ class Nepu : ParsedAnimeHttpSource() {
 
         val m3u8Cache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-        private const val STATIC_COOKIE = "cf_clearance=UMMyu1mcDHXl4ILh_Pfd929hPm2ezQdOatDfmbdvHwI-1786091156-1.2.1.1-QhEt72hGzbN09cn5ajDhEdObFC6MlvqDQ75q0KF4UJY1vmQwRQg9aVwmaH1a.K7CNmeK9Ut2W3fTMsrSqYq1hQ0JFq8__JtQyP.JFl72WZxipOijOHzqFxw6JngLirbMPhqIMTlf_pQyZa1tPeIhdKjGOwmoO55J1JtLprAYlJCIadfn_iN0Pp8g5rmT7IQw5FV8e99.hrsGqA.RqugQMGhoK.uQCyGWsU1Rdq0zGQGVN7XQqsldm3RZcHmaf99QA2yH.RnDeoou6xyvNvzv6vufuYlc0Q7.UHLp6YC74csUuw5Flw8PUisxHgR.AvZNOkpShYnEjIPeCJ.uKCytoCmGUUWUZnxdJ2uAxjLjvdU_5CchPCSGESTwZQxbHpIqUcRmZv4L8yjevqY3WaKSJeRDMPZ.2a4rB11_viQqUMnRWy7U4uhWv7igU5o2WpA52Sper5VxRbHteizDUX31Lw; PHPSESSID=5gjq2di3raht68r852i4dsah0h"
+        private const val STATIC_COOKIE = "cf_clearance=QntbrMfRDztm9JLJLR.YgMUFEH4KTV5.bZ0a7UjnLjY-1786103878-1.2.1.1-rIQfszL.e12CgGhnyRfnBLD.EaazmfjTbBH_CAlZ9oa_BcDBrbmC.nXdsHLuFnzma9BsC85pDJuF58DSuJ08tyaPNJXKTQkl14oz8ymnWiA0p9Z1Yrbi36QxamugRKAU8CQSb0do43Ibet0B629fTYwjKMJRT6gxxywaO3mAOdneLlGzMCO461dy0i_rT2Uz.skZZ5VC.XuGnDU2m0334DOqmyGgbQ.sNP.BaCm4AzPefLhhJqmiOfa2C7tYepTWS0Cvvk.WzBL3uZAoM2.RNY9Ka8iXDUja87eqrqqJSeeEgsf8pYrpZWLW0nQ4W4bQwD8Ta5G6kiIOQ0K7EQ9Dd3WLO8mwsSV4dEn6JKU756uBrOqSSnrvZU8wHl8GfpsNSmIuy5OXdspMhgH5v61HDDTyHmYtkyjpM_EAFjQfdQqoXepOi8q4Yzx1ZmKzIODMJn6wEaVvpcp6oUXQI0D.CQ; PHPSESSID=e0iort79v1mdeinmqcn8umm1fr"
 
         var hlsFile = ""
         var playerNonce = ""
@@ -833,12 +833,17 @@ class LocalProxy(
                         .add("g", g.toString())
                         .build()
 
-                    val keyHeaders = okhttp3.Headers.Builder()
+                    val savedUA = userAgentProvider() ?: source.headers.get("User-Agent")
+                    val keyHeadersBuilder = okhttp3.Headers.Builder()
                         .set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
                         .set("X-Requested-With", "XMLHttpRequest")
                         .set("Referer", "$baseUrl/")
                         .set("Origin", baseUrl)
-                        .build()
+                        .set("Cookie", source.getBestCookie())
+                    if (!savedUA.isNullOrBlank()) {
+                        keyHeadersBuilder.set("User-Agent", savedUA)
+                    }
+                    val keyHeaders = keyHeadersBuilder.build()
 
                     val keyRequest = Request.Builder()
                         .url("$baseUrl/ajax/hlskey")
