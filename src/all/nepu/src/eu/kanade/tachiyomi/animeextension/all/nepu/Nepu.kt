@@ -83,7 +83,7 @@ class Nepu : ParsedAnimeHttpSource() {
                 return@addInterceptor chain.proceed(builder.removeHeader("Referer").build())
             }
             if (request.header("Cookie").isNullOrEmpty() && request.url.host.endsWith("nepu.io")) {
-                builder.set("Cookie", getBestCookie())
+                builder.header("Cookie", getBestCookie())
             }
             chain.proceed(builder.build())
         }
