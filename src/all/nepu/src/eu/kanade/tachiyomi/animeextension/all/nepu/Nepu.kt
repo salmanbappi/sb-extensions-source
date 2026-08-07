@@ -47,7 +47,6 @@ class Nepu : ParsedAnimeHttpSource() {
     override val supportsLatest = true
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36")
 
     fun getBestCookie(): String {
         try {
