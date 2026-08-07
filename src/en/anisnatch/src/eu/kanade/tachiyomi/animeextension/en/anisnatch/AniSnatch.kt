@@ -47,16 +47,55 @@ class AniSnatch :
     override val lang = "en"
     override val supportsLatest = true
 
-    // ─── Crypto constants ─────────────────────────────────────────────────────
+    // ─── Dynamic Crypto Config ───────────────────────────────────────────────
+
+    private var smcAlphabet: String? = null
+    private var markerBytes: ByteArray? = null
+
+    private fun ensureConfig() {
+        if (smcAlphabet != null && markerBytes != null) return
+        synchronized(this) {
+            if (smcAlphabet != null && markerBytes != null) return
+            try {
+                val request = okhttp3.Request.Builder()
+                    .url(baseUrl)
+                    .headers(headers)
+                    .build()
+                val response = client.newCall(request).execute()
+                val html = response.body.string()
+
+                val tokenMatch = Regex("""<meta name="token" content="([^"]+)">""").find(html)
+                val token = tokenMatch?.groupValues?.get(1) ?: return
+
+                val configTokenMatch = Regex("""configToken\s*=\s*'([^']+)'""").find(html)
+                val configToken = configTokenMatch?.groupValues?.get(1) ?: return
+
+                val versionMatch = Regex("""version\s*=\s*'([^']+)'""").find(html)
+                val version = versionMatch?.groupValues?.get(1) ?: return
+
+                val serverTimeMatch = Regex("""serverTime\s*=\s*(\d+)""").find(html)
+                val serverTime = serverTimeMatch?.groupValues?.get(1) ?: return
+
+                val tBytes = Base64.decode(configToken, Base64.DEFAULT)
+                val xorKey = (token + version + serverTime).toByteArray(Charsets.UTF_8)
+
+                val decrypted = ByteArray(tBytes.size) { i ->
+                    (tBytes[i].toInt() xor xorKey[i % xorKey.size].toInt()).toByte()
+                }
+
+                val jsonObj = Json.parseToJsonElement(String(decrypted, Charsets.UTF_8)).jsonObject
+                smcAlphabet = jsonObj["key"]?.jsonPrimitive?.content
+                val markArr = jsonObj["mark"]?.jsonArray
+                if (markArr != null) {
+                    markerBytes = ByteArray(markArr.size) { idx ->
+                        markArr[idx].jsonPrimitive.content.toInt().toByte()
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
 
     companion object {
-        // SMC cipher alphabet (62 alphanumeric chars, shift-by-5 substitution cipher)
-        private const val SMC_ALPHABET = "nopLQR1Tmy4cdAK6XYBstu923rvwSabGU7CfzDEMN5qx8OPFWVZ0ghijklHIJe"
-        private const val SMC_LEN = 62
-
-        // "AniSnatch" marker bytes that precede encrypted payload in response
-        private val MARKER = byteArrayOf(65, 110, 105, 83, 110, 97, 116, 99, 104)
-
         // Filter data — cached in companion object per skill rules
         val GENRES = listOf(
             Pair("All", ""),
@@ -198,16 +237,19 @@ class AniSnatch :
     // ─── SMC Cipher ───────────────────────────────────────────────────────────
 
     private fun smcShift(input: String, enc: Boolean, passes: Int): String {
+        ensureConfig()
+        val alphabet = smcAlphabet ?: return input
+        val smcLen = alphabet.length
         var result = input
         repeat(passes) {
             val sb = StringBuilder(result.length)
             for (ch in result) {
-                val pos = SMC_ALPHABET.indexOf(ch)
+                val pos = alphabet.indexOf(ch)
                 if (pos == -1) {
                     sb.append(ch)
                 } else {
-                    val newPos = if (enc) (pos + 5) % SMC_LEN else (pos - 5 + SMC_LEN) % SMC_LEN
-                    sb.append(SMC_ALPHABET[newPos])
+                    val newPos = if (enc) (pos + 5) % smcLen else (pos - 5 + smcLen) % smcLen
+                    sb.append(alphabet[newPos])
                 }
             }
             result = sb.reverse().toString()
@@ -262,18 +304,19 @@ class AniSnatch :
 
     /** Decrypt the binary API response using XOR + gzip */
     private fun decryptResponse(bytes: ByteArray, authenticator: String): ByteArray? {
-        // Find "AniSnatch" marker
+        ensureConfig()
+        val marker = markerBytes ?: return null
         var markerIdx = -1
-        outer@ for (i in 0..bytes.size - MARKER.size) {
-            for (j in MARKER.indices) {
-                if (bytes[i + j] != MARKER[j]) continue@outer
+        outer@ for (i in 0..bytes.size - marker.size) {
+            for (j in marker.indices) {
+                if (bytes[i + j] != marker[j]) continue@outer
             }
             markerIdx = i
             break
         }
         if (markerIdx == -1) return null
 
-        val encrypted = bytes.copyOfRange(markerIdx + MARKER.size, bytes.size)
+        val encrypted = bytes.copyOfRange(markerIdx + marker.size, bytes.size)
         val keyBytes = authenticator.toByteArray()
         val decrypted = ByteArray(encrypted.size) { i ->
             (encrypted[i].toInt() xor keyBytes[i % keyBytes.size].toInt()).toByte()
@@ -282,7 +325,8 @@ class AniSnatch :
     }
 
     /** Execute a POST request to an api endpoint and return parsed JSON */
-    private fun apiPost(endpoint: String, body: Map<String, Any>): JsonObject? {
+    private fun apiPost(endpoint: String, body: Map<String, Any>, isRetry: Boolean = false): JsonObject? {
+        ensureConfig()
         val jsonBody = buildJsonObject {
             for ((k, v) in body) {
                 when (v) {
@@ -304,9 +348,26 @@ class AniSnatch :
         return try {
             val response = client.newCall(request).execute()
             val bytes = response.body.bytes()
-            val decrypted = decryptResponse(bytes, authenticator) ?: return null
+            val decrypted = decryptResponse(bytes, authenticator)
+            if (decrypted == null) {
+                if (!isRetry) {
+                    synchronized(this) {
+                        smcAlphabet = null
+                        markerBytes = null
+                    }
+                    return apiPost(endpoint, body, isRetry = true)
+                }
+                return null
+            }
             Json.parseToJsonElement(String(decrypted, Charsets.UTF_8)).jsonObject
         } catch (e: Exception) {
+            if (!isRetry) {
+                synchronized(this) {
+                    smcAlphabet = null
+                    markerBytes = null
+                }
+                return apiPost(endpoint, body, isRetry = true)
+            }
             null
         }
     }
