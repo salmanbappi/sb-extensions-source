@@ -325,6 +325,7 @@ class ToonWorld4All :
                 link.contains("dood.") -> {
                     return DoodExtractor(client).videosFromUrl(link, "DoodStream")
                 }
+
                 else -> {
                     val extracted = runCatching { universalExtractor.videosFromUrl(link, headers) }.getOrDefault(emptyList())
                     if (extracted.isNotEmpty()) return extracted
