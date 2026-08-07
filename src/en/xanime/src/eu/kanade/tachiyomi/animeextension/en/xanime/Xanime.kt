@@ -312,7 +312,7 @@ class Xanime : Source() {
             }
         }
 
-        return episodeList.distinctBy { it.url }.sortedBy { it.episode_number }
+        return episodeList.distinctBy { it.url }.sortedByDescending { it.episode_number }
     }
 
     // ============================ Video Links =============================
