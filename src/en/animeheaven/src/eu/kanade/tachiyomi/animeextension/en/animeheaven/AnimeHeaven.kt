@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.animeheaven
 
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -47,14 +48,26 @@ class AnimeHeaven : Source() {
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        if (query.isBlank()) {
-            return getPopularAnime(page)
+        if (query.isNotBlank()) {
+            val response = client.newCall(GET("$baseUrl/search.php?s=${query.encodeForQuery()}&page=$page", headers)).execute()
+            return parseSearchAnimeListPage(response)
         }
-        val response = client.newCall(GET("$baseUrl/search.php?s=${query.encodeForQuery()}&page=$page", headers)).execute()
-        return parseSearchAnimeListPage(response)
+
+        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
+        val selectedGenre = genreFilter?.getSelectedValue() ?: ""
+
+        if (selectedGenre.isNotBlank()) {
+            val response = client.newCall(GET("$baseUrl/tags.php?tag=${selectedGenre.encodeForQuery()}&page=$page", headers)).execute()
+            return parseSearchAnimeListPage(response)
+        }
+
+        return getPopularAnime(page)
     }
 
-    override fun getFilterList(): AnimeFilterList = AnimeFilterList()
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        AnimeFilter.Header("Text search ignores filters below"),
+        GenreFilter(),
+    )
 
     private fun parseAnimeListPage(response: Response): AnimesPage {
         val doc = response.asJsoup()
@@ -85,9 +98,11 @@ class AnimeHeaven : Source() {
             ?: linkEl.text()
         if (titleText.isBlank()) return null
 
+        val path = if (href.startsWith("/")) href else "/$href"
+
         return SAnime.create().apply {
             title = titleText.replace("&#039;", "'").trim()
-            setUrlWithoutDomain(href)
+            setUrlWithoutDomain(path)
             thumbnail_url = imgEl?.absUrl("src")
             fetch_type = FetchType.Episodes
         }
@@ -104,9 +119,11 @@ class AnimeHeaven : Source() {
             ?: linkEl.text()
         if (titleText.isBlank()) return null
 
+        val path = if (href.startsWith("/")) href else "/$href"
+
         return SAnime.create().apply {
             title = titleText.replace("&#039;", "'").trim()
-            setUrlWithoutDomain(href)
+            setUrlWithoutDomain(path)
             thumbnail_url = imgEl?.absUrl("src")
             fetch_type = FetchType.Episodes
         }
@@ -114,7 +131,8 @@ class AnimeHeaven : Source() {
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
+        val path = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
+        val response = client.newCall(GET("$baseUrl$path", headers)).execute()
         val doc = response.asJsoup()
         val infoDiv = doc.selectFirst("div.infodiv")
 
@@ -161,12 +179,13 @@ class AnimeHeaven : Source() {
 
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
+        val path = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
+        val response = client.newCall(GET("$baseUrl$path", headers)).execute()
         val html = response.body.string()
 
         // Match gatea("HASH") and capture episode number from watch2 div
         val regex = Regex("""onclick='gatea\("([a-f0-9]+)"\)'[^>]*>(?:[\s\S]*?)<div[^>]*\bwatch2\b[^>]*>\s*(\d+)\s*</div>""")
-        val animeId = anime.url.removePrefix("/").removePrefix("anime.php?")
+        val animeId = path.removePrefix("/").removePrefix("anime.php?")
 
         val episodes = regex.findAll(html).mapNotNull { match ->
             val gateKey = match.groupValues[1]
@@ -184,12 +203,14 @@ class AnimeHeaven : Source() {
     }
 
     // ============================ Video Links =============================
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(
-        Hoster(
-            hosterName = "AnimeHeaven",
-            hosterUrl = episode.url,
-        ),
-    )
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        return listOf(
+            Hoster(
+                hosterName = "AnimeHeaven",
+                hosterUrl = episode.url,
+            )
+        )
+    }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val epUrl = hoster.hosterUrl
@@ -203,7 +224,7 @@ class AnimeHeaven : Source() {
                 headers.newBuilder()
                     .add("Cookie", "key=$gateKey")
                     .set("Referer", animeReferer)
-                    .build(),
+                    .build()
             )
             .build()
 
@@ -244,7 +265,7 @@ class AnimeHeaven : Source() {
         val videoHeaders = Headers.headersOf(
             "Referer", "$baseUrl/",
             "Origin", baseUrl,
-            "User-Agent", DEFAULT_USER_AGENT,
+            "User-Agent", DEFAULT_USER_AGENT
         )
 
         // Deduplicate URLs while prioritizing URLs without &error
@@ -271,12 +292,15 @@ class AnimeHeaven : Source() {
     override fun List<Video>.sortVideos(): List<Video> {
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) },
+            compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) }
         )
     }
 
     // ============================ Recommendations ========================
-    fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
+    fun relatedAnimeListRequest(anime: SAnime): Request {
+        val path = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
+        return GET("$baseUrl$path", headers)
+    }
 
     fun relatedAnimeListParse(response: Response): List<SAnime> {
         val doc = response.asJsoup()
@@ -305,12 +329,68 @@ class AnimeHeaven : Source() {
         )
     }
 
-    private fun String.encodeForQuery(): String = java.net.URLEncoder.encode(this, "UTF-8")
+    private class GenreFilter : AnimeFilter.Select<String>(
+        "Genre / Tag",
+        GENRES.map { it.first }.toTypedArray(),
+    ) {
+        fun getSelectedValue() = GENRES[state].second
+    }
+
+    private fun String.encodeForQuery(): String {
+        return java.net.URLEncoder.encode(this, "UTF-8")
+    }
 
     companion object {
         private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         private const val PREF_SERVER_KEY = "pref_server"
         private const val PREF_SERVER_DEFAULT = "auto"
         private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
+
+        private val GENRES = listOf(
+            Pair("All", ""),
+            Pair("Action", "Action"),
+            Pair("Adventure", "Adventure"),
+            Pair("Based On A Manga", "Based On A Manga"),
+            Pair("Comedy", "Comedy"),
+            Pair("Cyberpunk", "Cyberpunk"),
+            Pair("Demons", "Demons"),
+            Pair("Drama", "Drama"),
+            Pair("Ecchi", "Ecchi"),
+            Pair("Fantasy", "Fantasy"),
+            Pair("Game", "Game"),
+            Pair("Harem", "Harem"),
+            Pair("Historical", "Historical"),
+            Pair("Horror", "Horror"),
+            Pair("Isekai", "Isekai"),
+            Pair("Japanese Mythology", "Japanese Mythology"),
+            Pair("Josei", "Josei"),
+            Pair("Kids", "Kids"),
+            Pair("Magic", "Magic"),
+            Pair("Martial Arts", "Martial Arts"),
+            Pair("Mecha", "Mecha"),
+            Pair("Military", "Military"),
+            Pair("Music", "Music"),
+            Pair("Mystery", "Mystery"),
+            Pair("Ninja", "Ninja"),
+            Pair("Parody", "Parody"),
+            Pair("Psychological", "Psychological"),
+            Pair("Reincarnation", "Reincarnation"),
+            Pair("Revenge", "Revenge"),
+            Pair("Rivalries", "Rivalries"),
+            Pair("Romance", "Romance"),
+            Pair("Samurai", "Samurai"),
+            Pair("School", "School"),
+            Pair("Sci-Fi", "Sci-Fi"),
+            Pair("Seinen", "Seinen"),
+            Pair("Shoujo", "Shoujo"),
+            Pair("Shounen", "Shounen"),
+            Pair("Slice of Life", "Slice of Life"),
+            Pair("Space", "Space"),
+            Pair("Sports", "Sports"),
+            Pair("Super Power", "Super Power"),
+            Pair("Supernatural", "Supernatural"),
+            Pair("Thriller", "Thriller"),
+            Pair("Vampire", "Vampire"),
+        )
     }
 }
