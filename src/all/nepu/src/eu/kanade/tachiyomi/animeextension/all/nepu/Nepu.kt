@@ -48,7 +48,6 @@ class Nepu : ParsedAnimeHttpSource() {
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36")
-        .add("Cookie", getBestCookie())
 
     fun getBestCookie(): String {
         try {
@@ -82,7 +81,7 @@ class Nepu : ParsedAnimeHttpSource() {
             if (request.url.host.contains("tmdb.org")) {
                 return@addInterceptor chain.proceed(builder.removeHeader("Referer").build())
             }
-            if (request.header("Cookie").isNullOrEmpty() && request.url.host.endsWith("nepu.io")) {
+            if (request.url.host.endsWith("nepu.io")) {
                 builder.header("Cookie", getBestCookie())
             }
             chain.proceed(builder.build())
@@ -888,12 +887,13 @@ class LocalProxy(
             if (targetHeaders.get("Referer").isNullOrEmpty()) {
                 targetHeaders.set("Referer", "$baseUrl/")
             }
-            if (targetHeaders.get("Origin").isNullOrEmpty()) {
-                targetHeaders.set("Origin", baseUrl)
-            }
-
-            if (targetHeaders.get("Cookie").isNullOrEmpty()) {
-                targetHeaders.set("Cookie", source.getBestCookie())
+            if (targetUrl.contains("nepu.io")) {
+                if (targetHeaders.get("Origin").isNullOrEmpty()) {
+                    targetHeaders.set("Origin", baseUrl)
+                }
+                if (targetHeaders.get("Cookie").isNullOrEmpty()) {
+                    targetHeaders.set("Cookie", source.getBestCookie())
+                }
             }
 
             var line: String?
