@@ -273,8 +273,11 @@ class Xanime : Source() {
                         if (!epPath.contains("/title/") || !epPath.contains("-episode-")) continue
 
                         val rawTitle = resolveString(obj["ep_title"], objs)
-                        val rawIndex = obj["ep_index"]?.jsonPrimitive?.floatOrNull
-                            ?: getJsonString(obj["ep_index"])?.toFloatOrNull()
+                        val epIndexStr = resolveString(obj["ep_index"], objs)
+                        val rawIndex = epIndexStr?.toFloatOrNull()
+                            ?: obj["ep_index"]?.jsonPrimitive?.floatOrNull
+                            ?: epPath.substringAfter("-episode-", "").toFloatOrNull()
+                            ?: rawTitle?.substringAfter("Episode ")?.toFloatOrNull()
                             ?: 0f
 
                         val epName = if (!rawTitle.isNullOrBlank()) rawTitle else "Episode ${rawIndex.toInt()}"
@@ -301,11 +304,14 @@ class Xanime : Source() {
                 val href = a.attr("href")
                 val titleText = a.text().trim()
                 if (href.isNotBlank() && episodeList.none { it.url == href }) {
+                    val epNum = href.substringAfter("-episode-", "").toFloatOrNull()
+                        ?: titleText.substringAfter("Episode ").toFloatOrNull()
+                        ?: 0f
                     episodeList.add(
                         SEpisode.create().apply {
                             name = if (titleText.isNotBlank()) titleText else "Episode"
                             setUrlWithoutDomain(href)
-                            episode_number = name.substringAfter("Episode ").toFloatOrNull() ?: 0f
+                            episode_number = epNum
                         },
                     )
                 }
