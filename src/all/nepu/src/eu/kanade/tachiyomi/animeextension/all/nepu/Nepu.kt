@@ -48,6 +48,26 @@ class Nepu : ParsedAnimeHttpSource() {
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
+        .add("Cookie", getBestCookie())
+
+    fun getBestCookie(): String {
+        try {
+            val cookieManager = CookieManager.getInstance()
+            val managerCookies = cookieManager.getCookie(baseUrl)
+            if (!managerCookies.isNullOrEmpty() && managerCookies.contains("cf_clearance")) {
+                return managerCookies
+            }
+        } catch (_: Exception) {}
+
+        try {
+            val cookieJarCookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+            if (cookieJarCookies.isNotEmpty() && cookieJarCookies.contains("cf_clearance")) {
+                return cookieJarCookies
+            }
+        } catch (_: Exception) {}
+
+        return STATIC_COOKIE
+    }
 
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
 
@@ -58,10 +78,14 @@ class Nepu : ParsedAnimeHttpSource() {
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain ->
             val request = chain.request()
+            val builder = request.newBuilder()
             if (request.url.host.contains("tmdb.org")) {
-                return@addInterceptor chain.proceed(request.newBuilder().removeHeader("Referer").build())
+                return@addInterceptor chain.proceed(builder.removeHeader("Referer").build())
             }
-            chain.proceed(request)
+            if (request.header("Cookie").isNullOrEmpty() && request.url.host.endsWith("nepu.io")) {
+                builder.set("Cookie", getBestCookie())
+            }
+            chain.proceed(builder.build())
         }
         .build()
 
@@ -380,18 +404,7 @@ class Nepu : ParsedAnimeHttpSource() {
         }
 
         if (isVideoOnBaseUrl) {
-            try {
-                val cookieManager = CookieManager.getInstance()
-                val managerCookies = cookieManager.getCookie(baseUrl)
-                if (!managerCookies.isNullOrEmpty()) {
-                    builder.set("Cookie", managerCookies)
-                }
-            } catch (_: Exception) {
-                val cookieJarCookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
-                if (cookieJarCookies.isNotEmpty() && cookieJarCookies.contains("cf_clearance")) {
-                    builder.set("Cookie", cookieJarCookies)
-                }
-            }
+            builder.set("Cookie", getBestCookie())
         }
 
         return builder.build()
@@ -647,6 +660,8 @@ class Nepu : ParsedAnimeHttpSource() {
 
         val m3u8Cache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
+        private const val STATIC_COOKIE = "cf_clearance=UMMyu1mcDHXl4ILh_Pfd929hPm2ezQdOatDfmbdvHwI-1786091156-1.2.1.1-QhEt72hGzbN09cn5ajDhEdObFC6MlvqDQ75q0KF4UJY1vmQwRQg9aVwmaH1a.K7CNmeK9Ut2W3fTMsrSqYq1hQ0JFq8__JtQyP.JFl72WZxipOijOHzqFxw6JngLirbMPhqIMTlf_pQyZa1tPeIhdKjGOwmoO55J1JtLprAYlJCIadfn_iN0Pp8g5rmT7IQw5FV8e99.hrsGqA.RqugQMGhoK.uQCyGWsU1Rdq0zGQGVN7XQqsldm3RZcHmaf99QA2yH.RnDeoou6xyvNvzv6vufuYlc0Q7.UHLp6YC74csUuw5Flw8PUisxHgR.AvZNOkpShYnEjIPeCJ.uKCytoCmGUUWUZnxdJ2uAxjLjvdU_5CchPCSGESTwZQxbHpIqUcRmZv4L8yjevqY3WaKSJeRDMPZ.2a4rB11_viQqUMnRWy7U4uhWv7igU5o2WpA52Sper5VxRbHteizDUX31Lw; PHPSESSID=5gjq2di3raht68r852i4dsah0h"
+
         var hlsFile = ""
         var playerNonce = ""
         var tToken = ""
@@ -654,7 +669,7 @@ class Nepu : ParsedAnimeHttpSource() {
         @Synchronized
         fun getProxyUrl(source: Nepu, targetUrl: String, headers: okhttp3.Headers?): String {
             if (proxy == null) {
-                proxy = LocalProxy(source.client, source.baseUrl) {
+                proxy = LocalProxy(source, source.client, source.baseUrl) {
                     source.headers.get("User-Agent")
                 }
             }
@@ -738,6 +753,7 @@ class Nepu : ParsedAnimeHttpSource() {
 }
 
 class LocalProxy(
+    private val source: Nepu,
     private val client: okhttp3.OkHttpClient,
     private val baseUrl: String,
     private val userAgentProvider: () -> String?,
@@ -872,13 +888,7 @@ class LocalProxy(
             }
 
             if (targetHeaders.get("Cookie").isNullOrEmpty()) {
-                try {
-                    val cookieManager = CookieManager.getInstance()
-                    val managerCookies = cookieManager.getCookie(baseUrl)
-                    if (!managerCookies.isNullOrEmpty()) {
-                        targetHeaders.set("Cookie", managerCookies)
-                    }
-                } catch (_: Exception) {}
+                targetHeaders.set("Cookie", source.getBestCookie())
             }
 
             var line: String?
