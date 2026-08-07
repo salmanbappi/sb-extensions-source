@@ -127,12 +127,14 @@ class Xanime : Source() {
                     val titleText = a.selectFirst("h3, h4, .title, span")?.text() ?: a.text()
                     val img = a.selectFirst("img")?.attr("abs:src")
                     if (titleText.isNotBlank() && animeList.none { it.url == href }) {
-                        animeList.add(SAnime.create().apply {
-                            title = titleText.trim()
-                            setUrlWithoutDomain(href)
-                            thumbnail_url = img
-                            fetch_type = FetchType.Episodes
-                        })
+                        animeList.add(
+                            SAnime.create().apply {
+                                title = titleText.trim()
+                                setUrlWithoutDomain(href)
+                                thumbnail_url = img
+                                fetch_type = FetchType.Episodes
+                            },
+                        )
                     }
                 }
             }
@@ -229,7 +231,9 @@ class Xanime : Source() {
                         val idx = ref?.toIntOrNull(36)
                         val path = if (idx != null && idx in 0 until objs.size) {
                             objs[idx].jsonPrimitive.contentOrNull
-                        } else ref
+                        } else {
+                            ref
+                        }
                         if (!path.isNullOrBlank() && path.contains("/title/")) {
                             sampleEpPath = path
                             break
@@ -301,11 +305,13 @@ class Xanime : Source() {
                 val href = a.attr("href")
                 val titleText = a.text().trim()
                 if (href.isNotBlank() && episodeList.none { it.url == href }) {
-                    episodeList.add(SEpisode.create().apply {
-                        name = if (titleText.isNotBlank()) titleText else "Episode"
-                        setUrlWithoutDomain(href)
-                        episode_number = name.substringAfter("Episode ").toFloatOrNull() ?: 0f
-                    })
+                    episodeList.add(
+                        SEpisode.create().apply {
+                            name = if (titleText.isNotBlank()) titleText else "Episode"
+                            setUrlWithoutDomain(href)
+                            episode_number = name.substringAfter("Episode ").toFloatOrNull() ?: 0f
+                        },
+                    )
                 }
             }
         }
@@ -357,15 +363,13 @@ class Xanime : Source() {
         return hosterList.sortedByDescending { it.hosterName.startsWith(prefType, ignoreCase = true) }
     }
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        return playlistUtils.extractFromHls(
-            playlistUrl = hoster.hosterUrl,
-            referer = "$baseUrl/",
-            masterHeaders = headers,
-            videoHeaders = headers,
-            videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
-        )
-    }
+    override suspend fun getVideoList(hoster: Hoster): List<Video> = playlistUtils.extractFromHls(
+        playlistUrl = hoster.hosterUrl,
+        referer = "$baseUrl/",
+        masterHeaders = headers,
+        videoHeaders = headers,
+        videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
+    )
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
@@ -373,7 +377,7 @@ class Xanime : Source() {
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.startsWith(prefType, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
-                .thenByDescending { it.resolution }
+                .thenByDescending { it.resolution },
         )
     }
 
@@ -395,8 +399,12 @@ class Xanime : Source() {
                         thumbnail_url = img
                         fetch_type = FetchType.Episodes
                     }
-                } else null
-            } else null
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
         }.distinctBy { it.url }
     }
 

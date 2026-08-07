@@ -18,10 +18,11 @@ object Filters {
 
     private class GenreCheckBox(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
 
-    class GenreFilter : AnimeFilter.Group<AnimeFilter.CheckBox>(
-        "Genres",
-        GENRES.map { GenreCheckBox(it.first) },
-    ) {
+    class GenreFilter :
+        AnimeFilter.Group<AnimeFilter.CheckBox>(
+            "Genres",
+            GENRES.map { GenreCheckBox(it.first) },
+        ) {
         fun getSelected(): List<String> = state.mapIndexedNotNull { index, filter ->
             if (filter.state) GENRES[index].second else null
         }
