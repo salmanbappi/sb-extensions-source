@@ -1,0 +1,16 @@
+ext {
+    extName = 'ToonWorld4All'
+    extClass = '.ToonWorld4All'
+    extVersionCode = 1
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(':lib:dood-extractor'))
+    implementation(project(':lib:filemoon-extractor'))
+    implementation(project(':lib:streamwish-extractor'))
+    implementation(project(':lib:vidhide-extractor'))
+    implementation(project(':lib:buzzheavier-extractor'))
+    implementation(project(':lib:universal-extractor'))
+}
