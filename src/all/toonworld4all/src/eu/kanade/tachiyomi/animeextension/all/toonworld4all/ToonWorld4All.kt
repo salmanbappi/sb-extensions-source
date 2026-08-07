@@ -62,10 +62,12 @@ class ToonWorld4All :
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
-        GET("$baseUrl/", headers)
-    } else {
-        GET("$baseUrl/page/$page/", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        return if (page == 1) {
+            GET("$baseUrl/", headers)
+        } else {
+            GET("$baseUrl/page/$page/", headers)
+        }
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -98,62 +100,64 @@ class ToonWorld4All :
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
-        if (page == 1) {
-            GET("$baseUrl/?s=$query", headers)
-        } else {
-            GET("$baseUrl/page/$page/?s=$query", headers)
-        }
-    } else {
-        var path = ""
-        for (filter in filters) {
-            when (filter) {
-                is CategoryFilter -> {
-                    if (filter.state > 0) {
-                        path = categoryPaths[filter.state]
-                        break
-                    }
-                }
-
-                is ChannelFilter -> {
-                    if (filter.state > 0) {
-                        path = channelPaths[filter.state]
-                        break
-                    }
-                }
-
-                is LanguageFilter -> {
-                    if (filter.state > 0) {
-                        path = languagePaths[filter.state]
-                        break
-                    }
-                }
-
-                is OttFilter -> {
-                    if (filter.state > 0) {
-                        path = ottPaths[filter.state]
-                        break
-                    }
-                }
-
-                is QualityFilter -> {
-                    if (filter.state > 0) {
-                        path = qualityPaths[filter.state]
-                        break
-                    }
-                }
-
-                else -> {}
-            }
-        }
-        if (path.isNotBlank()) {
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        return if (query.isNotBlank()) {
             if (page == 1) {
-                GET("$baseUrl/$path/", headers)
+                GET("$baseUrl/?s=$query", headers)
             } else {
-                GET("$baseUrl/$path/page/$page/", headers)
+                GET("$baseUrl/page/$page/?s=$query", headers)
             }
         } else {
-            popularAnimeRequest(page)
+            var path = ""
+            for (filter in filters) {
+                when (filter) {
+                    is CategoryFilter -> {
+                        if (filter.state > 0) {
+                            path = categoryPaths[filter.state]
+                            break
+                        }
+                    }
+
+                    is ChannelFilter -> {
+                        if (filter.state > 0) {
+                            path = channelPaths[filter.state]
+                            break
+                        }
+                    }
+
+                    is LanguageFilter -> {
+                        if (filter.state > 0) {
+                            path = languagePaths[filter.state]
+                            break
+                        }
+                    }
+
+                    is OttFilter -> {
+                        if (filter.state > 0) {
+                            path = ottPaths[filter.state]
+                            break
+                        }
+                    }
+
+                    is QualityFilter -> {
+                        if (filter.state > 0) {
+                            path = qualityPaths[filter.state]
+                            break
+                        }
+                    }
+
+                    else -> {}
+                }
+            }
+            if (path.isNotBlank()) {
+                if (page == 1) {
+                    GET("$baseUrl/$path/", headers)
+                } else {
+                    GET("$baseUrl/$path/page/$page/", headers)
+                }
+            } else {
+                popularAnimeRequest(page)
+            }
         }
     }
 
@@ -197,13 +201,9 @@ class ToonWorld4All :
 
         val pageText = document.text()
         val scanlatorText = buildString {
-            if (pageText.contains("Multi Audio", true)) {
-                append("Multi Audio")
-            } else if (pageText.contains("Dual Audio", true)) {
-                append("Dual Audio")
-            } else if (pageText.contains("Hindi", true)) {
-                append("Hindi")
-            }
+            if (pageText.contains("Multi Audio", true)) append("Multi Audio")
+            else if (pageText.contains("Dual Audio", true)) append("Dual Audio")
+            else if (pageText.contains("Hindi", true)) append("Hindi")
 
             if (pageText.contains("Sub", true) || pageText.contains("ESub", true)) {
                 if (isNotEmpty()) append(" / Sub") else append("Sub")
@@ -327,15 +327,28 @@ class ToonWorld4All :
 
     // ============================ Video Links =============================
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val rawLink = episode.url
-        val link = if (rawLink.startsWith("http")) {
-            rawLink
-        } else {
-            "https://archive.toonworld4all.me" + (if (rawLink.startsWith("/")) "" else "/") + rawLink
+        val rawLink = episode.url.trim()
+        val link = when {
+            rawLink.startsWith("http") -> rawLink
+            rawLink.startsWith("/") -> "https://archive.toonworld4all.me$rawLink"
+            else -> "https://archive.toonworld4all.me/$rawLink"
         }
 
         if (link.contains("archive.toonworld4all.me")) {
-            return extractVideosFromArchive(link)
+            val videos = extractVideosFromArchive(link)
+            if (videos.isNotEmpty()) return videos
+
+            // Automatic Fallback for old database entries missing /episode/ or /movie/ prefix
+            val slug = link.substringAfterLast("/").substringAfterLast("me/")
+            if (slug.isNotBlank() && !link.contains("/episode/") && !link.contains("/movie/")) {
+                val epFallback = "https://archive.toonworld4all.me/episode/$slug"
+                val epVideos = extractVideosFromArchive(epFallback)
+                if (epVideos.isNotEmpty()) return epVideos
+
+                val movieFallback = "https://archive.toonworld4all.me/movie/$slug"
+                val movieVideos = extractVideosFromArchive(movieFallback)
+                if (movieVideos.isNotEmpty()) return movieVideos
+            }
         }
 
         val videoList = mutableListOf<Video>()
@@ -344,11 +357,9 @@ class ToonWorld4All :
                 link.contains("filemoon.sx") || link.contains("filemoon.") -> {
                     return FilemoonExtractor(fastClient).videosFromUrl(link, "FileMoon - ")
                 }
-
                 link.contains("dood.") -> {
                     return DoodExtractor(fastClient).videosFromUrl(link, "DoodStream")
                 }
-
                 else -> {
                     val extracted = runCatching { universalExtractor.videosFromUrl(link, headers) }.getOrDefault(emptyList())
                     if (extracted.isNotEmpty()) return extracted
@@ -380,7 +391,12 @@ class ToonWorld4All :
             .headers(headers.newBuilder().set("Referer", "$baseUrl/").build())
             .build()
 
-        val resp = fastClient.newCall(req).execute()
+        val resp = try {
+            fastClient.newCall(req).execute()
+        } catch (e: Exception) {
+            return emptyList()
+        }
+
         val html = resp.body.string()
         resp.close()
 
@@ -393,8 +409,19 @@ class ToonWorld4All :
             return emptyList()
         }
 
-        val dataObj = rootObj["data"]?.jsonObject?.get("data")?.jsonObject ?: return emptyList()
-        val encodesArray = dataObj["encodes"]?.jsonArray ?: dataObj["downloads"]?.jsonArray ?: return emptyList()
+        val dataField = rootObj["data"]
+        val dataObj = if (dataField != null && dataField is kotlinx.serialization.json.JsonObject) {
+            dataField.jsonObject["data"]?.jsonObject ?: dataField.jsonObject
+        } else {
+            rootObj
+        }
+
+        val encodesArray = dataObj["encodes"]?.jsonArray
+            ?: dataObj["downloads"]?.jsonArray
+            ?: dataObj["streams"]?.jsonArray
+            ?: rootObj["encodes"]?.jsonArray
+            ?: rootObj["downloads"]?.jsonArray
+            ?: return emptyList()
 
         return encodesArray.parallelCatchingFlatMap { encodeElement ->
             val encodeObj = encodeElement.jsonObject
@@ -527,10 +554,16 @@ class ToonWorld4All :
             val propsRegex = Regex("""window\.__PROPS__\s*=\s*(\{.*?\});\s*</script>""", RegexOption.DOT_MATCHES_ALL)
             val jsonMatch = propsRegex.find(html)?.groupValues?.get(1) ?: return null
             val obj = Json.parseToJsonElement(jsonMatch).jsonObject
-            val linkObj = obj["link"]?.jsonObject ?: return null
 
-            val domain = linkObj["domain"]?.jsonPrimitive?.content ?: ""
-            val hidden = linkObj["hidden"]?.jsonPrimitive?.content ?: ""
+            val dataField = obj["data"]
+            val linkContainer = if (dataField != null && dataField is kotlinx.serialization.json.JsonObject) {
+                dataField.jsonObject["link"]?.jsonObject ?: obj["link"]?.jsonObject
+            } else {
+                obj["link"]?.jsonObject
+            } ?: return null
+
+            val domain = linkContainer["domain"]?.jsonPrimitive?.content ?: ""
+            val hidden = linkContainer["hidden"]?.jsonPrimitive?.content ?: ""
             val dest = obj["destination"]?.jsonPrimitive?.content ?: ""
 
             if (domain.isNotBlank() && hidden.isNotBlank()) {
@@ -576,18 +609,20 @@ class ToonWorld4All :
         return list
     }
 
-    private fun getRedirectUrl(link: String, referrer: String): String = try {
-        val req = Request.Builder()
-            .url(link)
-            .header("Referer", referrer)
-            .headers(headers)
-            .build()
-        val resp = fastClient.newCall(req).execute()
-        val finalUrl = resp.request.url.toString()
-        resp.close()
-        if (finalUrl.isNotBlank()) finalUrl else link
-    } catch (e: Exception) {
-        link
+    private fun getRedirectUrl(link: String, referrer: String): String {
+        return try {
+            val req = Request.Builder()
+                .url(link)
+                .header("Referer", referrer)
+                .headers(headers)
+                .build()
+            val resp = fastClient.newCall(req).execute()
+            val finalUrl = resp.request.url.toString()
+            resp.close()
+            if (finalUrl.isNotBlank()) finalUrl else link
+        } catch (e: Exception) {
+            link
+        }
     }
 
     private fun extractHubCloudFromUrl(url: String, suffix: String): List<Video> {
