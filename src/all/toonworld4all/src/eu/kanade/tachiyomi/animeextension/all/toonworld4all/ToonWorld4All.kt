@@ -44,12 +44,10 @@ class ToonWorld4All :
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int): Request {
-        return if (page == 1) {
-            GET("$baseUrl/", headers)
-        } else {
-            GET("$baseUrl/page/$page/", headers)
-        }
+    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
+        GET("$baseUrl/", headers)
+    } else {
+        GET("$baseUrl/page/$page/", headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -82,64 +80,62 @@ class ToonWorld4All :
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return if (query.isNotBlank()) {
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
+        if (page == 1) {
+            GET("$baseUrl/?s=$query", headers)
+        } else {
+            GET("$baseUrl/page/$page/?s=$query", headers)
+        }
+    } else {
+        var path = ""
+        for (filter in filters) {
+            when (filter) {
+                is CategoryFilter -> {
+                    if (filter.state > 0) {
+                        path = categoryPaths[filter.state]
+                        break
+                    }
+                }
+
+                is ChannelFilter -> {
+                    if (filter.state > 0) {
+                        path = channelPaths[filter.state]
+                        break
+                    }
+                }
+
+                is LanguageFilter -> {
+                    if (filter.state > 0) {
+                        path = languagePaths[filter.state]
+                        break
+                    }
+                }
+
+                is OttFilter -> {
+                    if (filter.state > 0) {
+                        path = ottPaths[filter.state]
+                        break
+                    }
+                }
+
+                is QualityFilter -> {
+                    if (filter.state > 0) {
+                        path = qualityPaths[filter.state]
+                        break
+                    }
+                }
+
+                else -> {}
+            }
+        }
+        if (path.isNotBlank()) {
             if (page == 1) {
-                GET("$baseUrl/?s=$query", headers)
+                GET("$baseUrl/$path/", headers)
             } else {
-                GET("$baseUrl/page/$page/?s=$query", headers)
+                GET("$baseUrl/$path/page/$page/", headers)
             }
         } else {
-            var path = ""
-            for (filter in filters) {
-                when (filter) {
-                    is CategoryFilter -> {
-                        if (filter.state > 0) {
-                            path = categoryPaths[filter.state]
-                            break
-                        }
-                    }
-
-                    is ChannelFilter -> {
-                        if (filter.state > 0) {
-                            path = channelPaths[filter.state]
-                            break
-                        }
-                    }
-
-                    is LanguageFilter -> {
-                        if (filter.state > 0) {
-                            path = languagePaths[filter.state]
-                            break
-                        }
-                    }
-
-                    is OttFilter -> {
-                        if (filter.state > 0) {
-                            path = ottPaths[filter.state]
-                            break
-                        }
-                    }
-
-                    is QualityFilter -> {
-                        if (filter.state > 0) {
-                            path = qualityPaths[filter.state]
-                            break
-                        }
-                    }
-
-                    else -> {}
-                }
-            }
-            if (path.isNotBlank()) {
-                if (page == 1) {
-                    GET("$baseUrl/$path/", headers)
-                } else {
-                    GET("$baseUrl/$path/page/$page/", headers)
-                }
-            } else {
-                popularAnimeRequest(page)
-            }
+            popularAnimeRequest(page)
         }
     }
 
@@ -183,9 +179,13 @@ class ToonWorld4All :
 
         val pageText = document.text()
         val scanlatorText = buildString {
-            if (pageText.contains("Multi Audio", true)) append("Multi Audio")
-            else if (pageText.contains("Dual Audio", true)) append("Dual Audio")
-            else if (pageText.contains("Hindi", true)) append("Hindi")
+            if (pageText.contains("Multi Audio", true)) {
+                append("Multi Audio")
+            } else if (pageText.contains("Dual Audio", true)) {
+                append("Dual Audio")
+            } else if (pageText.contains("Hindi", true)) {
+                append("Hindi")
+            }
 
             if (pageText.contains("Sub", true) || pageText.contains("ESub", true)) {
                 if (isNotEmpty()) append(" / Sub") else append("Sub")
@@ -319,6 +319,7 @@ class ToonWorld4All :
                 link.contains("filemoon.sx") -> {
                     return FilemoonExtractor(client).videosFromUrl(link, "FileMoon - ")
                 }
+
                 link.contains("dood.") -> {
                     return DoodExtractor(client).videosFromUrl(link, "DoodStream")
                 }
