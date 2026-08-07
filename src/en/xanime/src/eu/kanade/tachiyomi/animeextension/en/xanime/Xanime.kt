@@ -15,6 +15,7 @@ import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.floatOrNull
@@ -25,8 +26,6 @@ import kotlinx.serialization.json.longOrNull
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
-import kotlin.getValue
-import kotlin.text.RegexOption
 
 class Xanime : Source() {
 
@@ -91,24 +90,13 @@ class Xanime : Source() {
                 val jsonElement = json.parseToJsonElement(qwikMatch).jsonObject
                 val objs = jsonElement["objs"]?.jsonArray ?: return@runCatching
 
-                fun resolveRef(ref: JsonElement?): JsonElement? {
-                    val strVal = ref?.jsonPrimitive?.contentOrNull ?: return ref
-                    val idx = strVal.toIntOrNull(36) ?: return ref
-                    return if (idx in 0 until objs.size) objs[idx] else ref
-                }
-
-                fun resolveString(ref: JsonElement?): String? {
-                    val resolved = resolveRef(ref)
-                    return resolved?.jsonPrimitive?.contentOrNull
-                }
-
                 for (element in objs) {
                     val obj = element as? JsonObject ?: continue
                     if (obj.containsKey("aniPath") && obj.containsKey("info_title")) {
-                        val titleStr = resolveString(obj["info_title"]) ?: continue
-                        val pathStr = resolveString(obj["aniPath"]) ?: continue
-                        val coverStr = resolveString(obj["urlCover600"])
-                            ?: resolveString(obj["urlCoverOri"])
+                        val titleStr = resolveString(obj["info_title"], objs) ?: continue
+                        val pathStr = resolveString(obj["aniPath"], objs) ?: continue
+                        val coverStr = resolveString(obj["urlCover600"], objs)
+                            ?: resolveString(obj["urlCoverOri"], objs)
                             ?: ""
 
                         if (titleStr.isNotBlank() && pathStr.contains("/title/")) {
@@ -168,26 +156,15 @@ class Xanime : Source() {
                 val jsonElement = json.parseToJsonElement(qwikMatch).jsonObject
                 val objs = jsonElement["objs"]?.jsonArray ?: return@runCatching
 
-                fun resolveRef(ref: JsonElement?): JsonElement? {
-                    val strVal = ref?.jsonPrimitive?.contentOrNull ?: return ref
-                    val idx = strVal.toIntOrNull(36) ?: return ref
-                    return if (idx in 0 until objs.size) objs[idx] else ref
-                }
-
-                fun resolveString(ref: JsonElement?): String? {
-                    val resolved = resolveRef(ref)
-                    return resolved?.jsonPrimitive?.contentOrNull
-                }
-
                 for (element in objs) {
                     val obj = element as? JsonObject ?: continue
                     if (obj.containsKey("info_filmdesc") || obj.containsKey("info_meta_status")) {
-                        val desc = resolveString(obj["info_filmdesc"]) ?: ""
-                        val statusRaw = resolveString(obj["info_meta_status"]) ?: ""
-                        val year = resolveString(obj["info_meta_year"]) ?: ""
-                        val duration = resolveString(obj["info_meta_duration"]) ?: ""
-                        val rating = resolveString(obj["info_meta_rating_short"])
-                            ?: resolveString(obj["info_meta_rating"]) ?: ""
+                        val desc = resolveString(obj["info_filmdesc"], objs) ?: ""
+                        val statusRaw = resolveString(obj["info_meta_status"], objs) ?: ""
+                        val year = resolveString(obj["info_meta_year"], objs) ?: ""
+                        val duration = resolveString(obj["info_meta_duration"], objs) ?: ""
+                        val rating = resolveString(obj["info_meta_rating_short"], objs)
+                            ?: resolveString(obj["info_meta_rating"], objs) ?: ""
                         val score = obj["info_meta_scores"]?.jsonPrimitive?.doubleOrNull
 
                         details.status = when {
@@ -233,13 +210,7 @@ class Xanime : Source() {
                 for (element in objs) {
                     val obj = element as? JsonObject ?: continue
                     if (obj.containsKey("epPath")) {
-                        val ref = obj["epPath"]?.jsonPrimitive?.contentOrNull
-                        val idx = ref?.toIntOrNull(36)
-                        val path = if (idx != null && idx in 0 until objs.size) {
-                            objs[idx].jsonPrimitive.contentOrNull
-                        } else {
-                            ref
-                        }
+                        val path = resolveString(obj["epPath"], objs)
                         if (!path.isNullOrBlank() && path.contains("/title/")) {
                             sampleEpPath = path
                             break
@@ -265,26 +236,15 @@ class Xanime : Source() {
             runCatching {
                 val objs = json.parseToJsonElement(epQwik).jsonObject["objs"]?.jsonArray ?: return@runCatching
 
-                fun resolveRef(ref: JsonElement?): JsonElement? {
-                    val strVal = ref?.jsonPrimitive?.contentOrNull ?: return ref
-                    val idx = strVal.toIntOrNull(36) ?: return ref
-                    return if (idx in 0 until objs.size) objs[idx] else ref
-                }
-
-                fun resolveString(ref: JsonElement?): String? {
-                    val resolved = resolveRef(ref)
-                    return resolved?.jsonPrimitive?.contentOrNull
-                }
-
                 for (element in objs) {
                     val obj = element as? JsonObject ?: continue
                     if (obj.containsKey("epPath") && (obj.containsKey("ep_title") || obj.containsKey("ep_index"))) {
-                        val epPath = resolveString(obj["epPath"]) ?: continue
+                        val epPath = resolveString(obj["epPath"], objs) ?: continue
                         if (!epPath.contains("/title/") || !epPath.contains("-episode-")) continue
 
-                        val rawTitle = resolveString(obj["ep_title"])
+                        val rawTitle = resolveString(obj["ep_title"], objs)
                         val rawIndex = obj["ep_index"]?.jsonPrimitive?.floatOrNull
-                            ?: obj["ep_index"]?.jsonPrimitive?.contentOrNull?.toFloatOrNull()
+                            ?: getJsonString(obj["ep_index"])?.toFloatOrNull()
                             ?: 0f
 
                         val epName = if (!rawTitle.isNullOrBlank()) rawTitle else "Episode ${rawIndex.toInt()}"
@@ -337,25 +297,14 @@ class Xanime : Source() {
         runCatching {
             val objs = json.parseToJsonElement(qwikMatch).jsonObject["objs"]?.jsonArray ?: return emptyList()
 
-            fun resolveRef(ref: JsonElement?): JsonElement? {
-                val strVal = ref?.jsonPrimitive?.contentOrNull ?: return ref
-                val idx = strVal.toIntOrNull(36) ?: return ref
-                return if (idx in 0 until objs.size) objs[idx] else ref
-            }
-
-            fun resolveString(ref: JsonElement?): String? {
-                val resolved = resolveRef(ref)
-                return resolved?.jsonPrimitive?.contentOrNull
-            }
-
             for (element in objs) {
                 val obj = element as? JsonObject ?: continue
                 if (obj.containsKey("souPath")) {
-                    val souPath = resolveString(obj["souPath"]) ?: continue
+                    val souPath = resolveString(obj["souPath"], objs) ?: continue
                     if (!souPath.contains("m3u8")) continue
 
-                    val srcType = (resolveString(obj["src_type"]) ?: "SUB").uppercase()
-                    val srcName = resolveString(obj["src_name"]) ?: "1"
+                    val srcType = (resolveString(obj["src_type"], objs) ?: "SUB").uppercase()
+                    val srcName = resolveString(obj["src_name"], objs) ?: "1"
 
                     if (excludedTypes.any { it.equals(srcType, ignoreCase = true) }) continue
 
@@ -451,6 +400,22 @@ class Xanime : Source() {
         )
     }
 
+    private fun getJsonString(element: JsonElement?): String? {
+        val primitive = element as? JsonPrimitive ?: return null
+        return if (primitive.isString) primitive.content else primitive.contentOrNull
+    }
+
+    private fun resolveRef(ref: JsonElement?, objs: List<JsonElement>): JsonElement? {
+        val strVal = getJsonString(ref) ?: return ref
+        val idx = strVal.toIntOrNull(36) ?: return ref
+        return if (idx in 0 until objs.size) objs[idx] else ref
+    }
+
+    private fun resolveString(ref: JsonElement?, objs: List<JsonElement>): String? {
+        val resolved = resolveRef(ref, objs)
+        return getJsonString(resolved)
+    }
+
     private fun fixCoverUrl(url: String): String {
         if (url.isBlank()) return ""
         return when {
@@ -470,6 +435,6 @@ class Xanime : Source() {
         private const val PREF_TYPE_DEFAULT = "SUB"
         private const val PREF_EXCLUDE_TYPE_KEY = "pref_exclude_type"
 
-        private val QWIK_JSON_REGEX = Regex("""<script[^>]*type="qwik/json"[^>]*>(.*?)</script>""", RegexOption.DOTALL)
+        private val QWIK_JSON_REGEX = Regex("""(?s)<script[^>]*type="qwik/json"[^>]*>(.*?)</script>""")
     }
 }
