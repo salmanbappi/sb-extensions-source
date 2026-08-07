@@ -40,11 +40,14 @@ class Nepu : ParsedAnimeHttpSource() {
 
     override val name = "Nepu"
 
-    override val baseUrl = "https://nepu.to"
+    override val baseUrl = "https://nepu.io"
 
     override val lang = "all"
 
     override val supportsLatest = true
+
+    override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
 
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
 
@@ -379,7 +382,7 @@ class Nepu : ParsedAnimeHttpSource() {
         if (isVideoOnBaseUrl) {
             try {
                 val cookieManager = CookieManager.getInstance()
-                val managerCookies = cookieManager.getCookie("https://nepu.to")
+                val managerCookies = cookieManager.getCookie(baseUrl)
                 if (!managerCookies.isNullOrEmpty()) {
                     builder.set("Cookie", managerCookies)
                 }
@@ -429,12 +432,13 @@ class Nepu : ParsedAnimeHttpSource() {
                 val embedResponse = client.newCall(postRequest).execute()
                 val responseBody = embedResponse.body.string()
 
-                val servedUrlRegex = Regex("""var servedUrl\s*=\s*"([^"]+)"""")
+                val servedUrlRegex = Regex("""var (?:servedUrl|plainManifestUrl|opaqueManifestUrl)\s*=\s*"([^"]+)"""")
                 val match = servedUrlRegex.find(responseBody)
                 val rawServedUrl = match?.groupValues?.get(1)
 
                 if (!rawServedUrl.isNullOrEmpty()) {
-                    val servedUrl = rawServedUrl.replace("\\u0026", "&")
+                    val cleanUrl = rawServedUrl.replace("\\u0026", "&")
+                    val servedUrl = if (cleanUrl.startsWith("/")) "$baseUrl$cleanUrl" else cleanUrl
 
                     val matchFilename = Regex("""var hlsFileName\s*=\s*"([^"]+)"""").find(responseBody)
                     val matchNonce = Regex("""var playerNonce\s*=\s*"([^"]+)"""").find(responseBody)
@@ -444,7 +448,7 @@ class Nepu : ParsedAnimeHttpSource() {
                     tToken = servedUrl.toHttpUrl().queryParameter("t") ?: ""
 
                     val videoHeaders = buildVideoHeaders(servedUrl, pageUrl)
-                    if (servedUrl.contains(".m3u8") || servedUrl.contains(".mp4")) {
+                    if (servedUrl.contains(".m3u8") || servedUrl.contains(".mp4") || servedUrl.contains("/ajax/hls") || servedUrl.contains("/hls")) {
                         videoList.add(Video(videoUrl = servedUrl, videoTitle = "Nepu", headers = videoHeaders))
                     } else {
                         when {
@@ -842,11 +846,10 @@ class LocalProxy(
                     }
                 } catch (_: Exception) {}
             }
-            val isM3u8Request = targetUrl.contains(".m3u8") || path.contains(".m3u8")
-            val isCdnRequest = targetUrl.contains("vr-cdn.com")
+            val isM3u8Request = targetUrl.contains(".m3u8") || targetUrl.contains("/ajax/hls") || path.contains(".m3u8") || path.contains("playlist.m3u8")
 
             val targetHeaders = okhttp3.Headers.Builder()
-            if (encodedHeaders.isNotEmpty() && !isCdnRequest) {
+            if (encodedHeaders.isNotEmpty()) {
                 val headersStr = String(Base64.decode(encodedHeaders, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
                 headersStr.split("\n").forEach { line ->
                     val headerParts = line.split(":", limit = 2)
@@ -861,9 +864,21 @@ class LocalProxy(
                 targetHeaders.set("User-Agent", savedUA)
             }
 
-            if (isCdnRequest) {
+            if (targetHeaders.get("Referer").isNullOrEmpty()) {
                 targetHeaders.set("Referer", "$baseUrl/")
+            }
+            if (targetHeaders.get("Origin").isNullOrEmpty()) {
                 targetHeaders.set("Origin", baseUrl)
+            }
+
+            if (targetHeaders.get("Cookie").isNullOrEmpty()) {
+                try {
+                    val cookieManager = CookieManager.getInstance()
+                    val managerCookies = cookieManager.getCookie(baseUrl)
+                    if (!managerCookies.isNullOrEmpty()) {
+                        targetHeaders.set("Cookie", managerCookies)
+                    }
+                } catch (_: Exception) {}
             }
 
             var line: String?
@@ -900,7 +915,7 @@ class LocalProxy(
 
     private fun sendResponse(socket: Socket, response: Response, targetUrl: String, encodedHeaders: String) {
         val out = socket.getOutputStream()
-        val isM3u8 = targetUrl.contains(".m3u8") || response.header("Content-Type")?.contains("mpegurl") == true
+        val isM3u8 = targetUrl.contains(".m3u8") || targetUrl.contains("/ajax/hls") || response.header("Content-Type")?.contains("mpegurl") == true
 
         var modifiedContentBytes: ByteArray? = null
         if (isM3u8) {
@@ -937,7 +952,8 @@ class LocalProxy(
             out.write("Content-Length: ${modifiedContentBytes.size}\r\n".toByteArray())
             out.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
         } else {
-            out.write("Content-Type: video/mp2t\r\n".toByteArray())
+            val contentType = response.header("Content-Type") ?: "video/mp2t"
+            out.write("Content-Type: $contentType\r\n".toByteArray())
         }
         out.write("Connection: close\r\n\r\n".toByteArray())
 
