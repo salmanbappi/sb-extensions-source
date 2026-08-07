@@ -258,7 +258,7 @@ class ToonWorld4All :
                 scanlator = scanlatorText
             }
 
-            if (raw.url.contains("archive.toonworld4all.me/episode/")) {
+            if (raw.url.contains("archive.toonworld4all.me/episode/") || raw.url.contains("archive.toonworld4all.me/movie/")) {
                 try {
                     val req = Request.Builder()
                         .url(raw.url)
@@ -311,7 +311,7 @@ class ToonWorld4All :
     // ============================ Video Links =============================
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val link = episode.url
-        if (link.contains("archive.toonworld4all.me/episode/")) {
+        if (link.contains("archive.toonworld4all.me")) {
             return extractVideosFromArchive(link)
         }
 
@@ -325,6 +325,11 @@ class ToonWorld4All :
                 link.contains("dood.") -> {
                     return DoodExtractor(client).videosFromUrl(link, "DoodStream")
                 }
+                else -> {
+                    val extracted = runCatching { universalExtractor.videosFromUrl(link, headers) }.getOrDefault(emptyList())
+                    if (extracted.isNotEmpty()) return extracted
+                    videoList.add(Video(videoUrl = link, videoTitle = "Direct Stream", headers = headers))
+                }
             }
         } catch (e: Exception) {
             // ignore
@@ -336,6 +341,7 @@ class ToonWorld4All :
         val hostName: String,
         val targetUrl: String,
         val hiddenCode: String,
+        val destination: String,
     )
 
     private suspend fun extractVideosFromArchive(archiveUrl: String): List<Video> {
@@ -382,51 +388,66 @@ class ToonWorld4All :
                 val targetHoster = resolveArchiveRedirect(redirectUrl, hostName) ?: return@forEach
 
                 try {
-                    when {
-                        hostName.equals("HubCloud", ignoreCase = true) || targetHoster.targetUrl.contains("hubcloud") -> {
-                            videos.addAll(resolveHubCloudWithCode(targetHoster.hiddenCode, targetHoster.targetUrl, qualitySuffix))
-                        }
+                    val hubCloudVideos = if (hostName.equals("HubCloud", ignoreCase = true) || targetHoster.targetUrl.contains("hubcloud")) {
+                        resolveHubCloudWithCode(targetHoster.hiddenCode, targetHoster.targetUrl, qualitySuffix)
+                    } else {
+                        emptyList()
+                    }
 
-                        hostName.equals("Buzzheavier", ignoreCase = true) || targetHoster.targetUrl.contains("buzzheavier") -> {
-                            videos.addAll(BuzzheavierExtractor(client, headers).videosFromUrl(targetHoster.targetUrl, "Buzzheavier$qualitySuffix - "))
-                        }
+                    if (hubCloudVideos.isNotEmpty()) {
+                        videos.addAll(hubCloudVideos)
+                    } else {
+                        when {
+                            hostName.equals("Buzzheavier", ignoreCase = true) || targetHoster.targetUrl.contains("buzzheavier") -> {
+                                videos.addAll(BuzzheavierExtractor(client, headers).videosFromUrl(targetHoster.targetUrl, "Buzzheavier$qualitySuffix - "))
+                            }
 
-                        hostName.equals("Filemoon", ignoreCase = true) || targetHoster.targetUrl.contains("filemoon") -> {
-                            videos.addAll(FilemoonExtractor(client).videosFromUrl(targetHoster.targetUrl, "FileMoon$qualitySuffix - "))
-                        }
+                            hostName.equals("Filemoon", ignoreCase = true) || targetHoster.targetUrl.contains("filemoon") -> {
+                                videos.addAll(FilemoonExtractor(client).videosFromUrl(targetHoster.targetUrl, "FileMoon$qualitySuffix - "))
+                            }
 
-                        targetHoster.targetUrl.contains("streamwish") || targetHoster.targetUrl.contains("cdnwish") -> {
-                            videos.addAll(StreamWishExtractor(client, headers).videosFromUrl(targetHoster.targetUrl, "StreamWish$qualitySuffix"))
-                        }
+                            targetHoster.targetUrl.contains("streamwish") || targetHoster.targetUrl.contains("cdnwish") -> {
+                                videos.addAll(StreamWishExtractor(client, headers).videosFromUrl(targetHoster.targetUrl, "StreamWish$qualitySuffix"))
+                            }
 
-                        targetHoster.targetUrl.contains("vidhide") || targetHoster.targetUrl.contains("streamhg") -> {
-                            videos.addAll(VidHideExtractor(client, headers).videosFromUrl(targetHoster.targetUrl) { "VidHide$qualitySuffix - $it" })
-                        }
+                            targetHoster.targetUrl.contains("vidhide") || targetHoster.targetUrl.contains("streamhg") -> {
+                                videos.addAll(VidHideExtractor(client, headers).videosFromUrl(targetHoster.targetUrl) { "VidHide$qualitySuffix - $it" })
+                            }
 
-                        else -> {
-                            // Try universal extractor or direct video link fallback
-                            val extracted = runCatching { universalExtractor.videosFromUrl(targetHoster.targetUrl, headers) }.getOrDefault(emptyList())
-                            if (extracted.isNotEmpty()) {
-                                videos.addAll(
-                                    extracted.map { v ->
+                            else -> {
+                                val extracted = runCatching { universalExtractor.videosFromUrl(targetHoster.targetUrl, headers) }.getOrDefault(emptyList())
+                                if (extracted.isNotEmpty()) {
+                                    videos.addAll(
+                                        extracted.map { v ->
+                                            Video(
+                                                videoUrl = v.videoUrl,
+                                                videoTitle = "$hostName$qualitySuffix - ${v.videoTitle}",
+                                                headers = v.headers,
+                                                subtitleTracks = v.subtitleTracks,
+                                            )
+                                        },
+                                    )
+                                } else {
+                                    videos.add(
                                         Video(
-                                            videoUrl = v.videoUrl,
-                                            videoTitle = "$hostName$qualitySuffix - ${v.videoTitle}",
-                                            headers = v.headers,
-                                            subtitleTracks = v.subtitleTracks,
-                                        )
-                                    },
-                                )
-                            } else if (targetHoster.targetUrl.contains(".mp4") || targetHoster.targetUrl.contains(".mkv") || targetHoster.targetUrl.contains(".m3u8")) {
-                                videos.add(
-                                    Video(
-                                        videoUrl = targetHoster.targetUrl,
-                                        videoTitle = "$hostName$qualitySuffix",
-                                        headers = headers,
-                                    ),
-                                )
+                                            videoUrl = targetHoster.targetUrl,
+                                            videoTitle = "$hostName$qualitySuffix",
+                                            headers = headers,
+                                        ),
+                                    )
+                                }
                             }
                         }
+                    }
+
+                    if (targetHoster.destination.isNotBlank() && targetHoster.destination != targetHoster.targetUrl) {
+                        videos.add(
+                            Video(
+                                videoUrl = targetHoster.destination,
+                                videoTitle = "$hostName (Mirror)$qualitySuffix",
+                                headers = headers,
+                            ),
+                        )
                     }
                 } catch (e: Exception) {
                     // ignore
@@ -454,9 +475,12 @@ class ToonWorld4All :
 
             val domain = linkObj["domain"]?.jsonPrimitive?.content ?: ""
             val hidden = linkObj["hidden"]?.jsonPrimitive?.content ?: ""
+            val dest = obj["destination"]?.jsonPrimitive?.content ?: ""
 
             if (domain.isNotBlank() && hidden.isNotBlank()) {
-                TargetHoster(hostName, "$domain$hidden", hidden)
+                TargetHoster(hostName, "$domain$hidden", hidden, dest)
+            } else if (dest.isNotBlank()) {
+                TargetHoster(hostName, dest, hidden, dest)
             } else {
                 null
             }
@@ -468,6 +492,7 @@ class ToonWorld4All :
     private fun resolveHubCloudWithCode(code: String, rawTargetUrl: String, suffix: String): List<Video> {
         val list = mutableListOf<Video>()
         val hubcloudDomains = listOf(
+            "hubcloud.work",
             "hubcloud.club",
             "hubcloud.link",
             "hubcloud.foo",
@@ -475,10 +500,13 @@ class ToonWorld4All :
             "hubcloud.one",
             "hubcloud.vip",
             "hubcloud.ink",
+            "hubcloud.website",
+            "hubcloud.co",
+            "hubcloud.biz",
         )
 
         for (domain in hubcloudDomains) {
-            for (path in listOf("video", "drive", "file")) {
+            for (path in listOf("drive", "video", "file")) {
                 val testUrl = "https://$domain/$path/$code"
                 val extracted = extractHubCloudFromUrl(testUrl, suffix)
                 if (extracted.isNotEmpty()) {
