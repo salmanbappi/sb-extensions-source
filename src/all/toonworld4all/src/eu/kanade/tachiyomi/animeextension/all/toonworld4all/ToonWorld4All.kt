@@ -42,25 +42,27 @@ class ToonWorld4All :
     override val supportsLatest = true
     override val id: Long = 7291048561930492815L
 
-    private val extendedClient: OkHttpClient by lazy {
+    private val fastClient: OkHttpClient by lazy {
         client.newBuilder()
-            .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .callTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(4, TimeUnit.SECONDS)
+            .writeTimeout(4, TimeUnit.SECONDS)
+            .callTimeout(5, TimeUnit.SECONDS)
             .build()
     }
 
-    private val universalExtractor by lazy { UniversalExtractor(extendedClient) }
+    private val universalExtractor by lazy { UniversalExtractor(fastClient) }
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
-        GET("$baseUrl/", headers)
-    } else {
-        GET("$baseUrl/page/$page/", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        return if (page == 1) {
+            GET("$baseUrl/", headers)
+        } else {
+            GET("$baseUrl/page/$page/", headers)
+        }
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -93,62 +95,64 @@ class ToonWorld4All :
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
-        if (page == 1) {
-            GET("$baseUrl/?s=$query", headers)
-        } else {
-            GET("$baseUrl/page/$page/?s=$query", headers)
-        }
-    } else {
-        var path = ""
-        for (filter in filters) {
-            when (filter) {
-                is CategoryFilter -> {
-                    if (filter.state > 0) {
-                        path = categoryPaths[filter.state]
-                        break
-                    }
-                }
-
-                is ChannelFilter -> {
-                    if (filter.state > 0) {
-                        path = channelPaths[filter.state]
-                        break
-                    }
-                }
-
-                is LanguageFilter -> {
-                    if (filter.state > 0) {
-                        path = languagePaths[filter.state]
-                        break
-                    }
-                }
-
-                is OttFilter -> {
-                    if (filter.state > 0) {
-                        path = ottPaths[filter.state]
-                        break
-                    }
-                }
-
-                is QualityFilter -> {
-                    if (filter.state > 0) {
-                        path = qualityPaths[filter.state]
-                        break
-                    }
-                }
-
-                else -> {}
-            }
-        }
-        if (path.isNotBlank()) {
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        return if (query.isNotBlank()) {
             if (page == 1) {
-                GET("$baseUrl/$path/", headers)
+                GET("$baseUrl/?s=$query", headers)
             } else {
-                GET("$baseUrl/$path/page/$page/", headers)
+                GET("$baseUrl/page/$page/?s=$query", headers)
             }
         } else {
-            popularAnimeRequest(page)
+            var path = ""
+            for (filter in filters) {
+                when (filter) {
+                    is CategoryFilter -> {
+                        if (filter.state > 0) {
+                            path = categoryPaths[filter.state]
+                            break
+                        }
+                    }
+
+                    is ChannelFilter -> {
+                        if (filter.state > 0) {
+                            path = channelPaths[filter.state]
+                            break
+                        }
+                    }
+
+                    is LanguageFilter -> {
+                        if (filter.state > 0) {
+                            path = languagePaths[filter.state]
+                            break
+                        }
+                    }
+
+                    is OttFilter -> {
+                        if (filter.state > 0) {
+                            path = ottPaths[filter.state]
+                            break
+                        }
+                    }
+
+                    is QualityFilter -> {
+                        if (filter.state > 0) {
+                            path = qualityPaths[filter.state]
+                            break
+                        }
+                    }
+
+                    else -> {}
+                }
+            }
+            if (path.isNotBlank()) {
+                if (page == 1) {
+                    GET("$baseUrl/$path/", headers)
+                } else {
+                    GET("$baseUrl/$path/page/$page/", headers)
+                }
+            } else {
+                popularAnimeRequest(page)
+            }
         }
     }
 
@@ -187,18 +191,14 @@ class ToonWorld4All :
     )
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val document = extendedClient.newCall(animeDetailsRequest(anime)).execute().asJsoup()
+        val document = fastClient.newCall(animeDetailsRequest(anime)).execute().asJsoup()
         val entryContent = document.selectFirst(".entry-content") ?: return emptyList()
 
         val pageText = document.text()
         val scanlatorText = buildString {
-            if (pageText.contains("Multi Audio", true)) {
-                append("Multi Audio")
-            } else if (pageText.contains("Dual Audio", true)) {
-                append("Dual Audio")
-            } else if (pageText.contains("Hindi", true)) {
-                append("Hindi")
-            }
+            if (pageText.contains("Multi Audio", true)) append("Multi Audio")
+            else if (pageText.contains("Dual Audio", true)) append("Dual Audio")
+            else if (pageText.contains("Hindi", true)) append("Hindi")
 
             if (pageText.contains("Sub", true) || pageText.contains("ESub", true)) {
                 if (isNotEmpty()) append(" / Sub") else append("Sub")
@@ -277,7 +277,7 @@ class ToonWorld4All :
                         .headers(headers.newBuilder().set("Referer", "$baseUrl/").build())
                         .build()
 
-                    val resp = extendedClient.newCall(req).execute()
+                    val resp = fastClient.newCall(req).execute()
                     val html = resp.body.string()
                     resp.close()
 
@@ -337,13 +337,11 @@ class ToonWorld4All :
         try {
             when {
                 link.contains("filemoon.sx") || link.contains("filemoon.") -> {
-                    return FilemoonExtractor(extendedClient).videosFromUrl(link, "FileMoon - ")
+                    return FilemoonExtractor(fastClient).videosFromUrl(link, "FileMoon - ")
                 }
-
                 link.contains("dood.") -> {
-                    return DoodExtractor(extendedClient).videosFromUrl(link, "DoodStream")
+                    return DoodExtractor(fastClient).videosFromUrl(link, "DoodStream")
                 }
-
                 else -> {
                     val extracted = runCatching { universalExtractor.videosFromUrl(link, headers) }.getOrDefault(emptyList())
                     if (extracted.isNotEmpty()) return extracted
@@ -375,7 +373,7 @@ class ToonWorld4All :
             .headers(headers.newBuilder().set("Referer", "$baseUrl/").build())
             .build()
 
-        val resp = extendedClient.newCall(req).execute()
+        val resp = fastClient.newCall(req).execute()
         val html = resp.body.string()
         resp.close()
 
@@ -402,12 +400,11 @@ class ToonWorld4All :
             }
 
             val filesArray = encodeObj["files"]?.jsonArray ?: return@parallelCatchingFlatMap emptyList()
-            val videos = mutableListOf<Video>()
 
-            filesArray.forEach { fileElement ->
+            filesArray.parallelCatchingFlatMap { fileElement ->
                 val fileObj = fileElement.jsonObject
                 val hostName = fileObj["host"]?.jsonPrimitive?.content ?: "Server"
-                val redirectPath = fileObj["link"]?.jsonPrimitive?.content ?: return@forEach
+                val redirectPath = fileObj["link"]?.jsonPrimitive?.content ?: return@parallelCatchingFlatMap emptyList()
 
                 val redirectUrl = if (redirectPath.startsWith("http")) {
                     redirectPath
@@ -415,7 +412,8 @@ class ToonWorld4All :
                     "https://archive.toonworld4all.me" + (if (redirectPath.startsWith("/")) "" else "/") + redirectPath
                 }
 
-                val targetHoster = resolveArchiveRedirect(redirectUrl, hostName) ?: return@forEach
+                val targetHoster = resolveArchiveRedirect(redirectUrl, hostName) ?: return@parallelCatchingFlatMap emptyList()
+                val videos = mutableListOf<Video>()
 
                 try {
                     val hubCloudVideos = if (hostName.equals("HubCloud", ignoreCase = true) || targetHoster.targetUrl.contains("hubcloud")) {
@@ -429,19 +427,19 @@ class ToonWorld4All :
                     } else {
                         when {
                             hostName.equals("Buzzheavier", ignoreCase = true) || targetHoster.targetUrl.contains("buzzheavier") -> {
-                                videos.addAll(BuzzheavierExtractor(extendedClient, headers).videosFromUrl(targetHoster.targetUrl, "Buzzheavier$qualitySuffix - "))
+                                videos.addAll(BuzzheavierExtractor(fastClient, headers).videosFromUrl(targetHoster.targetUrl, "Buzzheavier$qualitySuffix - "))
                             }
 
                             hostName.equals("Filemoon", ignoreCase = true) || targetHoster.targetUrl.contains("filemoon") -> {
-                                videos.addAll(FilemoonExtractor(extendedClient).videosFromUrl(targetHoster.targetUrl, "FileMoon$qualitySuffix - "))
+                                videos.addAll(FilemoonExtractor(fastClient).videosFromUrl(targetHoster.targetUrl, "FileMoon$qualitySuffix - "))
                             }
 
                             targetHoster.targetUrl.contains("streamwish") || targetHoster.targetUrl.contains("cdnwish") -> {
-                                videos.addAll(StreamWishExtractor(extendedClient, headers).videosFromUrl(targetHoster.targetUrl, "StreamWish$qualitySuffix"))
+                                videos.addAll(StreamWishExtractor(fastClient, headers).videosFromUrl(targetHoster.targetUrl, "StreamWish$qualitySuffix"))
                             }
 
                             targetHoster.targetUrl.contains("vidhide") || targetHoster.targetUrl.contains("streamhg") -> {
-                                videos.addAll(VidHideExtractor(extendedClient, headers).videosFromUrl(targetHoster.targetUrl) { "VidHide$qualitySuffix - $it" })
+                                videos.addAll(VidHideExtractor(fastClient, headers).videosFromUrl(targetHoster.targetUrl) { "VidHide$qualitySuffix - $it" })
                             }
 
                             else -> {
@@ -480,7 +478,6 @@ class ToonWorld4All :
                         )
                     }
                 } catch (e: Exception) {
-                    // Always add targetUrl & destination as fallbacks if extraction fails
                     videos.add(
                         Video(
                             videoUrl = targetHoster.targetUrl,
@@ -498,8 +495,8 @@ class ToonWorld4All :
                         )
                     }
                 }
+                videos
             }
-            videos
         }
     }
 
@@ -516,7 +513,7 @@ class ToonWorld4All :
                 .headers(headers.newBuilder().set("Referer", "https://archive.toonworld4all.me/").build())
                 .build()
 
-            val resp = extendedClient.newCall(req).execute()
+            val resp = fastClient.newCall(req).execute()
             val html = resp.body.string()
             resp.close()
 
@@ -572,18 +569,20 @@ class ToonWorld4All :
         return list
     }
 
-    private fun getRedirectUrl(link: String, referrer: String): String = try {
-        val req = Request.Builder()
-            .url(link)
-            .header("Referer", referrer)
-            .headers(headers)
-            .build()
-        val resp = extendedClient.newCall(req).execute()
-        val finalUrl = resp.request.url.toString()
-        resp.close()
-        if (finalUrl.isNotBlank()) finalUrl else link
-    } catch (e: Exception) {
-        link
+    private fun getRedirectUrl(link: String, referrer: String): String {
+        return try {
+            val req = Request.Builder()
+                .url(link)
+                .header("Referer", referrer)
+                .headers(headers)
+                .build()
+            val resp = fastClient.newCall(req).execute()
+            val finalUrl = resp.request.url.toString()
+            resp.close()
+            if (finalUrl.isNotBlank()) finalUrl else link
+        } catch (e: Exception) {
+            link
+        }
     }
 
     private fun extractHubCloudFromUrl(url: String, suffix: String): List<Video> {
@@ -594,7 +593,7 @@ class ToonWorld4All :
                 .headers(headers)
                 .build()
 
-            val resp = extendedClient.newCall(req).execute()
+            val resp = fastClient.newCall(req).execute()
             var html = resp.body.string()
             val targetUrl = resp.request.url.toString()
             resp.close()
@@ -606,7 +605,7 @@ class ToonWorld4All :
             if (jsRedirectMatch != null) {
                 val jsUrl = jsRedirectMatch.groupValues[1]
                 val jsReq = Request.Builder().url(jsUrl).headers(headers).build()
-                val jsResp = extendedClient.newCall(jsReq).execute()
+                val jsResp = fastClient.newCall(jsReq).execute()
                 html = jsResp.body.string()
                 jsResp.close()
             }
@@ -629,7 +628,7 @@ class ToonWorld4All :
             }
 
             val dlReq = Request.Builder().url(finalDlUrl).headers(headers).build()
-            val dlResp = extendedClient.newCall(dlReq).execute()
+            val dlResp = fastClient.newCall(dlReq).execute()
             val dlHtml = dlResp.body.string()
             val dlPageUrl = dlResp.request.url.toString()
             dlResp.close()
@@ -656,7 +655,7 @@ class ToonWorld4All :
 
                     lowerLabel.contains("buzzserver") -> {
                         try {
-                            val noRedirectClient = extendedClient.newBuilder().followRedirects(false).build()
+                            val noRedirectClient = fastClient.newBuilder().followRedirects(false).build()
                             val buzzReq = Request.Builder().url("$link/download").header("Referer", link).build()
                             val buzzResp = noRedirectClient.newCall(buzzReq).execute()
                             val dlink = buzzResp.header("hx-redirect") ?: buzzResp.header("HX-Redirect") ?: ""
