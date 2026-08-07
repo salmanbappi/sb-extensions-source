@@ -490,7 +490,17 @@ class ToonWorld4All :
                         when {
                             hostName.equals("Buzzheavier", ignoreCase = true) || targetHoster.targetUrl.contains("buzzheavier") -> {
                                 val extracted = BuzzheavierExtractor(fastClient, headers).videosFromUrl(targetHoster.targetUrl, "Buzzheavier$qualitySuffix - ")
-                                videos.addAll(extracted.map { v -> Video(v.videoUrl, v.videoTitle, v.videoUrl, headers = createStreamHeaders(v.videoUrl)) })
+                                videos.addAll(
+                                    extracted.map { v ->
+                                        Video(
+                                            videoUrl = v.videoUrl,
+                                            videoTitle = v.videoTitle,
+                                            headers = createStreamHeaders(v.videoUrl),
+                                            subtitleTracks = v.subtitleTracks,
+                                            audioTracks = v.audioTracks,
+                                        )
+                                    },
+                                )
                             }
 
                             hostName.equals("Filemoon", ignoreCase = true) || targetHoster.targetUrl.contains("filemoon") -> {
