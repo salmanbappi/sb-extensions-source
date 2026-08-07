@@ -24,6 +24,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Dispatcher
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -43,11 +44,15 @@ class ToonWorld4All :
     override val id: Long = 7291048561930492815L
 
     private val fastClient: OkHttpClient by lazy {
+        val customDispatcher = Dispatcher().apply {
+            maxRequests = 64
+            maxRequestsPerHost = 32
+        }
         client.newBuilder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(4, TimeUnit.SECONDS)
-            .writeTimeout(4, TimeUnit.SECONDS)
-            .callTimeout(5, TimeUnit.SECONDS)
+            .dispatcher(customDispatcher)
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .writeTimeout(8, TimeUnit.SECONDS)
             .build()
     }
 
