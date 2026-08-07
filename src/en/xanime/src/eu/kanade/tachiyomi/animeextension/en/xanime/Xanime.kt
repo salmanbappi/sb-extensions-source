@@ -69,22 +69,33 @@ class Xanime : Source() {
                 addQueryParameter("word", query)
             }
         } else {
-            val sortFilter = filters.filterIsInstance<Filters.SortFilter>().firstOrNull()
-            val sortValue = sortFilter?.getSelectedValue() ?: ""
+            val sortValue = filters.filterIsInstance<Filters.SortFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val typeValue = filters.filterIsInstance<Filters.TypeFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val statusValue = filters.filterIsInstance<Filters.StatusFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val seasonValue = filters.filterIsInstance<Filters.SeasonFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val sourceValue = filters.filterIsInstance<Filters.SourceFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val episodesValue = filters.filterIsInstance<Filters.EpisodesFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val yearValue = filters.filterIsInstance<Filters.YearFilter>().firstOrNull()?.getSelectedValue() ?: ""
 
             val genreFilter = filters.filterIsInstance<Filters.GenreFilter>().firstOrNull()
             val selectedGenres = genreFilter?.getSelected() ?: emptyList()
 
-            if (selectedGenres.size == 1 && sortValue.isBlank()) {
+            val isOnlySingleGenre = selectedGenres.size == 1 &&
+                sortValue.isBlank() && typeValue.isBlank() && statusValue.isBlank() &&
+                seasonValue.isBlank() && sourceValue.isBlank() && episodesValue.isBlank() && yearValue.isBlank()
+
+            if (isOnlySingleGenre) {
                 "$baseUrl/latest/${selectedGenres.first()}".toHttpUrl().newBuilder()
             } else {
                 "$baseUrl/search".toHttpUrl().newBuilder().apply {
-                    if (sortValue.isNotBlank()) {
-                        addQueryParameter("sortby", sortValue)
-                    }
-                    if (selectedGenres.isNotEmpty()) {
-                        addQueryParameter("genre", selectedGenres.joinToString(","))
-                    }
+                    if (sortValue.isNotBlank()) addQueryParameter("sortby", sortValue)
+                    if (typeValue.isNotBlank()) addQueryParameter("type", typeValue)
+                    if (statusValue.isNotBlank()) addQueryParameter("status", statusValue)
+                    if (seasonValue.isNotBlank()) addQueryParameter("season", seasonValue)
+                    if (sourceValue.isNotBlank()) addQueryParameter("source", sourceValue)
+                    if (episodesValue.isNotBlank()) addQueryParameter("episodes", episodesValue)
+                    if (yearValue.isNotBlank()) addQueryParameter("year", yearValue)
+                    if (selectedGenres.isNotEmpty()) addQueryParameter("genre", selectedGenres.joinToString(","))
                 }
             }
         }

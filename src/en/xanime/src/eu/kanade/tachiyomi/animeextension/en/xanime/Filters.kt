@@ -29,6 +29,103 @@ object Filters {
             ),
         )
 
+    class TypeFilter :
+        UriPartFilter(
+            "Type",
+            arrayOf(
+                Pair("All", ""),
+                Pair("TV Series", "TV"),
+                Pair("Movie", "Movie"),
+                Pair("OVA", "OVA"),
+                Pair("ONA", "ONA"),
+                Pair("Special", "Special"),
+            ),
+        )
+
+    class StatusFilter :
+        UriPartFilter(
+            "Status",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Currently Airing", "currently_airing"),
+                Pair("Finished Airing", "finished_airing"),
+                Pair("Not Yet Aired", "not_yet_aired"),
+            ),
+        )
+
+    class SeasonFilter :
+        UriPartFilter(
+            "Season",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Winter", "winter"),
+                Pair("Spring", "spring"),
+                Pair("Summer", "summer"),
+                Pair("Fall", "fall"),
+            ),
+        )
+
+    class SourceFilter :
+        UriPartFilter(
+            "Audio / Source",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Subbed", "sub"),
+                Pair("Dubbed", "dub"),
+            ),
+        )
+
+    class EpisodesFilter :
+        UriPartFilter(
+            "Episodes",
+            arrayOf(
+                Pair("All", ""),
+                Pair("1 Episode", "1"),
+                Pair("12 Episodes", "12"),
+                Pair("24 Episodes", "24"),
+            ),
+        )
+
+    class YearFilter :
+        UriPartFilter(
+            "Year",
+            arrayOf(
+                Pair("All", ""),
+                Pair("2026", "2026"),
+                Pair("2025", "2025"),
+                Pair("2024", "2024"),
+                Pair("2023", "2023"),
+                Pair("2022", "2022"),
+                Pair("2021", "2021"),
+                Pair("2020", "2020"),
+                Pair("2019", "2019"),
+                Pair("2018", "2018"),
+                Pair("2017", "2017"),
+                Pair("2016", "2016"),
+                Pair("2015", "2015"),
+                Pair("2014", "2014"),
+                Pair("2013", "2013"),
+                Pair("2012", "2012"),
+                Pair("2011", "2011"),
+                Pair("2010", "2010"),
+                Pair("2009", "2009"),
+                Pair("2008", "2008"),
+                Pair("2007", "2007"),
+                Pair("2006", "2006"),
+                Pair("2005", "2005"),
+                Pair("2004", "2004"),
+                Pair("2003", "2003"),
+                Pair("2002", "2002"),
+                Pair("2001", "2001"),
+                Pair("2000", "2000"),
+                Pair("1999", "1999"),
+                Pair("1998", "1998"),
+                Pair("1997", "1997"),
+                Pair("1996", "1996"),
+                Pair("1995", "1995"),
+            ),
+        )
+
     private class GenreCheckBox(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
 
     class GenreFilter :
@@ -135,6 +232,12 @@ object Filters {
     fun getFilterList() = AnimeFilterList(
         AnimeFilter.Header("Text search ignores filters below"),
         SortFilter(),
+        TypeFilter(),
+        StatusFilter(),
+        SeasonFilter(),
+        SourceFilter(),
+        EpisodesFilter(),
+        YearFilter(),
         GenreFilter(),
     )
 }
