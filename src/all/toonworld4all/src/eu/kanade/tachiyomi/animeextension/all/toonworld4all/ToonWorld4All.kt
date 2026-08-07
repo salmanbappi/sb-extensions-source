@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.lib.buzzheavierextractor.BuzzheavierExtractor
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
+import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
@@ -39,6 +40,8 @@ class ToonWorld4All :
     override val lang = "all"
     override val supportsLatest = true
     override val id: Long = 7291048561930492815L
+
+    private val universalExtractor by lazy { UniversalExtractor(client) }
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
@@ -316,7 +319,7 @@ class ToonWorld4All :
         val videoList = mutableListOf<Video>()
         try {
             when {
-                link.contains("filemoon.sx") -> {
+                link.contains("filemoon.sx") || link.contains("filemoon.") -> {
                     return FilemoonExtractor(client).videosFromUrl(link, "FileMoon - ")
                 }
 
@@ -329,6 +332,12 @@ class ToonWorld4All :
         }
         return videoList
     }
+
+    private data class TargetHoster(
+        val hostName: String,
+        val targetUrl: String,
+        val hiddenCode: String,
+    )
 
     private suspend fun extractVideosFromArchive(archiveUrl: String): List<Video> {
         val req = Request.Builder()
@@ -371,38 +380,44 @@ class ToonWorld4All :
                 val redirectPath = fileObj["link"]?.jsonPrimitive?.content ?: return@forEach
                 val redirectUrl = "https://archive.toonworld4all.me" + redirectPath
 
-                val hosterTargetUrl = resolveArchiveRedirect(redirectUrl) ?: return@forEach
+                val targetHoster = resolveArchiveRedirect(redirectUrl, hostName) ?: return@forEach
 
                 try {
                     when {
-                        hostName.equals("HubCloud", ignoreCase = true) || hosterTargetUrl.contains("hubcloud") -> {
-                            videos.addAll(resolveHubCloud(hosterTargetUrl, qualitySuffix))
+                        hostName.equals("HubCloud", ignoreCase = true) || targetHoster.targetUrl.contains("hubcloud") -> {
+                            videos.addAll(resolveHubCloudWithCode(targetHoster.hiddenCode, targetHoster.targetUrl, qualitySuffix))
                         }
 
-                        hostName.equals("Buzzheavier", ignoreCase = true) || hosterTargetUrl.contains("buzzheavier") -> {
-                            videos.addAll(BuzzheavierExtractor(client, headers).videosFromUrl(hosterTargetUrl, "Buzzheavier$qualitySuffix - "))
+                        hostName.equals("Buzzheavier", ignoreCase = true) || targetHoster.targetUrl.contains("buzzheavier") -> {
+                            videos.addAll(BuzzheavierExtractor(client, headers).videosFromUrl(targetHoster.targetUrl, "Buzzheavier$qualitySuffix - "))
                         }
 
-                        hostName.equals("Filemoon", ignoreCase = true) || hosterTargetUrl.contains("filemoon") -> {
-                            videos.addAll(FilemoonExtractor(client).videosFromUrl(hosterTargetUrl, "FileMoon$qualitySuffix - "))
+                        hostName.equals("Filemoon", ignoreCase = true) || targetHoster.targetUrl.contains("filemoon") -> {
+                            videos.addAll(FilemoonExtractor(client).videosFromUrl(targetHoster.targetUrl, "FileMoon$qualitySuffix - "))
                         }
 
-                        hosterTargetUrl.contains("streamwish") || hosterTargetUrl.contains("cdnwish") -> {
-                            videos.addAll(StreamWishExtractor(client, headers).videosFromUrl(hosterTargetUrl, "StreamWish$qualitySuffix"))
+                        targetHoster.targetUrl.contains("streamwish") || targetHoster.targetUrl.contains("cdnwish") -> {
+                            videos.addAll(StreamWishExtractor(client, headers).videosFromUrl(targetHoster.targetUrl, "StreamWish$qualitySuffix"))
                         }
 
-                        hosterTargetUrl.contains("vidhide") || hosterTargetUrl.contains("streamhg") -> {
-                            videos.addAll(VidHideExtractor(client, headers).videosFromUrl(hosterTargetUrl) { "VidHide$qualitySuffix - $it" })
+                        targetHoster.targetUrl.contains("vidhide") || targetHoster.targetUrl.contains("streamhg") -> {
+                            videos.addAll(VidHideExtractor(client, headers).videosFromUrl(targetHoster.targetUrl) { "VidHide$qualitySuffix - $it" })
                         }
 
                         else -> {
-                            videos.add(
-                                Video(
-                                    videoUrl = hosterTargetUrl,
-                                    videoTitle = "$hostName$qualitySuffix",
-                                    headers = headers,
-                                ),
-                            )
+                            // Try universal extractor or direct video link fallback
+                            val extracted = runCatching { universalExtractor.videosFromUrl(targetHoster.targetUrl, headers) }.getOrDefault(emptyList())
+                            if (extracted.isNotEmpty()) {
+                                videos.addAll(extracted.map { v -> Video(v.videoUrl, "$hostName$qualitySuffix - ${v.videoTitle}", v.headers, v.subtitleTracks) })
+                            } else if (targetHoster.targetUrl.contains(".mp4") || targetHoster.targetUrl.contains(".mkv") || targetHoster.targetUrl.contains(".m3u8")) {
+                                videos.add(
+                                    Video(
+                                        videoUrl = targetHoster.targetUrl,
+                                        videoTitle = "$hostName$qualitySuffix",
+                                        headers = headers,
+                                    ),
+                                )
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -413,7 +428,7 @@ class ToonWorld4All :
         }
     }
 
-    private fun resolveArchiveRedirect(redirectUrl: String): String? {
+    private fun resolveArchiveRedirect(redirectUrl: String, hostName: String): TargetHoster? {
         return try {
             val req = Request.Builder()
                 .url(redirectUrl)
@@ -431,8 +446,9 @@ class ToonWorld4All :
 
             val domain = linkObj["domain"]?.jsonPrimitive?.content ?: ""
             val hidden = linkObj["hidden"]?.jsonPrimitive?.content ?: ""
+
             if (domain.isNotBlank() && hidden.isNotBlank()) {
-                "$domain$hidden"
+                TargetHoster(hostName, "$domain$hidden", hidden)
             } else {
                 null
             }
@@ -441,82 +457,130 @@ class ToonWorld4All :
         }
     }
 
-    private fun resolveHubCloud(hubCloudUrl: String, suffix: String): List<Video> {
+    private fun resolveHubCloudWithCode(code: String, rawTargetUrl: String, suffix: String): List<Video> {
+        val list = mutableListOf<Video>()
+        val hubcloudDomains = listOf(
+            "hubcloud.club",
+            "hubcloud.link",
+            "hubcloud.foo",
+            "hubcloud.lol",
+            "hubcloud.one",
+            "hubcloud.vip",
+            "hubcloud.ink",
+        )
+
+        for (domain in hubcloudDomains) {
+            for (path in listOf("video", "drive", "file")) {
+                val testUrl = "https://$domain/$path/$code"
+                val extracted = extractHubCloudFromUrl(testUrl, suffix)
+                if (extracted.isNotEmpty()) {
+                    list.addAll(extracted)
+                    return list
+                }
+            }
+        }
+        return list
+    }
+
+    private fun extractHubCloudFromUrl(url: String, suffix: String): List<Video> {
         val list = mutableListOf<Video>()
         try {
-            val uri = java.net.URI(hubCloudUrl)
-            val hostBase = "${uri.scheme}://${uri.host}"
+            val req = Request.Builder()
+                .url(url)
+                .headers(headers)
+                .build()
 
-            val resp = client.newCall(GET(hubCloudUrl, headers)).execute()
-            val doc = resp.asJsoup()
+            val resp = client.newCall(req).execute()
+            var html = resp.body.string()
             resp.close()
 
-            var href = doc.selectFirst("#download")?.attr("href") ?: ""
-            if (href.isNotBlank() && !href.startsWith("http")) {
-                href = hostBase.trimEnd('/') + "/" + href.trimStart('/')
+            if (html.contains("404") || html.contains("File Not Found") || html.length < 100) return emptyList()
+
+            // Handle JS window.location.replace redirect
+            val jsRedirectMatch = Regex("""window\.location\.replace\('([^']+)'\)""").find(html)
+            if (jsRedirectMatch != null) {
+                val jsUrl = jsRedirectMatch.groupValues[1]
+                val jsReq = Request.Builder().url(jsUrl).headers(headers).build()
+                val jsResp = client.newCall(jsReq).execute()
+                html = jsResp.body.string()
+                jsResp.close()
             }
 
-            val targetUrl = if (href.isNotBlank()) href else hubCloudUrl
-            val resp2 = client.newCall(GET(targetUrl, headers)).execute()
-            val doc2 = resp2.asJsoup()
-            resp2.close()
+            // Find #download button
+            var dlLink = Regex("""href=["']([^"']+)["'][^>]*id=["']download["']""").find(html)?.groupValues?.get(1)
+                ?: Regex("""id=["']download["'][^>]*href=["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                ?: ""
 
-            doc2.select("a.btn, a[class*=btn]").forEach { element ->
-                val link = element.attr("href")
-                val label = element.ownText().lowercase()
+            if (dlLink.isNotBlank()) {
+                if (!dlLink.startsWith("http")) {
+                    val uri = java.net.URI(url)
+                    val base = "${uri.scheme}://${uri.host}"
+                    dlLink = base.trimEnd('/') + "/" + dlLink.trimStart('/')
+                }
 
-                when {
-                    label.contains("fsl server") || label.contains("fslv2") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (FSL)$suffix", headers = headers))
-                    }
+                val dlReq = Request.Builder().url(dlLink).headers(headers).build()
+                val dlResp = client.newCall(dlReq).execute()
+                val dlHtml = dlResp.body.string()
+                dlResp.close()
 
-                    label.contains("download file") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (Download)$suffix", headers = headers))
-                    }
+                val doc = org.jsoup.Jsoup.parse(dlHtml)
+                doc.select("a.btn, a[class*=btn]").forEach { element ->
+                    val link = element.attr("href")
+                    val label = element.text().lowercase()
 
-                    label.contains("buzzserver") -> {
-                        try {
-                            val noRedirectClient = client.newBuilder().followRedirects(false).build()
-                            val buzzReq = Request.Builder().url("$link/download").header("Referer", link).build()
-                            val buzzResp = noRedirectClient.newCall(buzzReq).execute()
-                            val dlink = buzzResp.header("hx-redirect") ?: buzzResp.header("HX-Redirect") ?: ""
-                            buzzResp.close()
-                            if (dlink.isNotBlank()) {
-                                list.add(Video(videoUrl = dlink, videoTitle = "HubCloud (BuzzServer)$suffix", headers = headers))
+                    when {
+                        label.contains("fsl server") || label.contains("fslv2") -> {
+                            if (link.contains("r2.cloudflarestorage.com") || link.contains("googleusercontent.com") || link.contains(".mp4") || link.contains(".mkv")) {
+                                list.add(Video(videoUrl = link, videoTitle = "HubCloud (FSL)$suffix", headers = headers))
                             }
-                        } catch (e: Exception) {
-                            // ignore
                         }
-                    }
 
-                    label.contains("pixeldra") || label.contains("pixelserver") || label.contains("pixeldrain") -> {
-                        val idMatch = Regex("""pixeldrain\.com/(?:u|file)/([a-zA-Z0-9]+)""").find(link)
-                        val id = idMatch?.groupValues?.get(1) ?: ""
-                        if (id.isNotBlank()) {
-                            list.add(Video(videoUrl = "https://pixeldrain.com/api/file/$id?download", videoTitle = "HubCloud (Pixeldrain)$suffix", headers = headers))
+                        label.contains("download file") -> {
+                            if (link.contains("r2.cloudflarestorage.com") || link.contains("googleusercontent.com") || link.contains(".mp4") || link.contains(".mkv")) {
+                                list.add(Video(videoUrl = link, videoTitle = "HubCloud (Download)$suffix", headers = headers))
+                            }
                         }
-                    }
 
-                    label.contains("mega server") || label.contains("s3 server") || label.contains("pdl server") -> {
-                        list.add(Video(videoUrl = link, videoTitle = "HubCloud (${element.ownText()})$suffix", headers = headers))
-                    }
-
-                    label.contains("10gbps") || label.contains("10 gbps") -> {
-                        try {
-                            val gpdlResp = client.newCall(GET(link, headers)).execute()
-                            val finalUrl = gpdlResp.request.url.toString()
-                            gpdlResp.close()
-
-                            if (finalUrl.contains("gamerxyt.com/dl.php?link=")) {
-                                val directLink = URLDecoder.decode(finalUrl.substringAfter("dl.php?link="), "UTF-8")
-                                if (directLink.isNotEmpty()) {
-                                    list.add(Video(videoUrl = directLink, videoTitle = "HubCloud (10Gbps)$suffix", headers = headers))
+                        label.contains("buzzserver") -> {
+                            try {
+                                val noRedirectClient = client.newBuilder().followRedirects(false).build()
+                                val buzzReq = Request.Builder().url("$link/download").header("Referer", link).build()
+                                val buzzResp = noRedirectClient.newCall(buzzReq).execute()
+                                val dlink = buzzResp.header("hx-redirect") ?: buzzResp.header("HX-Redirect") ?: ""
+                                buzzResp.close()
+                                if (dlink.isNotBlank()) {
+                                    list.add(Video(videoUrl = dlink, videoTitle = "HubCloud (BuzzServer)$suffix", headers = headers))
                                 }
-                            } else if (finalUrl.contains("video-downloads.googleusercontent.com")) {
-                                list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (10Gbps)$suffix", headers = headers))
+                            } catch (e: Exception) {
+                                // ignore
                             }
-                        } catch (e: Exception) {
-                            // ignore
+                        }
+
+                        label.contains("pixeldra") || label.contains("pixelserver") || label.contains("pixeldrain") -> {
+                            val idMatch = Regex("""pixeldrain\.com/(?:u|file)/([a-zA-Z0-9]+)""").find(link)
+                            val id = idMatch?.groupValues?.get(1) ?: ""
+                            if (id.isNotBlank()) {
+                                list.add(Video(videoUrl = "https://pixeldrain.com/api/file/$id?download", videoTitle = "HubCloud (Pixeldrain)$suffix", headers = headers))
+                            }
+                        }
+
+                        label.contains("10gbps") || label.contains("10 gbps") -> {
+                            try {
+                                val gpdlResp = client.newCall(GET(link, headers)).execute()
+                                val finalUrl = gpdlResp.request.url.toString()
+                                gpdlResp.close()
+
+                                if (finalUrl.contains("gamerxyt.com/dl.php?link=")) {
+                                    val directLink = URLDecoder.decode(finalUrl.substringAfter("dl.php?link="), "UTF-8")
+                                    if (directLink.isNotEmpty()) {
+                                        list.add(Video(videoUrl = directLink, videoTitle = "HubCloud (10Gbps)$suffix", headers = headers))
+                                    }
+                                } else if (finalUrl.contains("video-downloads.googleusercontent.com")) {
+                                    list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (10Gbps)$suffix", headers = headers))
+                                }
+                            } catch (e: Exception) {
+                                // ignore
+                            }
                         }
                     }
                 }
