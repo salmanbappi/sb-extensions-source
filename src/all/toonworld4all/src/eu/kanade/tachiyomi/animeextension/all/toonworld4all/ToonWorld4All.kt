@@ -408,7 +408,16 @@ class ToonWorld4All :
                             // Try universal extractor or direct video link fallback
                             val extracted = runCatching { universalExtractor.videosFromUrl(targetHoster.targetUrl, headers) }.getOrDefault(emptyList())
                             if (extracted.isNotEmpty()) {
-                                videos.addAll(extracted.map { v -> Video(v.videoUrl, "$hostName$qualitySuffix - ${v.videoTitle}", v.headers, v.subtitleTracks) })
+                                videos.addAll(
+                                    extracted.map { v ->
+                                        Video(
+                                            videoUrl = v.videoUrl,
+                                            videoTitle = "$hostName$qualitySuffix - ${v.videoTitle}",
+                                            headers = v.headers,
+                                            subtitleTracks = v.subtitleTracks,
+                                        )
+                                    },
+                                )
                             } else if (targetHoster.targetUrl.contains(".mp4") || targetHoster.targetUrl.contains(".mkv") || targetHoster.targetUrl.contains(".m3u8")) {
                                 videos.add(
                                     Video(
