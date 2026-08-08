@@ -312,12 +312,16 @@ class FlixProxyServer(
                 data[0] == 0x52.toByte() && data[1] == 0x49.toByte() &&
                 data[2] == 0x46.toByte() && data[3] == 0x46.toByte() &&
                 data[8] == 0x57.toByte() && data[9] == 0x45.toByte() &&
-                data[10] == 0x42.toByte() && data[11] == 0x50.toByte() -> 12 // RIFF....WEBP
+                data[10] == 0x42.toByte() && data[11] == 0x50.toByte() -> 12
+
+            // RIFF....WEBP
             data.size >= 8 &&
                 data[0] == 0x89.toByte() && data[1] == 0x50.toByte() &&
                 data[2] == 0x4E.toByte() && data[3] == 0x47.toByte() &&
                 data[4] == 0x0D.toByte() && data[5] == 0x0A.toByte() &&
-                data[6] == 0x26.toByte() && data[7] == 0x0A.toByte() -> 8 // PNG sig
+                data[6] == 0x26.toByte() && data[7] == 0x0A.toByte() -> 8
+
+            // PNG sig
             else -> 0
         }
     }
