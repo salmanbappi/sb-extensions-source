@@ -945,6 +945,8 @@ class ReAnime : Source() {
         private val JSON5_KEY_REGEX = Regex("""([{,]\s*)([\w_]+)(\s*:)""")
         private val JSON5_TRAILING_COMMA_REGEX = Regex(""""",\s*([}\]])""")
         private val JSON5_UNDEFINED_REGEX = Regex(""":\s*undefined\b""")
+        private val HLS_SCRIPT_REGEX = Regex("""href="([^"]*hls\.js[^"]*)"""")
+        private val XOR_MASK_REGEX = Regex("""for\(var f=\[(\d{1,3}(?:,\d{1,3}){15})]""")
 
         fun parseStatus(status: String?): Int = when (status) {
             "RELEASING", "Releasing" -> SAnime.ONGOING
