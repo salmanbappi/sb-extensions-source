@@ -382,7 +382,8 @@ class ToonWorld4All :
         val lower = url.lowercase()
         return lower.endsWith(".mp4") || lower.endsWith(".m3u8") || lower.endsWith(".mkv") ||
             lower.contains(".m3u8?") || lower.contains(".mp4?") || lower.contains("fsl.direct") ||
-            lower.contains("pixeldrain.com/api/file/")
+            lower.contains("pixeldrain.com/api/file/") || lower.contains("pixeldrain.dev/api/file/") ||
+            lower.contains("gpdl") || lower.contains("pixeldrain.dev/u/") || lower.contains("pixeldrain.com/u/")
     }
 
     private fun createStreamHeaders(videoUrl: String): Headers {
@@ -691,51 +692,89 @@ class ToonWorld4All :
                 jsResp.close()
             }
 
-            // Find #download button or generic download link
-            var dlLink = Regex("""href=["']([^"']+)["'][^>]*id=["']download["']""").find(html)?.groupValues?.get(1)
-                ?: Regex("""id=["']download["'][^>]*href=["']([^"']+)["']""").find(html)?.groupValues?.get(1)
-                ?: Regex("""<a[^>]+href=["'](/.[^"']+)["']""").find(html)?.groupValues?.get(1)
-                ?: ""
+            // Check if landing page contains a generator link (e.g. sportverse.cc/hubcloud.php...)
+            val genLinkMatch = Regex("""href=["'](https://[^"']*hubcloud\.php[^"']*)["']""", RegexOption.IGNORE_CASE).find(html)
+                ?: Regex("""(https://[^\s"'<>]+/hubcloud\.php\?[^\s"'<>]+)""", RegexOption.IGNORE_CASE).find(html)
 
-            val finalDlUrl = if (dlLink.isNotBlank()) {
-                if (!dlLink.startsWith("http")) {
-                    val uri = java.net.URI(targetUrl)
-                    val base = "${uri.scheme}://${uri.host}"
-                    base.trimEnd('/') + "/" + dlLink.trimStart('/')
-                } else {
-                    dlLink
-                }
+            var dlPageUrl = targetUrl
+            var dlHtml = html
+
+            if (genLinkMatch != null) {
+                val genUrl = genLinkMatch.groupValues[1]
+                val genReq = Request.Builder()
+                    .url(genUrl)
+                    .headers(headers.newBuilder().set("Referer", targetUrl).build())
+                    .build()
+                val genResp = fastClient.newCall(genReq).execute()
+                dlHtml = genResp.body.string()
+                dlPageUrl = genResp.request.url.toString()
+                genResp.close()
             } else {
-                targetUrl
+                // Find #download button or generic download link
+                val dlLink = Regex("""href=["']([^"']+)["'][^>]*id=["']download["']""").find(html)?.groupValues?.get(1)
+                    ?: Regex("""id=["']download["'][^>]*href=["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                    ?: Regex("""<a[^>]+href=["'](/.[^"']+)["']""").find(html)?.groupValues?.get(1)
+                    ?: ""
+
+                if (dlLink.isNotBlank()) {
+                    val finalDlUrl = if (!dlLink.startsWith("http")) {
+                        val uri = java.net.URI(targetUrl)
+                        val base = "${uri.scheme}://${uri.host}"
+                        base.trimEnd('/') + "/" + dlLink.trimStart('/')
+                    } else {
+                        dlLink
+                    }
+                    val dlReq = Request.Builder().url(finalDlUrl).headers(headers).build()
+                    val dlResp = fastClient.newCall(dlReq).execute()
+                    dlHtml = dlResp.body.string()
+                    dlPageUrl = dlResp.request.url.toString()
+                    dlResp.close()
+                }
             }
 
-            val dlReq = Request.Builder().url(finalDlUrl).headers(headers).build()
-            val dlResp = fastClient.newCall(dlReq).execute()
-            val dlHtml = dlResp.body.string()
-            val dlPageUrl = dlResp.request.url.toString()
-            dlResp.close()
-
             val doc = org.jsoup.Jsoup.parse(dlHtml)
-            val buttons = doc.select("a.btn, a[class*=btn]")
+            val buttons = doc.select("a.btn, a[class*=btn], a[href*='pixeldrain'], a[href*='gpdl'], a[href*='gofile']")
 
             buttons.forEach { element ->
                 val link = element.attr("href")
                 val label = element.text().trim()
                 val lowerLabel = label.lowercase()
-                if (link.isBlank() || link == "#") return@forEach
+                val lowerLink = link.lowercase()
+                if (link.isBlank() || link == "#" || lowerLink.contains("telegram") || lowerLink.contains("ad")) return@forEach
 
                 when {
-                    lowerLabel.contains("fsl server") || lowerLabel.contains("fslv2") -> {
+                    lowerLink.contains("pixeldrain.dev") || lowerLink.contains("pixeldrain.com") || lowerLabel.contains("pixeldra") || lowerLabel.contains("pixelserver") -> {
+                        val idMatch = Regex("""pixeldrain\.(?:dev|com)/(?:u|file|api/file)/([a-zA-Z0-9]+)""").find(link)
+                        val id = idMatch?.groupValues?.get(1) ?: ""
+                        if (id.isNotBlank()) {
+                            val pixelUrl = "https://pixeldrain.com/api/file/$id?download"
+                            list.add(Video(videoUrl = pixelUrl, videoTitle = "HubCloud (Pixeldrain)$suffix", headers = createStreamHeaders(pixelUrl)))
+                        } else {
+                            val direct = getRedirectUrl(link, dlPageUrl)
+                            val finalUrl = if (direct.isNotBlank()) direct else link
+                            list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (Pixeldrain)$suffix", headers = createStreamHeaders(finalUrl)))
+                        }
+                    }
+
+                    lowerLink.contains("gpdl") || lowerLabel.contains("10gbps") || lowerLabel.contains("10 gbps") -> {
+                        val direct = if (isDirectStreamUrl(link)) link else getRedirectUrl(link, dlPageUrl)
+                        val finalUrl = if (direct.isNotBlank()) direct else link
+                        list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (10Gbps)$suffix", headers = createStreamHeaders(finalUrl)))
+                    }
+
+                    lowerLabel.contains("fsl server") || lowerLabel.contains("fslv2") || lowerLink.contains("fsl.direct") -> {
                         val direct = getRedirectUrl(link, dlPageUrl)
-                        list.add(Video(videoUrl = direct, videoTitle = "HubCloud (FSL)$suffix", headers = createStreamHeaders(direct)))
+                        val finalUrl = if (direct.isNotBlank()) direct else link
+                        list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (FSL)$suffix", headers = createStreamHeaders(finalUrl)))
                     }
 
                     lowerLabel.contains("download file") -> {
                         val direct = getRedirectUrl(link, dlPageUrl)
-                        list.add(Video(videoUrl = direct, videoTitle = "HubCloud (Download)$suffix", headers = createStreamHeaders(direct)))
+                        val finalUrl = if (direct.isNotBlank()) direct else link
+                        list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (Download)$suffix", headers = createStreamHeaders(finalUrl)))
                     }
 
-                    lowerLabel.contains("buzzserver") -> {
+                    lowerLabel.contains("buzzserver") || lowerLink.contains("buzzheavier") -> {
                         try {
                             val noRedirectClient = fastClient.newBuilder().followRedirects(false).build()
                             val buzzReq = Request.Builder().url("$link/download").header("Referer", link).build()
@@ -746,25 +785,9 @@ class ToonWorld4All :
                             list.add(Video(videoUrl = finalLink, videoTitle = "HubCloud (BuzzServer)$suffix", headers = createStreamHeaders(finalLink)))
                         } catch (e: Exception) {
                             val direct = getRedirectUrl(link, dlPageUrl)
-                            list.add(Video(videoUrl = direct, videoTitle = "HubCloud (BuzzServer)$suffix", headers = createStreamHeaders(direct)))
+                            val finalUrl = if (direct.isNotBlank()) direct else link
+                            list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud (BuzzServer)$suffix", headers = createStreamHeaders(finalUrl)))
                         }
-                    }
-
-                    lowerLabel.contains("pixeldra") || lowerLabel.contains("pixelserver") || lowerLabel.contains("pixeldrain") -> {
-                        val idMatch = Regex("""pixeldrain\.com/(?:u|file)/([a-zA-Z0-9]+)""").find(link)
-                        val id = idMatch?.groupValues?.get(1) ?: ""
-                        if (id.isNotBlank()) {
-                            val pixelUrl = "https://pixeldrain.com/api/file/$id?download"
-                            list.add(Video(videoUrl = pixelUrl, videoTitle = "HubCloud (Pixeldrain)$suffix", headers = createStreamHeaders(pixelUrl)))
-                        } else {
-                            val direct = getRedirectUrl(link, dlPageUrl)
-                            list.add(Video(videoUrl = direct, videoTitle = "HubCloud (Pixeldrain)$suffix", headers = createStreamHeaders(direct)))
-                        }
-                    }
-
-                    lowerLabel.contains("10gbps") || lowerLabel.contains("10 gbps") -> {
-                        val direct = getRedirectUrl(link, dlPageUrl)
-                        list.add(Video(videoUrl = direct, videoTitle = "HubCloud (10Gbps)$suffix", headers = createStreamHeaders(direct)))
                     }
 
                     else -> {
@@ -777,13 +800,6 @@ class ToonWorld4All :
                             )
                         } else {
                             val direct = getRedirectUrl(link, dlPageUrl)
-                            if (isDirectStreamUrl(direct)) {
-                                list.add(Video(videoUrl = direct, videoTitle = "HubCloud ($label)$suffix", headers = createStreamHeaders(direct)))
-                            }
-                        }
-                    }
-                }
-            }
         } catch (e: Exception) {
             // ignore
         }
