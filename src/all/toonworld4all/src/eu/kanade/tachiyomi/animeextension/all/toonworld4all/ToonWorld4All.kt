@@ -287,8 +287,7 @@ class ToonWorld4All :
                     val html = resp.body.string()
                     resp.close()
 
-                    val propsRegex = Regex("""window\.__PROPS__\s*=\s*(\{.*?\});\s*</script>""", RegexOption.DOT_MATCHES_ALL)
-                    val jsonMatch = propsRegex.find(html)?.groupValues?.get(1)
+                    val jsonMatch = extractPropsJson(html)
                     if (jsonMatch != null) {
                         val rootObj = Json.parseToJsonElement(jsonMatch).jsonObject
                         val metaObj = rootObj["data"]?.jsonObject?.get("data")?.jsonObject?.get("metadata")?.jsonObject
@@ -408,6 +407,12 @@ class ToonWorld4All :
         val destination: String,
     )
 
+    private fun extractPropsJson(html: String): String? {
+        if (html.isBlank()) return null
+        return Regex("""window\.__PROPS__\s*=\s*(\{.*?\})\s*;?\s*(?:</script>|$)""", RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.get(1)
+            ?: Regex("""window\.__PROPS__\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.get(1)
+    }
+
     private suspend fun extractVideosFromArchive(rawArchiveUrl: String): List<Video> {
         val archiveUrl = if (rawArchiveUrl.startsWith("http")) {
             rawArchiveUrl
@@ -429,8 +434,7 @@ class ToonWorld4All :
         val html = resp.body.string()
         resp.close()
 
-        val propsRegex = Regex("""window\.__PROPS__\s*=\s*(\{.*?\});\s*</script>""", RegexOption.DOT_MATCHES_ALL)
-        val jsonMatch = propsRegex.find(html)?.groupValues?.get(1) ?: return emptyList()
+        val jsonMatch = extractPropsJson(html) ?: return emptyList()
 
         val rootObj = try {
             Json.parseToJsonElement(jsonMatch).jsonObject
@@ -591,8 +595,7 @@ class ToonWorld4All :
             val html = resp.body.string()
             resp.close()
 
-            val propsRegex = Regex("""window\.__PROPS__\s*=\s*(\{.*?\});\s*</script>""", RegexOption.DOT_MATCHES_ALL)
-            val jsonMatch = propsRegex.find(html)?.groupValues?.get(1) ?: return null
+            val jsonMatch = extractPropsJson(html) ?: return null
             val obj = Json.parseToJsonElement(jsonMatch).jsonObject
 
             val dataField = obj["data"]
@@ -678,16 +681,28 @@ class ToonWorld4All :
             val resp = fastClient.newCall(req).execute()
             var html = resp.body.string()
             val targetUrl = resp.request.url.toString()
+            var cookieHeader = resp.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
             resp.close()
 
             if (html.contains("404") || html.contains("File Not Found") || html.length < 100) return emptyList()
 
-            // Handle JS window.location.replace redirect
+            // Handle JS window.location.replace redirect with Cookie forwarding
             val jsRedirectMatch = Regex("""window\.location\.replace\('([^']+)'\)""").find(html)
             if (jsRedirectMatch != null) {
                 val jsUrl = jsRedirectMatch.groupValues[1]
-                val jsReq = Request.Builder().url(jsUrl).headers(headers).build()
-                val jsResp = fastClient.newCall(jsReq).execute()
+                val jsReqBuilder = Request.Builder()
+                    .url(jsUrl)
+                    .headers(headers.newBuilder().set("Referer", targetUrl).build())
+
+                if (cookieHeader.isNotBlank()) {
+                    jsReqBuilder.header("Cookie", cookieHeader)
+                }
+
+                val jsResp = fastClient.newCall(jsReqBuilder.build()).execute()
+                val newCookies = jsResp.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
+                if (newCookies.isNotBlank()) {
+                    cookieHeader = if (cookieHeader.isNotBlank()) "$cookieHeader; $newCookies" else newCookies
+                }
                 html = jsResp.body.string()
                 jsResp.close()
             }
@@ -701,11 +716,15 @@ class ToonWorld4All :
 
             if (genLinkMatch != null) {
                 val genUrl = genLinkMatch.groupValues[1]
-                val genReq = Request.Builder()
+                val genReqBuilder = Request.Builder()
                     .url(genUrl)
                     .headers(headers.newBuilder().set("Referer", targetUrl).build())
-                    .build()
-                val genResp = fastClient.newCall(genReq).execute()
+
+                if (cookieHeader.isNotBlank()) {
+                    genReqBuilder.header("Cookie", cookieHeader)
+                }
+
+                val genResp = fastClient.newCall(genReqBuilder.build()).execute()
                 dlHtml = genResp.body.string()
                 dlPageUrl = genResp.request.url.toString()
                 genResp.close()
