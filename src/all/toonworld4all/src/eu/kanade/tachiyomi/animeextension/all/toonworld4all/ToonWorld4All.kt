@@ -600,7 +600,6 @@ class ToonWorld4All :
         }
         return videos
     }
-    }
 
     private fun resolveArchiveRedirect(redirectUrl: String, hostName: String): TargetHoster? {
         return try {
