@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animeextension.en.reanime.FlixProxyServer.Companion.d
 import eu.kanade.tachiyomi.animeextension.en.reanime.FlixProxyServer.Companion.flixCloudUrl
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
@@ -26,8 +27,11 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -571,82 +575,86 @@ class ReAnime : Source() {
         }.reversed()
     }
 
-    // ============================== Video Links ==============================
-    override suspend fun getVideoList(episode: SEpisode): List<Video> = runBlocking {
+    // ============================== Hosters & Video Links ==============================
+
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val bits = episode.url.split("/")
         val slug = bits.getOrNull(0) ?: ""
         val epId = bits.getOrNull(1) ?: ""
         val epNumber = epId.removePrefix("ep-")
 
         val meta = animeMetaCache.get(slug) ?: fetchAnimeMeta(slug)
-
-        if (meta != null && meta.anilistId > 0) {
-            val flixRes = client.newCall(
-                GET(
-                    "$flixUrl/${meta.anilistId}/$epNumber",
-                    apiHeaders("$baseUrl/watch/$slug?ep=$epNumber"),
-                ),
-            ).execute()
-            val referer = "$baseUrl/watch/$slug?ep=$epNumber"
-            return@runBlocking parseFlixServers(flixRes, referer).sortVideos()
-        }
-
-        // Fallback to HTML page if API completely failed to get Anilist ID
-        val htmlRes = client.newCall(GET("$detailsUrl/$slug?_ep=$epNumber", headers)).execute()
-        return@runBlocking handleAnimePageResponse(htmlRes).sortVideos()
-    }
-
-    private suspend fun handleAnimePageResponse(response: Response): List<Video> {
-        val html = response.body.string()
-
-        val anilistId = ANILIST_ID_REGEX.find(html)?.groupValues?.get(1)?.toIntOrNull()
-            ?: return emptyList()
-
-        val slug = response.request.url.pathSegments.lastOrNull() ?: ""
-        val epNumber = response.request.url.queryParameter("_ep") ?: return emptyList()
-
-        val subbed = SUBBED_REGEX.find(html)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        val dubbed = DUBBED_REGEX.find(html)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        animeMetaCache.put(slug, AnimeMeta(anilistId, subbed, dubbed))
+        if (meta == null || meta.anilistId <= 0) return emptyList()
 
         val referer = "$baseUrl/watch/$slug?ep=$epNumber"
-
         val flixRes = client.newCall(
-            GET("$flixUrl/$anilistId/$epNumber", apiHeaders(referer)),
+            GET("$flixUrl/${meta.anilistId}/$epNumber", apiHeaders(referer)),
         ).execute()
 
-        return parseFlixServers(flixRes, referer)
-    }
-
-    private suspend fun parseFlixServers(response: Response, referer: String): List<Video> {
-        val parsed = response.use {
+        val parsed = flixRes.use {
             if (!it.isSuccessful) return emptyList()
             it.parseAs<VideoResponseDto>()
         }
 
         if (!parsed.success || parsed.servers.isNullOrEmpty()) return emptyList()
 
-        val audioTag = if (preferredAudio == "dub") "[Dub]" else "[Sub]"
+        val hosterMap = mutableMapOf<String, MutableList<VideoServerDto>>()
+        parsed.servers.forEach { server ->
+            val name = server.serverName ?: "Server"
+            hosterMap.getOrPut(name) { mutableListOf() }.add(server)
+        }
 
-        val videos = parsed.servers.parallelCatchingFlatMap { server ->
+        val preferredServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+
+        return hosterMap.map { (serverName, servers) ->
+            val payload = buildJsonObject {
+                put("slug", slug)
+                put("epNumber", epNumber)
+                put("referer", referer)
+                put("serverName", serverName)
+                put("servers", jsonParser.encodeToJsonElement(servers))
+            }.toString()
+
+            Hoster(
+                hosterName = serverName,
+                hosterUrl = payload,
+            )
+        }.sortedWith(
+            compareByDescending<Hoster> { it.hosterName.contains(preferredServer, ignoreCase = true) },
+        )
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val payloadJson = hoster.hosterUrl
+        val obj = try {
+            jsonParser.parseToJsonElement(payloadJson).jsonObject
+        } catch (_: Exception) {
+            return emptyList()
+        }
+
+        val referer = obj["referer"]?.jsonPrimitive?.content ?: "$baseUrl/home"
+        val serversJson = obj["servers"] ?: return emptyList()
+        val servers = try {
+            jsonParser.decodeFromJsonElement<List<VideoServerDto>>(serversJson)
+        } catch (_: Exception) {
+            return emptyList()
+        }
+
+        val videos = servers.parallelCatchingFlatMap { server ->
             val dataLink = server.dataLink ?: return@parallelCatchingFlatMap emptyList()
             val label = buildString {
                 when (server.dataType) {
-                    "sub" -> append("[Sub]")
-                    "dub" -> append("[Dub]")
-                    else -> server.dataType?.let { append("[$it]") }
+                    "sub" -> append("Sub")
+                    "dub" -> append("Dub")
+                    else -> server.dataType?.let { append(it) }
                 }
-                server.serverName?.let { append(" $it") }
-                if (server.softsub) append(" [Softsub]")
+                if (server.softsub) append(" (Softsub)")
             }
 
             extractFromServer(dataLink, label, referer)
         }
 
-        return videos.sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(preferredServer, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(audioTag) },
-        )
+        return videos.sortVideos()
     }
 
     private val jsonParser = Json { ignoreUnknownKeys = true }
@@ -849,6 +857,22 @@ class ReAnime : Source() {
         preferences.edit().putString("flixcloud_xor_mask", maskStr).apply()
     }
 
+    override fun List<Video>.sortVideos(): List<Video> {
+        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val audio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
+        val audioLabel = if (audio == "dub") "Dub" else "Sub"
+        val qualityOrder = listOf("1080p", "720p", "480p", "360p")
+
+        return this.sortedWith(
+            compareByDescending<Video> { it.videoTitle.startsWith(audioLabel, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) }
+                .thenBy { video ->
+                    val index = qualityOrder.indexOfFirst { video.videoTitle.contains(it) }
+                    if (index == -1) qualityOrder.size else index
+                },
+        )
+    }
+
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addListPreference(
@@ -896,6 +920,15 @@ class ReAnime : Source() {
             summary = "%s",
         )
 
+        screen.addListPreference(
+            key = PREF_QUALITY_KEY,
+            title = "Preferred Quality",
+            entries = PREF_QUALITY_ENTRIES,
+            entryValues = PREF_QUALITY_VALUES,
+            default = PREF_QUALITY_DEFAULT,
+            summary = "%s",
+        )
+
         screen.addPreference(
             SwitchPreferenceCompat(screen.context).apply {
                 key = PREF_HIDE_FILLER_KEY
@@ -926,6 +959,11 @@ class ReAnime : Source() {
         private val PREF_SERVER_ENTRIES = listOf("HD-1", "HD-2")
         private val PREF_SERVER_VALUES = listOf("HD-1", "HD-2")
         private const val PREF_SERVER_DEFAULT = "HD-1"
+
+        private const val PREF_QUALITY_KEY = "preferred_quality"
+        private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "480p", "360p")
+        private val PREF_QUALITY_VALUES = listOf("1080", "720", "480", "360")
+        private const val PREF_QUALITY_DEFAULT = "1080"
 
         private const val PREF_TITLE_LANG_KEY = "preferred_title_lang"
         private const val PREF_TITLE_LANG_DEFAULT = "romaji"
