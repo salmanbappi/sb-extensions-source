@@ -170,19 +170,7 @@ class FlixProxyServer(
         }
 
         val headerSize = detectHeader(headerBytes)
-        val shouldXor = headerSize > 0 &&
-            headerBytes.size > headerSize &&
-            (headerBytes[headerSize].toInt() and 0xFF) != 0x47
-
-        // --- XOR KEY VALIDATION ---
-        if (shouldXor) {
-            val firstPayloadByte = headerBytes[headerSize].toInt() and 0xFF
-            val decryptedByte = firstPayloadByte xor (segmentMask[0].toInt() and 0xFF)
-
-            if (decryptedByte != 0x47) {
-                throw IllegalStateException("XOR key could not be found.")
-            }
-        }
+        val shouldXor = headerSize > 0
 
         // Output length = original length minus the stripped image header.
         val originalLength = body.contentLength()
@@ -313,16 +301,12 @@ class FlixProxyServer(
                 data[0] == 0x52.toByte() && data[1] == 0x49.toByte() &&
                 data[2] == 0x46.toByte() && data[3] == 0x46.toByte() &&
                 data[8] == 0x57.toByte() && data[9] == 0x45.toByte() &&
-                data[10] == 0x42.toByte() && data[11] == 0x50.toByte() -> 12
+                data[10] == 0x42.toByte() && data[11] == 0x50.toByte() -> 12 // RIFF....WEBP
 
-            // RIFF....WEBP
-            data.size >= 8 &&
+            data.size >= 4 &&
                 data[0] == 0x89.toByte() && data[1] == 0x50.toByte() &&
-                data[2] == 0x4E.toByte() && data[3] == 0x47.toByte() &&
-                data[4] == 0x0D.toByte() && data[5] == 0x0A.toByte() &&
-                data[6] == 0x26.toByte() && data[7] == 0x0A.toByte() -> 8
+                data[2] == 0x4E.toByte() && data[3] == 0x47.toByte() -> 8 // PNG sig
 
-            // PNG sig
             else -> 0
         }
     }
