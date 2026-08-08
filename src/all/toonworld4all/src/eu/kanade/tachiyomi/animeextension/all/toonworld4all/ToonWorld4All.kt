@@ -800,6 +800,14 @@ class ToonWorld4All :
                             )
                         } else {
                             val direct = getRedirectUrl(link, dlPageUrl)
+                            val finalUrl = if (direct.isNotBlank()) direct else link
+                            if (isDirectStreamUrl(finalUrl)) {
+                                list.add(Video(videoUrl = finalUrl, videoTitle = "HubCloud ($label)$suffix", headers = createStreamHeaders(finalUrl)))
+                            }
+                        }
+                    }
+                }
+            }
         } catch (e: Exception) {
             // ignore
         }
