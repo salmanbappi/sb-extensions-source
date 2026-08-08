@@ -8,20 +8,17 @@ import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animeextension.en.reanime.FlixProxyServer.Companion.decApi
 import eu.kanade.tachiyomi.animeextension.en.reanime.FlixProxyServer.Companion.flixCloudUrl
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
-import fi.iki.elonen.NanoHTTPD
+import extensions.utils.Source
 import keiyoushi.utils.addListPreference
-import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
@@ -45,9 +42,7 @@ import java.util.TimeZone.getTimeZone
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.seconds
 
-class ReAnime :
-    AnimeHttpSource(),
-    ConfigurableAnimeSource {
+class ReAnime : Source() {
 
     override val name = "Re:ANIME"
 
@@ -55,7 +50,6 @@ class ReAnime :
 
     override val supportsLatest = true
 
-    private val preferences: SharedPreferences by getPreferencesLazy()
     override val baseUrl: String
         get() = preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT) ?: PREF_DOMAIN_DEFAULT
 
@@ -445,9 +439,8 @@ class ReAnime :
     }
 
     // ============================== Related Anime ==============================
-    override val disableRelatedAnimesBySearch = true
 
-    override fun relatedAnimeListParse(response: Response): List<SAnime> {
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
         val dto = response.parseAs<AnimeDetailDto>()
         val currentId = dto.animeId
 
@@ -579,7 +572,7 @@ class ReAnime :
     }
 
     // ============================== Video Links ==============================
-    override fun videoListRequest(episode: SEpisode): Request {
+    override suspend fun getVideoList(episode: SEpisode): List<Video> = runBlocking {
         val bits = episode.url.split("/")
         val slug = bits.getOrNull(0) ?: ""
         val epId = bits.getOrNull(1) ?: ""
@@ -588,25 +581,19 @@ class ReAnime :
         val meta = animeMetaCache.get(slug) ?: fetchAnimeMeta(slug)
 
         if (meta != null && meta.anilistId > 0) {
-            return GET(
-                "$flixUrl/${meta.anilistId}/$epNumber",
-                apiHeaders("$baseUrl/watch/$slug?ep=$epNumber"),
-            )
+            val flixRes = client.newCall(
+                GET(
+                    "$flixUrl/${meta.anilistId}/$epNumber",
+                    apiHeaders("$baseUrl/watch/$slug?ep=$epNumber"),
+                ),
+            ).execute()
+            val referer = "$baseUrl/watch/$slug?ep=$epNumber"
+            return@runBlocking parseFlixServers(flixRes, referer).sortVideos()
         }
 
         // Fallback to HTML page if API completely failed to get Anilist ID
-        return GET("$detailsUrl/$slug?_ep=$epNumber", headers)
-    }
-
-    override fun videoListParse(response: Response): List<Video> = runBlocking {
-        val requestUrl = response.request.url.toString()
-
-        if (!requestUrl.contains("/api/flix/")) {
-            return@runBlocking response.use { handleAnimePageResponse(it) }
-        }
-
-        val referer = response.request.header("Referer") ?: "$baseUrl/home"
-        parseFlixServers(response, referer)
+        val htmlRes = client.newCall(GET("$detailsUrl/$slug?_ep=$epNumber", headers)).execute()
+        return@runBlocking handleAnimePageResponse(htmlRes).sortVideos()
     }
 
     private suspend fun handleAnimePageResponse(response: Response): List<Video> {
@@ -657,8 +644,8 @@ class ReAnime :
         }
 
         return videos.sortedWith(
-            compareByDescending<Video> { it.quality.contains(preferredServer, ignoreCase = true) }
-                .thenByDescending { it.quality.contains(audioTag) },
+            compareByDescending<Video> { it.videoTitle.contains(preferredServer, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(audioTag) },
         )
     }
 
@@ -840,7 +827,7 @@ class ReAnime :
         if (proxyServer == null || !proxyServer!!.isAlive) {
             proxyServer?.stop()
             proxyServer = FlixProxyServer(headers, segmentMask)
-            proxyServer!!.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+            proxyServer!!.start()
         } else {
             proxyServer!!.updateSegmentMask(segmentMask)
         }
@@ -958,24 +945,6 @@ class ReAnime :
         private val JSON5_KEY_REGEX = Regex("""([{,]\s*)([\w_]+)(\s*:)""")
         private val JSON5_TRAILING_COMMA_REGEX = Regex(""""",\s*([}\]])""")
         private val JSON5_UNDEFINED_REGEX = Regex(""":\s*undefined\b""")
-
-        /**
-         * FlixCloud segment XOR mask (16 bytes, repeating).
-         *
-         * This mask is fetched DYNAMICALLY from hls.js on every episode load.
-         * If the dynamic fetch fails, the extension falls back to the array below.
-         *
-         * How to manually update the fallback:
-         *   1. Open a Re:ANIME video in a browser.
-         *   2. In DevTools, search the loaded scripts for: `for(var f=[`
-         *   3. Copy the 16 decimal numbers and paste them into `hardcodedFallback`
-         *   in [extractFromServer].
-         *
-         * Last verified fallback: 2026-08-01
-         */
-
-        private val HLS_SCRIPT_REGEX = Regex("""href="([^"]*hls\.js[^"]*)"""")
-        private val XOR_MASK_REGEX = Regex("""for\(var f=\[(\d{1,3}(?:,\d{1,3}){15})]""")
 
         fun parseStatus(status: String?): Int = when (status) {
             "RELEASING", "Releasing" -> SAnime.ONGOING
