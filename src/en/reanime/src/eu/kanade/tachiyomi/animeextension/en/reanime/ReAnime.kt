@@ -186,31 +186,42 @@ class ReAnime :
             filters.forEach { filter ->
                 when (filter) {
                     is Filters.SortFilter -> addQueryParameter("sort", filter.getValue())
+
                     is Filters.FormatFilter -> filter.getValue()?.let { addQueryParameter("format", it) }
+
                     is Filters.StatusFilter -> filter.getValue()?.let { addQueryParameter("status", it) }
+
                     is Filters.SeasonFilter -> filter.getValue()?.let { addQueryParameter("season", it) }
+
                     is Filters.OriginFilter -> filter.getValue()?.let { addQueryParameter("country", it) }
+
                     is Filters.YearFilter -> filter.getValue()?.let { addQueryParameter("year", it) }
+
                     is Filters.GenreFilter -> {
                         val genres = filter.getSelectedValues()
                         if (genres.isNotEmpty()) addQueryParameter("genre", genres)
                     }
+
                     is Filters.CharacterFilter -> {
                         val characters = filter.getSelectedValues()
                         if (characters.isNotEmpty()) addQueryParameter("character", characters)
                     }
+
                     is Filters.StaffFilter -> {
                         val staff = filter.getSelectedValues()
                         if (staff.isNotEmpty()) addQueryParameter("staff", staff)
                     }
+
                     is Filters.StudioFilter -> {
                         val studios = filter.getSelectedValues()
                         if (studios.isNotEmpty()) addQueryParameter("studio", studios)
                     }
+
                     is Filters.TagFilter -> {
                         val tags = filter.getSelectedValues()
                         if (tags.isNotEmpty()) addQueryParameter("tag", tags)
                     }
+
                     else -> {}
                 }
             }
@@ -349,7 +360,9 @@ class ReAnime :
                     infoLines.add("**Airing**: From $startDateStr to $endDateStr")
                 }
             }
+
             startDateStr != null -> infoLines.add("**Start Date**: $startDateStr")
+
             endDateStr != null -> infoLines.add("**End Date**: $endDateStr")
         }
 
