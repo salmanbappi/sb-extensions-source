@@ -92,11 +92,7 @@ class FlixProxyServer(
 
         return try {
             val isManifest = url.contains(".m3u8")
-            val isMasterManifest = isManifest && (
-                url.contains("master.m3u8") ||
-                    (url.contains("flixcloud.cc") && !url.contains("audio.m3u8") && !url.contains("video.m3u8"))
-                )
-            val finalUrl = if (isMasterManifest) wrapInDecApi(url, wPayload) else url
+            val finalUrl = if (isManifest) wrapInDecApi(url, wPayload) else url
 
             val proxyHeaders = headers.newBuilder()
                 .set("Accept", "*/*")

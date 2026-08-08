@@ -640,8 +640,7 @@ class ReAnime : Source() {
             return emptyList()
         }
 
-        val matchingServers = allServers.filter { it.dataType.equals(preferredAudio, ignoreCase = true) }
-        val targetServers = if (matchingServers.isNotEmpty()) matchingServers else allServers
+        val targetServers = allServers.distinctBy { it.dataLink }
 
         val videos = targetServers.parallelCatchingFlatMap { server ->
             val dataLink = server.dataLink ?: return@parallelCatchingFlatMap emptyList()
