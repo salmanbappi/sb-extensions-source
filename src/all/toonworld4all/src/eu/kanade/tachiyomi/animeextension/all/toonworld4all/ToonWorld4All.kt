@@ -449,6 +449,25 @@ class ToonWorld4All :
             rootObj
         }
 
+        val linkContainer = if (dataObj.containsKey("link") && dataObj["link"] is kotlinx.serialization.json.JsonObject) {
+            dataObj["link"]?.jsonObject
+        } else if (rootObj.containsKey("link") && rootObj["link"] is kotlinx.serialization.json.JsonObject) {
+            rootObj["link"]?.jsonObject
+        } else {
+            null
+        }
+
+        val domain = linkContainer?.get("domain")?.jsonPrimitive?.content ?: ""
+        val hidden = linkContainer?.get("hidden")?.jsonPrimitive?.content ?: ""
+        val dest = rootObj["destination"]?.jsonPrimitive?.content
+            ?: dataObj["destination"]?.jsonPrimitive?.content ?: ""
+
+        if ((domain.isNotBlank() && hidden.isNotBlank()) || dest.isNotBlank()) {
+            val targetUrl = if (domain.isNotBlank() && hidden.isNotBlank()) "$domain$hidden" else dest
+            val targetHoster = TargetHoster("Server", targetUrl, hidden, dest)
+            return processTargetHoster(targetHoster, "")
+        }
+
         val encodesArray = dataObj["encodes"]?.jsonArray
             ?: dataObj["downloads"]?.jsonArray
             ?: dataObj["streams"]?.jsonArray
@@ -480,102 +499,107 @@ class ToonWorld4All :
                 }
 
                 val targetHoster = resolveArchiveRedirect(redirectUrl, hostName) ?: return@parallelCatchingFlatMap emptyList()
-                val videos = mutableListOf<Video>()
+                processTargetHoster(targetHoster, qualitySuffix)
+            }
+        }
+    }
 
-                try {
-                    val hubCloudVideos = if (hostName.equals("HubCloud", ignoreCase = true) || targetHoster.targetUrl.contains("hubcloud")) {
-                        resolveHubCloudWithCode(targetHoster.hiddenCode, targetHoster.targetUrl, qualitySuffix)
-                    } else {
-                        emptyList()
+    private suspend fun processTargetHoster(targetHoster: TargetHoster, qualitySuffix: String): List<Video> {
+        val videos = mutableListOf<Video>()
+        val hostName = targetHoster.hostName
+        try {
+            val hubCloudVideos = if (hostName.equals("HubCloud", ignoreCase = true) || targetHoster.targetUrl.contains("hubcloud")) {
+                resolveHubCloudWithCode(targetHoster.hiddenCode, targetHoster.targetUrl, qualitySuffix)
+            } else {
+                emptyList()
+            }
+
+            if (hubCloudVideos.isNotEmpty()) {
+                videos.addAll(hubCloudVideos)
+            } else {
+                when {
+                    hostName.equals("Buzzheavier", ignoreCase = true) || targetHoster.targetUrl.contains("buzzheavier") -> {
+                        val extracted = BuzzheavierExtractor(fastClient, headers).videosFromUrl(targetHoster.targetUrl, "Buzzheavier$qualitySuffix - ")
+                        videos.addAll(
+                            extracted.map { v ->
+                                Video(
+                                    videoUrl = v.videoUrl,
+                                    videoTitle = v.videoTitle,
+                                    headers = createStreamHeaders(v.videoUrl),
+                                    subtitleTracks = v.subtitleTracks,
+                                    audioTracks = v.audioTracks,
+                                )
+                            },
+                        )
                     }
 
-                    if (hubCloudVideos.isNotEmpty()) {
-                        videos.addAll(hubCloudVideos)
-                    } else {
-                        when {
-                            hostName.equals("Buzzheavier", ignoreCase = true) || targetHoster.targetUrl.contains("buzzheavier") -> {
-                                val extracted = BuzzheavierExtractor(fastClient, headers).videosFromUrl(targetHoster.targetUrl, "Buzzheavier$qualitySuffix - ")
+                    hostName.equals("Filemoon", ignoreCase = true) || targetHoster.targetUrl.contains("filemoon") -> {
+                        val extracted = FilemoonExtractor(fastClient).videosFromUrl(targetHoster.targetUrl, "FileMoon$qualitySuffix - ")
+                        videos.addAll(extracted)
+                    }
+
+                    targetHoster.targetUrl.contains("streamwish") || targetHoster.targetUrl.contains("cdnwish") -> {
+                        val extracted = StreamWishExtractor(fastClient, headers).videosFromUrl(targetHoster.targetUrl, "StreamWish$qualitySuffix")
+                        videos.addAll(extracted)
+                    }
+
+                    targetHoster.targetUrl.contains("vidhide") || targetHoster.targetUrl.contains("streamhg") -> {
+                        val extracted = VidHideExtractor(fastClient, headers).videosFromUrl(targetHoster.targetUrl) { "VidHide$qualitySuffix - $it" }
+                        videos.addAll(extracted)
+                    }
+
+                    else -> {
+                        val extracted = runCatching { universalExtractor.videosFromUrl(targetHoster.targetUrl, headers) }.getOrDefault(emptyList())
+                        if (extracted.isNotEmpty()) {
+                            videos.addAll(
+                                extracted.map { v ->
+                                    Video(
+                                        videoUrl = v.videoUrl,
+                                        videoTitle = "$hostName$qualitySuffix - ${v.videoTitle}",
+                                        headers = createStreamHeaders(v.videoUrl),
+                                        subtitleTracks = v.subtitleTracks,
+                                    )
+                                },
+                            )
+                        } else {
+                            val destExtracted = runCatching { universalExtractor.videosFromUrl(targetHoster.destination, headers) }.getOrDefault(emptyList())
+                            if (destExtracted.isNotEmpty()) {
                                 videos.addAll(
-                                    extracted.map { v ->
+                                    destExtracted.map { v ->
                                         Video(
                                             videoUrl = v.videoUrl,
-                                            videoTitle = v.videoTitle,
+                                            videoTitle = "$hostName (Mirror)$qualitySuffix - ${v.videoTitle}",
                                             headers = createStreamHeaders(v.videoUrl),
                                             subtitleTracks = v.subtitleTracks,
-                                            audioTracks = v.audioTracks,
                                         )
                                     },
                                 )
-                            }
-
-                            hostName.equals("Filemoon", ignoreCase = true) || targetHoster.targetUrl.contains("filemoon") -> {
-                                val extracted = FilemoonExtractor(fastClient).videosFromUrl(targetHoster.targetUrl, "FileMoon$qualitySuffix - ")
-                                videos.addAll(extracted)
-                            }
-
-                            targetHoster.targetUrl.contains("streamwish") || targetHoster.targetUrl.contains("cdnwish") -> {
-                                val extracted = StreamWishExtractor(fastClient, headers).videosFromUrl(targetHoster.targetUrl, "StreamWish$qualitySuffix")
-                                videos.addAll(extracted)
-                            }
-
-                            targetHoster.targetUrl.contains("vidhide") || targetHoster.targetUrl.contains("streamhg") -> {
-                                val extracted = VidHideExtractor(fastClient, headers).videosFromUrl(targetHoster.targetUrl) { "VidHide$qualitySuffix - $it" }
-                                videos.addAll(extracted)
-                            }
-
-                            else -> {
-                                val extracted = runCatching { universalExtractor.videosFromUrl(targetHoster.targetUrl, headers) }.getOrDefault(emptyList())
-                                if (extracted.isNotEmpty()) {
-                                    videos.addAll(
-                                        extracted.map { v ->
-                                            Video(
-                                                videoUrl = v.videoUrl,
-                                                videoTitle = "$hostName$qualitySuffix - ${v.videoTitle}",
-                                                headers = createStreamHeaders(v.videoUrl),
-                                                subtitleTracks = v.subtitleTracks,
-                                            )
-                                        },
-                                    )
-                                } else {
-                                    val destExtracted = runCatching { universalExtractor.videosFromUrl(targetHoster.destination, headers) }.getOrDefault(emptyList())
-                                    if (destExtracted.isNotEmpty()) {
-                                        videos.addAll(
-                                            destExtracted.map { v ->
-                                                Video(
-                                                    videoUrl = v.videoUrl,
-                                                    videoTitle = "$hostName (Mirror)$qualitySuffix - ${v.videoTitle}",
-                                                    headers = createStreamHeaders(v.videoUrl),
-                                                    subtitleTracks = v.subtitleTracks,
-                                                )
-                                            },
-                                        )
-                                    } else if (isDirectStreamUrl(targetHoster.targetUrl)) {
-                                        videos.add(
-                                            Video(
-                                                videoUrl = targetHoster.targetUrl,
-                                                videoTitle = "$hostName$qualitySuffix",
-                                                headers = createStreamHeaders(targetHoster.targetUrl),
-                                            ),
-                                        )
-                                    }
-                                }
+                            } else if (isDirectStreamUrl(targetHoster.targetUrl)) {
+                                videos.add(
+                                    Video(
+                                        videoUrl = targetHoster.targetUrl,
+                                        videoTitle = "$hostName$qualitySuffix",
+                                        headers = createStreamHeaders(targetHoster.targetUrl),
+                                    ),
+                                )
                             }
                         }
                     }
-                } catch (e: Exception) {
-                    if (isDirectStreamUrl(targetHoster.targetUrl)) {
-                        videos.add(
-                            Video(
-                                videoUrl = targetHoster.targetUrl,
-                                videoTitle = "$hostName$qualitySuffix",
-                                headers = createStreamHeaders(targetHoster.targetUrl),
-                            ),
-                        )
-                    }
                 }
-                videos
+            }
+        } catch (e: Exception) {
+            if (isDirectStreamUrl(targetHoster.targetUrl)) {
+                videos.add(
+                    Video(
+                        videoUrl = targetHoster.targetUrl,
+                        videoTitle = "$hostName$qualitySuffix",
+                        headers = createStreamHeaders(targetHoster.targetUrl),
+                    ),
+                )
             }
         }
+        return videos
+    }
     }
 
     private fun resolveArchiveRedirect(redirectUrl: String, hostName: String): TargetHoster? {
