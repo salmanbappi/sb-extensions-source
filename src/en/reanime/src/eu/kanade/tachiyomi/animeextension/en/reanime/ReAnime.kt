@@ -634,24 +634,18 @@ class ReAnime : Source() {
 
         val referer = obj["referer"]?.jsonPrimitive?.content ?: "$baseUrl/home"
         val serversJson = obj["servers"] ?: return emptyList()
-        val servers = try {
+        val allServers = try {
             jsonParser.decodeFromJsonElement<List<VideoServerDto>>(serversJson)
         } catch (_: Exception) {
             return emptyList()
         }
 
-        val videos = servers.parallelCatchingFlatMap { server ->
-            val dataLink = server.dataLink ?: return@parallelCatchingFlatMap emptyList()
-            val label = buildString {
-                when (server.dataType) {
-                    "sub" -> append("Sub")
-                    "dub" -> append("Dub")
-                    else -> server.dataType?.let { append(it) }
-                }
-                if (server.softsub) append(" (Softsub)")
-            }
+        val matchingServers = allServers.filter { it.dataType.equals(preferredAudio, ignoreCase = true) }
+        val targetServers = if (matchingServers.isNotEmpty()) matchingServers else allServers
 
-            extractFromServer(dataLink, label, referer)
+        val videos = targetServers.parallelCatchingFlatMap { server ->
+            val dataLink = server.dataLink ?: return@parallelCatchingFlatMap emptyList()
+            extractFromServer(dataLink, referer)
         }
 
         return videos.sortVideos()
@@ -659,7 +653,7 @@ class ReAnime : Source() {
 
     private val jsonParser = Json { ignoreUnknownKeys = true }
 
-    private fun extractFromServer(dataLink: String, label: String, referer: String): List<Video> {
+    private fun extractFromServer(dataLink: String, referer: String): List<Video> {
         val flixHeaders = headers.newBuilder()
             .add("Accept", "*/*")
             .add("Origin", flixCloudUrl)
@@ -789,9 +783,7 @@ class ReAnime : Source() {
                 referer = flixCloudUrl,
                 masterHeaders = headers,
                 videoHeaders = headers,
-                videoNameGen = { quality ->
-                    "$label - $quality"
-                },
+                videoNameGen = { quality -> quality },
                 subtitleList = subtitleTracks,
             )
         } catch (_: Exception) {
