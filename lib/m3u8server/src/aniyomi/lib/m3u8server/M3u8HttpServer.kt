@@ -67,8 +67,11 @@ class M3u8HttpServer(
 
         val response = when {
             uri.startsWith("/m3u8") -> handleM3u8Request(session)
+
             uri.startsWith("/segment") -> handleSegmentRequest(session)
+
             uri.startsWith("/health") -> handleHealthRequest()
+
             else -> {
                 Log.w(tag, "Unknown endpoint: $uri")
                 newFixedLengthResponse(Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
@@ -429,6 +432,7 @@ class M3u8HttpServer(
                     segmentSequence = mediaSequence
                     modifiedLines.add(line)
                 }
+
                 line.startsWith("#EXT-X-KEY:") -> {
                     val attributes = parseHlsAttributes(line)
                     when (attributes["METHOD"]?.uppercase()) {
@@ -447,19 +451,23 @@ class M3u8HttpServer(
                                 Log.d(tag, "AES-128 detected, intercepting key at proxy: $resolvedKeyUrl (iv=${currentKey!!.iv})")
                             }
                         }
+
                         "NONE" -> {
                             currentKey = null
                             modifiedLines.add(line)
                         }
+
                         else -> {
                             currentKey = null
                             modifiedLines.add(line)
                         }
                     }
                 }
+
                 line.startsWith("#") || line.isBlank() -> {
                     modifiedLines.add(line)
                 }
+
                 else -> {
                     val resolvedUrl = resolveHlsUrl(baseHttpUrl, line)
                     if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
