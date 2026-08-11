@@ -17,6 +17,10 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.URLEncoder
+import java.security.GeneralSecurityException
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * Real HTTP server for M3U8 processing using NanoHTTPD
@@ -25,6 +29,7 @@ import java.net.URLEncoder
 class M3u8HttpServer(
     private val client: OkHttpClient,
     port: Int = 0, // 0 means random port
+    private val fallbackClient: OkHttpClient? = null,
 ) : NanoHTTPD(port) {
 
     val port: Int
@@ -62,11 +67,8 @@ class M3u8HttpServer(
 
         val response = when {
             uri.startsWith("/m3u8") -> handleM3u8Request(session)
-
             uri.startsWith("/segment") -> handleSegmentRequest(session)
-
             uri.startsWith("/health") -> handleHealthRequest()
-
             else -> {
                 Log.w(tag, "Unknown endpoint: $uri")
                 newFixedLengthResponse(Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
@@ -79,7 +81,9 @@ class M3u8HttpServer(
 
     private fun handleM3u8Request(session: IHTTPSession): Response {
         val url = session.parameters["url"]?.first()
-        val headers = extractHeadersFromSession(session)
+        val fallbackReferer = session.parameters["referer"]?.first()
+        val fallbackUserAgent = session.parameters["useragent"]?.first()
+        val headers = extractHeadersFromSession(session, fallbackReferer, fallbackUserAgent)
 
         Log.d(tag, "Processing M3U8 request for URL: $url")
         Log.d(tag, "Headers: $headers")
@@ -94,6 +98,9 @@ class M3u8HttpServer(
             val processedContent = runBlocking { processM3u8Content(url, headers) }
             Log.d(tag, "M3U8 processing completed successfully, content length: ${processedContent.length}")
             newFixedLengthResponse(Status.OK, "application/vnd.apple.mpegurl", processedContent)
+        } catch (e: UpstreamStatusException) {
+            Log.w(tag, "Upstream HTTP ${e.code} for $url: ${e.message}")
+            passThroughStatus(e)
         } catch (e: Exception) {
             Log.e(tag, "Error processing M3U8: ${e.message}", e)
             newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
@@ -102,9 +109,13 @@ class M3u8HttpServer(
 
     private fun handleSegmentRequest(session: IHTTPSession): Response {
         val url = session.parameters["url"]?.first()
-        val headers = extractHeadersFromSession(session)
+        val keyUrl = session.parameters["key"]?.first()
+        val iv = session.parameters["iv"]?.first()
+        val fallbackReferer = session.parameters["referer"]?.first()
+        val fallbackUserAgent = session.parameters["useragent"]?.first()
+        val headers = extractHeadersFromSession(session, fallbackReferer, fallbackUserAgent)
 
-        Log.d(tag, "Processing segment request for URL: $url")
+        Log.d(tag, "Processing segment request for URL: $url (key=${keyUrl != null}, iv=${iv != null})")
         Log.d(tag, "Headers: $headers")
 
         if (url.isNullOrBlank()) {
@@ -112,16 +123,37 @@ class M3u8HttpServer(
             return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url parameter")
         }
 
+        val hasAes = keyUrl != null && iv != null
         return try {
-            Log.d(tag, "Starting segment processing for: $url")
-            val segmentData = runBlocking { processSegmentUrl(url, headers) }
+            Log.d(tag, "Starting segment processing for: $url (aes=$hasAes)")
+            val segmentData = runBlocking {
+                processSegmentUrl(url, headers, keyUrl, iv)
+            }
             Log.d(tag, "Segment processing completed successfully, data size: ${segmentData.size} bytes")
             val inputStream = ByteArrayInputStream(segmentData)
             newChunkedResponse(Status.OK, "video/mp2t", inputStream)
+        } catch (e: UpstreamStatusException) {
+            Log.w(tag, "Upstream segment HTTP ${e.code} for $url: ${e.message}")
+            passThroughStatus(e)
         } catch (e: Exception) {
             Log.e(tag, "Error processing segment: ${e.message}", e)
             newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
         }
+    }
+
+    private fun passThroughStatus(e: UpstreamStatusException): Response {
+        val nanoStatus = when (e.code) {
+            401 -> Status.UNAUTHORIZED
+            403 -> Status.FORBIDDEN
+            404 -> Status.NOT_FOUND
+            429 -> Status.TOO_MANY_REQUESTS
+            in 400..499 -> Status.BAD_REQUEST
+            500 -> Status.INTERNAL_ERROR
+            503 -> Status.SERVICE_UNAVAILABLE
+            else -> Status.INTERNAL_ERROR
+        }
+        val body = "Upstream ${e.code} for ${e.url}\n${e.message}"
+        return newFixedLengthResponse(nanoStatus, MIME_PLAINTEXT, body)
     }
 
     private fun handleHealthRequest(): Response {
@@ -131,65 +163,162 @@ class M3u8HttpServer(
         return newFixedLengthResponse(Status.OK, MIME_PLAINTEXT, status)
     }
 
-    /**
-     * Extract headers from the HTTP session
-     */
-    private fun extractHeadersFromSession(session: IHTTPSession): Map<String, String> {
+    private fun extractHeadersFromSession(
+        session: IHTTPSession,
+        fallbackReferer: String? = null,
+        fallbackUserAgent: String? = null,
+    ): Map<String, String> {
         val headers = mutableMapOf<String, String>()
 
-        // Extract common headers that might be needed for video requests
         session.headers.forEach { (key, value) ->
             when (key.lowercase()) {
                 "user-agent", "referer", "origin", "accept", "accept-language",
-                "accept-encoding", "connection", "cache-control", "pragma", "cookie",
+                "accept-encoding", "connection", "cache-control", "pragma",
                 -> {
-                    headers[key] = value
+                    headers[key.lowercase()] = value
                 }
             }
         }
 
-        Log.d(tag, "Extracted headers: $headers")
+        if (!fallbackUserAgent.isNullOrBlank()) {
+            headers["user-agent"] = fallbackUserAgent
+        }
+        if (!fallbackReferer.isNullOrBlank()) {
+            headers["referer"] = fallbackReferer
+        }
+
+        Log.d(tag, "Extracted headers (referer=${headers["referer"]?.take(80) ?: "none"}, ua=${headers["user-agent"]?.take(40) ?: "none"})")
         return headers
     }
 
-    /**
-     * Process M3U8 content through the server
-     */
+    private class UpstreamStatusException(
+        val code: Int,
+        val url: String,
+        message: String,
+        cause: Throwable? = null,
+    ) : IOException("$code for $url: $message", cause)
+
     private suspend fun processM3u8Content(url: String, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
         try {
             Log.d(tag, "Fetching M3U8 content from: $url with headers: $headers")
             val m3u8Content = fetchM3u8Content(url, headers)
             Log.d(tag, "Original M3U8 content length: ${m3u8Content.length}")
 
-            val modifiedContent = modifyM3u8Content(m3u8Content, url, port)
+            val referer = headers["referer"]
+            val userAgent = headers["user-agent"]
+            val modifiedContent = modifyM3u8Content(m3u8Content, url, port, referer, userAgent)
             Log.d(tag, "Modified M3U8 content length: ${modifiedContent.length}")
             Log.d(tag, "M3U8 processing completed successfully")
 
             modifiedContent
+        } catch (e: UpstreamStatusException) {
+            Log.w(tag, "Upstream ${e.code} propagating from processM3u8Content for $url")
+            throw e
         } catch (e: Exception) {
             Log.e(tag, "Error processing M3U8 URL: ${e.message}", e)
-            throw IOException("Error processing m3u8: ${e.message}")
+            throw UpstreamStatusException(503, url, "Error processing m3u8: ${e.message}", e)
         }
     }
 
-    /**
-     * Process segment with automatic detection
-     */
-    suspend fun processSegmentUrl(url: String, headers: Map<String, String> = emptyMap()): ByteArray = withContext(Dispatchers.IO) {
+    suspend fun processSegmentUrl(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        keyUrl: String? = null,
+        iv: String? = null,
+    ): ByteArray = withContext(Dispatchers.IO) {
         try {
-            Log.d(tag, "Fetching segment from: $url with headers: $headers")
-            val segmentData = fetchSegmentWithAutoDetection(url, headers)
-            Log.d(tag, "Segment processing completed, final size: ${segmentData.size} bytes")
-            segmentData
+            Log.d(tag, "Fetching segment from: $url with headers: $headers (aes=${keyUrl != null})")
+            val rawSegment = fetchSegmentBytes(url, headers)
+            val plaintext = if (keyUrl != null && iv != null) {
+                val keyBytes = fetchSegmentBytes(keyUrl, headers)
+                decryptAes128Cbc(rawSegment, keyBytes, iv).also {
+                    Log.d(tag, "AES-128 decrypted segment: ${rawSegment.size} → ${it.size} bytes")
+                }
+            } else {
+                rawSegment
+            }
+            val stripped = stripInterleavedJunk(plaintext)
+            Log.d(tag, "Segment processing completed, final size: ${stripped.size} bytes")
+            stripped
+        } catch (e: UpstreamStatusException) {
+            Log.w(tag, "Segment fetch upstream ${e.code} for $url")
+            throw e
         } catch (e: Exception) {
             Log.e(tag, "Error processing segment URL: ${e.message}", e)
-            throw IOException("Error processing segment: ${e.message}")
+            throw UpstreamStatusException(503, url, "Error processing segment: ${e.message}", e)
         }
     }
 
-    /**
-     * Health check
-     */
+    private suspend fun fetchSegmentBytes(url: String, headers: Map<String, String>): ByteArray = withContext(Dispatchers.IO) {
+        Log.d(tag, "Making HTTP request to fetch segment with headers: $headers")
+
+        val requestBuilder = Request.Builder().url(url)
+        headers.forEach { (key, value) ->
+            requestBuilder.addHeader(key, value)
+        }
+        val request = requestBuilder.build()
+
+        client.newCall(request).execute().use { response ->
+            Log.d(tag, "Segment HTTP response code: ${response.code}")
+            if (!response.isSuccessful) {
+                Log.e(tag, "Failed to fetch segment, HTTP code: ${response.code}")
+                throw UpstreamStatusException(response.code, url, "Failed to fetch segment")
+            }
+            response.body.bytes()
+        }
+    }
+
+    private fun stripInterleavedJunk(fullData: ByteArray): ByteArray {
+        val skipRanges = AutoDetector.detectInterleavedSkips(fullData)
+        if (skipRanges.isEmpty()) return fullData
+        val strippedBytes = skipRanges.sumOf { it.last - it.first + 1 }
+        val finalSize = fullData.size - strippedBytes
+        Log.d(tag, "Stripping ${skipRanges.size} interleaved junk block(s) ($strippedBytes bytes total), final size: $finalSize bytes")
+        val stripped = ByteArrayOutputStream(finalSize.coerceAtLeast(0))
+        var cursor = 0
+        for (range in skipRanges) {
+            if (range.first > cursor) {
+                stripped.write(copyRegion(fullData, cursor, range.first - cursor))
+            }
+            cursor = range.last + 1
+        }
+        if (cursor < fullData.size) {
+            stripped.write(copyRegion(fullData, cursor, fullData.size - cursor))
+        }
+        return stripped.toByteArray()
+    }
+
+    private fun decryptAes128Cbc(data: ByteArray, key: ByteArray, iv: String): ByteArray {
+        if (key.size != 16) {
+            throw IOException("Invalid AES-128 key length: ${key.size}")
+        }
+        val normalizedIv = iv.normalizeHlsIv()
+        if (normalizedIv.length != 32) {
+            throw IOException("Invalid AES-128 IV length: ${normalizedIv.length}")
+        }
+        return try {
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(key, "AES"),
+                IvParameterSpec(normalizedIv.hexToByteArray()),
+            )
+            cipher.doFinal(data)
+        } catch (e: GeneralSecurityException) {
+            throw IOException("Failed to decrypt AES-128 segment", e)
+        } catch (e: NumberFormatException) {
+            throw IOException("Invalid AES-128 IV", e)
+        }
+    }
+
+    private fun Long.toHlsIv(): String = toString(16).padStart(32, '0')
+
+    private fun String.normalizeHlsIv(): String = removePrefix("0x").removePrefix("0X").padStart(32, '0')
+
+    private fun String.hexToByteArray(): ByteArray = ByteArray(length / 2) { index ->
+        substring(index * 2, index * 2 + 2).toInt(16).toByte()
+    }
+
     fun getHealthStatus(): String = if (isRunning) {
         "M3U8 HTTP Server is running on port $port"
     } else {
@@ -205,124 +334,203 @@ class M3u8HttpServer(
         }
         val request = requestBuilder.build()
 
-        client.newCall(request).execute().use { response ->
-            Log.d(tag, "M3U8 HTTP response code: ${response.code}")
+        try {
+            client.newCall(request).execute().use { response ->
+                Log.d(tag, "M3U8 HTTP response code: ${response.code}")
 
-            if (!response.isSuccessful) {
-                Log.e(tag, "Failed to fetch M3U8 content, HTTP code: ${response.code}")
-                throw IOException("Failed to fetch m3u8: ${response.code}")
-            }
-
-            val content = response.body.string()
-            if (content.isBlank()) {
-                Log.e(tag, "Empty M3U8 response body")
-                throw IOException("Empty response body")
-            }
-
-            Log.d(tag, "Successfully fetched M3U8 content")
-            content
-        }
-    }
-
-    private suspend fun fetchSegmentWithAutoDetection(url: String, headers: Map<String, String> = emptyMap()): ByteArray = withContext(Dispatchers.IO) {
-        Log.d(tag, "Making HTTP request to fetch segment with headers: $headers")
-
-        val requestBuilder = Request.Builder().url(url)
-        headers.forEach { (key, value) ->
-            requestBuilder.addHeader(key, value)
-        }
-        val request = requestBuilder.build()
-
-        client.newCall(request).execute().use { response ->
-            Log.d(tag, "Segment HTTP response code: ${response.code}")
-
-            if (!response.isSuccessful) {
-                Log.e(tag, "Failed to fetch segment, HTTP code: ${response.code}")
-                throw IOException("Failed to fetch segment: ${response.code}")
-            }
-
-            val inputStream = response.body.byteStream()
-            val outputStream = ByteArrayOutputStream()
-
-            // Read first 4KB to detect format (ensuring we read 4KB or reach EOF)
-            val buffer = ByteArray(4096)
-            var totalBytesRead = 0
-            while (totalBytesRead < buffer.size) {
-                val read = inputStream.read(buffer, totalBytesRead, buffer.size - totalBytesRead)
-                if (read == -1) break
-                totalBytesRead += read
-            }
-            Log.d(tag, "Read $totalBytesRead bytes from segment for format detection")
-
-            if (totalBytesRead > 0) {
-                val skipBytes = AutoDetector.detectSkipBytes(buffer.copyOf(totalBytesRead))
-                Log.d(tag, "AutoDetector determined skip bytes: $skipBytes")
-
-                // Write data from detected offset
-                val validBytes = totalBytesRead - skipBytes
-                if (validBytes > 0) {
-                    outputStream.write(buffer, skipBytes, validBytes)
-                    Log.d(tag, "Wrote $validBytes bytes from detected offset")
+                if (!response.isSuccessful) {
+                    Log.e(tag, "Failed to fetch M3U8 content, HTTP code: ${response.code}")
+                    throw UpstreamStatusException(response.code, url, "Failed to fetch m3u8")
                 }
 
-                // Copy remaining data
-                val remainingBytes = inputStream.copyTo(outputStream)
-                Log.d(tag, "Copied $remainingBytes remaining bytes")
-            }
+                val content = response.body.string()
+                if (content.isBlank()) {
+                    Log.e(tag, "Empty M3U8 response body")
+                    throw UpstreamStatusException(502, url, "Empty response body")
+                }
 
-            inputStream.close()
-            val finalData = outputStream.toByteArray()
-            outputStream.close()
-            Log.d(tag, "Final segment data size: ${finalData.size} bytes")
-            finalData
+                Log.d(tag, "Successfully fetched M3U8 content")
+                content
+            }
+        } catch (primary: UpstreamStatusException) {
+            throw primary
+        } catch (primary: Exception) {
+            Log.w(tag, "Primary client failed for $url: ${primary.javaClass.simpleName}: ${primary.message}; ${if (fallbackClient != null) "attempting fallback" else "no fallback configured"}")
+            val fb = fallbackClient ?: throw UpstreamStatusException(503, url, "Primary client failed: ${primary.message}", primary)
+
+            try {
+                fb.newCall(request).execute().use { response ->
+                    Log.d(tag, "M3U8 fallback HTTP response code: ${response.code}")
+                    if (!response.isSuccessful) {
+                        Log.e(tag, "Fallback also failed for M3U8, HTTP code: ${response.code}")
+                        throw UpstreamStatusException(response.code, url, "Fallback failed: ${primary.message}", primary)
+                    }
+                    val content = response.body.string()
+                    if (content.isBlank()) {
+                        throw UpstreamStatusException(502, url, "Empty fallback body", primary)
+                    }
+                    Log.d(tag, "Fallback fetch succeeded, content length: ${content.length}")
+                    content
+                }
+            } catch (fb: UpstreamStatusException) {
+                throw fb
+            } catch (fb: Exception) {
+                Log.e(tag, "Fallback client threw: ${fb.javaClass.simpleName}: ${fb.message}", fb)
+                throw UpstreamStatusException(503, url, "Both primary and fallback failed (primary=${primary.message}; fallback=${fb.message})", primary)
+            }
         }
     }
 
-    /**
-     * Creates a local M3U8 URL by encoding the original URL and redirecting to the local server.
-     * It can either be segment URL or a direct M3U8 URL (not a playlist).
-     */
-    fun createLocalUrl(m3u8Url: String): String {
-        val encodedUrl = URLEncoder.encode(m3u8Url, Charsets.UTF_8.name())
-        return "http://127.0.0.1:$port/m3u8?url=$encodedUrl"
+    private fun copyRegion(src: ByteArray, off: Int, len: Int): ByteArray {
+        if (off == 0 && len == src.size) return src
+        if (len == 0) return ByteArray(0)
+        val out = ByteArray(len)
+        System.arraycopy(src, off, out, 0, len)
+        return out
     }
 
-    private fun modifyM3u8Content(content: String, originalUrl: String, serverPort: Int): String {
-        Log.d(tag, "Modifying M3U8 content for server port: $serverPort")
-        val lines = content.lines().toMutableList()
+    fun createLocalUrl(
+        m3u8Url: String,
+        referer: String? = null,
+        userAgent: String? = null,
+    ): String {
+        val sb = StringBuilder("http://localhost:$port/m3u8?url=")
+            .append(URLEncoder.encode(m3u8Url, Charsets.UTF_8.name()))
+        if (!referer.isNullOrBlank()) {
+            sb.append("&referer=").append(URLEncoder.encode(referer, Charsets.UTF_8.name()))
+        }
+        if (!userAgent.isNullOrBlank()) {
+            sb.append("&useragent=").append(URLEncoder.encode(userAgent, Charsets.UTF_8.name()))
+        }
+        return sb.toString()
+    }
+
+    private fun modifyM3u8Content(
+        content: String,
+        originalUrl: String,
+        serverPort: Int,
+        referer: String? = null,
+        userAgent: String? = null,
+    ): String {
+        Log.d(tag, "Modifying M3U8 content for server port: $serverPort (referer=${referer?.take(80) ?: "none"})")
+        val lines = content.lines()
         val modifiedLines = mutableListOf<String>()
         var segmentCount = 0
+        var mediaSequence = 0L
+        var segmentSequence = mediaSequence
+        var currentKey: HlsKey? = null
 
-        // Determine base URL from the original URL
         val baseHttpUrl = originalUrl.toHttpUrlOrNull()
 
         for (line in lines) {
             when {
-                line.startsWith("#") -> {
-                    // Keep comments and headers
+                line.startsWith("#EXT-X-MEDIA-SEQUENCE:") -> {
+                    mediaSequence = line.substringAfter(":").trim().toLongOrNull() ?: mediaSequence
+                    segmentSequence = mediaSequence
                     modifiedLines.add(line)
                 }
-
-                line.isNotBlank() && !line.startsWith("#") -> {
-                    // This is a segment or nested playlist URL, resolve against base URL
-                    val resolvedUrl = baseHttpUrl?.resolve(line)?.toString() ?: line
-                    val encodedUrl = URLEncoder.encode(resolvedUrl, Charsets.UTF_8.name())
-                    val isNestedM3u8 = resolvedUrl.contains(".m3u8", ignoreCase = true) ||
-                        resolvedUrl.contains("application/vnd.apple.mpegurl", ignoreCase = true)
-                    val endpoint = if (isNestedM3u8) "m3u8" else "segment"
-                    val localUrl = "http://127.0.0.1:$serverPort/$endpoint?url=$encodedUrl"
-                    modifiedLines.add(localUrl)
-                    if (!isNestedM3u8) segmentCount++
+                line.startsWith("#EXT-X-KEY:") -> {
+                    val attributes = parseHlsAttributes(line)
+                    when (attributes["METHOD"]?.uppercase()) {
+                        "AES-128" -> {
+                            val keyUri = attributes["URI"]
+                            if (keyUri.isNullOrBlank()) {
+                                currentKey = null
+                                modifiedLines.add(line)
+                            } else {
+                                val resolvedKeyUrl = resolveHlsUrl(baseHttpUrl, keyUri)
+                                val iv = attributes["IV"]
+                                currentKey = HlsKey(
+                                    url = resolvedKeyUrl,
+                                    iv = iv?.let { it.normalizeHlsIv() } ?: segmentSequence.toHlsIv(),
+                                )
+                                Log.d(tag, "AES-128 detected, intercepting key at proxy: $resolvedKeyUrl (iv=${currentKey!!.iv})")
+                            }
+                        }
+                        "NONE" -> {
+                            currentKey = null
+                            modifiedLines.add(line)
+                        }
+                        else -> {
+                            currentKey = null
+                            modifiedLines.add(line)
+                        }
+                    }
                 }
-
+                line.startsWith("#") || line.isBlank() -> {
+                    modifiedLines.add(line)
+                }
                 else -> {
-                    // Keep empty lines
-                    modifiedLines.add(line)
+                    val resolvedUrl = resolveHlsUrl(baseHttpUrl, line)
+                    if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
+                        val encodedUrl = URLEncoder.encode(resolvedUrl, Charsets.UTF_8.name())
+                        modifiedLines.add(buildChildM3u8Url(serverPort, resolvedUrl, referer, userAgent))
+                    } else {
+                        modifiedLines.add(
+                            createLocalSegmentUrl(serverPort, resolvedUrl, currentKey, referer, userAgent),
+                        )
+                        segmentCount++
+                    }
+                    segmentSequence++
                 }
             }
         }
 
-        Log.d(tag, "Modified M3U8 content: $segmentCount segments redirected to local server")
+        Log.d(tag, "Modified M3U8 content: $segmentCount segments redirected, ${if (currentKey != null) "AES-128 keys proxied" else "no AES keys"}")
         return modifiedLines.joinToString("\n")
+    }
+
+    private fun buildChildM3u8Url(
+        serverPort: Int,
+        m3u8Url: String,
+        referer: String?,
+        userAgent: String?,
+    ): String {
+        val sb = StringBuilder("http://localhost:$serverPort/m3u8?url=")
+            .append(URLEncoder.encode(m3u8Url, Charsets.UTF_8.name()))
+        if (!referer.isNullOrBlank()) {
+            sb.append("&referer=").append(URLEncoder.encode(referer, Charsets.UTF_8.name()))
+        }
+        if (!userAgent.isNullOrBlank()) {
+            sb.append("&useragent=").append(URLEncoder.encode(userAgent, Charsets.UTF_8.name()))
+        }
+        return sb.toString()
+    }
+
+    private data class HlsKey(val url: String, val iv: String)
+
+    private val hlsAttributeRegex = Regex("""([A-Z0-9-]+)=("[^"]*"|[^,]*)""")
+
+    private fun parseHlsAttributes(line: String): Map<String, String> = hlsAttributeRegex.findAll(line.substringAfter(":")).associate {
+        it.groupValues[1] to it.groupValues[2].trim('"')
+    }
+
+    private fun resolveHlsUrl(baseHttpUrl: okhttp3.HttpUrl?, uri: String): String = baseHttpUrl?.resolve(uri)?.toString() ?: uri
+
+    private fun createLocalSegmentUrl(
+        serverPort: Int,
+        segmentUrl: String,
+        key: HlsKey?,
+        referer: String? = null,
+        userAgent: String? = null,
+    ): String {
+        val encodedUrl = URLEncoder.encode(segmentUrl, Charsets.UTF_8.name())
+        return buildString {
+            append("http://localhost:$serverPort/segment?url=$encodedUrl")
+            if (key != null) {
+                append("&key=")
+                append(URLEncoder.encode(key.url, Charsets.UTF_8.name()))
+                append("&iv=")
+                append(URLEncoder.encode(key.iv, Charsets.UTF_8.name()))
+            }
+            if (!referer.isNullOrBlank()) {
+                append("&referer=")
+                append(URLEncoder.encode(referer, Charsets.UTF_8.name()))
+            }
+            if (!userAgent.isNullOrBlank()) {
+                append("&useragent=")
+                append(URLEncoder.encode(userAgent, Charsets.UTF_8.name()))
+            }
+        }
     }
 }
