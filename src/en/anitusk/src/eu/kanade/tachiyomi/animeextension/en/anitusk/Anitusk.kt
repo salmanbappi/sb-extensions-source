@@ -734,7 +734,6 @@ class Anitusk :
         YearFilter(),
     )
 
-
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain"
         private const val PREF_DOMAIN_DEFAULT = "https://anitummy.cc"
@@ -1304,7 +1303,6 @@ data class FastTrack(
     val label: String? = null,
     val kind: String? = null,
 )
-
 
 @Serializable
 data class KitsuMappingResponse(
