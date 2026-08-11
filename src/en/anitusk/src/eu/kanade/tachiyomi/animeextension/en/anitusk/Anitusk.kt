@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.en.anitusk
 
-import android.net.Uri
 import android.util.Base64
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -50,13 +49,13 @@ class Anitusk :
     Source(),
     ConfigurableAnimeSource {
 
-    override val name = "Anitusk"
+    override val name = "Anitummy"
 
     override val baseUrl: String
         get() = preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT) ?: PREF_DOMAIN_DEFAULT
 
     private val apiBaseUrl: String
-        get() = baseUrl.replace("https://", "https://miruro.")
+        get() = "https://miruro.anifake.com"
 
     override val lang = "en"
 
@@ -430,7 +429,7 @@ class Anitusk :
                     if (hosterType == "fast") {
                         val resolvedUrl = "https://megaplay.buzz/stream/ani/$anilistId/$episodeNumber/$type"
                         val reqHeaders = headersBuilder()
-                            .set("Referer", "https://anitusk.com/")
+                            .set("Referer", "https://anitummy.cc/")
                             .build()
                         val response = client.newCall(GET(resolvedUrl, reqHeaders)).execute()
                         if (response.isSuccessful) {
@@ -480,49 +479,18 @@ class Anitusk :
                             response.close()
                         }
                     } else if (hosterType == "vidnest") {
-                        val resolvedUrl = "https://new.vidnest.fun/hianime/anime/$anilistId/$episodeNumber/$type"
-                        val reqHeaders = headersBuilder()
-                            .set("Referer", "https://vidnest.fun/")
-                            .build()
-                        val response = client.newCall(GET(resolvedUrl, reqHeaders)).execute()
-                        if (response.isSuccessful) {
-                            val apiJson = json.decodeFromString<VidNestApiResponse>(response.body.string())
-                            val decryptedStr = if (apiJson.encrypted && apiJson.data != null) {
-                                decryptVidNest(apiJson.data)
-                            } else {
-                                apiJson.data ?: ""
-                            }
-                            if (decryptedStr.isNotBlank()) {
-                                val sourcesJson = json.decodeFromString<VidNestSourcesResponse>(decryptedStr)
-                                val masterUrl = sourcesJson.sources?.firstOrNull()?.file
-                                if (masterUrl != null) {
-                                    val refHeaders = headersBuilder()
-                                        .set("Referer", "https://megaplay.buzz/")
-                                        .build()
-                                    val tracks = sourcesJson.tracks
-                                        ?.filter { it.kind == "captions" && !it.file.isNullOrBlank() && !it.label.isNullOrBlank() }
-                                        ?.map { Track(it.file!!, it.label!!) }
-                                        ?: emptyList()
-                                    playlistUtils.extractFromHls(
-                                        masterUrl,
-                                        referer = "https://megaplay.buzz/",
-                                        videoNameGen = { quality -> "VidNest - $quality (${type.uppercase()})" },
-                                        subtitleList = tracks,
-                                    ).forEach { v ->
-                                        videoList.add(
-                                            Video(
-                                                videoUrl = v.videoUrl,
-                                                videoTitle = v.videoTitle,
-                                                headers = refHeaders,
-                                                subtitleTracks = v.subtitleTracks,
-                                                audioTracks = v.audioTracks,
-                                            ),
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            response.close()
+                        val embedUrl = "https://vidnest.fun/animepahe/$anilistId/$episodeNumber/$type"
+                        val extractor = VidHideExtractor(client, headers)
+                        extractor.videosFromUrl(embedUrl) { quality -> "VidNest - $quality (${type.uppercase()})" }.forEach { v ->
+                            videoList.add(
+                                Video(
+                                    videoUrl = v.videoUrl,
+                                    videoTitle = v.videoTitle,
+                                    headers = v.headers,
+                                    subtitleTracks = v.subtitleTracks,
+                                    audioTracks = v.audioTracks,
+                                ),
+                            )
                         }
                     }
                 } catch (_: Exception) {
@@ -678,8 +646,8 @@ class Anitusk :
         screen.addListPreference(
             key = PREF_DOMAIN_KEY,
             title = "Preferred Domain",
-            entries = listOf("anitusk.com"),
-            entryValues = listOf("https://anitusk.com"),
+            entries = listOf("anitummy.cc"),
+            entryValues = listOf("https://anitummy.cc"),
             default = PREF_DOMAIN_DEFAULT,
             summary = "%s",
         )
@@ -766,49 +734,10 @@ class Anitusk :
         YearFilter(),
     )
 
-    private fun decryptVidNest(encryptedText: String): String {
-        val alphabet = "RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW+/="
-        val a = IntArray(256) { 64 }
-        for (i in alphabet.indices) {
-            val code = alphabet[i].code
-            if (code < 256) {
-                a[code] = i
-            }
-        }
-
-        val out = java.io.ByteArrayOutputStream()
-        var t = 0
-        while (t < encryptedText.length) {
-            val endIdx = if (t + 4 < encryptedText.length) t + 4 else encryptedText.length
-            val chunk = encryptedText.substring(t, endIdx)
-            t += 4
-            val d = IntArray(4) { 64 }
-            for (e in chunk.indices) {
-                val code = chunk[e].code
-                d[e] = if (code < 256) a[code] else 64
-            }
-
-            val b1 = (d[0] shl 2) or (d[1] shr 4)
-            out.write(b1)
-            if (d[2] != 64) {
-                val b2 = ((d[1] and 15) shl 4) or (d[2] shr 2)
-                out.write(b2)
-            }
-            if (d[3] != 64) {
-                val b3 = ((d[2] and 3) shl 6) or d[3]
-                out.write(b3)
-            }
-        }
-        return try {
-            out.toString("UTF-8")
-        } catch (_: Exception) {
-            out.toString()
-        }
-    }
 
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain"
-        private const val PREF_DOMAIN_DEFAULT = "https://anitusk.com"
+        private const val PREF_DOMAIN_DEFAULT = "https://anitummy.cc"
         private const val PREF_TITLE_LANG_KEY = "preferred_title_lang"
         private const val PREF_TYPE_KEY = "preferred_type"
         private const val PREF_QUALITY_KEY = "preferred_quality"
@@ -1337,10 +1266,10 @@ class AnituskCloudflareInterceptor(
             val targetHost = try {
                 baseUrlProvider().toHttpUrl().host
             } catch (_: Exception) {
-                "anitusk.com"
+                "anitummy.cc"
             }
             val host = request.url.host
-            val bypassUrl = if (host.contains(targetHost) || host.contains("miruro.")) {
+            val bypassUrl = if (host.contains(targetHost) || host.contains("miruro.") || host.contains("anifake")) {
                 baseUrlProvider()
             } else {
                 request.url.toString()
@@ -1376,23 +1305,6 @@ data class FastTrack(
     val kind: String? = null,
 )
 
-@Serializable
-data class VidNestSourcesResponse(
-    val sources: List<VidNestSourceFile>? = null,
-    val tracks: List<FastTrack>? = null,
-)
-
-@Serializable
-data class VidNestSourceFile(
-    val file: String? = null,
-    val type: String? = null,
-)
-
-@Serializable
-data class VidNestApiResponse(
-    val encrypted: Boolean = false,
-    val data: String? = null,
-)
 
 @Serializable
 data class KitsuMappingResponse(
