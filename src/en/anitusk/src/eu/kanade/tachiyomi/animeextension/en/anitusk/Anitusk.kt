@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.anitusk
 
-import aniyomi.lib.m3u8server.M3u8Integration
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -851,7 +851,6 @@ class Anitusk :
         )
     }
 }
-
 
 @Serializable
 data class GraphQLRequest(
