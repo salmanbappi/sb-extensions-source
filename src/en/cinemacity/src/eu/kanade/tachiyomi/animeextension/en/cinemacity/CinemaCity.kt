@@ -318,12 +318,12 @@ class CinemaCity : Source() {
         val pageUrl = if (epUrl.contains("#")) epUrl.substringBefore("#") else epUrl
         val hash = if (epUrl.contains("#")) epUrl.substringAfter("#") else ""
 
-        val streamUrl = if (hash.isNotBlank() && (pageUrl.endsWith(".html") || pageUrl.startsWith("/"))) {
+        val (streamUrl, subtitles) = if (hash.isNotBlank() && (pageUrl.endsWith(".html") || pageUrl.startsWith("/"))) {
             val response = client.newCall(GET("$baseUrl$pageUrl", headers)).execute()
             val html = response.body.string()
-            findStreamUrlFromHtml(html, hash)
+            findStreamAndSubsFromHtml(html, hash)
         } else {
-            epUrl
+            Pair(epUrl, emptyList())
         }
 
         if (streamUrl.isBlank()) return emptyList()
@@ -334,10 +334,11 @@ class CinemaCity : Source() {
             masterHeaders = headers,
             videoHeaders = headers,
             videoNameGen = { quality -> "CinemaCity - $quality" },
+            subtitleList = subtitles,
         )
     }
 
-    private fun findStreamUrlFromHtml(html: String, hash: String): String {
+    private fun findStreamAndSubsFromHtml(html: String, hash: String): Pair<String, List<eu.kanade.tachiyomi.animesource.model.Track>> {
         val atobMatches = ATOB_REGEX.findAll(html)
         for (match in atobMatches) {
             val b64 = match.groupValues[1]
@@ -349,6 +350,19 @@ class CinemaCity : Source() {
 
             val fileContent = extractFileJson(decoded)
             if (fileContent.isBlank()) continue
+
+            // Extract subtitle tracks from the decoded PlayerJS payload
+            val subtitles = mutableListOf<eu.kanade.tachiyomi.animesource.model.Track>()
+            val subtitleRaw = SUBTITLE_REGEX.find(decoded)?.groupValues?.get(1) ?: ""
+            if (subtitleRaw.isNotBlank()) {
+                subtitleRaw.split(",").forEach { trackEntry ->
+                    val label = trackEntry.substringBefore("]").removePrefix("[")
+                    val url = trackEntry.substringAfter("]")
+                    if (url.isNotBlank() && (url.contains(".vtt") || url.contains(".srt"))) {
+                        subtitles.add(eu.kanade.tachiyomi.animesource.model.Track(url, label.ifBlank { "Sub" }))
+                    }
+                }
+            }
 
             if (fileContent.startsWith("[")) {
                 runCatching {
@@ -366,20 +380,20 @@ class CinemaCity : Source() {
                                 epIndexInSeason++
 
                                 if (targetHash.equals(hash, ignoreCase = true) || targetHash.replace(" ", "").equals(hash.replace(" ", ""), ignoreCase = true)) {
-                                    if (!file.isNullOrBlank()) return file
+                                    if (!file.isNullOrBlank()) return Pair(file, subtitles)
                                 }
                             }
                         } else if (!directFile.isNullOrBlank()) {
-                            if (hash == "movie" || hash.isNotBlank()) return directFile
+                            if (hash == "movie" || hash.isNotBlank()) return Pair(directFile, subtitles)
                         }
                     }
                 }
             } else if (fileContent.contains(".m3u8")) {
-                return fileContent
+                return Pair(fileContent, subtitles)
             }
         }
 
-        return M3U8_REGEX.find(html)?.groupValues?.get(1) ?: ""
+        return Pair(M3U8_REGEX.find(html)?.groupValues?.get(1) ?: "", emptyList())
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
@@ -411,6 +425,7 @@ class CinemaCity : Source() {
     companion object {
         private val ATOB_REGEX = Regex("""eval\(atob\("([^"]+)"\)\)""")
         private val M3U8_REGEX = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""")
+        private val SUBTITLE_REGEX = Regex("""["']?subtitle["']?\s*:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
 
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
