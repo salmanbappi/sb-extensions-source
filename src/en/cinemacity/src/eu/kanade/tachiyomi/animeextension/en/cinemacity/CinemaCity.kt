@@ -396,8 +396,9 @@ class CinemaCity : Source() {
 
     private fun parseSubtitleTracks(subtitleStr: String): List<Track> {
         if (subtitleStr.isBlank()) return emptyList()
+        val unescaped = unescapeUnicode(subtitleStr)
         val tracks = mutableListOf<Track>()
-        subtitleStr.split(",").forEach { entry ->
+        unescaped.split(",").forEach { entry ->
             val trimmed = entry.trim()
             if (trimmed.isNotBlank()) {
                 val label = trimmed.substringBefore("]").removePrefix("[").trim()
@@ -412,6 +413,14 @@ class CinemaCity : Source() {
             }
         }
         return tracks
+    }
+
+    private fun unescapeUnicode(str: String): String {
+        val regex = Regex("""\\u([0-9a-fA-F]{4})""")
+        return regex.replace(str) { match ->
+            val codePoint = match.groupValues[1].toInt(16)
+            codePoint.toChar().toString()
+        }.replace("\\/", "/")
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
