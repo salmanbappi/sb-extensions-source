@@ -295,12 +295,10 @@ class CinemaCity : Source() {
         return ""
     }
 
-    private fun packEpisodeUrl(streamUrl: String, subStr: String): String {
-        return if (subStr.isNotBlank()) {
-            "{\"url\":\"$streamUrl\",\"subs\":\"${subStr.replace("\"", "\\\"")}\"}"
-        } else {
-            streamUrl
-        }
+    private fun packEpisodeUrl(streamUrl: String, subStr: String): String = if (subStr.isNotBlank()) {
+        "{\"url\":\"$streamUrl\",\"subs\":\"${subStr.replace("\"", "\\\"")}\"}"
+    } else {
+        streamUrl
     }
 
     private fun parseSubtitles(subStr: String): List<Track> {
