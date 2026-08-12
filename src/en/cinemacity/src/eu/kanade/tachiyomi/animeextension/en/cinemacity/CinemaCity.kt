@@ -263,15 +263,8 @@ class CinemaCity : Source() {
             }
         }
 
-        // Placeholder for unreleased titles / coming soon shows to prevent infinite UI re-fetching flashes
         if (episodes.isEmpty()) {
-            episodes.add(
-                SEpisode.create().apply {
-                    name = "No episodes released yet (Coming Soon)"
-                    url = ""
-                    episode_number = 1.0f
-                },
-            )
+            throw Exception("No episodes available for this title on CinemaCity")
         }
 
         return episodes.reversed()
