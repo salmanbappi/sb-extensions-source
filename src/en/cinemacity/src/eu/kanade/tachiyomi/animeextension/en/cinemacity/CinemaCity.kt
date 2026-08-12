@@ -45,7 +45,7 @@ class CinemaCity : Source() {
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val pageUrl = if (page > 1) "$baseUrl/movies/page/$page/" else "$baseUrl/movies/"
+        val pageUrl = if (page > 1) "$baseUrl/f/sort=news_read/order=desc/page/$page/" else "$baseUrl/f/sort=news_read/order=desc/"
         val response = client.newCall(GET(pageUrl, headers)).execute()
         return parseAnimeListPage(response, page)
     }
@@ -75,6 +75,8 @@ class CinemaCity : Source() {
         val sortFilter = filters.filterIsInstance<SortFilter>().firstOrNull()?.selected
         val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()?.selected
         val yearFilter = filters.filterIsInstance<YearFilter>().firstOrNull()?.selected
+        val qualityFilter = filters.filterIsInstance<QualityFilter>().firstOrNull()?.selected
+        val statusFilter = filters.filterIsInstance<StatusFilter>().firstOrNull()?.selected
 
         val targetUrl = when {
             !genreFilter.isNullOrBlank() -> {
@@ -85,8 +87,15 @@ class CinemaCity : Source() {
                 if (page > 1) "$baseUrl/year/$yearFilter/page/$page/" else "$baseUrl/year/$yearFilter/"
             }
 
-            !sortFilter.isNullOrBlank() -> {
-                if (page > 1) "$baseUrl/f/$sortFilter/page/$page/" else "$baseUrl/f/$sortFilter/"
+            !sortFilter.isNullOrBlank() || !qualityFilter.isNullOrBlank() || !statusFilter.isNullOrBlank() -> {
+                val catId = if (typeFilter == "tv-series") "2" else "1"
+                buildString {
+                    append("$baseUrl/f/cat=$catId/")
+                    if (!sortFilter.isNullOrBlank()) append("$sortFilter/")
+                    if (!qualityFilter.isNullOrBlank()) append("quality=$qualityFilter/")
+                    if (!statusFilter.isNullOrBlank()) append("status=$statusFilter/")
+                    if (page > 1) append("page/$page/")
+                }
             }
 
             else -> {
@@ -103,6 +112,8 @@ class CinemaCity : Source() {
         SortFilter(),
         GenreFilter(),
         YearFilter(),
+        QualityFilter(),
+        StatusFilter(),
     )
 
     private fun parseAnimeListPage(response: Response, page: Int = 1): AnimesPage {
@@ -324,7 +335,7 @@ class CinemaCity : Source() {
     companion object {
         private val ATOB_REGEX = Regex("""eval\(atob\("([^"]+)"\)\)""")
         private val M3U8_REGEX = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""")
-        private val SUBTITLE_PARAM_REGEX = Regex("""subtitle\s*:\s*["']([^"']+)["']""")
+        private val SUBTITLE_PARAM_REGEX = Regex("""["']?subtitle["']?\s*:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
 
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
