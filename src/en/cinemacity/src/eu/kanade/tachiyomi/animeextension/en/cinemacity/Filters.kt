@@ -26,11 +26,45 @@ class SortFilter :
 
     companion object {
         val sorts = listOf(
-            Pair("Default (Latest)", "date/order=desc"),
-            Pair("Rating", "rating/order=desc"),
-            Pair("Popularity (Views)", "news_read/order=desc"),
-            Pair("Comments", "comm_num/order=desc"),
-            Pair("Title (A-Z)", "title/order=asc"),
+            Pair("Default", ""),
+            Pair("Latest", "sort=date/order=desc"),
+            Pair("Rating", "sort=rating/order=desc"),
+            Pair("Popularity (Views)", "sort=news_read/order=desc"),
+            Pair("Comments", "sort=comm_num/order=desc"),
+            Pair("Title (A-Z)", "sort=title/order=asc"),
+        )
+    }
+}
+
+class QualityFilter :
+    AnimeFilter.Select<String>(
+        "Quality",
+        qualities.map { it.first }.toTypedArray(),
+    ) {
+    val selected: String get() = qualities[state].second
+
+    companion object {
+        val qualities = listOf(
+            Pair("All", ""),
+            Pair("WEB-DL", "WEB-DL"),
+            Pair("TS", "TS"),
+            Pair("CAM-Rip", "CAM-Rip"),
+        )
+    }
+}
+
+class StatusFilter :
+    AnimeFilter.Select<String>(
+        "Status (TV Series)",
+        statuses.map { it.first }.toTypedArray(),
+    ) {
+    val selected: String get() = statuses[state].second
+
+    companion object {
+        val statuses = listOf(
+            Pair("All", ""),
+            Pair("Ongoing", "Ongoing"),
+            Pair("Ended", "Ended"),
         )
     }
 }
