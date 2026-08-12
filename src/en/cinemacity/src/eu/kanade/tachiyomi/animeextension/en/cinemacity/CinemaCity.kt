@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -22,6 +23,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.FormBody
 import okhttp3.Headers
+import okhttp3.OkHttpClient
 import okhttp3.Response
 
 class CinemaCity : Source() {
@@ -33,6 +35,12 @@ class CinemaCity : Source() {
     override val lang = "en"
 
     override val supportsLatest = true
+
+    override val client: OkHttpClient by lazy {
+        network.client.newBuilder()
+            .addInterceptor(CloudflareInterceptor(network.client))
+            .build()
+    }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
@@ -253,6 +261,17 @@ class CinemaCity : Source() {
                     },
                 )
             }
+        }
+
+        // Placeholder for unreleased titles / coming soon shows to prevent infinite UI re-fetching flashes
+        if (episodes.isEmpty()) {
+            episodes.add(
+                SEpisode.create().apply {
+                    name = "No episodes released yet (Coming Soon)"
+                    url = ""
+                    episode_number = 1.0f
+                },
+            )
         }
 
         return episodes.reversed()
