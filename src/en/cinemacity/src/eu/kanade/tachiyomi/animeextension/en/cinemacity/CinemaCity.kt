@@ -199,7 +199,8 @@ class CinemaCity : Source() {
             // Extract subtitle parameter if present
             val subStr = SUBTITLE_PARAM_REGEX.find(decoded)?.groupValues?.get(1) ?: ""
 
-            val fileContent = decoded.substringAfter("file:").substringBefore(", poster:").substringBefore(", default_quality:").trim('\'', '"', ' ')
+            val fileContent = extractFileJson(decoded)
+            if (fileContent.isBlank()) continue
 
             if (fileContent.startsWith("[")) {
                 // TV Series or Movie playlist JSON
@@ -270,10 +271,36 @@ class CinemaCity : Source() {
         return episodes.reversed()
     }
 
-    private fun packEpisodeUrl(streamUrl: String, subStr: String): String = if (subStr.isNotBlank()) {
-        "{\"url\":\"$streamUrl\",\"subs\":\"${subStr.replace("\"", "\\\"")}\"}"
-    } else {
-        streamUrl
+    private fun extractFileJson(decoded: String): String {
+        val idx = decoded.indexOf("file:")
+        if (idx == -1) return ""
+        val rest = decoded.substring(idx + 5).trimStart()
+        if (rest.isEmpty()) return ""
+
+        val quoteChar = rest[0]
+        if (quoteChar == '\'' || quoteChar == '"') {
+            val content = rest.substring(1)
+            val endMarker1 = "$quoteChar, poster:"
+            val endMarker2 = "$quoteChar, default_quality:"
+            val endMarker3 = "$quoteChar, preload:"
+
+            var endIdx = content.indexOf(endMarker1)
+            if (endIdx == -1) endIdx = content.indexOf(endMarker2)
+            if (endIdx == -1) endIdx = content.indexOf(endMarker3)
+
+            if (endIdx != -1) {
+                return content.substring(0, endIdx)
+            }
+        }
+        return ""
+    }
+
+    private fun packEpisodeUrl(streamUrl: String, subStr: String): String {
+        return if (subStr.isNotBlank()) {
+            "{\"url\":\"$streamUrl\",\"subs\":\"${subStr.replace("\"", "\\\"")}\"}"
+        } else {
+            streamUrl
+        }
     }
 
     private fun parseSubtitles(subStr: String): List<Track> {
