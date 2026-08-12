@@ -1,6 +1,9 @@
 package eu.kanade.tachiyomi.animeextension.en.cinemacity
 
+import android.app.Application
 import android.util.Base64
+import android.webkit.CookieManager
+import android.webkit.WebSettings
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -24,6 +27,8 @@ import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Response
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 class CinemaCity : Source() {
 
@@ -35,8 +40,26 @@ class CinemaCity : Source() {
 
     override val supportsLatest = true
 
+    private val context: Application by lazy { Injekt.get() }
+
+    private val defaultUserAgentString by lazy {
+        runCatching { WebSettings.getDefaultUserAgent(context) }.getOrNull() ?: DEFAULT_USER_AGENT
+    }
+
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val cookies = runCatching {
+                    CookieManager.getInstance().getCookie(request.url.toString())
+                }.getOrNull()
+
+                val builder = request.newBuilder()
+                if (!cookies.isNullOrEmpty()) {
+                    builder.header("Cookie", cookies)
+                }
+                chain.proceed(builder.build())
+            }
             .addInterceptor(CloudflareInterceptor(network.client))
             .build()
     }
@@ -44,7 +67,9 @@ class CinemaCity : Source() {
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     override fun headersBuilder(): Headers.Builder {
-        val userAgent = preferences.getString(PREF_USER_AGENT_KEY, DEFAULT_USER_AGENT) ?: DEFAULT_USER_AGENT
+        val customUa = preferences.getString(PREF_USER_AGENT_KEY, "")?.trim()
+        val userAgent = if (!customUa.isNullOrBlank()) customUa else defaultUserAgentString
+
         return super.headersBuilder()
             .add("User-Agent", userAgent)
             .add("Referer", "$baseUrl/")
@@ -326,8 +351,8 @@ class CinemaCity : Source() {
         screen.addEditTextPreference(
             key = PREF_USER_AGENT_KEY,
             title = "User-Agent Header",
-            summary = "Custom User-Agent header for Cloudflare",
-            default = DEFAULT_USER_AGENT,
+            summary = "Custom User-Agent header for Cloudflare (Leave blank for System Default)",
+            default = "",
         )
     }
 
