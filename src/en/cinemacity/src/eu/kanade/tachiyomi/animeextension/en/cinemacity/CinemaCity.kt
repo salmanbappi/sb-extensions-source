@@ -144,7 +144,7 @@ class CinemaCity : Source() {
                         setUrlWithoutDomain(href)
                         thumbnail_url = imgEl?.absUrl("src")
                         fetch_type = FetchType.Episodes
-                    }
+                    },
                 )
             }
         }
@@ -166,7 +166,7 @@ class CinemaCity : Source() {
                         setUrlWithoutDomain(href)
                         thumbnail_url = imgEl?.absUrl("src")
                         fetch_type = FetchType.Episodes
-                    }
+                    },
                 )
             }
         }
