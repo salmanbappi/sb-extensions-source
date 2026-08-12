@@ -7,7 +7,6 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
-import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
@@ -196,9 +195,6 @@ class CinemaCity : Source() {
 
             if ("file:" !in decoded) continue
 
-            // Extract subtitle parameter if present
-            val subStr = SUBTITLE_PARAM_REGEX.find(decoded)?.groupValues?.get(1) ?: ""
-
             val fileContent = extractFileJson(decoded)
             if (fileContent.isBlank()) continue
 
@@ -221,7 +217,7 @@ class CinemaCity : Source() {
                                 episodes.add(
                                     SEpisode.create().apply {
                                         name = "$itemTitle $epTitle".trim()
-                                        url = packEpisodeUrl(streamUrl, subStr)
+                                        url = streamUrl
                                         episode_number = epNum++
                                     },
                                 )
@@ -231,7 +227,7 @@ class CinemaCity : Source() {
                             episodes.add(
                                 SEpisode.create().apply {
                                     name = if (itemTitle.isNotBlank()) itemTitle else anime.title
-                                    url = packEpisodeUrl(directFile, subStr)
+                                    url = directFile
                                     episode_number = 1.0f
                                 },
                             )
@@ -243,7 +239,7 @@ class CinemaCity : Source() {
                 episodes.add(
                     SEpisode.create().apply {
                         name = anime.title
-                        url = packEpisodeUrl(fileContent, subStr)
+                        url = fileContent
                         episode_number = 1.0f
                     },
                 )
@@ -295,39 +291,10 @@ class CinemaCity : Source() {
         return ""
     }
 
-    private fun packEpisodeUrl(streamUrl: String, subStr: String): String = if (subStr.isNotBlank()) {
-        "{\"url\":\"$streamUrl\",\"subs\":\"${subStr.replace("\"", "\\\"")}\"}"
-    } else {
-        streamUrl
-    }
-
-    private fun parseSubtitles(subStr: String): List<Track> {
-        if (subStr.isBlank()) return emptyList()
-        val regex = Regex("""\[([^\]]+)\](https?:[^\s,]+)""")
-        val cleaned = subStr.replace("\\/", "/")
-        return regex.findAll(cleaned).mapNotNull { match ->
-            val lang = match.groupValues[1]
-            val url = match.groupValues[2]
-            if (url.isBlank()) null else Track(url, lang)
-        }.toList()
-    }
-
     // ============================ Video Links =============================
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val rawUrl = episode.url
-        if (rawUrl.isBlank()) return emptyList()
-
-        var masterUrl = rawUrl
-        var subtitleTracks = emptyList<Track>()
-
-        if (rawUrl.startsWith("{")) {
-            runCatching {
-                val jsonObj = json.parseToJsonElement(rawUrl).jsonObject
-                masterUrl = jsonObj["url"]?.jsonPrimitive?.content ?: rawUrl
-                val subStr = jsonObj["subs"]?.jsonPrimitive?.content ?: ""
-                subtitleTracks = parseSubtitles(subStr)
-            }
-        }
+        val masterUrl = episode.url
+        if (masterUrl.isBlank()) return emptyList()
 
         return playlistUtils.extractFromHls(
             playlistUrl = masterUrl,
@@ -335,7 +302,6 @@ class CinemaCity : Source() {
             masterHeaders = headers,
             videoHeaders = headers,
             videoNameGen = { quality -> "CinemaCity - $quality" },
-            subtitleList = subtitleTracks,
         )
     }
 
@@ -368,7 +334,6 @@ class CinemaCity : Source() {
     companion object {
         private val ATOB_REGEX = Regex("""eval\(atob\("([^"]+)"\)\)""")
         private val M3U8_REGEX = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""")
-        private val SUBTITLE_PARAM_REGEX = Regex("""["']?subtitle["']?\s*:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
 
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
