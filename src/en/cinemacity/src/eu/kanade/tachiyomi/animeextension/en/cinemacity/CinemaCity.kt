@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.en.cinemacity
 
-import android.app.Application
 import android.util.Base64
 import android.webkit.CookieManager
 import android.webkit.WebSettings
@@ -27,8 +26,6 @@ import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Response
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 class CinemaCity : Source() {
 
@@ -39,8 +36,6 @@ class CinemaCity : Source() {
     override val lang = "en"
 
     override val supportsLatest = true
-
-    private val context: Application by lazy { Injekt.get() }
 
     private val defaultUserAgentString by lazy {
         runCatching { WebSettings.getDefaultUserAgent(context) }.getOrNull() ?: DEFAULT_USER_AGENT
