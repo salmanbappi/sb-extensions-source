@@ -123,24 +123,57 @@ class CinemaCity : Source() {
 
     private fun parseAnimeListPage(response: Response): AnimesPage {
         val doc = response.asJsoup()
-        val animes = doc.select("a[href*=\"/movies/\"], a[href*=\"/tv-series/\"]").mapNotNull { element ->
-            val href = element.attr("href")
-            if (!href.endsWith(".html") || href.contains("#watch")) return@mapNotNull null
+        val animes = mutableListOf<SAnime>()
 
-            val imgEl = element.selectFirst("img") ?: return@mapNotNull null
-            val itemTitle = imgEl.attr("alt").ifBlank { element.attr("title") }
-            if (itemTitle.isBlank()) return@mapNotNull null
+        // Strategy 1: Container-based parsing (.dle-fast_item, .th-item, etc.)
+        val containers = doc.select(".dle-fast_item, .th-item, div.movie-item, article")
+        if (containers.isNotEmpty()) {
+            for (element in containers) {
+                val linkEl = element.selectFirst("a[href*=\"/movies/\"], a[href*=\"/tv-series/\"]") ?: continue
+                val href = linkEl.attr("href")
+                if (!href.endsWith(".html") || href.contains("#watch")) continue
 
-            SAnime.create().apply {
-                title = itemTitle
-                setUrlWithoutDomain(href)
-                thumbnail_url = imgEl.absUrl("src")
-                fetch_type = FetchType.Episodes
+                val itemTitle = linkEl.text().ifBlank { element.selectFirst("img")?.attr("alt") ?: "" }
+                if (itemTitle.isBlank()) continue
+
+                val imgEl = element.selectFirst("img")
+
+                animes.add(
+                    SAnime.create().apply {
+                        title = itemTitle
+                        setUrlWithoutDomain(href)
+                        thumbnail_url = imgEl?.absUrl("src")
+                        fetch_type = FetchType.Episodes
+                    }
+                )
             }
-        }.distinctBy { it.url }
+        }
 
+        // Strategy 2: Direct link lookup fallback (search / custom templates)
+        if (animes.isEmpty()) {
+            doc.select("a[href*=\"/movies/\"], a[href*=\"/tv-series/\"]").forEach { element ->
+                val href = element.attr("href")
+                if (!href.endsWith(".html") || href.contains("#watch")) return@forEach
+
+                val parent = element.parent()
+                val imgEl = parent?.selectFirst("img") ?: element.selectFirst("img")
+                val itemTitle = element.text().ifBlank { imgEl?.attr("alt") ?: "" }
+                if (itemTitle.isBlank()) return@forEach
+
+                animes.add(
+                    SAnime.create().apply {
+                        title = itemTitle
+                        setUrlWithoutDomain(href)
+                        thumbnail_url = imgEl?.absUrl("src")
+                        fetch_type = FetchType.Episodes
+                    }
+                )
+            }
+        }
+
+        val distinctAnimes = animes.distinctBy { it.url }
         val hasNext = doc.select("a[href*=\"/page/\"]").any { it.text().contains("Next", ignoreCase = true) || it.text() == ">" }
-        return AnimesPage(animes, hasNext)
+        return AnimesPage(distinctAnimes, hasNext)
     }
 
     // =========================== Anime Details ============================
