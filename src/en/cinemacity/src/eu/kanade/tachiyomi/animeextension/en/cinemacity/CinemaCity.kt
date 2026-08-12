@@ -143,7 +143,6 @@ class CinemaCity : Source() {
         val doc = response.asJsoup()
         val animes = mutableListOf<SAnime>()
 
-        // Target main content area (#dle-content) to exclude top carousel/header items (.dle-fast_item)
         val mainContent = doc.selectFirst("#dle-content, .dle-content") ?: doc
 
         val containers = mainContent.select("div[class*=\"dar-short_item\"], div[class*=\"short-story\"], div[class*=\"_item\"]")
@@ -205,7 +204,6 @@ class CinemaCity : Source() {
 
         val episodes = mutableListOf<SEpisode>()
 
-        // Look for PlayerJS eval(atob("...")) script
         val atobMatches = ATOB_REGEX.findAll(html)
         for (match in atobMatches) {
             val b64 = match.groupValues[1]
@@ -222,7 +220,7 @@ class CinemaCity : Source() {
                 // TV Series or Movie playlist JSON
                 runCatching {
                     val jsonArray = json.parseToJsonElement(fileContent).jsonArray
-                    var epNum = 1.0f
+                    var globalEpNum = 1.0f
                     for (itemObj in jsonArray) {
                         val itemTitle = itemObj.jsonObject["title"]?.jsonPrimitive?.content ?: ""
                         val folder = itemObj.jsonObject["folder"]?.jsonArray
@@ -230,15 +228,17 @@ class CinemaCity : Source() {
 
                         if (folder != null) {
                             // TV Series (Seasons & Episodes)
+                            var epIndexInSeason = 1
                             for (epObj in folder) {
-                                val epTitle = epObj.jsonObject["title"]?.jsonPrimitive?.content ?: "Episode"
-                                val streamUrl = epObj.jsonObject["file"]?.jsonPrimitive?.content ?: continue
+                                val epTitle = epObj.jsonObject["title"]?.jsonPrimitive?.content ?: "Episode $epIndexInSeason"
+                                val stableUrl = "${anime.url}#${itemTitle.trim()}-$epIndexInSeason"
+                                epIndexInSeason++
 
                                 episodes.add(
                                     SEpisode.create().apply {
                                         name = "$itemTitle $epTitle".trim()
-                                        url = streamUrl
-                                        episode_number = epNum++
+                                        url = stableUrl
+                                        episode_number = globalEpNum++
                                     },
                                 )
                             }
@@ -247,7 +247,7 @@ class CinemaCity : Source() {
                             episodes.add(
                                 SEpisode.create().apply {
                                     name = if (itemTitle.isNotBlank()) itemTitle else anime.title
-                                    url = directFile
+                                    url = "${anime.url}#movie"
                                     episode_number = 1.0f
                                 },
                             )
@@ -259,21 +259,20 @@ class CinemaCity : Source() {
                 episodes.add(
                     SEpisode.create().apply {
                         name = anime.title
-                        url = fileContent
+                        url = "${anime.url}#movie"
                         episode_number = 1.0f
                     },
                 )
             }
         }
 
-        // Fallback regex for direct m3u8 if playerjs atob wasn't matched
         if (episodes.isEmpty()) {
             val directM3u8 = M3U8_REGEX.find(html)?.groupValues?.get(1)
             if (!directM3u8.isNullOrBlank()) {
                 episodes.add(
                     SEpisode.create().apply {
                         name = anime.title
-                        url = directM3u8
+                        url = "${anime.url}#movie"
                         episode_number = 1.0f
                     },
                 )
@@ -313,16 +312,74 @@ class CinemaCity : Source() {
 
     // ============================ Video Links =============================
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val masterUrl = episode.url
-        if (masterUrl.isBlank()) return emptyList()
+        val epUrl = episode.url
+        if (epUrl.isBlank()) return emptyList()
+
+        val pageUrl = if (epUrl.contains("#")) epUrl.substringBefore("#") else epUrl
+        val hash = if (epUrl.contains("#")) epUrl.substringAfter("#") else ""
+
+        val streamUrl = if (hash.isNotBlank() && (pageUrl.endsWith(".html") || pageUrl.startsWith("/"))) {
+            val response = client.newCall(GET("$baseUrl$pageUrl", headers)).execute()
+            val html = response.body.string()
+            findStreamUrlFromHtml(html, hash)
+        } else {
+            epUrl
+        }
+
+        if (streamUrl.isBlank()) return emptyList()
 
         return playlistUtils.extractFromHls(
-            playlistUrl = masterUrl,
+            playlistUrl = streamUrl,
             referer = "$baseUrl/",
             masterHeaders = headers,
             videoHeaders = headers,
             videoNameGen = { quality -> "CinemaCity - $quality" },
         )
+    }
+
+    private fun findStreamUrlFromHtml(html: String, hash: String): String {
+        val atobMatches = ATOB_REGEX.findAll(html)
+        for (match in atobMatches) {
+            val b64 = match.groupValues[1]
+            val decoded = runCatching {
+                String(Base64.decode(b64, Base64.DEFAULT), Charsets.UTF_8)
+            }.getOrNull() ?: continue
+
+            if ("file:" !in decoded) continue
+
+            val fileContent = extractFileJson(decoded)
+            if (fileContent.isBlank()) continue
+
+            if (fileContent.startsWith("[")) {
+                runCatching {
+                    val jsonArray = json.parseToJsonElement(fileContent).jsonArray
+                    for (itemObj in jsonArray) {
+                        val itemTitle = itemObj.jsonObject["title"]?.jsonPrimitive?.content ?: ""
+                        val folder = itemObj.jsonObject["folder"]?.jsonArray
+                        val directFile = itemObj.jsonObject["file"]?.jsonPrimitive?.content
+
+                        if (folder != null) {
+                            var epIndexInSeason = 1
+                            for (epObj in folder) {
+                                val targetHash = "${itemTitle.trim()}-$epIndexInSeason"
+                                val file = epObj.jsonObject["file"]?.jsonPrimitive?.content
+                                epIndexInSeason++
+
+                                if (targetHash.equals(hash, ignoreCase = true) || targetHash.replace(" ", "").equals(hash.replace(" ", ""), ignoreCase = true)) {
+                                    if (!file.isNullOrBlank()) return file
+                                }
+                            }
+                        } else if (!directFile.isNullOrBlank()) {
+                            if (hash == "movie" || hash.isNotBlank()) return directFile
+                        }
+                    }
+                }
+            } else if (fileContent.contains(".m3u8")) {
+                return fileContent
+            }
+        }
+
+        return M3U8_REGEX.find(html)?.groupValues?.get(1) ?: ""
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
