@@ -39,9 +39,9 @@ class CinemaCity : Source() {
 
     override fun headersBuilder(): Headers.Builder {
         val userAgent = preferences.getString(PREF_USER_AGENT_KEY, DEFAULT_USER_AGENT) ?: DEFAULT_USER_AGENT
-        val cfClearance = preferences.getString(PREF_CF_CLEARANCE_KEY, DEFAULT_CF_CLEARANCE) ?: DEFAULT_CF_CLEARANCE
-        val phpSessId = preferences.getString(PREF_PHPSESSID_KEY, DEFAULT_PHPSESSID) ?: DEFAULT_PHPSESSID
-        val ccDgDevice = preferences.getString(PREF_CC_DG_DEVICE_KEY, DEFAULT_CC_DG_DEVICE) ?: DEFAULT_CC_DG_DEVICE
+        val cfClearance = preferences.getString(PREF_CF_CLEARANCE_KEY, "") ?: ""
+        val phpSessId = preferences.getString(PREF_PHPSESSID_KEY, "") ?: ""
+        val ccDgDevice = preferences.getString(PREF_CC_DG_DEVICE_KEY, "") ?: ""
 
         val cookieHeader = buildString {
             if (ccDgDevice.isNotBlank()) append("cc_dg_device=$ccDgDevice; ")
@@ -125,8 +125,8 @@ class CinemaCity : Source() {
         val doc = response.asJsoup()
         val animes = mutableListOf<SAnime>()
 
-        // Strategy 1: Container-based parsing (.dle-fast_item, .th-item, etc.)
-        val containers = doc.select(".dle-fast_item, .th-item, div.movie-item, article")
+        // Strategy 1: Container-based parsing (.dle-fast_item, .dar-short_item, etc.)
+        val containers = doc.select("div[class*=\"dle-fast_item\"], div[class*=\"dar-short_item\"], div[class*=\"short-story\"], div[class*=\"_item\"]")
         if (containers.isNotEmpty()) {
             for (element in containers) {
                 val linkEl = element.selectFirst("a[href*=\"/movies/\"], a[href*=\"/tv-series/\"]") ?: continue
@@ -155,10 +155,10 @@ class CinemaCity : Source() {
                 val href = element.attr("href")
                 if (!href.endsWith(".html") || href.contains("#watch")) return@forEach
 
-                val parent = element.parent()
-                val imgEl = parent?.selectFirst("img") ?: element.selectFirst("img")
-                val itemTitle = element.text().ifBlank { imgEl?.attr("alt") ?: "" }
+                val itemTitle = element.text().ifBlank { element.selectFirst("img")?.attr("alt") ?: "" }
                 if (itemTitle.isBlank()) return@forEach
+
+                val imgEl = element.parent()?.selectFirst("img") ?: element.selectFirst("img")
 
                 animes.add(
                     SAnime.create().apply {
@@ -214,22 +214,36 @@ class CinemaCity : Source() {
             val fileContent = decoded.substringAfter("file:").substringBefore(", poster:").substringBefore(", default_quality:").trim('\'', '"', ' ')
 
             if (fileContent.startsWith("[")) {
-                // TV Series nested playlist JSON
+                // TV Series or Movie playlist JSON
                 runCatching {
                     val jsonArray = json.parseToJsonElement(fileContent).jsonArray
                     var epNum = 1.0f
-                    for (seasonObj in jsonArray) {
-                        val seasonTitle = seasonObj.jsonObject["title"]?.jsonPrimitive?.content ?: "Season"
-                        val folder = seasonObj.jsonObject["folder"]?.jsonArray ?: continue
-                        for (epObj in folder) {
-                            val epTitle = epObj.jsonObject["title"]?.jsonPrimitive?.content ?: "Episode"
-                            val streamUrl = epObj.jsonObject["file"]?.jsonPrimitive?.content ?: continue
+                    for (itemObj in jsonArray) {
+                        val itemTitle = itemObj.jsonObject["title"]?.jsonPrimitive?.content ?: ""
+                        val folder = itemObj.jsonObject["folder"]?.jsonArray
+                        val directFile = itemObj.jsonObject["file"]?.jsonPrimitive?.content
 
+                        if (folder != null) {
+                            // TV Series (Seasons & Episodes)
+                            for (epObj in folder) {
+                                val epTitle = epObj.jsonObject["title"]?.jsonPrimitive?.content ?: "Episode"
+                                val streamUrl = epObj.jsonObject["file"]?.jsonPrimitive?.content ?: continue
+
+                                episodes.add(
+                                    SEpisode.create().apply {
+                                        name = "$itemTitle $epTitle".trim()
+                                        url = streamUrl
+                                        episode_number = epNum++
+                                    },
+                                )
+                            }
+                        } else if (!directFile.isNullOrBlank()) {
+                            // Movie in JSON
                             episodes.add(
                                 SEpisode.create().apply {
-                                    name = "$seasonTitle $epTitle"
-                                    url = streamUrl
-                                    episode_number = epNum++
+                                    name = if (itemTitle.isNotBlank()) itemTitle else anime.title
+                                    url = directFile
+                                    episode_number = 1.0f
                                 },
                             )
                         }
@@ -305,20 +319,20 @@ class CinemaCity : Source() {
         screen.addEditTextPreference(
             key = PREF_CF_CLEARANCE_KEY,
             title = "cf_clearance Cookie",
-            summary = "Cloudflare clearance cookie value",
-            default = DEFAULT_CF_CLEARANCE,
+            summary = "Custom Cloudflare clearance cookie (leave blank to use WebView cookies)",
+            default = "",
         )
         screen.addEditTextPreference(
             key = PREF_PHPSESSID_KEY,
             title = "PHPSESSID Cookie",
-            summary = "PHP session ID cookie value",
-            default = DEFAULT_PHPSESSID,
+            summary = "Custom PHP session ID (leave blank to use WebView cookies)",
+            default = "",
         )
         screen.addEditTextPreference(
             key = PREF_CC_DG_DEVICE_KEY,
             title = "cc_dg_device Cookie",
-            summary = "CinemaCity device guard cookie value",
-            default = DEFAULT_CC_DG_DEVICE,
+            summary = "Custom CinemaCity device guard (leave blank to use WebView cookies)",
+            default = "",
         )
     }
 
@@ -333,12 +347,7 @@ class CinemaCity : Source() {
         private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
 
         private const val PREF_CF_CLEARANCE_KEY = "pref_cf_clearance"
-        private const val DEFAULT_CF_CLEARANCE = "MV02UEDHUY0lmTjlDfREb0h4nJHGdzjGusswsDJIXsM-1786543032-1.2.1.1-fRDC6k7wKEUfzablSU0D5X0Y9WI3ahGZgnDRHCXjw_YR2kfERxlzqL4NhbbfcGCP1w_V6zaC2b._slsbFAjlUKt6znnI5jww6EuLYrMFzCLVb8ZH9DCmTq4CyiKdD3Nk2x7hCGvpBCN9Bg8s1WJxdyx2XFcXEppyY92SMoZWhJrCHDHt.Y7WoYyudznbhbyBf2qtSC8IRfkdz3K3RYqAeojcltXwIOXtm1XzAPy_INLtystdg4xsKX2Uem_B8GKtw2S77p76Z9K2ZpxZ5AS_.8EwV.82AClEnf3Hc7T18EqykOq5fjQSibMONkHMG48cQNtK7_4udVfF3lvV1gfrQvM2bVrz9pg_.7P_CCIPmlLV5Nb.27qpnRcHCRpFG6854wtIU60TVUTtRJxVUow2cI9GeQBUJVGLE5mqHQJZ6ACCISi4QV2vJsDKYpRNxPUDe4Rt4uZUcdTA2fhtwOF3Ag"
-
         private const val PREF_PHPSESSID_KEY = "pref_phpsessid"
-        private const val DEFAULT_PHPSESSID = "k3566tnsn6qsrd3jvbv6gts9ht"
-
         private const val PREF_CC_DG_DEVICE_KEY = "pref_cc_dg_device"
-        private const val DEFAULT_CC_DG_DEVICE = "f5ce433e261197ad855a1a00883d01bec15a85f5012443743cb0cfeb6bb9bd60"
     }
 }
