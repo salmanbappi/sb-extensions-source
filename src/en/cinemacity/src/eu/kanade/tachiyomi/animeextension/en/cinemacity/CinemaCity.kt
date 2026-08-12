@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
@@ -338,7 +339,7 @@ class CinemaCity : Source() {
         )
     }
 
-    private fun findStreamAndSubsFromHtml(html: String, hash: String): Pair<String, List<eu.kanade.tachiyomi.animesource.model.Track>> {
+    private fun findStreamAndSubsFromHtml(html: String, hash: String): Pair<String, List<Track>> {
         val atobMatches = ATOB_REGEX.findAll(html)
         for (match in atobMatches) {
             val b64 = match.groupValues[1]
@@ -351,19 +352,6 @@ class CinemaCity : Source() {
             val fileContent = extractFileJson(decoded)
             if (fileContent.isBlank()) continue
 
-            // Extract subtitle tracks from the decoded PlayerJS payload
-            val subtitles = mutableListOf<eu.kanade.tachiyomi.animesource.model.Track>()
-            val subtitleRaw = SUBTITLE_REGEX.find(decoded)?.groupValues?.get(1) ?: ""
-            if (subtitleRaw.isNotBlank()) {
-                subtitleRaw.split(",").forEach { trackEntry ->
-                    val label = trackEntry.substringBefore("]").removePrefix("[")
-                    val url = trackEntry.substringAfter("]")
-                    if (url.isNotBlank() && (url.contains(".vtt") || url.contains(".srt"))) {
-                        subtitles.add(eu.kanade.tachiyomi.animesource.model.Track(url, label.ifBlank { "Sub" }))
-                    }
-                }
-            }
-
             if (fileContent.startsWith("[")) {
                 runCatching {
                     val jsonArray = json.parseToJsonElement(fileContent).jsonArray
@@ -371,29 +359,59 @@ class CinemaCity : Source() {
                         val itemTitle = itemObj.jsonObject["title"]?.jsonPrimitive?.content ?: ""
                         val folder = itemObj.jsonObject["folder"]?.jsonArray
                         val directFile = itemObj.jsonObject["file"]?.jsonPrimitive?.content
+                        val topSubtitle = itemObj.jsonObject["subtitle"]?.jsonPrimitive?.content ?: ""
 
                         if (folder != null) {
                             var epIndexInSeason = 1
                             for (epObj in folder) {
                                 val targetHash = "${itemTitle.trim()}-$epIndexInSeason"
                                 val file = epObj.jsonObject["file"]?.jsonPrimitive?.content
+                                val epSubtitle = epObj.jsonObject["subtitle"]?.jsonPrimitive?.content ?: topSubtitle
                                 epIndexInSeason++
 
                                 if (targetHash.equals(hash, ignoreCase = true) || targetHash.replace(" ", "").equals(hash.replace(" ", ""), ignoreCase = true)) {
-                                    if (!file.isNullOrBlank()) return Pair(file, subtitles)
+                                    if (!file.isNullOrBlank()) {
+                                        val tracks = parseSubtitleTracks(epSubtitle)
+                                        return Pair(file, tracks)
+                                    }
                                 }
                             }
                         } else if (!directFile.isNullOrBlank()) {
-                            if (hash == "movie" || hash.isNotBlank()) return Pair(directFile, subtitles)
+                            if (hash == "movie" || hash.isNotBlank()) {
+                                val tracks = parseSubtitleTracks(topSubtitle)
+                                return Pair(directFile, tracks)
+                            }
                         }
                     }
                 }
             } else if (fileContent.contains(".m3u8")) {
-                return Pair(fileContent, subtitles)
+                val topSubtitle = SUBTITLE_REGEX.find(decoded)?.groupValues?.get(1) ?: ""
+                val tracks = parseSubtitleTracks(topSubtitle)
+                return Pair(fileContent, tracks)
             }
         }
 
         return Pair(M3U8_REGEX.find(html)?.groupValues?.get(1) ?: "", emptyList())
+    }
+
+    private fun parseSubtitleTracks(subtitleStr: String): List<Track> {
+        if (subtitleStr.isBlank()) return emptyList()
+        val tracks = mutableListOf<Track>()
+        subtitleStr.split(",").forEach { entry ->
+            val trimmed = entry.trim()
+            if (trimmed.isNotBlank()) {
+                val label = trimmed.substringBefore("]").removePrefix("[").trim()
+                val url = trimmed.substringAfter("]").trim()
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    tracks.add(Track(url, label.ifBlank { "Subtitle" }))
+                } else if (url.startsWith("//")) {
+                    tracks.add(Track("https:$url", label.ifBlank { "Subtitle" }))
+                } else if (url.startsWith("/")) {
+                    tracks.add(Track("$baseUrl$url", label.ifBlank { "Subtitle" }))
+                }
+            }
+        }
+        return tracks
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
