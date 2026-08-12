@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.animeextension.en.cinemacity
 
 import android.util.Base64
 import androidx.preference.PreferenceScreen
-
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -14,9 +13,9 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
 import extensions.utils.asJsoup
+import keiyoushi.utils.UrlUtils
 import keiyoushi.utils.addEditTextPreference
 import keiyoushi.utils.addListPreference
-import keiyoushi.utils.UrlUtils
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -97,12 +96,15 @@ class CinemaCity : Source() {
             !genreFilter.isNullOrBlank() -> {
                 if (page > 1) "$baseUrl/genre/$genreFilter/page/$page/" else "$baseUrl/genre/$genreFilter/"
             }
+
             !yearFilter.isNullOrBlank() -> {
                 if (page > 1) "$baseUrl/year/$yearFilter/page/$page/" else "$baseUrl/year/$yearFilter/"
             }
+
             !sortFilter.isNullOrBlank() -> {
                 if (page > 1) "$baseUrl/f/$sortFilter/page/$page/" else "$baseUrl/f/$sortFilter/"
             }
+
             else -> {
                 if (page > 1) "$baseUrl/$typeFilter/page/$page/" else "$baseUrl/$typeFilter/"
             }
@@ -195,7 +197,7 @@ class CinemaCity : Source() {
                                     name = "$seasonTitle $epTitle"
                                     url = streamUrl
                                     episode_number = epNum++
-                                }
+                                },
                             )
                         }
                     }
@@ -207,7 +209,7 @@ class CinemaCity : Source() {
                         name = anime.title
                         url = fileContent
                         episode_number = 1.0f
-                    }
+                    },
                 )
             }
         }
@@ -221,7 +223,7 @@ class CinemaCity : Source() {
                         name = anime.title
                         url = directM3u8
                         episode_number = 1.0f
-                    }
+                    },
                 )
             }
         }
@@ -239,7 +241,7 @@ class CinemaCity : Source() {
             referer = "$baseUrl/",
             masterHeaders = headers,
             videoHeaders = headers,
-            videoNameGen = { quality -> "CinemaCity - $quality" }
+            videoNameGen = { quality -> "CinemaCity - $quality" },
         )
     }
 
@@ -247,7 +249,7 @@ class CinemaCity : Source() {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) }
-                .thenByDescending { it.resolution }
+                .thenByDescending { it.resolution },
         )
     }
 
