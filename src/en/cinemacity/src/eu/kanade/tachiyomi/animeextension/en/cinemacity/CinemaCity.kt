@@ -73,24 +73,20 @@ class CinemaCity : Source() {
 
         val typeFilter = filters.filterIsInstance<TypeFilter>().firstOrNull()?.selected ?: "movies"
         val sortFilter = filters.filterIsInstance<SortFilter>().firstOrNull()?.selected
-        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()?.selected
-        val yearFilter = filters.filterIsInstance<YearFilter>().firstOrNull()?.selected
         val qualityFilter = filters.filterIsInstance<QualityFilter>().firstOrNull()?.selected
         val statusFilter = filters.filterIsInstance<StatusFilter>().firstOrNull()?.selected
+        val yearFilter = filters.filterIsInstance<YearFilter>().firstOrNull()?.state?.trim() ?: ""
+
+        val genreGroup = filters.filterIsInstance<GenreGroup>().firstOrNull()
+        val selectedGenres = genreGroup?.state?.filter { it.state }?.map { it.slug }?.joinToString(",") ?: ""
 
         val targetUrl = when {
-            !genreFilter.isNullOrBlank() -> {
-                if (page > 1) "$baseUrl/genre/$genreFilter/page/$page/" else "$baseUrl/genre/$genreFilter/"
-            }
-
-            !yearFilter.isNullOrBlank() -> {
-                if (page > 1) "$baseUrl/year/$yearFilter/page/$page/" else "$baseUrl/year/$yearFilter/"
-            }
-
-            !sortFilter.isNullOrBlank() || !qualityFilter.isNullOrBlank() || !statusFilter.isNullOrBlank() -> {
+            selectedGenres.isNotBlank() || yearFilter.isNotBlank() || !sortFilter.isNullOrBlank() || !qualityFilter.isNullOrBlank() || !statusFilter.isNullOrBlank() -> {
                 val catId = if (typeFilter == "tv-series") "2" else "1"
                 buildString {
                     append("$baseUrl/f/cat=$catId/")
+                    if (selectedGenres.isNotBlank()) append("genre=$selectedGenres/")
+                    if (yearFilter.isNotBlank()) append("year=$yearFilter/")
                     if (!sortFilter.isNullOrBlank()) append("$sortFilter/")
                     if (!qualityFilter.isNullOrBlank()) append("quality=$qualityFilter/")
                     if (!statusFilter.isNullOrBlank()) append("status=$statusFilter/")
@@ -110,10 +106,10 @@ class CinemaCity : Source() {
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
         TypeFilter(),
         SortFilter(),
-        GenreFilter(),
         YearFilter(),
         QualityFilter(),
         StatusFilter(),
+        GenreGroup(),
     )
 
     private fun parseAnimeListPage(response: Response, page: Int = 1): AnimesPage {
@@ -262,10 +258,12 @@ class CinemaCity : Source() {
         return episodes.reversed()
     }
 
-    private fun packEpisodeUrl(streamUrl: String, subStr: String): String = if (subStr.isNotBlank()) {
-        "{\"url\":\"$streamUrl\",\"subs\":\"${subStr.replace("\"", "\\\"")}\"}"
-    } else {
-        streamUrl
+    private fun packEpisodeUrl(streamUrl: String, subStr: String): String {
+        return if (subStr.isNotBlank()) {
+            "{\"url\":\"$streamUrl\",\"subs\":\"${subStr.replace("\"", "\\\"")}\"}"
+        } else {
+            streamUrl
+        }
     }
 
     private fun parseSubtitles(subStr: String): List<Track> {
