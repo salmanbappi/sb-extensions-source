@@ -282,33 +282,31 @@ class Moviewala : Source() {
         return noCacheClient.newCall(request).execute().body.string()
     }
 
-    private fun extractVideoUrl(html: String, season: String?, episode: String?): String {
-        return if (season != null && episode != null) {
-            val seasonsRegex = Regex("""seasons\\*":\s*(\[.*?\])\s*,\s*\\*"series\\*"""")
-            val seasonsJsonEscaped = seasonsRegex.find(html)?.groupValues?.get(1)
-                ?: throw Exception("Seasons data not found in player page")
+    private fun extractVideoUrl(html: String, season: String?, episode: String?): String = if (season != null && episode != null) {
+        val seasonsRegex = Regex("""seasons\\*":\s*(\[.*?\])\s*,\s*\\*"series\\*"""")
+        val seasonsJsonEscaped = seasonsRegex.find(html)?.groupValues?.get(1)
+            ?: throw Exception("Seasons data not found in player page")
 
-            val cleanJson = seasonsJsonEscaped
-                .replace("\\\"", "\"")
-                .replace("\\/", "/")
-                .replace("\\u0026", "&")
+        val cleanJson = seasonsJsonEscaped
+            .replace("\\\"", "\"")
+            .replace("\\/", "/")
+            .replace("\\u0026", "&")
 
-            val seasons = myJson.decodeFromString<List<PlayerSeasonDto>>(cleanJson)
-            val matchingEpisode = seasons.firstOrNull { it.season_number == season.toIntOrNull() }
-                ?.episodes?.firstOrNull { it.episode_number == episode.toIntOrNull() }
-                ?: throw Exception("Episode S${season}E$episode not found in player page")
+        val seasons = myJson.decodeFromString<List<PlayerSeasonDto>>(cleanJson)
+        val matchingEpisode = seasons.firstOrNull { it.season_number == season.toIntOrNull() }
+            ?.episodes?.firstOrNull { it.episode_number == episode.toIntOrNull() }
+            ?: throw Exception("Episode S${season}E$episode not found in player page")
 
-            matchingEpisode.playback?.hls ?: throw Exception("HLS stream URL not found for episode")
-        } else {
-            val hlsRegex = Regex("""hls\\*":\\*"([^"]+)""")
-            val rawHls = hlsRegex.find(html)?.groupValues?.get(1)
-                ?: throw Exception("HLS stream URL not found in player page")
-            rawHls.split("\\\"")[0]
-                .replace("\\u0026", "&")
-                .replace("\\/", "/")
-                .replace("\\u002f", "/")
-                .removeSuffix("\\")
-        }
+        matchingEpisode.playback?.hls ?: throw Exception("HLS stream URL not found for episode")
+    } else {
+        val hlsRegex = Regex("""hls\\*":\\*"([^"]+)""")
+        val rawHls = hlsRegex.find(html)?.groupValues?.get(1)
+            ?: throw Exception("HLS stream URL not found in player page")
+        rawHls.split("\\\"")[0]
+            .replace("\\u0026", "&")
+            .replace("\\/", "/")
+            .replace("\\u002f", "/")
+            .removeSuffix("\\")
     }
 
     private fun isUrlExpired(url: String): Boolean {
