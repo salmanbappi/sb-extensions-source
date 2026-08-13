@@ -366,7 +366,7 @@ class Vegamovies : Source() {
         val url = hoster.hosterUrl
         val refHeaders = headersBuilder().set("Referer", url).build()
         return listOf(url).parallelCatchingFlatMap { src ->
-            val videos: List<Video> = when {
+            when {
                 src.contains("dood", ignoreCase = true) ->
                     doodExtractor.videosFromUrl(src)
 
@@ -374,7 +374,7 @@ class Vegamovies : Source() {
                     filemoonExtractor.videosFromUrl(src, prefix = "${hoster.hosterName} - ", headers = refHeaders)
 
                 src.contains("streamtape", ignoreCase = true) ->
-                    streamtapeExtractor.videosFromUrl(src)?.let { listOf(it) } ?: emptyList()
+                    streamtapeExtractor.videoFromUrl(src, quality = "${hoster.hosterName} - StreamTape")?.let { listOf(it) } ?: emptyList()
 
                 src.contains("streamwish", ignoreCase = true) || src.contains("awish", ignoreCase = true) ->
                     streamwishExtractor.videosFromUrl(src, prefix = "${hoster.hosterName} - ")
@@ -382,7 +382,6 @@ class Vegamovies : Source() {
                 else ->
                     universalExtractor.videosFromUrl(src, refHeaders)
             }
-            videos
         }
     }
 
