@@ -279,17 +279,57 @@ def generate_doc(repo_root: Path) -> bool:
 
 
 def lint_codebase(repo_root: Path) -> bool:
-    """Scans Kotlin code for code smells, blocking calls, and missing headers."""
+    """Scans Kotlin code for code smells, blocking calls, anti-patterns, and missing headers."""
     print("🔍 Running Linter & Code Quality Inspection across Extension Codebase...\n" + "=" * 60)
     warnings = 0
     src_dir = repo_root / "src"
     for kt_file in src_dir.rglob("*.kt"):
         content = kt_file.read_text(encoding="utf-8", errors="ignore")
         rel_path = kt_file.relative_to(repo_root)
+        file_warnings = []
 
+        # 1. Blocking Thread.sleep call
         if "Thread.sleep" in content:
-            print(f"  ⚠️ {rel_path}: Blocking Thread.sleep call found")
-            warnings += 1
+            file_warnings.append("Blocking Thread.sleep call found (use delay() in coroutines)")
+
+        # 2. Raw baseUrl string concatenation instead of absUrl()
+        if re.search(r'"\$baseUrl"\s*\+\s*\w+\.attr\(', content):
+            file_warnings.append('Manual "$baseUrl" + attr() prepend — use element.attr("abs:src") or absUrl() instead')
+
+        # 3. Date parsing without runCatching
+        date_parse = re.findall(r'SimpleDateFormat\([^)]+\)\.parse\(', content)
+        for match in date_parse:
+            # Check if it's wrapped in runCatching within ~5 lines context
+            if "runCatching" not in content[max(0, content.find(match) - 200):content.find(match) + 50]:
+                file_warnings.append(f"Date parsing without runCatching wrapping — can throw ParseException")
+                break
+
+        # 4. Sequential for-loop over embed URLs instead of parallelCatchingFlatMap
+        if re.search(r'for\s*\(\w+\s+in\s+(?:hosters|embedUrls|servers|links)\)', content):
+            if "parallelCatchingFlatMap" not in content:
+                file_warnings.append("Sequential for-loop over hosters/servers — consider parallelCatchingFlatMap for parallel extraction")
+
+        # 5. Raw json.decodeFromString without parseAs<> wrapper
+        if re.search(r'json\.decodeFromString<', content) and "parseAs<" not in content:
+            file_warnings.append("Raw json.decodeFromString<> — prefer response.parseAs<T>() wrapper pattern")
+
+        # 6. Force-unwrap null!! on preference getString
+        if re.search(r'preferences\.getString\([^)]+\)!!', content):
+            file_warnings.append("Force-unwrap preferences.getString()!! — use ?: \"default\" fallback instead")
+
+        # 7. Hardcoded session/CF cookies in headers
+        if re.search(r'(?:cf_clearance|PHPSESSID|__cfduid)["\']', content):
+            file_warnings.append("Hardcoded session/CF cookie literal found — cookies should be fetched dynamically")
+
+        # 8. Deprecated it.quality Video property
+        if "it.quality" in content:
+            file_warnings.append("Deprecated Video property 'it.quality' — use it.videoTitle (v16 API)")
+
+        for w in file_warnings:
+            print(f"  ⚠️  {rel_path}: {w}")
+            warnings += len(file_warnings)
+            break  # one file-level count per file block already printed above
+        warnings += len(file_warnings) - (1 if file_warnings else 0)  # correct: count all warnings
 
     if warnings == 0:
         print("  ✓ No lint warnings or code smells detected across codebase.")

@@ -3,7 +3,7 @@
 Automated Maintenance Suite for Aniyomi Extensions
 Performs full multi-step maintenance:
 1. Syncs shared extractor modules from upstream repositories.
-2. Audits and auto-fixes missing build.gradle extractor dependencies.
+2. Audits and auto-fixes missing build.gradle extractor dependencies (per extension).
 3. Runs static code analysis across all extension modules.
 """
 
@@ -42,12 +42,32 @@ def main():
     if code1 != 0:
         failed_steps.append("1. Upstream Extractor Sync")
 
-    # Step 2: Auto-Fix Missing Extractor Dependencies
+    # Step 2: Auto-Fix Missing Extractor Dependencies (per extension directory)
     print("2. Scanning and Auto-Fixing Extractor Dependencies in `build.gradle`...")
-    detect_cmd = [sys.executable, str(repo_root / "scripts" / "detect_extractors.py"), "--fix"]
-    code2, output2 = run_command(detect_cmd)
-    print(output2)
-    if code2 != 0:
+    src_dir = repo_root / "src"
+    detect_script = str(repo_root / "scripts" / "detect_extractors.py")
+    step2_failed = False
+    for lang_dir in sorted(src_dir.iterdir()):
+        if not lang_dir.is_dir():
+            continue
+        for ext_dir in sorted(lang_dir.iterdir()):
+            if not ext_dir.is_dir():
+                continue
+            detect_cmd = [
+                sys.executable, detect_script,
+                "--lang", lang_dir.name,
+                "--name", ext_dir.name,
+                "--fix",
+            ]
+            if args.dry_run:
+                detect_cmd.append("--dry-run")
+            code2, output2 = run_command(detect_cmd)
+            if output2.strip():
+                print(output2.strip())
+            if code2 != 0:
+                print(f"  [!] detect-extractors failed for src/{lang_dir.name}/{ext_dir.name}")
+                step2_failed = True
+    if step2_failed:
         failed_steps.append("2. Extractor Dependency Auto-Fix")
 
     # Step 3: Run Static Code Analysis Validation

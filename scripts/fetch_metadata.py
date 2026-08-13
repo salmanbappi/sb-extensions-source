@@ -41,11 +41,14 @@ def http_post_json(url: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]
     return None
 
 
-def fetch_jikan_episodes(mal_id: str) -> Dict[int, Dict[str, Any]]:
-    url = f"https://api.jikan.moe/v4/anime/{mal_id}/episodes"
-    res = http_get_json(url)
+def fetch_jikan_episodes(mal_id: str, max_pages: int = 10) -> Dict[int, Dict[str, Any]]:
     episodes = {}
-    if res and "data" in res:
+    page = 1
+    while page <= max_pages:
+        url = f"https://api.jikan.moe/v4/anime/{mal_id}/episodes?page={page}"
+        res = http_get_json(url)
+        if not res or "data" not in res:
+            break
         for ep in res["data"]:
             num = ep.get("mal_id")
             if num:
@@ -54,6 +57,13 @@ def fetch_jikan_episodes(mal_id: str) -> Dict[int, Dict[str, Any]]:
                     "aired": ep.get("aired"),
                     "filler": ep.get("filler", False)
                 }
+        # Check pagination
+        pagination = res.get("pagination", {})
+        if not pagination.get("has_next_page", False):
+            break
+        page += 1
+    if page > max_pages:
+        print(f"  [!] Jikan: reached max_pages limit ({max_pages}). Some episodes may be missing.")
     return episodes
 
 
@@ -89,7 +99,7 @@ def fetch_anilist_metadata(mal_id: str) -> Dict[str, Any]:
     return result
 
 
-def fetch_kitsu_episodes(mal_id: str) -> Dict[int, Dict[str, Any]]:
+def fetch_kitsu_episodes(mal_id: str, max_pages: int = 10) -> Dict[int, Dict[str, Any]]:
     map_url = f"https://kitsu.app/api/edge/mappings?filter[externalSite]=myanimelist/anime&filter[externalId]={mal_id}&include=item"
     map_res = http_get_json(map_url)
     kitsu_id = None
@@ -101,10 +111,14 @@ def fetch_kitsu_episodes(mal_id: str) -> Dict[int, Dict[str, Any]]:
     if not kitsu_id:
         return {}
 
-    ep_url = f"https://kitsu.app/api/edge/anime/{kitsu_id}/episodes?page[limit]=20&sort=number"
-    ep_res = http_get_json(ep_url)
     episodes = {}
-    if ep_res and "data" in ep_res:
+    next_url: Optional[str] = f"https://kitsu.app/api/edge/anime/{kitsu_id}/episodes?page[limit]=20&sort=number"
+    pages = 0
+    while next_url and pages < max_pages:
+        ep_res = http_get_json(next_url)
+        pages += 1
+        if not ep_res or "data" not in ep_res:
+            break
         for ep in ep_res["data"]:
             attrs = ep.get("attributes", {})
             num = attrs.get("number")
@@ -119,6 +133,10 @@ def fetch_kitsu_episodes(mal_id: str) -> Dict[int, Dict[str, Any]]:
                     "thumbnail": thumb,
                     "airdate": attrs.get("airdate")
                 }
+        # Follow next page link
+        next_url = (ep_res.get("links") or {}).get("next")
+    if pages >= max_pages and next_url:
+        print(f"  [!] Kitsu: reached max_pages limit ({max_pages}). Some episodes may be missing.")
     return episodes
 
 
@@ -160,14 +178,14 @@ def fetch_tmdb_episodes(title: str, api_key: str, season: int = 1) -> Dict[int, 
     return episodes
 
 
-def run_fetch_metadata(mal_id: str, title: Optional[str] = None, tmdb_key: str = "", format_type: str = "table"):
+def run_fetch_metadata(mal_id: str, title: Optional[str] = None, tmdb_key: str = "", format_type: str = "table", max_pages: int = 10):
     """Main CLI orchestrator for fetching & merging episode metadata."""
     print(f"🚀 Fetching metadata for MAL ID: {mal_id} (Title: {title or 'N/A'})...")
 
-    jikan_eps = fetch_jikan_episodes(mal_id) if mal_id else {}
+    jikan_eps = fetch_jikan_episodes(mal_id, max_pages) if mal_id else {}
     anilist_data = fetch_anilist_metadata(mal_id) if mal_id else {"streaming_episodes": {}, "banner": None}
     anilist_eps = anilist_data["streaming_episodes"]
-    kitsu_eps = fetch_kitsu_episodes(mal_id) if mal_id else {}
+    kitsu_eps = fetch_kitsu_episodes(mal_id, max_pages) if mal_id else {}
     tmdb_eps = fetch_tmdb_episodes(title, tmdb_key) if title and tmdb_key else {}
 
     all_episode_nums = sorted(list(set(jikan_eps.keys()) | set(anilist_eps.keys()) | set(kitsu_eps.keys()) | set(tmdb_eps.keys())))
@@ -209,13 +227,17 @@ def run_fetch_metadata(mal_id: str, title: Optional[str] = None, tmdb_key: str =
 
 
 def main():
+    import os
     parser = argparse.ArgumentParser(description="Fetch and merge anime episode metadata from external APIs.")
     parser.add_argument("--mal-id", required=True, help="MyAnimeList Anime ID")
     parser.add_argument("--title", help="Anime title for TMDB search fallback")
-    parser.add_argument("--tmdb-key", default="", help="TMDB API key")
+    parser.add_argument("--tmdb-key", default="", help="TMDB API key (or set TMDB_API_KEY env var)")
     parser.add_argument("--format", choices=["table", "json"], default="table", help="Output format")
+    parser.add_argument("--max-pages", type=int, default=10, help="Max pages to fetch from paginated APIs (default: 10)")
     args = parser.parse_args()
-    run_fetch_metadata(args.mal_id, args.title, args.tmdb_key, args.format)
+    # TMDB key: prefer CLI arg, then env var
+    tmdb_key = args.tmdb_key or os.environ.get("TMDB_API_KEY", "")
+    run_fetch_metadata(args.mal_id, args.title, tmdb_key, args.format, args.max_pages)
 
 
 if __name__ == "__main__":
