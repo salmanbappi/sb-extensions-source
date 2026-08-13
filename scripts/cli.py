@@ -247,6 +247,10 @@ def main():
             "script": "fetch_metadata.py",
             "desc": "Fetch and merge anime/movie episode metadata from external APIs (Jikan, AniList, Kitsu, TMDB)."
         },
+        "auto-maintain": {
+            "script": "auto_maintain.py",
+            "desc": "Execute full automated maintenance (sync extractors, fix dependencies, run static validation)."
+        },
         "detect-extractors": {
             "script": "detect_extractors.py",
             "desc": "Auto-detect required video extractors from embed URLs or extension codebase, and update build.gradle dependencies."
@@ -281,21 +285,20 @@ Available Commands ({len(commands_info)} Total):
   4. info              {commands_info['info']['desc']}
   5. fetch-icon        {commands_info['fetch-icon']['desc']}
   6. fetch-metadata    {commands_info['fetch-metadata']['desc']}
-  7. detect-extractors {commands_info['detect-extractors']['desc']}
-  8. sync-lib          {commands_info['sync-lib']['desc']}
-  9. test-scraper      {commands_info['test-scraper']['desc']}
- 10. test-extractor    {commands_info['test-extractor']['desc']}
- 11. list-extractors   {commands_info['list-extractors']['desc']}
+  7. auto-maintain     {commands_info['auto-maintain']['desc']}
+  8. detect-extractors {commands_info['detect-extractors']['desc']}
+  9. sync-lib          {commands_info['sync-lib']['desc']}
+ 10. test-scraper      {commands_info['test-scraper']['desc']}
+ 11. test-extractor    {commands_info['test-extractor']['desc']}
+ 12. list-extractors   {commands_info['list-extractors']['desc']}
 
 Examples:
-  python3 scripts/cli.py create --name "AnimeFlix" --lang "en" --siteType "html"
+  python3 scripts/cli.py auto-maintain
   python3 scripts/cli.py sync-lib --module dood-extractor
-  python3 scripts/cli.py sync-lib --all --check
-  python3 scripts/cli.py detect-extractors --url "https://filemoon.sx/e/example"
-  python3 scripts/cli.py fetch-metadata --mal-id 21 --title "One Piece"
   python3 scripts/cli.py validate
 """
     )
+
 
 
 

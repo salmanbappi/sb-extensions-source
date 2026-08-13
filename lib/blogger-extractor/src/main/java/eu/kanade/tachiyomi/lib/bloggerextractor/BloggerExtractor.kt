@@ -26,7 +26,7 @@ class BloggerExtractor(private val client: OkHttpClient) {
                     "37" -> "1080p"
                     else -> "Unknown"
                 }
-                Video(videoUrl = videoUrl, videoTitle = "Blogger - $quality $suffix".trimEnd(), headers = headers)
+                Video(videoUrl, "Blogger - $quality $suffix".trimEnd(), videoUrl, headers)
             }
     }
 }
