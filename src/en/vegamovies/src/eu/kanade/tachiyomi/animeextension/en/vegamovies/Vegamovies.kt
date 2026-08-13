@@ -203,7 +203,9 @@ class Vegamovies : Source() {
                     !href.contains("telegram") && href != "$baseUrl/" && !href.contains("#")
                 ) {
                     href
-                } else null
+                } else {
+                    null
+                }
             }.distinct()
 
         val episodeHosterMap = Collections.synchronizedMap(mutableMapOf<Int, MutableList<ParsedHoster>>())
@@ -381,9 +383,11 @@ class Vegamovies : Source() {
                     doc.select("a[href]").forEach { a ->
                         val href = a.attr("abs:href")
                         if (href.startsWith("http") && !href.contains("telegram") && !href.contains("#") &&
-                            (href.contains(".m3u8") || href.contains(".mp4") || href.contains(".mkv") ||
-                             href.contains("googleusercontent") || href.contains("drive.google") ||
-                             href.contains("tinyurl") || href.contains("fast-dl") || href.contains("vcloud"))
+                            (
+                                href.contains(".m3u8") || href.contains(".mp4") || href.contains(".mkv") ||
+                                    href.contains("googleusercontent") || href.contains("drive.google") ||
+                                    href.contains("tinyurl") || href.contains("fast-dl") || href.contains("vcloud")
+                                )
                         ) {
                             videoList.add(
                                 Video(
