@@ -7,7 +7,6 @@ import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
-import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
@@ -16,7 +15,6 @@ import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
 import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
 import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
@@ -136,20 +134,21 @@ class Vegamovies : Source() {
             initialized = true
             description = buildString {
                 if (!scoreText.isNullOrBlank()) {
-                    append("★ IMDb Rating: $scoreText\n\n")
+                    append("### ⭐ IMDb Rating: **$scoreText**\n\n")
                 }
                 if (!langText.isNullOrBlank()) {
-                    append("🔊 Audio / Language: $langText\n")
+                    append("🔊 **Audio / Language**: `$langText`  \n")
                 }
                 if (!qualityText.isNullOrBlank()) {
-                    append("🎥 Quality: $qualityText\n")
+                    append("🎥 **Quality**: `$qualityText`  \n")
                 }
                 if (!genreText.isNullOrBlank()) {
-                    append("🏷️ Genres: $genreText\n")
+                    append("🏷️ **Genres**: *$genreText*  \n")
                 }
                 if (isNotEmpty()) append("\n")
                 if (!plotText.isNullOrBlank()) {
-                    append("📖 Plot Synopsis:\n$plotText")
+                    append("### 📖 Plot Synopsis\n")
+                    append("> $plotText\n")
                 }
             }.trim()
         }
@@ -186,7 +185,6 @@ class Vegamovies : Source() {
                 }
             }.ifEmpty { text.ifEmpty { "Download Server ${index + 1}" } }
 
-            val isDual = fullText.contains("Dual", ignoreCase = true) || fullText.contains("Hindi", ignoreCase = true)
             val audioTag = when {
                 fullText.contains("Dual Audio", ignoreCase = true) -> "Dual Audio (Hindi + English)"
                 fullText.contains("Multi Audio", ignoreCase = true) -> "Multi Audio"
@@ -231,7 +229,6 @@ class Vegamovies : Source() {
 
                 doc.select("a[href]").forEach { a ->
                     val href = a.attr("abs:href")
-                    val title = a.text().trim().ifEmpty { "Server" }
                     if (href.contains("fast-dl", ignoreCase = true)) {
                         hosters.add(Hoster("Fast 10Gbps Server", href))
                     } else if (href.contains("vcloud", ignoreCase = true)) {
@@ -271,7 +268,6 @@ class Vegamovies : Source() {
         val videoList = mutableListOf<Video>()
 
         try {
-            // Check direct extractor modules first
             when {
                 url.contains("dood", ignoreCase = true) -> videoList.addAll(doodExtractor.videosFromUrl(url))
                 url.contains("filemoon", ignoreCase = true) -> videoList.addAll(filemoonExtractor.videosFromUrl(url))
@@ -286,7 +282,6 @@ class Vegamovies : Source() {
                     val html = resp.body.string()
                     val doc = org.jsoup.Jsoup.parse(html, url)
 
-                    // 1. Scrape video links (.m3u8, .mp4, googleusercontent)
                     doc.select("a[href], button[data-url]").forEach { el ->
                         val link = el.attr("abs:href").ifEmpty { el.attr("data-url") }
                         if (link.contains(".m3u8") || link.contains(".mp4") || link.contains("googleusercontent") || link.contains(".mkv")) {
@@ -302,7 +297,6 @@ class Vegamovies : Source() {
                         }
                     }
 
-                    // 2. Scrape form actions or POST buttons
                     if (videoList.isEmpty()) {
                         val postReq = Request.Builder()
                             .url(url)
@@ -332,7 +326,6 @@ class Vegamovies : Source() {
             }
         } catch (_: Exception) {}
 
-        // Fallback to UniversalExtractor
         if (videoList.isEmpty()) {
             runCatching {
                 videoList.addAll(universalExtractor.videosFromUrl(url, headersBuilder().set("Referer", url).build()))
