@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
@@ -12,7 +13,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import keiyoushi.utils.addListPreference
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.addSetPreference
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -42,7 +43,7 @@ class Anikuro : Source() {
         isLenient = true
     }
 
-    companion object {
+    companion {
         private const val PREF_TYPE_KEY = "pref_type"
         private const val PREF_TYPE_DEFAULT = "ALL"
 
@@ -51,6 +52,9 @@ class Anikuro : Source() {
 
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
+
+        private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
+        private const val PREF_EXCLUDE_TYPE_KEY = "pref_exclude_type"
     }
 
     // ============================== Popular ===============================
@@ -77,25 +81,20 @@ class Anikuro : Source() {
                     is Filters.SortFilter -> {
                         if (!filter.isDefault()) addQueryParameter("sort", filter.selectedValue())
                     }
-
                     is Filters.FormatFilter -> {
                         if (!filter.isDefault()) addQueryParameter("format", filter.selectedValue())
                     }
-
                     is Filters.StatusFilter -> {
                         if (!filter.isDefault()) addQueryParameter("status", filter.selectedValue())
                     }
-
                     is Filters.SeasonFilter -> {
                         if (!filter.isDefault()) addQueryParameter("season", filter.selectedValue())
                     }
-
                     is Filters.GenreFilter -> {
                         filter.selectedGenres().forEach { genre ->
                             addQueryParameter("genres", genre)
                         }
                     }
-
                     else -> {}
                 }
             }
@@ -208,11 +207,14 @@ class Anikuro : Source() {
         }.reversed()
     }
 
-    // ============================ Video Links =============================
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+    // ============================ Hoster & Video Links =====================
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val parts = episode.url.split("/").filter { it.isNotBlank() }
         val animeId = parts.getOrNull(1) ?: return emptyList()
         val epNum = parts.getOrNull(2) ?: "1"
+
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+        val prefServer = preferences.getString(PREF_PROVIDER_KEY, PREF_PROVIDER_DEFAULT) ?: PREF_PROVIDER_DEFAULT
 
         val providers = listOf(
             ProviderEndpoint("AniKuro", "$baseUrl/api/v1/animepower/video/$animeId/$epNum"),
@@ -229,67 +231,77 @@ class Anikuro : Source() {
             ProviderEndpoint("AnimeVerse", "$baseUrl/api/v1/animeverse/video/$animeId/$epNum"),
         )
 
-        val prefProvider = preferences.getString(PREF_PROVIDER_KEY, PREF_PROVIDER_DEFAULT) ?: PREF_PROVIDER_DEFAULT
+        return providers.filter { it.name !in excludedServers }.map { provider ->
+            Hoster(
+                hosterName = provider.name,
+                hosterUrl = provider.url,
+            )
+        }.sortedByDescending { it.hosterName.equals(prefServer, ignoreCase = true) }
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val req = GET(hoster.hosterUrl, headers)
+        val res = runCatching { client.newCall(req).execute() }.getOrNull()
+            ?: return emptyList()
+
+        if (!res.isSuccessful) return emptyList()
+
+        val bodyStr = res.body.string()
+        val dto = runCatching { jsonSerializer.decodeFromString<ProviderResponseDto>(bodyStr) }.getOrNull()
+            ?: return emptyList()
+
+        val normalizedList = dto.data?.normalized ?: emptyList()
         val prefType = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
+        val excludedTypes = preferences.getStringSet(PREF_EXCLUDE_TYPE_KEY, emptySet()) ?: emptySet()
 
-        return providers.parallelCatchingFlatMapBlocking { provider ->
-            if (prefProvider != "ALL" && !provider.name.equals(prefProvider, ignoreCase = true)) {
-                return@parallelCatchingFlatMapBlocking emptyList()
+        return normalizedList.flatMap { norm ->
+            val variantStr = when (norm.variant?.lowercase()) {
+                "sub" -> "Sub"
+                "dub" -> "Dub"
+                "soft-sub" -> "Soft-Sub"
+                else -> norm.variant?.replaceFirstChar(Char::titlecase) ?: "Sub"
             }
 
-            val req = GET(provider.url, headers)
-            val res = runCatching { client.newCall(req).execute() }.getOrNull()
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
-
-            if (!res.isSuccessful) return@parallelCatchingFlatMapBlocking emptyList()
-
-            val bodyStr = res.body.string()
-            val dto = runCatching { jsonSerializer.decodeFromString<ProviderResponseDto>(bodyStr) }.getOrNull()
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
-
-            val normalizedList = dto.data?.normalized ?: emptyList()
-
-            normalizedList.flatMap { norm ->
-                val variantStr = norm.variant?.uppercase() ?: "SUB"
-                if (prefType != "ALL" && variantStr != prefType) {
-                    return@flatMap emptyList()
-                }
-
-                val subTracks = norm.subtitles?.mapNotNull { sub ->
-                    val subUrl = sub.url ?: return@mapNotNull null
-                    Track(subUrl, sub.label ?: sub.lang ?: "Subtitle")
-                } ?: emptyList()
-
-                val headersBuilder = headers.newBuilder()
-                norm.headers?.forEach { (k, v) ->
-                    headersBuilder.set(k, v)
-                }
-                val vidHeaders = headersBuilder.build()
-
-                norm.sources?.mapNotNull { src ->
-                    val streamUrl = src.url ?: return@mapNotNull null
-                    val qualityLabel = src.quality ?: "Default"
-                    val titleStr = "${provider.name} ($variantStr) - $qualityLabel"
-                    Video(
-                        videoUrl = streamUrl,
-                        videoTitle = titleStr,
-                        headers = vidHeaders,
-                        subtitleTracks = subTracks,
-                    )
-                } ?: emptyList()
+            if (variantStr.uppercase() in excludedTypes) {
+                return@flatMap emptyList()
             }
+
+            if (prefType != "ALL" && !variantStr.equals(prefType, ignoreCase = true)) {
+                return@flatMap emptyList()
+            }
+
+            val subTracks = norm.subtitles?.mapNotNull { sub ->
+                val subUrl = sub.url ?: return@mapNotNull null
+                Track(subUrl, sub.label ?: sub.lang ?: "Subtitle")
+            } ?: emptyList()
+
+            val headersBuilder = headers.newBuilder()
+            norm.headers?.forEach { (k, v) ->
+                headersBuilder.set(k, v)
+            }
+            val vidHeaders = headersBuilder.build()
+
+            norm.sources?.mapNotNull { src ->
+                val streamUrl = src.url ?: return@mapNotNull null
+                val qualityLabel = src.quality ?: "Default"
+                val titleStr = "$variantStr - $qualityLabel"
+                Video(
+                    videoUrl = streamUrl,
+                    videoTitle = titleStr,
+                    headers = vidHeaders,
+                    subtitleTracks = subTracks,
+                )
+            } ?: emptyList()
         }
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         val prefType = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
-        val prefProvider = preferences.getString(PREF_PROVIDER_KEY, PREF_PROVIDER_DEFAULT) ?: PREF_PROVIDER_DEFAULT
 
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefType, ignoreCase = true) }
-                .thenByDescending { if (prefProvider != "ALL") it.videoTitle.contains(prefProvider, ignoreCase = true) else true }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
+            compareByDescending<Video> { it.videoTitle.startsWith(prefType, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
         )
     }
 
@@ -323,50 +335,37 @@ class Anikuro : Source() {
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        val providerList = listOf(
+            "AniKuro",
+            "Anikoto",
+            "AnimiX",
+            "Senshi",
+            "AnimePahe",
+            "AllAnime",
+            "ReAnime",
+            "AnimeDao",
+            "AnimeGG",
+            "AniDB",
+            "AnimeDunya",
+            "AnimeVerse",
+        )
+
         screen.addListPreference(
             key = PREF_TYPE_KEY,
             title = "Preferred Audio / Type",
             default = PREF_TYPE_DEFAULT,
             summary = "%s",
-            entries = listOf("All", "Sub", "Dub"),
-            entryValues = listOf("ALL", "SUB", "DUB"),
+            entries = listOf("All", "Sub", "Dub", "Soft-Sub"),
+            entryValues = listOf("ALL", "SUB", "DUB", "SOFT-SUB"),
         )
 
         screen.addListPreference(
             key = PREF_PROVIDER_KEY,
-            title = "Preferred Provider / Server",
+            title = "Preferred Server",
             default = PREF_PROVIDER_DEFAULT,
             summary = "%s",
-            entries = listOf(
-                "All Servers",
-                "AniKuro",
-                "Anikoto",
-                "AnimiX",
-                "Senshi",
-                "AnimePahe",
-                "AllAnime",
-                "ReAnime",
-                "AnimeDao",
-                "AnimeGG",
-                "AniDB",
-                "AnimeDunya",
-                "AnimeVerse",
-            ),
-            entryValues = listOf(
-                "ALL",
-                "AniKuro",
-                "Anikoto",
-                "AnimiX",
-                "Senshi",
-                "AnimePahe",
-                "AllAnime",
-                "ReAnime",
-                "AnimeDao",
-                "AnimeGG",
-                "AniDB",
-                "AnimeDunya",
-                "AnimeVerse",
-            ),
+            entries = listOf("Auto") + providerList,
+            entryValues = listOf("ALL") + providerList,
         )
 
         screen.addListPreference(
@@ -376,6 +375,24 @@ class Anikuro : Source() {
             summary = "%s",
             entries = listOf("1080p", "720p", "480p", "360p", "Default"),
             entryValues = listOf("1080", "720", "480", "360", "Default"),
+        )
+
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_SERVERS_KEY,
+            title = "Exclude Servers",
+            summary = "Select servers to hide from the server list",
+            entries = providerList,
+            entryValues = providerList,
+            default = emptySet(),
+        )
+
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_TYPE_KEY,
+            title = "Exclude Audio Types",
+            summary = "Select audio formats to hide",
+            entries = listOf("Sub", "Dub", "Soft-Sub"),
+            entryValues = listOf("SUB", "DUB", "SOFT-SUB"),
+            default = emptySet(),
         )
     }
 
