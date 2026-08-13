@@ -411,7 +411,6 @@ class Vegamovies : Source() {
 
     private fun getServerName(href: String): String? = when {
         href.contains("fast-dl", ignoreCase = true) -> "Fast Download"
-        href.contains("vcloud", ignoreCase = true) -> "V-Cloud"
         href.contains("dood", ignoreCase = true) -> "DoodStream"
         href.contains("filemoon", ignoreCase = true) -> "Filemoon"
         href.contains("streamtape", ignoreCase = true) -> "StreamTape"
@@ -485,7 +484,7 @@ class Vegamovies : Source() {
                             val postResp = runCatching { client.newCall(postReq).execute() }.getOrNull()
                             val doc = postResp?.asJsoup() ?: client.newCall(GET(url, refHeaders)).execute().asJsoup()
 
-                            val vdLink = doc.selectFirst("a#vd, a[cf-cache]")?.attr("abs:href")
+                            val vdLink = doc.selectFirst("a#vd, a[cf-cache], a[href*='/file/']")?.attr("abs:href")
                             val finalStreamUrl = if (!vdLink.isNullOrBlank()) vdLink else url
 
                             if (finalStreamUrl.contains(".m3u8")) {
@@ -513,16 +512,18 @@ class Vegamovies : Source() {
             }
         }
 
-        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-        return videoList.sortedByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+        return videoList.sortVideos()
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val qualityOrder = listOf("2160P", "1080P", "720P", "480P", "360P")
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
+            compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+                .thenBy { video ->
+                    val index = qualityOrder.indexOfFirst { video.videoTitle.contains(it, ignoreCase = true) }
+                    if (index == -1) qualityOrder.size else index
+                },
         )
     }
 
