@@ -204,7 +204,9 @@ class Vegamovies : Source() {
                     !href.contains("telegram") && href != "$baseUrl/" && !href.contains("#")
                 ) {
                     href
-                } else null
+                } else {
+                    null
+                }
             }.distinct()
 
         val episodeHosterMap = Collections.synchronizedMap(mutableMapOf<Int, MutableList<ParsedHoster>>())
