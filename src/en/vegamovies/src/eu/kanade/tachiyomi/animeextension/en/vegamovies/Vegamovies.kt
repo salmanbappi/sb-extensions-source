@@ -464,7 +464,7 @@ class Vegamovies : Source() {
                     when {
                         url.contains("dood", ignoreCase = true) ->
                             doodExtractor.videosFromUrl(url).map { v ->
-                                Video(videoUrl = v.url, videoTitle = "$qualityLabel - ${v.quality}", headers = v.headers, subtitleTracks = v.subtitleTracks)
+                                Video(videoUrl = v.videoUrl, videoTitle = "$qualityLabel - ${v.videoTitle}", headers = v.headers, subtitleTracks = v.subtitleTracks)
                             }.let { videoList.addAll(it) }
 
                         url.contains("filemoon", ignoreCase = true) ->
