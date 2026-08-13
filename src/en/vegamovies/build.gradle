@@ -1,13 +1,14 @@
 ext {
     extName = 'Vegamovies'
     extClass = '.Vegamovies'
-    extVersionCode = 19
+    extVersionCode = 20
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
+    implementation(project(":lib:cloudflare-interceptor"))
     implementation(project(":lib:playlist-utils"))
     implementation(project(":lib:dood-extractor"))
     implementation(project(":lib:filemoon-extractor"))
