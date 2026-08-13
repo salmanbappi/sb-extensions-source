@@ -466,6 +466,33 @@ def lint_codebase(repo_root: Path) -> bool:
     return True
 
 
+def audit_all(repo_root: Path) -> bool:
+    """Runs a full repository audit: static validation, code linting, workspace cleaning, and catalog doc generation."""
+    print("🛡️ Running Master Repository Audit & Health Check...\n" + "=" * 60)
+    print("Step 1/4: Static Extension Validation")
+    v_ok = validate_extensions(repo_root)
+    print("\n" + "-" * 60)
+
+    print("Step 2/4: Kotlin Codebase Quality Linting")
+    l_ok = lint_codebase(repo_root)
+    print("\n" + "-" * 60)
+
+    print("Step 3/4: Workspace Cache & Artifact Cleaning")
+    c_ok = clean_workspace(repo_root)
+    print("\n" + "-" * 60)
+
+    print("Step 4/4: Extension Catalog Documentation Sync")
+    d_ok = generate_doc(repo_root)
+    print("\n" + "=" * 60)
+
+    success = v_ok and l_ok and c_ok and d_ok
+    if success:
+        print("🎉 Master Repository Audit Passed Cleanly!")
+    else:
+        print("⚠️ Master Repository Audit Completed with Warnings/Issues.")
+    return success
+
+
 def main():
     repo_root = Path(__file__).resolve().parent.parent
     scripts_dir = repo_root / "scripts"
@@ -542,6 +569,10 @@ def main():
         "lint": {
             "script": None,
             "desc": "Perform code quality inspection and scan for code smells across Kotlin source files."
+        },
+        "audit-all": {
+            "script": None,
+            "desc": "Run full repository health audit (validation, linting, cache cleaning, and doc catalog sync)."
         }
     }
 
@@ -602,6 +633,10 @@ Examples:
 
     if args.command == "lint":
         success = lint_codebase(repo_root)
+        sys.exit(0 if success else 1)
+
+    if args.command == "audit-all":
+        success = audit_all(repo_root)
         sys.exit(0 if success else 1)
 
     if args.command == "list-extractors":
