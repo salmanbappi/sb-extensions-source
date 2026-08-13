@@ -201,7 +201,9 @@ class Vegamovies : Source() {
                 val href = a.attr("abs:href")
                 if (href.isNotBlank() && !href.contains("telegram") && href != "$baseUrl/" && !href.contains("#")) {
                     href
-                } else null
+                } else {
+                    null
+                }
             }.distinct()
 
         val episodeHosterMap = mutableMapOf<Int, MutableList<ParsedHoster>>()
@@ -367,12 +369,16 @@ class Vegamovies : Source() {
             when {
                 src.contains("dood", ignoreCase = true) ->
                     doodExtractor.videosFromUrl(src)
+
                 src.contains("filemoon", ignoreCase = true) ->
                     filemoonExtractor.videosFromUrl(src, prefix = "${hoster.hosterName} - ", headers = refHeaders)
+
                 src.contains("streamtape", ignoreCase = true) ->
                     streamtapeExtractor.videosFromUrl(src)?.let { listOf(it) } ?: emptyList()
+
                 src.contains("streamwish", ignoreCase = true) || src.contains("awish", ignoreCase = true) ->
                     streamwishExtractor.videosFromUrl(src, prefix = "${hoster.hosterName} - ")
+
                 else ->
                     universalExtractor.videosFromUrl(src, refHeaders)
             }
