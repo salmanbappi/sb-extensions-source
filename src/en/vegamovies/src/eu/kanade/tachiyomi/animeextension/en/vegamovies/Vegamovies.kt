@@ -366,7 +366,7 @@ class Vegamovies : Source() {
         val url = hoster.hosterUrl
         val refHeaders = headersBuilder().set("Referer", url).build()
         return listOf(url).parallelCatchingFlatMap { src ->
-            when {
+            val videos: List<Video> = when {
                 src.contains("dood", ignoreCase = true) ->
                     doodExtractor.videosFromUrl(src)
 
@@ -382,6 +382,7 @@ class Vegamovies : Source() {
                 else ->
                     universalExtractor.videosFromUrl(src, refHeaders)
             }
+            videos
         }
     }
 
