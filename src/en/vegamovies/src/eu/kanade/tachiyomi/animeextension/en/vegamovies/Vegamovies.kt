@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
 import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
+import eu.kanade.tachiyomi.lib.unpacker.autoUnpacker
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.asJsoup
@@ -422,7 +423,14 @@ class Vegamovies : Source() {
                 hosterName = serverName,
                 hosterUrl = sources.joinToString(";;") { "${it.first}|${it.second}" },
             )
-        }.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
+        }.sortedByDescending { isPreferredServer(it.hosterName, prefServer) }
+    }
+
+    private fun isPreferredServer(serverName: String, prefServer: String): Boolean {
+        if (prefServer.contains("HDVB", ignoreCase = true) || prefServer.contains("Watch", ignoreCase = true)) {
+            return serverName.contains("HDVB", ignoreCase = true) || serverName.contains("Watch", ignoreCase = true)
+        }
+        return serverName.contains(prefServer, ignoreCase = true)
     }
 
     private fun getServerName(href: String): String? = when {
@@ -481,24 +489,38 @@ class Vegamovies : Source() {
                     when {
                         url.contains("hdvb", ignoreCase = true) || url.contains("watch", ignoreCase = true) || url.contains("player", ignoreCase = true) -> {
                             val hdvbResp = runCatching { client.newCall(GET(url, refHeaders)).execute() }.getOrNull()
-                            val hdvbHtml = hdvbResp?.body?.string() ?: ""
+                            val hdvbDoc = hdvbResp?.asJsoup()
+                            val hdvbHtml = hdvbDoc?.html() ?: ""
 
-                            val m3u8Match = Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(hdvbHtml)
-                                ?: Regex("""src:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(hdvbHtml)
-                                ?: Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(hdvbHtml)
+                            val scriptTexts = hdvbDoc?.select("script")?.map { it.html() } ?: emptyList()
+                            val unpackedScripts = scriptTexts.mapNotNull { autoUnpacker(it) }.joinToString("\n")
+                            val fullContent = "$hdvbHtml\n$unpackedScripts"
 
-                            val iframeSrc = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(hdvbHtml)?.groupValues?.get(1)
+                            val m3u8Match = Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(fullContent)
+                                ?: Regex("""src:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(fullContent)
+                                ?: Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(fullContent)
+                                ?: Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""", RegexOption.IGNORE_CASE).find(fullContent)
 
-                            val m3u8Url = m3u8Match?.groupValues?.get(1)
-                                ?: if (!iframeSrc.isNullOrBlank()) {
+                            var m3u8Url = m3u8Match?.groupValues?.get(1)
+
+                            if (m3u8Url.isNullOrBlank()) {
+                                val iframeSrc = hdvbDoc?.selectFirst("iframe[src]")?.attr("abs:src")
+                                    ?: hdvbDoc?.selectFirst("iframe")?.attr("src")
+                                if (!iframeSrc.isNullOrBlank()) {
                                     val embedUrl = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else iframeSrc
                                     val embedResp = runCatching { client.newCall(GET(embedUrl, refHeaders.newBuilder().set("Referer", url).build())).execute() }.getOrNull()
-                                    val embedHtml = embedResp?.body?.string() ?: ""
-                                    Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedHtml)?.groupValues?.get(1)
-                                        ?: Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedHtml)?.groupValues?.get(1)
-                                } else {
-                                    null
+                                    val embedDoc = embedResp?.asJsoup()
+                                    val embedHtml = embedDoc?.html() ?: ""
+                                    val embedScripts = embedDoc?.select("script")?.map { it.html() } ?: emptyList()
+                                    val embedUnpacked = embedScripts.mapNotNull { autoUnpacker(it) }.joinToString("\n")
+                                    val embedFull = "$embedHtml\n$embedUnpacked"
+
+                                    m3u8Url = Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedFull)?.groupValues?.get(1)
+                                        ?: Regex("""src:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedFull)?.groupValues?.get(1)
+                                        ?: Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedFull)?.groupValues?.get(1)
+                                        ?: Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""", RegexOption.IGNORE_CASE).find(embedFull)?.groupValues?.get(1)
                                 }
+                            }
 
                             if (!m3u8Url.isNullOrBlank()) {
                                 videoList.addAll(
@@ -508,14 +530,6 @@ class Vegamovies : Source() {
                                         masterHeaders = refHeaders,
                                         videoHeaders = refHeaders,
                                         videoNameGen = { q -> "HDVB Player - $q ($qualityLabel)" },
-                                    ),
-                                )
-                            } else {
-                                videoList.add(
-                                    Video(
-                                        videoUrl = url,
-                                        videoTitle = "HDVB Player - $qualityLabel",
-                                        headers = refHeaders,
                                     ),
                                 )
                             }
@@ -557,7 +571,7 @@ class Vegamovies : Source() {
                                         videoNameGen = { q -> "$qualityLabel - $q" },
                                     ),
                                 )
-                            } else {
+                            } else if (finalStreamUrl.contains(".mp4") || finalStreamUrl.contains(".mkv") || finalStreamUrl.contains(".avi") || finalStreamUrl.contains(".webm") || finalStreamUrl.contains("drive.google.com/uc") || finalStreamUrl.contains("pixeldrain")) {
                                 videoList.add(
                                     Video(
                                         videoUrl = finalStreamUrl,
@@ -585,7 +599,7 @@ class Vegamovies : Source() {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) }
+            compareByDescending<Video> { isPreferredServer(it.videoTitle, prefServer) }
                 .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
