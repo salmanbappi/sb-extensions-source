@@ -482,10 +482,12 @@ class Anikuro : Source() {
                             native = surrogate.native,
                         )
                     }
+
                     element is JsonPrimitive && element.isString -> {
                         val str = element.content
                         TitleDto(userPreferred = str, english = str, romaji = str, native = str)
                     }
+
                     else -> TitleDto()
                 }
             }.getOrDefault(TitleDto())
@@ -535,10 +537,12 @@ class Anikuro : Source() {
                         val surrogate = jsonDecoder.json.decodeFromJsonElement(CoverImageSurrogate.serializer(), element)
                         CoverImageDto(extraLarge = surrogate.extraLarge, large = surrogate.large, medium = surrogate.medium)
                     }
+
                     element is JsonPrimitive && element.isString -> {
                         val str = element.content
                         CoverImageDto(extraLarge = str, large = str, medium = str)
                     }
+
                     else -> CoverImageDto()
                 }
             }.getOrDefault(CoverImageDto())
