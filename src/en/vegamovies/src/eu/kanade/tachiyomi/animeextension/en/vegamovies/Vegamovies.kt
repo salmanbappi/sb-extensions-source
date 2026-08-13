@@ -421,31 +421,34 @@ class Vegamovies : Source() {
         val serverName = when {
             href.contains("fast-dl", ignoreCase = true) -> "Fast Download"
             href.contains("vcloud", ignoreCase = true) -> "V-Cloud"
-            href.contains("filepress", ignoreCase = true) -> "Filepress"
-            href.contains("gdtot", ignoreCase = true) -> "GDToT"
-            href.contains("dropgalaxy", ignoreCase = true) -> "DropGalaxy"
             href.contains("dood", ignoreCase = true) -> "DoodStream"
             href.contains("filemoon", ignoreCase = true) -> "Filemoon"
             href.contains("streamtape", ignoreCase = true) -> "StreamTape"
             href.contains("streamwish", ignoreCase = true) || href.contains("awish", ignoreCase = true) -> "StreamWish"
-            href.contains("vgmlinks", ignoreCase = true) -> "VGMLinks"
             else -> return null
         }
 
-        val qMatch = Regex("""(480p|720p|1080p|2160p|4k|HEVC)""", RegexOption.IGNORE_CASE).find(btnText)?.value?.uppercase()
-        val effQuality = quality.ifBlank { qMatch ?: "" }
-        val sizeMatch = Regex("""\[?([\d.]+\s*(?:MB|GB))\]?""", RegexOption.IGNORE_CASE).find(btnText)?.groupValues?.get(1)
+        val combinedText = "$btnText $quality"
+        val qMatch = Regex("""(480p|720p|1080p|2160p|4k|HEVC)""", RegexOption.IGNORE_CASE).find(combinedText)?.value?.uppercase()
+        val sizeMatch = Regex("""\[?([\d.]+\s*(?:MB|GB))\]?""", RegexOption.IGNORE_CASE).find(combinedText)?.groupValues?.get(1)
 
-        return buildString {
-            append(serverName)
-            if (effQuality.isNotBlank()) append(" [$effQuality]")
-            if (!sizeMatch.isNullOrBlank()) append(" ($sizeMatch)")
+        val parts = mutableListOf(serverName)
+        if (!qMatch.isNullOrBlank()) {
+            parts.add("- $qMatch")
         }
+        if (!sizeMatch.isNullOrBlank()) {
+            parts.add("($sizeMatch)")
+        }
+
+        return parts.joinToString(" ")
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val url = hoster.hosterUrl
-        val refHeaders = headersBuilder().set("Referer", url).build()
+        val refHeaders = headersBuilder()
+            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .set("Referer", "$baseUrl/")
+            .build()
         val videoList = mutableListOf<Video>()
 
         runCatching {
@@ -519,7 +522,7 @@ class Vegamovies : Source() {
                             videoList.add(
                                 Video(
                                     videoUrl = vdLink,
-                                    videoTitle = "${hoster.hosterName} - Direct Stream",
+                                    videoTitle = hoster.hosterName,
                                     headers = refHeaders,
                                 ),
                             )
@@ -554,18 +557,13 @@ class Vegamovies : Source() {
                     }
 
                     if (videoList.isEmpty()) {
-                        val m3u8Url = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""").find(doc.html())?.groupValues?.get(1)
-                        if (!m3u8Url.isNullOrBlank()) {
-                            videoList.addAll(
-                                playlistUtils.extractFromHls(
-                                    m3u8Url,
-                                    referer = url,
-                                    masterHeaders = refHeaders,
-                                    videoHeaders = refHeaders,
-                                    videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
-                                ),
-                            )
-                        }
+                        videoList.add(
+                            Video(
+                                videoUrl = url,
+                                videoTitle = hoster.hosterName,
+                                headers = refHeaders,
+                            ),
+                        )
                     }
                 }
             }
