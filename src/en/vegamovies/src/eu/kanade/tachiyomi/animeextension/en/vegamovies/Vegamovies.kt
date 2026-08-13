@@ -253,9 +253,6 @@ class Vegamovies : Source() {
         val sMatch = seasonRegex.find(doc.select("h1.entry-title").text()) ?: seasonRegex.find(postHtml)
         val globalSeason: Int = sMatch?.let { (it.groupValues[1].ifEmpty { it.groupValues[2] }).toIntOrNull() } ?: 1
 
-        val episodes = mutableListOf<SEpisode>()
-
-        // 1. Extract landing links (nexdrive/vcloud/fast-dl/vgmlinks)
         val landingLinks = mutableListOf<Pair<String, String>>()
         content.select("a[href]").forEach { a ->
             val href = a.attr("abs:href")
@@ -267,8 +264,9 @@ class Vegamovies : Source() {
             }
         }
 
-        // 2. Try fetching landing pages to extract TV series episode links
-        landingLinks.forEach { (landingUrl, btnText) ->
+        val detectedEpisodes = mutableSetOf<Int>()
+
+        landingLinks.forEach { (landingUrl, _) ->
             runCatching {
                 val resp = client.newCall(GET(landingUrl, headersBuilder().set("Referer", "$baseUrl/").build())).execute()
                 val lHtml = resp.body.string()
@@ -277,63 +275,57 @@ class Vegamovies : Source() {
                 epBlocks.forEach { block ->
                     val epNumMatch = Regex("""(?:Episodes?|Ep)\s*[-:]*\s*(\d+)""", RegexOption.IGNORE_CASE).find(block)
                     if (epNumMatch != null) {
-                        val epNum = epNumMatch.groupValues[1].toIntOrNull() ?: 1
-                        val bDoc = Jsoup.parse(block, landingUrl)
-                        bDoc.select("a[href]").forEach { a ->
-                            val href = a.attr("abs:href")
-                            val text = a.text().trim()
-                            val cleanName = getCleanHosterName(href, text, "")
-                            if (cleanName != null && href.startsWith("http") && episodes.none { it.url == href }) {
-                                val sStr = "S${globalSeason.toString().padStart(2, '0')}"
-                                val epName = "$sStr Episode ${epNum.toString().padStart(2, '0')} - $cleanName [$btnText]"
-                                val calculatedNum = (globalSeason * 1000f) + epNum
-                                episodes.add(
-                                    SEpisode.create().apply {
-                                        name = epName
-                                        setUrlWithoutDomain(href)
-                                        episode_number = calculatedNum
-                                        scanlator = audioTag
-                                    },
-                                )
-                            }
+                        val epNum = epNumMatch.groupValues[1].toIntOrNull()
+                        if (epNum != null) {
+                            detectedEpisodes.add(epNum)
                         }
                     }
                 }
             }
         }
 
-        // If landing pages revealed TV series episodes, return them
-        if (episodes.isNotEmpty()) {
+        if (detectedEpisodes.isNotEmpty()) {
+            val episodes = detectedEpisodes.sorted().map { epNum ->
+                val sStr = "S${globalSeason.toString().padStart(2, '0')}"
+                val epName = "$sStr Episode ${epNum.toString().padStart(2, '0')}"
+                val calculatedNum = (globalSeason * 1000f) + epNum
+                SEpisode.create().apply {
+                    name = epName
+                    setUrlWithoutDomain("${anime.url}#ep=$epNum&season=$globalSeason")
+                    episode_number = calculatedNum
+                    scanlator = audioTag
+                }
+            }
             return episodes.reversed()
         }
 
-        // Fallback: If direct episode buttons exist in post HTML
+        // Fallback: Check post directly for episode buttons
         val epRegex = Regex("""(?:Episode|Ep|\bE)\s*[-:]?\s*(\d+)""", RegexOption.IGNORE_CASE)
+        val postEpisodes = mutableSetOf<Int>()
         content.select("a[href]").forEach { a ->
-            val href = a.attr("abs:href")
             val text = a.text().trim()
             val epMatch = epRegex.find(text)
-            if (epMatch != null && href.startsWith("http") && episodes.none { it.url == href }) {
-                val epNum = epMatch.groupValues[1].toFloatOrNull() ?: 1f
-                val sStr = "S${globalSeason.toString().padStart(2, '0')}"
-                val epName = "$sStr Episode ${epMatch.groupValues[1]} - $text"
-                val calculatedNum = (globalSeason * 1000f) + epNum
-                episodes.add(
-                    SEpisode.create().apply {
-                        name = epName
-                        setUrlWithoutDomain(href)
-                        episode_number = calculatedNum
-                        scanlator = audioTag
-                    },
-                )
+            if (epMatch != null) {
+                epMatch.groupValues[1].toIntOrNull()?.let { postEpisodes.add(it) }
             }
         }
 
-        if (episodes.isNotEmpty()) {
+        if (postEpisodes.isNotEmpty()) {
+            val episodes = postEpisodes.sorted().map { epNum ->
+                val sStr = "S${globalSeason.toString().padStart(2, '0')}"
+                val epName = "$sStr Episode ${epNum.toString().padStart(2, '0')}"
+                val calculatedNum = (globalSeason * 1000f) + epNum
+                SEpisode.create().apply {
+                    name = epName
+                    setUrlWithoutDomain("${anime.url}#ep=$epNum&season=$globalSeason")
+                    episode_number = calculatedNum
+                    scanlator = audioTag
+                }
+            }
             return episodes.reversed()
         }
 
-        // 3. Otherwise (Single Movie post), return 1 Single Movie Episode
+        // Single Movie
         return listOf(
             SEpisode.create().apply {
                 name = "Full Movie"
@@ -346,19 +338,21 @@ class Vegamovies : Source() {
 
     // ============================ Video Links =============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val episodeUrl = if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}"
+        val rawUrl = if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}"
+        val basePostUrl = rawUrl.substringBefore("#")
+        val targetEp = Regex("""#ep=(\d+)""", RegexOption.IGNORE_CASE).find(rawUrl)?.groupValues?.get(1)?.toIntOrNull()
+
         val hosters = mutableListOf<Hoster>()
 
-        // 1. Direct hoster link check (fast-dl, vcloud, etc.)
-        val cleanDirectName = getCleanHosterName(episodeUrl, episode.name, "")
+        // 1. Direct hoster link check
+        val cleanDirectName = getCleanHosterName(rawUrl, episode.name, "")
         if (cleanDirectName != null) {
-            hosters.add(Hoster(cleanDirectName, episodeUrl))
+            hosters.add(Hoster(cleanDirectName, rawUrl))
             return hosters
         }
 
-        // 2. Movie post page / Landing page check
         runCatching {
-            val resp = client.newCall(GET(episodeUrl, headersBuilder().set("Referer", "$baseUrl/").build())).execute()
+            val resp = client.newCall(GET(basePostUrl, headersBuilder().set("Referer", "$baseUrl/").build())).execute()
             val doc = resp.asJsoup()
 
             val ttMatch = Regex("""src:\s*['"]?(tt\d+)['"]?""", RegexOption.IGNORE_CASE).find(doc.html())
@@ -368,14 +362,40 @@ class Vegamovies : Source() {
                 hosters.add(Hoster("Watch Online (Player)", watchUrl))
             }
 
-            // Parse nexdrive/vcloud/fast-dl landing links
+            val landingLinks = mutableListOf<Pair<String, String>>()
             doc.select("a[href]").forEach { a ->
                 val href = a.attr("abs:href")
                 val btnText = a.text().trim()
                 if (href.startsWith("http") && (href.contains("nexdrive") || href.contains("vcloud") || href.contains("vgmlinks") || href.contains("fast-dl"))) {
-                    runCatching {
-                        val nexResp = client.newCall(GET(href, headersBuilder().set("Referer", "$baseUrl/").build())).execute()
-                        val nexDoc = nexResp.asJsoup()
+                    if (landingLinks.none { it.first == href }) {
+                        landingLinks.add(Pair(href, btnText))
+                    }
+                }
+            }
+
+            landingLinks.forEach { (landingUrl, btnText) ->
+                runCatching {
+                    val nexResp = client.newCall(GET(landingUrl, headersBuilder().set("Referer", "$baseUrl/").build())).execute()
+                    val nexDoc = nexResp.asJsoup()
+                    val lHtml = nexDoc.html()
+
+                    if (targetEp != null) {
+                        val epBlocks = lHtml.split(Regex("""(?=<div[^>]+class=["']ep-title["']|<h[1-6][^>]*>|<p[^>]*>|-:\s*Episodes?:)""", RegexOption.IGNORE_CASE))
+                        epBlocks.forEach { block ->
+                            val epMatch = Regex("""(?:Episodes?|Ep)\s*[-:]*\s*(\d+)""", RegexOption.IGNORE_CASE).find(block)
+                            if (epMatch != null && epMatch.groupValues[1].toIntOrNull() == targetEp) {
+                                val bDoc = Jsoup.parse(block, landingUrl)
+                                bDoc.select("a[href]").forEach { na ->
+                                    val nHref = na.attr("abs:href")
+                                    val nText = na.text().trim()
+                                    val cleanName = getCleanHosterName(nHref, nText, btnText)
+                                    if (cleanName != null && nHref.startsWith("http") && hosters.none { it.hosterUrl == nHref }) {
+                                        hosters.add(Hoster(hosterName = cleanName, hosterUrl = nHref))
+                                    }
+                                }
+                            }
+                        }
+                    } else {
                         nexDoc.select("a[href]").forEach { na ->
                             val nHref = na.attr("abs:href")
                             val nText = na.text().trim()
@@ -390,7 +410,7 @@ class Vegamovies : Source() {
         }
 
         if (hosters.isEmpty()) {
-            hosters.add(Hoster("Direct Stream", episodeUrl))
+            hosters.add(Hoster("Direct Stream", rawUrl))
         }
 
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
