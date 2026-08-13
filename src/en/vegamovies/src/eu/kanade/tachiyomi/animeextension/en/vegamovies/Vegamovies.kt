@@ -264,7 +264,7 @@ class Vegamovies : Source() {
         content.select("a[href]").forEach { a ->
             val href = a.attr("abs:href")
             val text = a.text().trim()
-            if (href.startsWith("http") && (href.contains("nexdrive") || href.contains("vcloud") || href.contains("vgmlinks") || href.contains("fast-dl"))) {
+            if (href.startsWith("http") && (href.contains("nexdrive") || href.contains("vcloud") || href.contains("vgmlinks") || href.contains("fast-dl") || href.contains("hdvb") || href.contains("watch") || href.contains("fastcloud"))) {
                 if (landingLinks.none { it.first == href }) {
                     landingLinks.add(Pair(href, text))
                 }
@@ -359,7 +359,7 @@ class Vegamovies : Source() {
             doc.select("a[href]").forEach { a ->
                 val href = a.attr("abs:href")
                 val btnText = a.text().trim()
-                if (href.startsWith("http") && (href.contains("nexdrive") || href.contains("vcloud") || href.contains("vgmlinks") || href.contains("fast-dl"))) {
+                if (href.startsWith("http") && (href.contains("nexdrive") || href.contains("vcloud") || href.contains("vgmlinks") || href.contains("fast-dl") || href.contains("hdvb") || href.contains("watch") || href.contains("fastcloud"))) {
                     if (landingLinks.none { it.first == href }) {
                         landingLinks.add(Pair(href, btnText))
                     }
@@ -417,7 +417,8 @@ class Vegamovies : Source() {
     }
 
     private fun getServerName(href: String): String? = when {
-        href.contains("fast-dl", ignoreCase = true) -> "Fast Download"
+        href.contains("hdvb", ignoreCase = true) || href.contains("watch", ignoreCase = true) -> "HDVB Player"
+        href.contains("fast-dl", ignoreCase = true) || href.contains("fastcloud", ignoreCase = true) || href.contains("fastdownload", ignoreCase = true) -> "Fast Download"
         href.contains("vcloud", ignoreCase = true) -> "V-Cloud"
         href.contains("dood", ignoreCase = true) -> "DoodStream"
         href.contains("filemoon", ignoreCase = true) -> "Filemoon"
@@ -469,6 +470,46 @@ class Vegamovies : Source() {
 
                 runCatching {
                     when {
+                        url.contains("hdvb", ignoreCase = true) || url.contains("watch", ignoreCase = true) -> {
+                            val hdvbResp = runCatching { client.newCall(GET(url, refHeaders)).execute() }.getOrNull()
+                            val hdvbHtml = hdvbResp?.body?.string() ?: ""
+
+                            val m3u8Match = Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(hdvbHtml)
+                                ?: Regex("""src:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(hdvbHtml)
+                                ?: Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(hdvbHtml)
+
+                            val iframeSrc = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(hdvbHtml)?.groupValues?.get(1)
+
+                            val m3u8Url = m3u8Match?.groupValues?.get(1)
+                                ?: if (!iframeSrc.isNullOrBlank()) {
+                                    val embedUrl = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else iframeSrc
+                                    val embedResp = runCatching { client.newCall(GET(embedUrl, refHeaders.newBuilder().set("Referer", url).build())).execute() }.getOrNull()
+                                    val embedHtml = embedResp?.body?.string() ?: ""
+                                    Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedHtml)?.groupValues?.get(1)
+                                        ?: Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedHtml)?.groupValues?.get(1)
+                                } else null
+
+                            if (!m3u8Url.isNullOrBlank()) {
+                                videoList.addAll(
+                                    playlistUtils.extractFromHls(
+                                        m3u8Url,
+                                        referer = url,
+                                        masterHeaders = refHeaders,
+                                        videoHeaders = refHeaders,
+                                        videoNameGen = { q -> "$qualityLabel - HDVB Player ($q)" },
+                                    ),
+                                )
+                            } else {
+                                videoList.add(
+                                    Video(
+                                        videoUrl = url,
+                                        videoTitle = "$qualityLabel - HDVB Player",
+                                        headers = refHeaders,
+                                    ),
+                                )
+                            }
+                        }
+
                         url.contains("dood", ignoreCase = true) ->
                             doodExtractor.videosFromUrl(url).map { v ->
                                 Video(videoUrl = v.videoUrl, videoTitle = "$qualityLabel - ${v.videoTitle}", headers = v.headers, subtitleTracks = v.subtitleTracks)
