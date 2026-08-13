@@ -221,12 +221,14 @@ class Moviewala : Source() {
             val episodesList = mutableListOf<SEpisode>()
 
             for (season in seasons) {
-                for (episode in season.episodes) {
+                val seasonNum = season.season_number ?: continue
+                for (episode in season.episodes ?: emptyList()) {
+                    val episodeNum = episode.episode_number ?: continue
                     episodesList.add(
                         SEpisode.create().apply {
-                            url = "${anime.url}?tmdb_id=$tmdbId&season=${season.season_number}&episode=${episode.episode_number}"
-                            name = "S${season.season_number} E${episode.episode_number} ${episode.title ?: ""}".trim()
-                            episode_number = episode.episode_number.toFloat()
+                            url = "${anime.url}?tmdb_id=$tmdbId&season=$seasonNum&episode=$episodeNum"
+                            name = "S$seasonNum E$episodeNum ${episode.title ?: ""}".trim()
+                            episode_number = episodeNum.toFloat()
                         },
                     )
                 }
@@ -272,27 +274,16 @@ class Moviewala : Source() {
         Hoster(hosterName = "Silverline", hosterUrl = "$baseUrl${episode.url}"),
     )
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val uri = android.net.Uri.parse(hoster.hosterUrl)
-        val tmdbId = uri.getQueryParameter("tmdb_id") ?: throw Exception("TMDB ID not found")
-        val season = uri.getQueryParameter("season")
-        val episode = uri.getQueryParameter("episode")
-
-        val timestamp = System.currentTimeMillis() / 1000
-        val playerUrl = if (season != null && episode != null) {
-            "https://player.silverlinehub.org/?tmdb_id=$tmdbId&type=series&_=$timestamp"
-        } else {
-            "https://player.silverlinehub.org/?tmdb_id=$tmdbId&_=$timestamp"
-        }
-
+    private fun fetchPlayerHtml(playerUrl: String): String {
         val request = GET(playerUrl, headers).newBuilder()
             .header("Cache-Control", "no-cache, no-store, must-revalidate")
             .header("Pragma", "no-cache")
             .build()
-        val response = noCacheClient.newCall(request).execute()
-        val html = response.body.string()
+        return noCacheClient.newCall(request).execute().body.string()
+    }
 
-        val videoUrl = if (season != null && episode != null) {
+    private fun extractVideoUrl(html: String, season: String?, episode: String?): String {
+        return if (season != null && episode != null) {
             val seasonsRegex = Regex("""seasons\\*":\s*(\[.*?\])\s*,\s*\\*"series\\*"""")
             val seasonsJsonEscaped = seasonsRegex.find(html)?.groupValues?.get(1)
                 ?: throw Exception("Seasons data not found in player page")
@@ -303,8 +294,8 @@ class Moviewala : Source() {
                 .replace("\\u0026", "&")
 
             val seasons = myJson.decodeFromString<List<PlayerSeasonDto>>(cleanJson)
-            val matchingEpisode = seasons.firstOrNull { it.season_number == season.toInt() }
-                ?.episodes?.firstOrNull { it.episode_number == episode.toInt() }
+            val matchingEpisode = seasons.firstOrNull { it.season_number == season.toIntOrNull() }
+                ?.episodes?.firstOrNull { it.episode_number == episode.toIntOrNull() }
                 ?: throw Exception("Episode S${season}E$episode not found in player page")
 
             matchingEpisode.playback?.hls ?: throw Exception("HLS stream URL not found for episode")
@@ -318,13 +309,62 @@ class Moviewala : Source() {
                 .replace("\\u002f", "/")
                 .removeSuffix("\\")
         }
+    }
 
-        return playlistUtils.extractFromHls(
-            playlistUrl = videoUrl,
-            referer = playerUrl,
-            masterHeaders = headers,
-            videoHeaders = headers,
-        )
+    private fun isUrlExpired(url: String): Boolean {
+        val expStr = Regex("""[?&]e=(\d+)""").find(url)?.groupValues?.get(1) ?: return false
+        val exp = expStr.toLongOrNull() ?: return false
+        val now = System.currentTimeMillis() / 1000
+        return exp <= (now + 30)
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val uri = android.net.Uri.parse(hoster.hosterUrl)
+        val tmdbId = uri.getQueryParameter("tmdb_id") ?: throw Exception("TMDB ID not found")
+        val season = uri.getQueryParameter("season")
+        val episode = uri.getQueryParameter("episode")
+
+        fun getPlayerUrl(): String {
+            val timestamp = System.currentTimeMillis() / 1000
+            return if (season != null && episode != null) {
+                "https://player.silverlinehub.org/?tmdb_id=$tmdbId&type=series&_=$timestamp"
+            } else {
+                "https://player.silverlinehub.org/?tmdb_id=$tmdbId&_=$timestamp"
+            }
+        }
+
+        var playerUrl = getPlayerUrl()
+        var html = fetchPlayerHtml(playerUrl)
+        var videoUrl = extractVideoUrl(html, season, episode)
+
+        // Silverline uses Next.js ISR/CDN caching. If a video has not been accessed recently,
+        // the first response serves stale cached HTML with an expired token (HTTP 410 Gone),
+        // which triggers a background cache revalidation on their server.
+        // If the token is expired, refetch immediately to get the newly generated valid token.
+        if (isUrlExpired(videoUrl)) {
+            playerUrl = getPlayerUrl()
+            html = fetchPlayerHtml(playerUrl)
+            videoUrl = extractVideoUrl(html, season, episode)
+        }
+
+        return try {
+            playlistUtils.extractFromHls(
+                playlistUrl = videoUrl,
+                referer = playerUrl,
+                masterHeaders = headers,
+                videoHeaders = headers,
+            )
+        } catch (e: Exception) {
+            val playerUrlRetry = getPlayerUrl()
+            val retryHtml = fetchPlayerHtml(playerUrlRetry)
+            val retryVideoUrl = extractVideoUrl(retryHtml, season, episode)
+            playlistUtils.extractFromHls(
+                playlistUrl = retryVideoUrl,
+                referer = playerUrlRetry,
+                masterHeaders = headers,
+                videoHeaders = headers,
+            )
+        }
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
@@ -348,13 +388,13 @@ class Moviewala : Source() {
 
 @Serializable
 data class PlayerSeasonDto(
-    val episodes: List<PlayerEpisodeDto>,
-    val season_number: Int,
+    val episodes: List<PlayerEpisodeDto>? = emptyList(),
+    val season_number: Int? = null,
 )
 
 @Serializable
 data class PlayerEpisodeDto(
-    val episode_number: Int,
+    val episode_number: Int? = null,
     val playback: PlayerPlaybackDto? = null,
     val title: String? = null,
 )
