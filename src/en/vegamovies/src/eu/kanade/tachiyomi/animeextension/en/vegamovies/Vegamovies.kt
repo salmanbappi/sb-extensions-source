@@ -492,7 +492,7 @@ class Vegamovies : Source() {
                             val postResp = runCatching { client.newCall(postReq).execute() }.getOrNull()
                             val doc = postResp?.asJsoup() ?: client.newCall(GET(url, refHeaders)).execute().asJsoup()
 
-                            val vdLink = doc.selectFirst("a#vd, a[cf-cache], a[href*='/file/']")?.attr("abs:href")
+                            val vdLink = doc.selectFirst("a#vd, a[cf-cache], a[href*='/file/'], a.btn-success, a.download-btn, div.vd a[href]")?.attr("abs:href")
                             val finalStreamUrl = if (!vdLink.isNullOrBlank()) vdLink else url
 
                             if (finalStreamUrl.contains(".m3u8")) {
