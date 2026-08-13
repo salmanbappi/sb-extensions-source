@@ -238,13 +238,6 @@ class Vegamovies : Source() {
         val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
         val doc = response.asJsoup()
 
-        val titleText = doc.selectFirst("h1.entry-title, h3.entry-title")?.text() ?: anime.title
-        val globalSeasonMatch = Regex("""Season\s*(\d+)|\bS(\d+)\b""", RegexOption.IGNORE_CASE).find(titleText)
-        val globalSeason = (
-            globalSeasonMatch?.groupValues?.get(1)?.ifEmpty { null }
-                ?: globalSeasonMatch?.groupValues?.get(2)
-            )?.toIntOrNull()
-
         val pageText = doc.selectFirst("div.entry-content")?.text() ?: ""
         val audioTag = when {
             pageText.contains("Dual Audio", ignoreCase = true) -> "Dual Audio"
@@ -258,7 +251,7 @@ class Vegamovies : Source() {
 
         val seasonRegex = Regex("""Season\s*(\d+)|\bS(\d+)\b""", RegexOption.IGNORE_CASE)
         val sMatch = seasonRegex.find(doc.select("h1.entry-title").text()) ?: seasonRegex.find(postHtml)
-        val globalSeason = sMatch?.let { (it.groupValues[1].ifEmpty { it.groupValues[2] }).toIntOrNull() } ?: 1
+        val globalSeason: Int = sMatch?.let { (it.groupValues[1].ifEmpty { it.groupValues[2] }).toIntOrNull() } ?: 1
 
         val episodes = mutableListOf<SEpisode>()
 
