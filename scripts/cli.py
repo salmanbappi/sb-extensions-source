@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Aniyomi Extension Engine Master CLI Tool
-Unified entrypoint for AI agents and developers to scaffold, test, validate, and manage extensions.
+Unified entrypoint for AI agents and developers to scaffold, test, validate, bump version, and manage extensions.
 """
 
 import argparse
@@ -26,7 +26,6 @@ def fetch_icon(url: str, output_path: Path):
         f"{base_url}/apple-touch-icon-precomposed.png",
     ]
 
-    # Try HTML scrape for explicit icon tags
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -63,7 +62,6 @@ def fetch_icon(url: str, output_path: Path):
         print(f"  [!] Could not fetch live favicon from {url}. Icon generation requires manual placement or fallback.")
         return False
 
-    # Convert using ImageMagick 'convert' or 'magick'
     cmd = ["convert", str(temp_raw), "-background", "none", "-gravity", "center", "-extent", "200x200", "-resize", "192x192", str(output_path)]
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -72,12 +70,74 @@ def fetch_icon(url: str, output_path: Path):
             temp_raw.unlink()
         return True
     except Exception:
-        # Fallback to saving raw PNG if convert fails
         if temp_raw.exists():
             temp_raw.rename(output_path)
             print(f"  [✓] Saved raw icon to: {output_path}")
             return True
         return False
+
+
+def bump_version(repo_root: Path, target_lang: str, target_name: str) -> bool:
+    """Increments extVersionCode or overrideVersionCode in build.gradle."""
+    ext_path = repo_root / "src" / target_lang / target_name
+    gradle_file = ext_path / "build.gradle"
+    if not gradle_file.exists():
+        print(f"❌ build.gradle not found at {gradle_file}")
+        return False
+
+    content = gradle_file.read_text(encoding="utf-8")
+
+    ext_match = re.search(r"extVersionCode\s*=\s*(\d+)", content)
+    override_match = re.search(r"overrideVersionCode\s*=\s*(\d+)", content)
+
+    if ext_match:
+        old_val = int(ext_match.group(1))
+        new_val = old_val + 1
+        new_content = re.sub(r"extVersionCode\s*=\s*\d+", f"extVersionCode = {new_val}", content)
+        gradle_file.write_text(new_content, encoding="utf-8")
+        print(f"🚀 Incremented extVersionCode: {old_val} -> {new_val} in {gradle_file.relative_to(repo_root)}")
+        return True
+    elif override_match:
+        old_val = int(override_match.group(1))
+        new_val = old_val + 1
+        new_content = re.sub(r"overrideVersionCode\s*=\s*\d+", f"overrideVersionCode = {new_val}", content)
+        gradle_file.write_text(new_content, encoding="utf-8")
+        print(f"🚀 Incremented overrideVersionCode: {old_val} -> {new_val} in {gradle_file.relative_to(repo_root)}")
+        return True
+    else:
+        print(f"❌ Neither extVersionCode nor overrideVersionCode found in {gradle_file}")
+        return False
+
+
+def show_info(repo_root: Path, target_lang: str, target_name: str):
+    """Displays detailed summary of an extension module."""
+    ext_path = repo_root / "src" / target_lang / target_name
+    if not ext_path.exists():
+        print(f"❌ Extension src/{target_lang}/{target_name} not found.")
+        return
+
+    print(f"ℹ️ Module Info: src/{target_lang}/{target_name}\n" + "=" * 50)
+    gradle_file = ext_path / "build.gradle"
+    if gradle_file.exists():
+        content = gradle_file.read_text(encoding="utf-8")
+        name_m = re.search(r"extName\s*=\s*['\"]([^'\"]+)['\"]", content)
+        class_m = re.search(r"extClass\s*=\s*['\"]([^'\"]+)['\"]", content)
+        ver_m = re.search(r"(?:extVersionCode|overrideVersionCode)\s*=\s*(\d+)", content)
+        deps = re.findall(r"implementation\(project\(['\"]([^'\"]+)['\"]\)\)", content)
+
+        print(f"  • Name: {name_m.group(1) if name_m else 'Unknown'}")
+        print(f"  • Class: {class_m.group(1) if class_m else 'Unknown'}")
+        print(f"  • Version Code: {ver_m.group(1) if ver_m else 'Unknown'}")
+        print(f"  • Lib Dependencies ({len(deps)}): {', '.join(deps) if deps else 'None'}")
+
+    icon_file = ext_path / "res" / "drawable" / "ic_launcher.png"
+    manifest_file = ext_path / "AndroidManifest.xml"
+    kt_dir = ext_path / "src" / "eu" / "kanade" / "tachiyomi" / "animeextension" / target_lang / target_name
+    kt_files = list(kt_dir.glob("*.kt")) if kt_dir.exists() else []
+
+    print(f"  • Manifest: {'✓ Present' if manifest_file.exists() else '❌ Missing'}")
+    print(f"  • Launcher Icon: {'✓ Present' if icon_file.exists() else '❌ Missing'}")
+    print(f"  • Kotlin Source Files ({len(kt_files)}): {', '.join(f.name for f in kt_files)}")
 
 
 def validate_extensions(repo_root: Path, target_lang: str = None, target_name: str = None):
@@ -113,6 +173,10 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
             gradle_file = ext_path / "build.gradle"
             if not gradle_file.exists():
                 issues.append("Missing build.gradle")
+            else:
+                gradle_txt = gradle_file.read_text(encoding="utf-8")
+                if "extVersionCode" not in gradle_txt and "overrideVersionCode" not in gradle_txt:
+                    issues.append("Missing extVersionCode or overrideVersionCode in build.gradle")
 
             # 2. Check AndroidManifest.xml
             manifest_file = ext_path / "AndroidManifest.xml"
@@ -136,6 +200,8 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                 content = kt.read_text(encoding="utf-8", errors="ignore")
                 if not content.startswith(f"package {expected_pkg}"):
                     issues.append(f"Mismatched package declaration in {kt.name} (Expected: package {expected_pkg})")
+                if "getAnimeDetails" in content and "initialized = true" not in content:
+                    issues.append(f"Missing 'initialized = true' inside getAnimeDetails in {kt.name}")
 
             if issues:
                 issue_count += 1
@@ -161,6 +227,14 @@ def main():
         "validate": {
             "script": None,
             "desc": "Perform static analysis validation on extension modules without Gradle APK compilation."
+        },
+        "bump-version": {
+            "script": None,
+            "desc": "Increment extVersionCode or overrideVersionCode in build.gradle for an extension module."
+        },
+        "info": {
+            "script": None,
+            "desc": "Display detailed summary and dependency info for an extension module."
         },
         "fetch-icon": {
             "script": None,
@@ -188,14 +262,18 @@ Available Commands ({len(commands_info)} Total):
 ----------------------------------------
   1. create          {commands_info['create']['desc']}
   2. validate        {commands_info['validate']['desc']}
-  3. fetch-icon      {commands_info['fetch-icon']['desc']}
-  4. test-scraper    {commands_info['test-scraper']['desc']}
-  5. test-extractor  {commands_info['test-extractor']['desc']}
-  6. list-extractors {commands_info['list-extractors']['desc']}
+  3. bump-version    {commands_info['bump-version']['desc']}
+  4. info            {commands_info['info']['desc']}
+  5. fetch-icon      {commands_info['fetch-icon']['desc']}
+  6. test-scraper    {commands_info['test-scraper']['desc']}
+  7. test-extractor  {commands_info['test-extractor']['desc']}
+  8. list-extractors {commands_info['list-extractors']['desc']}
 
 Examples:
   python3 scripts/cli.py create --name "AnimeFlix" --lang "en" --siteType "html"
   python3 scripts/cli.py validate
+  python3 scripts/cli.py bump-version --lang "en" --name "vegamovies"
+  python3 scripts/cli.py info --lang "en" --name "vegamovies"
   python3 scripts/cli.py fetch-icon --url "https://vegamoviess.you/" --lang "en" --name "vegamovies"
   python3 scripts/cli.py test-scraper --url "https://vegamoviess.you/397593-swapnasundari-2026-hindi-audio-camrip-720p-480p-1080p.html"
   python3 scripts/cli.py list-extractors
@@ -233,6 +311,22 @@ Examples:
                 if idx + 1 < len(args.args):
                     target_name = args.args[idx + 1]
         validate_extensions(repo_root, target_lang, target_name)
+        sys.exit(0)
+
+    if args.command == "bump-version":
+        bump_parser = argparse.ArgumentParser(prog="cli.py bump-version")
+        bump_parser.add_argument("--lang", required=True, help="Target extension lang")
+        bump_parser.add_argument("--name", required=True, help="Target extension directory name")
+        bump_args = bump_parser.parse_args(args.args)
+        success = bump_version(repo_root, bump_args.lang, bump_args.name)
+        sys.exit(0 if success else 1)
+
+    if args.command == "info":
+        info_parser = argparse.ArgumentParser(prog="cli.py info")
+        info_parser.add_argument("--lang", required=True, help="Target extension lang")
+        info_parser.add_argument("--name", required=True, help="Target extension directory name")
+        info_args = info_parser.parse_args(args.args)
+        show_info(repo_root, info_args.lang, info_args.name)
         sys.exit(0)
 
     if args.command == "fetch-icon":
