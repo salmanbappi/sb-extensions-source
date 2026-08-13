@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.vegamovies
 
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -10,9 +11,9 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
 import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
-import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.asJsoup
@@ -38,7 +39,7 @@ class Vegamovies : Source() {
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
-    private val universalExtractor by lazy { UniversalExtractor(client) }
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val doodExtractor by lazy { DoodExtractor(client) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
@@ -79,13 +80,74 @@ class Vegamovies : Source() {
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val url = "$baseUrl/page/$page/?s=$encodedQuery"
+        if (query.isNotBlank()) {
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val url = "$baseUrl/page/$page/?s=$encodedQuery"
+            val response = client.newCall(GET(url, headers)).execute()
+            return parseAnimeListPage(response, page)
+        }
+
+        var categoryUrl: String? = null
+        for (filter in filters) {
+            when (filter) {
+                is CategoryFilter -> {
+                    if (!filter.isDefault()) {
+                        categoryUrl = filter.toUriPart()
+                    }
+                }
+                else -> {}
+            }
+        }
+
+        val url = if (!categoryUrl.isNullOrBlank()) {
+            if (page > 1) "$baseUrl/$categoryUrl/page/$page/" else "$baseUrl/$categoryUrl/"
+        } else {
+            if (page > 1) "$baseUrl/page/$page/" else "$baseUrl/"
+        }
+
         val response = client.newCall(GET(url, headers)).execute()
         return parseAnimeListPage(response, page)
     }
 
-    override fun getFilterList(): AnimeFilterList = AnimeFilterList()
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        AnimeFilter.Header("Text search ignores filters"),
+        CategoryFilter(),
+    )
+
+    // ============================== Filters ===============================
+    private open class UriPartFilter(
+        displayName: String,
+        private val vals: Array<Pair<String, String>>,
+    ) : AnimeFilter.Select<String>(
+        displayName,
+        vals.map { it.first }.toTypedArray(),
+    ) {
+        fun toUriPart() = vals[state].second
+        fun isDefault() = state == 0
+    }
+
+    private class CategoryFilter : UriPartFilter(
+        "Category / Type",
+        arrayOf(
+            Pair("All", ""),
+            Pair("Movies", "category/movies"),
+            Pair("TV / Web Series", "category/web-series"),
+            Pair("Bollywood Movies", "category/bollywood-movies"),
+            Pair("Hollywood Movies", "category/hollywood-movies"),
+            Pair("South Indian Movies", "category/south-indian-dubbed-movies"),
+            Pair("Hindi Dubbed Movies", "category/hindi-dubbed-movies"),
+            Pair("Korean Series", "category/korean-series"),
+            Pair("Anime", "category/anime"),
+            Pair("Netflix", "category/netflix"),
+            Pair("Amazon Prime Video", "category/amazon-prime"),
+            Pair("Disney+ Hotstar", "category/disney-plus-hotstar"),
+            Pair("Dual Audio", "category/dual-audio"),
+            Pair("4K Ultra HD", "category/4k-ultrahd"),
+            Pair("480p Movies", "category/480p-movies"),
+            Pair("720p Movies", "category/720p-movies"),
+            Pair("1080p Movies", "category/1080p-movies"),
+        ),
+    )
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
@@ -169,19 +231,15 @@ class Vegamovies : Source() {
     }
 
     // ============================== Episodes ==============================
-    // Parse episodes directly from the post DOM HTML for 100% stability.
+    // Parse multi-season & multi-episode TV series & movies from post DOM HTML.
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
         val doc = response.asJsoup()
 
         val titleText = doc.selectFirst("h1.entry-title, h3.entry-title")?.text() ?: anime.title
-        val seasonMatch = Regex("""Season\s*(\d+)""", RegexOption.IGNORE_CASE).find(titleText)
-        val seasonPrefix = if (seasonMatch != null) {
-            val sNum = seasonMatch.groupValues[1].padStart(2, '0')
-            "S$sNum "
-        } else {
-            ""
-        }
+        val globalSeasonMatch = Regex("""Season\s*(\d+)|\bS(\d+)\b""", RegexOption.IGNORE_CASE).find(titleText)
+        val globalSeason = (globalSeasonMatch?.groupValues?.get(1)?.ifEmpty { null }
+            ?: globalSeasonMatch?.groupValues?.get(2))?.toIntOrNull()
 
         val pageText = doc.selectFirst("div.entry-content")?.text() ?: ""
         val audioTag = when {
@@ -194,59 +252,110 @@ class Vegamovies : Source() {
         val content = doc.selectFirst("div.entry-content") ?: return emptyList()
 
         val episodes = mutableListOf<SEpisode>()
+        var currentSeason: Int? = globalSeason
         var currentQuality = ""
 
         val qRegex = Regex("""(480p|720p|1080p|2160p|4k|HEVC)""", RegexOption.IGNORE_CASE)
+        val seasonRegex = Regex("""Season\s*(\d+)|\bS(\d+)\b""", RegexOption.IGNORE_CASE)
         val epRegex = Regex("""(?:Episode|Ep|\bE)\s*[-:]?\s*(\d+)""", RegexOption.IGNORE_CASE)
         val sizeRegex = Regex("""\[?([\d.]+\s*(?:MB|GB))\]?""", RegexOption.IGNORE_CASE)
-        val skipHosts = setOf("telegram", "$baseUrl/", "#")
+        val skipHosts = setOf("telegram", "facebook", "twitter", "instagram", "youtube", "wp-content", "wp-includes", ".jpg", ".png", ".webp", ".jpeg", "#")
 
-        val parts = content.html().split(Regex("""(?=<h[1-6][^>]*>)""", RegexOption.IGNORE_CASE))
+        val parts = content.html().split(
+            Regex("""(?=<h[1-6][^>]*>|<p[^>]*>\s*<strong|<div[^>]*class=["'][^"']*(?:dl-|btn|box|download)[^"']*["'])""", RegexOption.IGNORE_CASE),
+        )
 
         parts.forEach { part ->
             val pDoc = Jsoup.parse(part, "$baseUrl${anime.url}")
-            val headingText = pDoc.select("h1, h2, h3, h4, h5, h6").text().trim()
-            val qMatch = qRegex.find(headingText)
+            val headerText = pDoc.select("h1, h2, h3, h4, h5, h6, strong, p").text().trim()
+
+            val sMatch = seasonRegex.find(headerText)
+            if (sMatch != null) {
+                val sNum = (sMatch.groupValues[1].ifEmpty { sMatch.groupValues[2] }).toIntOrNull()
+                if (sNum != null) {
+                    currentSeason = sNum
+                }
+            }
+
+            val qMatch = qRegex.find(headerText)
             if (qMatch != null) {
                 currentQuality = qMatch.value.uppercase()
             }
 
             pDoc.select("a[href]").forEach { a ->
                 val href = a.attr("abs:href")
-                if (href.isBlank() || skipHosts.any { href.contains(it) }) return@forEach
+                if (href.isBlank() || href == "$baseUrl/" || skipHosts.any { href.contains(it, ignoreCase = true) }) return@forEach
                 if (episodes.any { it.url == href }) return@forEach
 
-                if (href.contains("nexdrive") || href.contains("vcloud") || href.contains("fast-dl") || href.contains("vgmlinks")) {
-                    val btnText = a.text().trim()
-                    val sizeMatch = sizeRegex.find(btnText)
-                    val sizeStr = if (sizeMatch != null) " [${sizeMatch.groupValues[1]}]" else ""
+                val btnText = a.text().trim()
+                val isDownloadLink = href.contains("nexdrive") || href.contains("vcloud") ||
+                    href.contains("fast-dl") || href.contains("vgmlinks") ||
+                    href.contains("filepress") || href.contains("driveleech") ||
+                    href.contains("gdtot") || href.contains("devgdrive") ||
+                    a.hasClass("maxbutton") || a.hasClass("btn") ||
+                    btnText.contains("Download", ignoreCase = true) ||
+                    btnText.contains("Episode", ignoreCase = true) ||
+                    btnText.contains("Ep ", ignoreCase = true) ||
+                    btnText.contains("Batch", ignoreCase = true) ||
+                    btnText.contains("Zip", ignoreCase = true) ||
+                    btnText.contains("V-Cloud", ignoreCase = true) ||
+                    btnText.contains("Fast", ignoreCase = true)
 
-                    val epMatch = epRegex.find(btnText) ?: epRegex.find(headingText)
-                    val epName = if (epMatch != null) {
+                if (!isDownloadLink) return@forEach
+
+                val sizeMatch = sizeRegex.find(btnText) ?: sizeRegex.find(headerText)
+                val sizeStr = if (sizeMatch != null) " [${sizeMatch.groupValues[1]}]" else ""
+
+                val epMatch = epRegex.find(btnText) ?: epRegex.find(headerText)
+                val sPrefix = currentSeason?.let { "S${it.toString().padStart(2, '0')} " } ?: ""
+
+                val epName = when {
+                    epMatch != null -> {
                         val epNum = epMatch.groupValues[1]
-                        "${seasonPrefix}Episode $epNum$sizeStr"
-                    } else if (currentQuality.isNotBlank()) {
-                        "$currentQuality$sizeStr"
-                    } else {
-                        btnText.ifEmpty { "Download Link ${episodes.size + 1}" }
+                        val qualStr = if (currentQuality.isNotBlank() && !btnText.contains(currentQuality, ignoreCase = true)) " [$currentQuality]" else ""
+                        "${sPrefix}Episode $epNum$qualStr$sizeStr"
                     }
-
-                    episodes.add(
-                        SEpisode.create().apply {
-                            name = epName
-                            setUrlWithoutDomain(href)
-                            episode_number = (episodes.size + 1).toFloat()
-                            scanlator = audioTag
-                        },
-                    )
+                    btnText.contains("Zip", ignoreCase = true) || btnText.contains("Batch", ignoreCase = true) || btnText.contains("Complete", ignoreCase = true) -> {
+                        val qualStr = if (currentQuality.isNotBlank() && !btnText.contains(currentQuality, ignoreCase = true)) " [$currentQuality]" else ""
+                        "${sPrefix}Batch Zip$qualStr$sizeStr"
+                    }
+                    currentQuality.isNotBlank() -> {
+                        "$sPrefix$currentQuality$sizeStr"
+                    }
+                    else -> {
+                        btnText.ifEmpty { "${sPrefix}Download Link ${episodes.size + 1}" }
+                    }
                 }
+
+                val epNum = epMatch?.groupValues?.get(1)?.toFloatOrNull() ?: (episodes.size + 1).toFloat()
+                val calculatedEpNumber = if (currentSeason != null && epMatch != null) {
+                    (currentSeason!! * 1000f) + epNum
+                } else {
+                    epNum
+                }
+
+                episodes.add(
+                    SEpisode.create().apply {
+                        name = epName
+                        setUrlWithoutDomain(href)
+                        episode_number = calculatedEpNumber
+                        scanlator = audioTag
+                    },
+                )
             }
         }
 
-        if (episodes.isEmpty()) {
-            episodes.add(
+        val hasTvEpisodes = episodes.any { ep ->
+            val epName = ep.name
+            epName.contains("Episode", ignoreCase = true) ||
+                epName.contains("Ep ", ignoreCase = true) ||
+                Regex("""S\d+\s*E\d+""", RegexOption.IGNORE_CASE).containsMatchIn(epName)
+        }
+
+        if (!hasTvEpisodes || episodes.isEmpty()) {
+            return listOf(
                 SEpisode.create().apply {
-                    name = "Watch Online / Full Movie"
+                    name = "Full Movie"
                     setUrlWithoutDomain(anime.url)
                     episode_number = 1f
                     scanlator = audioTag
@@ -320,11 +429,13 @@ class Vegamovies : Source() {
             else -> return null
         }
 
+        val qMatch = Regex("""(480p|720p|1080p|2160p|4k|HEVC)""", RegexOption.IGNORE_CASE).find(btnText)?.value?.uppercase()
+        val effQuality = quality.ifBlank { qMatch ?: "" }
         val sizeMatch = Regex("""\[?([\d.]+\s*(?:MB|GB))\]?""", RegexOption.IGNORE_CASE).find(btnText)?.groupValues?.get(1)
 
         return buildString {
             append(serverName)
-            if (quality.isNotBlank()) append(" [$quality]")
+            if (effQuality.isNotBlank()) append(" [$effQuality]")
             if (!sizeMatch.isNullOrBlank()) append(" ($sizeMatch)")
         }
     }
@@ -341,14 +452,23 @@ class Vegamovies : Source() {
                     val resp = client.newCall(GET(url, refHeaders)).execute()
                     val html = resp.body.string()
                     val fileMatch = Regex("""["']file["']\s*:\s*["']([^"']+)["']""").find(html)
-                    if (fileMatch != null) {
-                        val playlistUrl = fileMatch.groupValues[1].replace("\\/", "/")
-                        val plResp = runCatching { client.newCall(GET(playlistUrl, headersBuilder().set("Referer", url).build())).execute() }.getOrNull()
-                        val plText = plResp?.body?.string() ?: ""
-                        videoList.addAll(universalExtractor.videosFromUrl(playlistUrl, refHeaders))
-                    }
-                    if (videoList.isEmpty()) {
-                        videoList.addAll(universalExtractor.videosFromUrl(url, refHeaders))
+                    val playlistUrl = fileMatch?.groupValues?.get(1)?.replace("\\/", "/")
+                        ?: Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""").find(html)?.groupValues?.get(1)
+
+                    if (!playlistUrl.isNullOrBlank()) {
+                        if (playlistUrl.contains(".m3u8")) {
+                            videoList.addAll(
+                                playlistUtils.extractFromHls(
+                                    playlistUrl,
+                                    referer = url,
+                                    masterHeaders = refHeaders,
+                                    videoHeaders = refHeaders,
+                                    videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
+                                ),
+                            )
+                        } else {
+                            videoList.add(Video(playlistUrl, "${hoster.hosterName} - Direct Stream", refHeaders))
+                        }
                     }
                 }
 
@@ -376,13 +496,25 @@ class Vegamovies : Source() {
 
                     val vdLink = doc.selectFirst("a#vd, a[cf-cache]")?.attr("abs:href")
                     if (!vdLink.isNullOrBlank()) {
-                        videoList.add(
-                            Video(
-                                videoUrl = vdLink,
-                                videoTitle = "${hoster.hosterName} - Direct Stream",
-                                headers = refHeaders,
-                            ),
-                        )
+                        if (vdLink.contains(".m3u8")) {
+                            videoList.addAll(
+                                playlistUtils.extractFromHls(
+                                    vdLink,
+                                    referer = url,
+                                    masterHeaders = refHeaders,
+                                    videoHeaders = refHeaders,
+                                    videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
+                                ),
+                            )
+                        } else {
+                            videoList.add(
+                                Video(
+                                    videoUrl = vdLink,
+                                    videoTitle = "${hoster.hosterName} - Direct Stream",
+                                    headers = refHeaders,
+                                ),
+                            )
+                        }
                     }
 
                     doc.select("a[href]").forEach { a ->
@@ -390,20 +522,40 @@ class Vegamovies : Source() {
                         if (href.startsWith("http") && !href.contains("telegram") && !href.contains("#") &&
                             href != vdLink && (href.contains("googleusercontent") || href.contains(".mp4") || href.contains(".mkv") || href.contains(".m3u8"))
                         ) {
-                            videoList.add(
-                                Video(
-                                    videoUrl = href,
-                                    videoTitle = hoster.hosterName,
-                                    headers = refHeaders,
-                                ),
-                            )
+                            if (href.contains(".m3u8")) {
+                                videoList.addAll(
+                                    playlistUtils.extractFromHls(
+                                        href,
+                                        referer = url,
+                                        masterHeaders = refHeaders,
+                                        videoHeaders = refHeaders,
+                                        videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
+                                    ),
+                                )
+                            } else {
+                                videoList.add(
+                                    Video(
+                                        videoUrl = href,
+                                        videoTitle = hoster.hosterName,
+                                        headers = refHeaders,
+                                    ),
+                                )
+                            }
                         }
                     }
 
                     if (videoList.isEmpty()) {
-                        val extracted = universalExtractor.videosFromUrl(url, refHeaders)
-                        if (extracted.isNotEmpty()) {
-                            videoList.addAll(extracted)
+                        val m3u8Url = Regex("""["']?(https?://[^"'\s]+\.m3u8[^"'\s]*)["']?""").find(doc.html())?.groupValues?.get(1)
+                        if (!m3u8Url.isNullOrBlank()) {
+                            videoList.addAll(
+                                playlistUtils.extractFromHls(
+                                    m3u8Url,
+                                    referer = url,
+                                    masterHeaders = refHeaders,
+                                    videoHeaders = refHeaders,
+                                    videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
+                                ),
+                            )
                         }
                     }
                 }
