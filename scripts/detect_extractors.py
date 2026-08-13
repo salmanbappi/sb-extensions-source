@@ -132,6 +132,10 @@ def main():
     args = parser.parse_args()
     repo_root = Path(__file__).resolve().parent.parent
 
+    if not args.url and not (args.lang and args.name):
+        parser.print_help()
+        sys.exit(1)
+
     if args.url:
         print(f"🔍 Analyzing URL: {args.url}\n")
         matches = scan_text_for_extractors(args.url)

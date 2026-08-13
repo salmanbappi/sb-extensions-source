@@ -89,7 +89,7 @@ def check_module_updates(repo_root: Path, module_name: str, upstream_key: str = 
         print(f"❌ Local module lib/{module_name} not found.")
         return False
 
-    kt_files = list(lib_dir.glob("src/main/java/**/*.kt"))
+    kt_files = list(lib_dir.glob("src/main/java/**/*.kt")) + list(lib_dir.glob("src/main/kotlin/**/*.kt"))
     if not kt_files:
         print(f"❌ No Kotlin source files found in lib/{module_name}")
         return False
@@ -124,7 +124,7 @@ def sync_module(repo_root: Path, module_name: str, upstream_key: str = "keiyoush
         print(f"❌ Local module lib/{module_name} not found.")
         return False
 
-    kt_files = list(lib_dir.glob("src/main/java/**/*.kt"))
+    kt_files = list(lib_dir.glob("src/main/java/**/*.kt")) + list(lib_dir.glob("src/main/kotlin/**/*.kt"))
     updated_count = 0
 
     for kt_path in kt_files:

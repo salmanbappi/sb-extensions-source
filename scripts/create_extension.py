@@ -516,9 +516,9 @@ def main():
     parser.add_argument("--baseUrl", default="https://example.com", help="Base URL of the target site")
     parser.add_argument("--siteType", choices=["html", "api", "theme"], default="html", help="Source architecture (html, api, theme)")
     parser.add_argument("--theme", help="Theme package name if siteType == theme (e.g. 'dooplay', 'anikototheme')")
-    parser.add_argument("--with-preferences", action="store_true", default=True, help="Include preference screen & quality sorting templates (Default: True)")
-    parser.add_argument("--with-extractors", action="store_true", default=True, help="Include common video extractors dependencies & lazy fields (Default: True)")
-    parser.add_argument("--with-metadata", action="store_true", default=True, help="Include episode thumbnail, scanlator sub/dub & upload date parsing (Default: True)")
+    parser.add_argument("--with-preferences", action="store_true", help="Include preference screen & quality sorting templates")
+    parser.add_argument("--with-extractors", action="store_true", help="Include common video extractors dependencies & lazy fields")
+    parser.add_argument("--with-metadata", action="store_true", help="Include episode thumbnail, scanlator sub/dub & upload date parsing")
     parser.add_argument("--nsfw", action="store_true", help="Set if extension contains NSFW content")
     parser.add_argument("--versionCode", type=int, default=1, help="Override version code. Default: 1")
 

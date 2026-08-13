@@ -70,7 +70,12 @@ def fetch_anilist_metadata(mal_id: str) -> Dict[str, Any]:
       }
     }
     """
-    res = http_post_json("https://graphql.anilist.co", {"query": query, "variables": {"idMal": int(mal_id)}})
+    try:
+        mal_id_int = int(mal_id)
+    except ValueError:
+        return {"streaming_episodes": {}, "banner": None}
+
+    res = http_post_json("https://graphql.anilist.co", {"query": query, "variables": {"idMal": mal_id_int}})
     result = {"streaming_episodes": {}, "banner": None}
     if res and "data" in res and res["data"].get("Media"):
         media = res["data"]["Media"]

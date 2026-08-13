@@ -200,12 +200,14 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
             expected_pkg = f"eu.kanade.tachiyomi.animeextension.{lang}.{ext_name}"
             for kt in kt_files:
                 content = kt.read_text(encoding="utf-8", errors="ignore")
-                if not content.startswith(f"package {expected_pkg}"):
+                pkg_match = re.search(r"^\s*package\s+([^\s;]+)", content, re.MULTILINE)
+                if not pkg_match or pkg_match.group(1) != expected_pkg:
                     issues.append(f"Mismatched package declaration in {kt.name} (Expected: package {expected_pkg})")
                 if "getAnimeDetails" in content and "initialized = true" not in content:
                     issues.append(f"Missing 'initialized = true' inside getAnimeDetails in {kt.name}")
                 if "ParsedAnimeHttpSource" in content:
                     issues.append(f"Legacy class 'ParsedAnimeHttpSource' found in {kt.name} (v16 Rule: Must extend extensions.utils.Source)")
+
 
 
             if issues:
