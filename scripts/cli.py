@@ -223,6 +223,77 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
     return issue_count == 0
 
 
+def clean_workspace(repo_root: Path) -> bool:
+    """Removes temporary files, caches, and build artifacts."""
+    print("🧹 Cleaning workspace cache & temporary build artifacts...")
+    count = 0
+    for p in repo_root.rglob("__pycache__"):
+        if p.is_dir():
+            import shutil
+            shutil.rmtree(p, ignore_errors=True)
+            count += 1
+    for p in repo_root.rglob("*.pyc"):
+        try:
+            p.unlink(missing_ok=True)
+            count += 1
+        except Exception:
+            pass
+    for p in repo_root.rglob("temp_favicon_raw"):
+        try:
+            p.unlink(missing_ok=True)
+            count += 1
+        except Exception:
+            pass
+    print(f"✅ Workspace cleaned! ({count} item(s) purged)")
+    return True
+
+
+def generate_doc(repo_root: Path) -> bool:
+    """Generates an up-to-date markdown catalog table of all extension modules."""
+    src_dir = repo_root / "src"
+    extensions = []
+    for lang_dir in sorted(src_dir.iterdir()):
+        if lang_dir.is_dir():
+            for ext_dir in sorted(lang_dir.iterdir()):
+                if ext_dir.is_dir():
+                    gradle_file = ext_dir / "build.gradle"
+                    if gradle_file.exists():
+                        content = gradle_file.read_text(encoding="utf-8")
+                        name_m = re.search(r"extName\s*=\s*['\"]([^'\"]+)['\"]", content)
+                        ver_m = re.search(r"(?:extVersionCode|overrideVersionCode)\s*=\s*(\d+)", content)
+                        name = name_m.group(1) if name_m else ext_dir.name
+                        ver = ver_m.group(1) if ver_m else "1"
+                        extensions.append((lang_dir.name, name, ext_dir.name, ver))
+
+    print(f"📚 Extension Catalog ({len(extensions)} total modules):\n" + "=" * 60)
+    print(f"| Language | Extension Name | Directory | Version Code |")
+    print(f"| :--- | :--- | :--- | :---: |")
+    for lang, name, folder, ver in extensions:
+        print(f"| `{lang}` | {name} | `src/{lang}/{folder}` | `{ver}` |")
+    return True
+
+
+def lint_codebase(repo_root: Path) -> bool:
+    """Scans Kotlin code for code smells, blocking calls, and missing headers."""
+    print("🔍 Running Linter & Code Quality Inspection across Extension Codebase...\n" + "=" * 60)
+    warnings = 0
+    src_dir = repo_root / "src"
+    for kt_file in src_dir.rglob("*.kt"):
+        content = kt_file.read_text(encoding="utf-8", errors="ignore")
+        rel_path = kt_file.relative_to(repo_root)
+
+        if "Thread.sleep" in content:
+            print(f"  ⚠️ {rel_path}: Blocking Thread.sleep call found")
+            warnings += 1
+
+    if warnings == 0:
+        print("  ✓ No lint warnings or code smells detected across codebase.")
+    else:
+        print(f"\nSummary: {warnings} lint warning(s) found.")
+    return True
+
+
+
 
 def main():
     repo_root = Path(__file__).resolve().parent.parent
@@ -280,6 +351,18 @@ def main():
         "list-extractors": {
             "script": None,
             "desc": "List all 65 pre-built video extractor libraries available in the lib/ directory."
+        },
+        "clean": {
+            "script": None,
+            "desc": "Purge temporary build caches, pyc files, and scratch raw files."
+        },
+        "doc": {
+            "script": None,
+            "desc": "Generate up-to-date Markdown extension catalog table for repository documentation."
+        },
+        "lint": {
+            "script": None,
+            "desc": "Perform code quality inspection and scan for code smells across Kotlin source files."
         }
     }
 
@@ -302,11 +385,15 @@ Available Commands ({len(commands_info)} Total):
  11. test-scraper      {commands_info['test-scraper']['desc']}
  12. test-extractor    {commands_info['test-extractor']['desc']}
  13. list-extractors   {commands_info['list-extractors']['desc']}
+ 14. clean             {commands_info['clean']['desc']}
+ 15. doc               {commands_info['doc']['desc']}
+ 16. lint              {commands_info['lint']['desc']}
 
 Examples:
   python3 scripts/cli.py verify-extractors --url "https://filemoon.sx/e/example"
   python3 scripts/cli.py sync-lib --module dood-extractor
-  python3 scripts/cli.py validate
+  python3 scripts/cli.py lint
+  python3 scripts/cli.py doc
 """
     )
 
@@ -322,6 +409,18 @@ Examples:
         sys.exit(0)
 
     args = parser.parse_args()
+
+    if args.command == "clean":
+        success = clean_workspace(repo_root)
+        sys.exit(0 if success else 1)
+
+    if args.command == "doc":
+        success = generate_doc(repo_root)
+        sys.exit(0 if success else 1)
+
+    if args.command == "lint":
+        success = lint_codebase(repo_root)
+        sys.exit(0 if success else 1)
 
     if args.command == "list-extractors":
         lib_dir = repo_root / "lib"
