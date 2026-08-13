@@ -169,7 +169,7 @@ class Vegamovies : Source() {
     }
 
     // ============================== Episodes ==============================
-    // Parse episodes directly from the post DOM HTML for 100% stability and zero missing episodes on reload.
+    // Parse episodes directly from the post DOM HTML for 100% stability.
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
         val doc = response.asJsoup()
@@ -246,7 +246,7 @@ class Vegamovies : Source() {
         if (episodes.isEmpty()) {
             episodes.add(
                 SEpisode.create().apply {
-                    name = "Full Movie / Stream"
+                    name = "Watch Online / Full Movie"
                     setUrlWithoutDomain(anime.url)
                     episode_number = 1f
                     scanlator = audioTag
@@ -268,7 +268,15 @@ class Vegamovies : Source() {
             ).execute()
             val doc = resp.asJsoup()
 
-            // Split nexdrive page by episode headings if present
+            // 1. Check Watch Online section (IndStreamPlayer / rasta428jem player)
+            val ttMatch = Regex("""src:\s*['"]?(tt\d+)['"]?""", RegexOption.IGNORE_CASE).find(doc.html())
+            if (ttMatch != null) {
+                val imdbId = ttMatch.groupValues[1]
+                val watchUrl = "https://rasta428jem.com/play/$imdbId"
+                hosters.add(Hoster("Watch Online (Player)", watchUrl))
+            }
+
+            // 2. Parse nexdrive / download hosters
             val nexHtml = doc.html()
             val epRegex = Regex("""Episodes?:\s*(\d+)""", RegexOption.IGNORE_CASE)
             val parts = nexHtml.split(Regex("""(?=<[^>]+class=["']ep-title[^"']*["']|<h[1-6][^>]*>)""", RegexOption.IGNORE_CASE))
@@ -328,6 +336,22 @@ class Vegamovies : Source() {
 
         runCatching {
             when {
+                url.contains("rasta428jem", ignoreCase = true) || url.contains("allmovieland", ignoreCase = true) -> {
+                    // Watch Online player
+                    val resp = client.newCall(GET(url, refHeaders)).execute()
+                    val html = resp.body.string()
+                    val fileMatch = Regex("""["']file["']\s*:\s*["']([^"']+)["']""").find(html)
+                    if (fileMatch != null) {
+                        val playlistUrl = fileMatch.groupValues[1].replace("\\/", "/")
+                        val plResp = runCatching { client.newCall(GET(playlistUrl, headersBuilder().set("Referer", url).build())).execute() }.getOrNull()
+                        val plText = plResp?.body?.string() ?: ""
+                        videoList.addAll(universalExtractor.videosFromUrl(playlistUrl, refHeaders))
+                    }
+                    if (videoList.isEmpty()) {
+                        videoList.addAll(universalExtractor.videosFromUrl(url, refHeaders))
+                    }
+                }
+
                 url.contains("dood", ignoreCase = true) ->
                     videoList.addAll(doodExtractor.videosFromUrl(url))
 
@@ -341,7 +365,7 @@ class Vegamovies : Source() {
                     videoList.addAll(streamwishExtractor.videosFromUrl(url, prefix = "${hoster.hosterName} - "))
 
                 else -> {
-                    // Issue POST request to fast-dl/vcloud hosters to resolve direct video stream URL
+                    // Submit POST request to fast-dl/vcloud hosters to resolve direct video stream URL
                     val postReq = Request.Builder()
                         .url(url)
                         .post(FormBody.Builder().build())
@@ -430,8 +454,8 @@ class Vegamovies : Source() {
             title = "Preferred Server",
             default = PREF_SERVER_DEFAULT,
             summary = "%s",
-            entries = listOf("Fast Download", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
-            entryValues = listOf("Fast Download", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
+            entries = listOf("Watch Online (Player)", "Fast Download", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
+            entryValues = listOf("Watch Online (Player)", "Fast Download", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
         )
     }
 
@@ -439,6 +463,6 @@ class Vegamovies : Source() {
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
         private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "Fast Download"
+        private const val PREF_SERVER_DEFAULT = "Watch Online (Player)"
     }
 }
