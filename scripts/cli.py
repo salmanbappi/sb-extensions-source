@@ -207,8 +207,11 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                     issues.append(f"Missing 'initialized = true' inside getAnimeDetails in {kt.name}")
                 if "ParsedAnimeHttpSource" in content:
                     issues.append(f"Legacy class 'ParsedAnimeHttpSource' found in {kt.name} (v16 Rule: Must extend extensions.utils.Source)")
-                if re.search(r"Video\s*\(\s*url\s*=", content) or re.search(r"Video\s*\([^)]*quality\s*=", content):
-                    issues.append(f"Deprecated Video constructor parameters (url=/quality=) in {kt.name} (v16 Rule: Use videoUrl= and videoTitle=)")
+                # Catch both named deprecated params (url=, quality=) and 4-arg positional form
+                has_deprecated_named = re.search(r"Video\s*\(\s*url\s*=", content) or re.search(r"Video\s*\([^)]*quality\s*=", content)
+                has_positional_4arg = re.search(r'\bVideo\s*\([^)]*,[^)]*,[^)]*,[^)]*\)', content) and not re.search(r'\bVideo\s*\(\s*videoUrl\s*=', content)
+                if has_deprecated_named or has_positional_4arg:
+                    issues.append(f"Deprecated Video constructor in {kt.name} (v16 Rule: Use Video(videoUrl=, videoTitle=, headers=))")
                 if "it.quality" in content:
                     issues.append(f"Deprecated Video property 'it.quality' in {kt.name} (v16 Rule: Use it.videoTitle)")
 
@@ -279,57 +282,72 @@ def generate_doc(repo_root: Path) -> bool:
 
 
 def lint_codebase(repo_root: Path) -> bool:
-    """Scans Kotlin code for code smells, blocking calls, anti-patterns, and missing headers."""
+    """Scans Kotlin code for code smells, blocking calls, anti-patterns, and missing headers.
+    Covers both src/ extension sources and lib/ shared extractor modules.
+    """
     print("🔍 Running Linter & Code Quality Inspection across Extension Codebase...\n" + "=" * 60)
     warnings = 0
-    src_dir = repo_root / "src"
-    for kt_file in src_dir.rglob("*.kt"):
-        content = kt_file.read_text(encoding="utf-8", errors="ignore")
-        rel_path = kt_file.relative_to(repo_root)
-        file_warnings = []
 
-        # 1. Blocking Thread.sleep call
-        if "Thread.sleep" in content:
-            file_warnings.append("Blocking Thread.sleep call found (use delay() in coroutines)")
+    # Scan both src/ (extensions) and lib/ (shared extractors) — lib/ is compiled too
+    scan_roots = [repo_root / "src", repo_root / "lib"]
 
-        # 2. Raw baseUrl string concatenation instead of absUrl()
-        if re.search(r'"\$baseUrl"\s*\+\s*\w+\.attr\(', content):
-            file_warnings.append('Manual "$baseUrl" + attr() prepend — use element.attr("abs:src") or absUrl() instead')
+    for scan_root in scan_roots:
+        if not scan_root.exists():
+            continue
+        for kt_file in sorted(scan_root.rglob("*.kt")):
+            content = kt_file.read_text(encoding="utf-8", errors="ignore")
+            rel_path = kt_file.relative_to(repo_root)
+            file_warnings = []
 
-        # 3. Date parsing without runCatching
-        date_parse = re.findall(r'SimpleDateFormat\([^)]+\)\.parse\(', content)
-        for match in date_parse:
-            # Check if it's wrapped in runCatching within ~5 lines context
-            if "runCatching" not in content[max(0, content.find(match) - 200):content.find(match) + 50]:
-                file_warnings.append(f"Date parsing without runCatching wrapping — can throw ParseException")
-                break
+            # 1. Blocking Thread.sleep call
+            if "Thread.sleep" in content:
+                file_warnings.append("Blocking Thread.sleep call found (use delay() in coroutines)")
 
-        # 4. Sequential for-loop over embed URLs instead of parallelCatchingFlatMap
-        if re.search(r'for\s*\(\w+\s+in\s+(?:hosters|embedUrls|servers|links)\)', content):
-            if "parallelCatchingFlatMap" not in content:
-                file_warnings.append("Sequential for-loop over hosters/servers — consider parallelCatchingFlatMap for parallel extraction")
+            # 2. Raw baseUrl string concatenation instead of absUrl()
+            if re.search(r'"\$baseUrl"\s*\+\s*\w+\.attr\(', content):
+                file_warnings.append('Manual "$baseUrl" + attr() prepend — use element.attr("abs:src") or absUrl() instead')
 
-        # 5. Raw json.decodeFromString without parseAs<> wrapper
-        if re.search(r'json\.decodeFromString<', content) and "parseAs<" not in content:
-            file_warnings.append("Raw json.decodeFromString<> — prefer response.parseAs<T>() wrapper pattern")
+            # 3. Date parsing without runCatching
+            for match in re.findall(r'SimpleDateFormat\([^)]+\)\.parse\(', content):
+                idx = content.find(match)
+                ctx = content[max(0, idx - 200):idx + 50]
+                if "runCatching" not in ctx:
+                    file_warnings.append("Date parsing without runCatching wrapping — can throw ParseException")
+                    break
 
-        # 6. Force-unwrap null!! on preference getString
-        if re.search(r'preferences\.getString\([^)]+\)!!', content):
-            file_warnings.append("Force-unwrap preferences.getString()!! — use ?: \"default\" fallback instead")
+            # 4. Sequential for-loop over embed URLs instead of parallelCatchingFlatMap
+            if re.search(r'for\s*\(\w+\s+in\s+(?:hosters|embedUrls|servers|links)\)', content):
+                if "parallelCatchingFlatMap" not in content:
+                    file_warnings.append("Sequential for-loop over hosters/servers — consider parallelCatchingFlatMap for parallel extraction")
 
-        # 7. Hardcoded session/CF cookies in headers
-        if re.search(r'(?:cf_clearance|PHPSESSID|__cfduid)["\']', content):
-            file_warnings.append("Hardcoded session/CF cookie literal found — cookies should be fetched dynamically")
+            # 5. Raw json.decodeFromString without parseAs<> wrapper
+            if re.search(r'json\.decodeFromString<', content) and "parseAs<" not in content:
+                file_warnings.append("Raw json.decodeFromString<> — prefer response.parseAs<T>() wrapper pattern")
 
-        # 8. Deprecated it.quality Video property
-        if "it.quality" in content:
-            file_warnings.append("Deprecated Video property 'it.quality' — use it.videoTitle (v16 API)")
+            # 6. Force-unwrap null!! on preference getString
+            if re.search(r'preferences\.getString\([^)]+\)!!', content):
+                file_warnings.append("Force-unwrap preferences.getString()!! — use ?: \"default\" fallback instead")
 
-        for w in file_warnings:
-            print(f"  ⚠️  {rel_path}: {w}")
-            warnings += len(file_warnings)
-            break  # one file-level count per file block already printed above
-        warnings += len(file_warnings) - (1 if file_warnings else 0)  # correct: count all warnings
+            # 7. Hardcoded session/CF cookies in headers
+            if re.search(r'(?:cf_clearance|PHPSESSID|__cfduid)["\']', content):
+                file_warnings.append("Hardcoded session/CF cookie literal found — cookies should be fetched dynamically")
+
+            # 8. Deprecated it.quality Video property
+            if "it.quality" in content:
+                file_warnings.append("Deprecated Video property 'it.quality' — use it.videoTitle (v16 API)")
+
+            # 9. Deprecated positional Video constructor (4-arg form: Video(url, quality, videoUrl, headers))
+            #    Matches Video(...) calls that are NOT using named parameters (videoUrl= / videoTitle=)
+            if re.search(r'\bVideo\s*\([^)]*,[^)]*,[^)]*,[^)]*\)', content):
+                if not re.search(r'\bVideo\s*\(\s*videoUrl\s*=', content):
+                    file_warnings.append(
+                        "Deprecated 4-arg positional Video(...) constructor — use Video(videoUrl=, videoTitle=, headers=) (v16 API)"
+                    )
+
+            if file_warnings:
+                for w in file_warnings:
+                    print(f"  ⚠️  {rel_path}: {w}")
+                warnings += len(file_warnings)
 
     if warnings == 0:
         print("  ✓ No lint warnings or code smells detected across codebase.")
