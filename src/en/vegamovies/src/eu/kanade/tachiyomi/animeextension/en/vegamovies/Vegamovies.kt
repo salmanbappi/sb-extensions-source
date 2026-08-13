@@ -95,6 +95,7 @@ class Vegamovies : Source() {
                         categoryUrl = filter.toUriPart()
                     }
                 }
+
                 else -> {}
             }
         }
@@ -126,28 +127,29 @@ class Vegamovies : Source() {
         fun isDefault() = state == 0
     }
 
-    private class CategoryFilter : UriPartFilter(
-        "Category / Type",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Movies", "category/movies"),
-            Pair("TV / Web Series", "category/web-series"),
-            Pair("Bollywood Movies", "category/bollywood-movies"),
-            Pair("Hollywood Movies", "category/hollywood-movies"),
-            Pair("South Indian Movies", "category/south-indian-dubbed-movies"),
-            Pair("Hindi Dubbed Movies", "category/hindi-dubbed-movies"),
-            Pair("Korean Series", "category/korean-series"),
-            Pair("Anime", "category/anime"),
-            Pair("Netflix", "category/netflix"),
-            Pair("Amazon Prime Video", "category/amazon-prime"),
-            Pair("Disney+ Hotstar", "category/disney-plus-hotstar"),
-            Pair("Dual Audio", "category/dual-audio"),
-            Pair("4K Ultra HD", "category/4k-ultrahd"),
-            Pair("480p Movies", "category/480p-movies"),
-            Pair("720p Movies", "category/720p-movies"),
-            Pair("1080p Movies", "category/1080p-movies"),
-        ),
-    )
+    private class CategoryFilter :
+        UriPartFilter(
+            "Category / Type",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Movies", "category/movies"),
+                Pair("TV / Web Series", "category/web-series"),
+                Pair("Bollywood Movies", "category/bollywood-movies"),
+                Pair("Hollywood Movies", "category/hollywood-movies"),
+                Pair("South Indian Movies", "category/south-indian-dubbed-movies"),
+                Pair("Hindi Dubbed Movies", "category/hindi-dubbed-movies"),
+                Pair("Korean Series", "category/korean-series"),
+                Pair("Anime", "category/anime"),
+                Pair("Netflix", "category/netflix"),
+                Pair("Amazon Prime Video", "category/amazon-prime"),
+                Pair("Disney+ Hotstar", "category/disney-plus-hotstar"),
+                Pair("Dual Audio", "category/dual-audio"),
+                Pair("4K Ultra HD", "category/4k-ultrahd"),
+                Pair("480p Movies", "category/480p-movies"),
+                Pair("720p Movies", "category/720p-movies"),
+                Pair("1080p Movies", "category/1080p-movies"),
+            ),
+        )
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
@@ -238,8 +240,10 @@ class Vegamovies : Source() {
 
         val titleText = doc.selectFirst("h1.entry-title, h3.entry-title")?.text() ?: anime.title
         val globalSeasonMatch = Regex("""Season\s*(\d+)|\bS(\d+)\b""", RegexOption.IGNORE_CASE).find(titleText)
-        val globalSeason = (globalSeasonMatch?.groupValues?.get(1)?.ifEmpty { null }
-            ?: globalSeasonMatch?.groupValues?.get(2))?.toIntOrNull()
+        val globalSeason = (
+            globalSeasonMatch?.groupValues?.get(1)?.ifEmpty { null }
+                ?: globalSeasonMatch?.groupValues?.get(2)
+            )?.toIntOrNull()
 
         val pageText = doc.selectFirst("div.entry-content")?.text() ?: ""
         val audioTag = when {
@@ -315,13 +319,16 @@ class Vegamovies : Source() {
                         val qualStr = if (currentQuality.isNotBlank() && !btnText.contains(currentQuality, ignoreCase = true)) " [$currentQuality]" else ""
                         "${sPrefix}Episode $epNum$qualStr$sizeStr"
                     }
+
                     btnText.contains("Zip", ignoreCase = true) || btnText.contains("Batch", ignoreCase = true) || btnText.contains("Complete", ignoreCase = true) -> {
                         val qualStr = if (currentQuality.isNotBlank() && !btnText.contains(currentQuality, ignoreCase = true)) " [$currentQuality]" else ""
                         "${sPrefix}Batch Zip$qualStr$sizeStr"
                     }
+
                     currentQuality.isNotBlank() -> {
                         "$sPrefix$currentQuality$sizeStr"
                     }
+
                     else -> {
                         btnText.ifEmpty { "${sPrefix}Download Link ${episodes.size + 1}" }
                     }
