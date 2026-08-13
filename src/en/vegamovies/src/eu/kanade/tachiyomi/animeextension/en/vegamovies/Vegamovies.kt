@@ -273,13 +273,9 @@ class Vegamovies : Source() {
                 val resp = client.newCall(GET(landingUrl, headersBuilder().set("Referer", "$baseUrl/").build())).execute()
                 val lHtml = resp.body.string()
 
-                val epBlocks = lHtml.split(Regex("""(?=<div[^>]+class=["']ep-title["']|<h[1-6][^>]*>)""", RegexOption.IGNORE_CASE))
+                val epBlocks = lHtml.split(Regex("""(?=<div[^>]+class=["']ep-title["']|<h[1-6][^>]*>|<p[^>]*>|-:\s*Episodes?:)""", RegexOption.IGNORE_CASE))
                 epBlocks.forEach { block ->
-                    val epTitleMatch = Regex("""class=["']ep-title["'][^>]*>(.*?)</div""", RegexOption.IGNORE_CASE).find(block)
-                        ?: Regex("""<h[1-6][^>]*>(.*?)</h[1-6]>""", RegexOption.IGNORE_CASE).find(block)
-                    val blockTitle = epTitleMatch?.groupValues?.get(1)?.replace(Regex("""<[^>]+>"""), "")?.trim() ?: ""
-
-                    val epNumMatch = Regex("""(?:Episodes?|Ep)\s*:\s*(\d+)""", RegexOption.IGNORE_CASE).find(blockTitle)
+                    val epNumMatch = Regex("""(?:Episodes?|Ep)\s*[-:]*\s*(\d+)""", RegexOption.IGNORE_CASE).find(block)
                     if (epNumMatch != null) {
                         val epNum = epNumMatch.groupValues[1].toIntOrNull() ?: 1
                         val bDoc = Jsoup.parse(block, landingUrl)
