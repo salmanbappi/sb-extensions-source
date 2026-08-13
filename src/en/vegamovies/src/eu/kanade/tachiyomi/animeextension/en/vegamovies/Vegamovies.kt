@@ -45,7 +45,6 @@ class Vegamovies : Source() {
     private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
     private val streamwishExtractor by lazy { StreamWishExtractor(client, headers) }
 
-
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
         val url = if (page > 1) "$baseUrl/page/$page/" else "$baseUrl/"
