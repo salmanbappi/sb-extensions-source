@@ -13,6 +13,27 @@ import urllib.request
 from pathlib import Path
 
 
+def resolve_extension_target(repo_root: Path, target: str = None, lang: str = None, name: str = None) -> tuple[str, str]:
+    """Helper to resolve (lang, name) from target positional argument (e.g. 'vegamovies' or 'en/vegamovies') or flags."""
+    src_dir = repo_root / "src"
+
+    if target:
+        if "/" in target:
+            parts = target.split("/", 1)
+            return parts[0], parts[1]
+        name = target
+        lang = None
+
+    if name:
+        if lang and (src_dir / lang / name).exists():
+            return lang, name
+        for lang_dir in sorted(src_dir.iterdir()):
+            if lang_dir.is_dir() and (lang_dir / name).exists():
+                return lang_dir.name, name
+
+    return lang, name
+
+
 def fetch_icon(url: str, output_path: Path):
     """Fetches favicon from target URL and converts it to 192x192 PNG launcher icon."""
     print(f"🔍 Fetching favicon from: {url}")
@@ -77,9 +98,14 @@ def fetch_icon(url: str, output_path: Path):
         return False
 
 
-def bump_version(repo_root: Path, target_lang: str, target_name: str) -> bool:
+def bump_version(repo_root: Path, target_lang: str = None, target_name: str = None) -> bool:
     """Increments extVersionCode or overrideVersionCode in build.gradle."""
-    ext_path = repo_root / "src" / target_lang / target_name
+    lang, name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
+    if not lang or not name:
+        print("❌ Target extension not specified or could not be resolved.")
+        return False
+
+    ext_path = repo_root / "src" / lang / name
     gradle_file = ext_path / "build.gradle"
     if not gradle_file.exists():
         print(f"❌ build.gradle not found at {gradle_file}")
@@ -109,14 +135,19 @@ def bump_version(repo_root: Path, target_lang: str, target_name: str) -> bool:
         return False
 
 
-def show_info(repo_root: Path, target_lang: str, target_name: str) -> bool:
+def show_info(repo_root: Path, target_lang: str = None, target_name: str = None) -> bool:
     """Displays detailed summary of an extension module."""
-    ext_path = repo_root / "src" / target_lang / target_name
-    if not ext_path.exists():
-        print(f"❌ Extension src/{target_lang}/{target_name} not found.")
+    lang, name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
+    if not lang or not name:
+        print("❌ Could not resolve target extension module.")
         return False
 
-    print(f"ℹ️ Module Info: src/{target_lang}/{target_name}\n" + "=" * 50)
+    ext_path = repo_root / "src" / lang / name
+    if not ext_path.exists():
+        print(f"❌ Extension src/{lang}/{name} not found.")
+        return False
+
+    print(f"ℹ️ Module Info: src/{lang}/{name}\n" + "=" * 50)
     gradle_file = ext_path / "build.gradle"
     if gradle_file.exists():
         content = gradle_file.read_text(encoding="utf-8")
@@ -132,13 +163,87 @@ def show_info(repo_root: Path, target_lang: str, target_name: str) -> bool:
 
     icon_file = ext_path / "res" / "drawable" / "ic_launcher.png"
     manifest_file = ext_path / "AndroidManifest.xml"
-    kt_dir = ext_path / "src" / "eu" / "kanade" / "tachiyomi" / "animeextension" / target_lang / target_name
+    kt_dir = ext_path / "src" / "eu" / "kanade" / "tachiyomi" / "animeextension" / lang / name
     kt_files = list(kt_dir.glob("*.kt")) if kt_dir.exists() else []
 
     print(f"  • Manifest: {'✓ Present' if manifest_file.exists() else '❌ Missing'}")
     print(f"  • Launcher Icon: {'✓ Present' if icon_file.exists() else '❌ Missing'}")
     print(f"  • Kotlin Source Files ({len(kt_files)}): {', '.join(f.name for f in kt_files)}")
     return True
+
+
+def list_extensions(repo_root: Path):
+    """Lists all available extensions with language, version code, and path."""
+    src_dir = repo_root / "src"
+    if not src_dir.exists():
+        print("❌ src/ directory not found.")
+        return
+    print("📦 Installed Extension Modules Catalog:\n" + "=" * 60)
+    total = 0
+    for lang_dir in sorted(src_dir.iterdir()):
+        if lang_dir.is_dir():
+            modules = sorted([d for d in lang_dir.iterdir() if d.is_dir()])
+            print(f"\n🌐 [{lang_dir.name}] ({len(modules)} modules):")
+            for m in modules:
+                total += 1
+                gradle_file = m / "build.gradle"
+                ver = "?"
+                if gradle_file.exists():
+                    txt = gradle_file.read_text(encoding="utf-8", errors="ignore")
+                    m_ver = re.search(r"(?:extVersionCode|overrideVersionCode)\s*=\s*(\d+)", txt)
+                    if m_ver:
+                        ver = m_ver.group(1)
+                print(f"  • {m.name:25s} (v{ver}) -> src/{lang_dir.name}/{m.name}")
+    print(f"\nTotal: {total} extension module(s) installed.")
+
+
+def publish_extension(repo_root: Path, target_lang: str = None, target_name: str = None, commit_msg: str = None) -> bool:
+    """Validates extension, bumps version code, stages git files, commits, and pushes to remote GitHub repository."""
+    lang, name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
+    if not lang or not name:
+        print("❌ Could not resolve target extension module. Usage: cli.py publish <name> [-m 'msg']")
+        return False
+
+    ext_path = repo_root / "src" / lang / name
+    if not ext_path.exists():
+        print(f"❌ Extension directory {ext_path} not found.")
+        return False
+
+    print(f"🚀 Publishing extension: src/{lang}/{name}...\n" + "=" * 60)
+
+    # 1. Run static validation
+    print("1️⃣ Running static code validation...")
+    if not validate_extensions(repo_root, lang, name):
+        print("❌ Validation failed. Fix errors before publishing.")
+        return False
+
+    # 2. Bump version
+    print("\n2️⃣ Bumping version code...")
+    if not bump_version(repo_root, lang, name):
+        print("❌ Failed to bump version code.")
+        return False
+
+    # 3. Stage changes
+    print("\n3️⃣ Staging git changes...")
+    cmd_add = ["git", "add", str(ext_path)]
+    subprocess.run(cmd_add, cwd=repo_root, check=True)
+
+    # 4. Commit
+    msg = commit_msg or f"{name}: bump version and maintenance update"
+    print(f"\n4️⃣ Committing: '{msg}'...")
+    cmd_commit = ["git", "commit", "-m", msg]
+    subprocess.run(cmd_commit, cwd=repo_root, check=True)
+
+    # 5. Push
+    print("\n5️⃣ Pushing to GitHub remote...")
+    cmd_push = ["git", "push", "origin", "master"]
+    result = subprocess.run(cmd_push, cwd=repo_root)
+    if result.returncode == 0:
+        print(f"\n🎉 Successfully published {name} (src/{lang}/{name}) to GitHub!")
+        return True
+    else:
+        print("❌ Git push failed.")
+        return False
 
 
 
@@ -356,8 +461,6 @@ def lint_codebase(repo_root: Path) -> bool:
     return True
 
 
-
-
 def main():
     repo_root = Path(__file__).resolve().parent.parent
     scripts_dir = repo_root / "scripts"
@@ -366,6 +469,14 @@ def main():
         "create": {
             "script": "create_extension.py",
             "desc": "Scaffold a new Aniyomi extension module (HTML, API, or Theme) with preferences, metadata, and extractors."
+        },
+        "list": {
+            "script": None,
+            "desc": "List all installed extension modules with their language, directory, and version code."
+        },
+        "publish": {
+            "script": None,
+            "desc": "Validate, bump version code, git commit, and push an extension to GitHub in one automated command."
         },
         "validate": {
             "script": None,
@@ -436,33 +547,32 @@ def main():
 Available Commands ({len(commands_info)} Total):
 ----------------------------------------
   1. create            {commands_info['create']['desc']}
-  2. validate          {commands_info['validate']['desc']}
-  3. bump-version      {commands_info['bump-version']['desc']}
-  4. info              {commands_info['info']['desc']}
-  5. fetch-icon        {commands_info['fetch-icon']['desc']}
-  6. fetch-metadata    {commands_info['fetch-metadata']['desc']}
-  7. auto-maintain     {commands_info['auto-maintain']['desc']}
-  8. detect-extractors {commands_info['detect-extractors']['desc']}
-  9. sync-lib          {commands_info['sync-lib']['desc']}
- 10. verify-extractors {commands_info['verify-extractors']['desc']}
- 11. test-scraper      {commands_info['test-scraper']['desc']}
- 12. test-extractor    {commands_info['test-extractor']['desc']}
- 13. list-extractors   {commands_info['list-extractors']['desc']}
- 14. clean             {commands_info['clean']['desc']}
- 15. doc               {commands_info['doc']['desc']}
- 16. lint              {commands_info['lint']['desc']}
+  2. list              {commands_info['list']['desc']}
+  3. publish           {commands_info['publish']['desc']}
+  4. validate          {commands_info['validate']['desc']}
+  5. bump-version      {commands_info['bump-version']['desc']}
+  6. info              {commands_info['info']['desc']}
+  7. fetch-icon        {commands_info['fetch-icon']['desc']}
+  8. fetch-metadata    {commands_info['fetch-metadata']['desc']}
+  9. auto-maintain     {commands_info['auto-maintain']['desc']}
+ 10. detect-extractors {commands_info['detect-extractors']['desc']}
+ 11. sync-lib          {commands_info['sync-lib']['desc']}
+ 12. verify-extractors {commands_info['verify-extractors']['desc']}
+ 13. test-scraper      {commands_info['test-scraper']['desc']}
+ 14. test-extractor    {commands_info['test-extractor']['desc']}
+ 15. list-extractors   {commands_info['list-extractors']['desc']}
+ 16. clean             {commands_info['clean']['desc']}
+ 17. doc               {commands_info['doc']['desc']}
+ 18. lint              {commands_info['lint']['desc']}
 
 Examples:
-  python3 scripts/cli.py verify-extractors --url "https://filemoon.sx/e/example"
-  python3 scripts/cli.py sync-lib --module dood-extractor
+  python3 scripts/cli.py bump-version vegamovies
+  python3 scripts/cli.py publish vegamovies -m "fix episode parsing"
+  python3 scripts/cli.py list
+  python3 scripts/cli.py info vegamovies
   python3 scripts/cli.py lint
-  python3 scripts/cli.py doc
 """
     )
-
-
-
-
 
     parser.add_argument("command", choices=list(commands_info.keys()), help="Subcommand to run")
     parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments passed to the subcommand")
@@ -472,6 +582,10 @@ Examples:
         sys.exit(0)
 
     args = parser.parse_args()
+
+    if args.command == "list":
+        list_extensions(repo_root)
+        sys.exit(0)
 
     if args.command == "clean":
         success = clean_workspace(repo_root)
@@ -497,38 +611,53 @@ Examples:
         print("\nSee .agents/skills/extractor-registry/SKILL.md for usage code snippets.")
         sys.exit(0)
 
+    if args.command == "publish":
+        pub_parser = argparse.ArgumentParser(prog="cli.py publish")
+        pub_parser.add_argument("target", nargs="?", help="Target extension name (e.g. vegamovies or en/vegamovies)")
+        pub_parser.add_argument("--lang", help="Target extension lang")
+        pub_parser.add_argument("--name", help="Target extension directory name")
+        pub_parser.add_argument("-m", "--message", help="Commit message")
+        pub_args = pub_parser.parse_args(args.args)
+        success = publish_extension(repo_root, pub_args.lang or pub_args.target, pub_args.name or pub_args.target, pub_args.message)
+        sys.exit(0 if success else 1)
+
     if args.command == "validate":
         val_parser = argparse.ArgumentParser(prog="cli.py validate")
+        val_parser.add_argument("target", nargs="?", help="Target extension name (e.g. vegamovies)")
         val_parser.add_argument("--lang", help="Target extension lang")
         val_parser.add_argument("--name", help="Target extension directory name")
-        val_args, _ = val_parser.parse_known_args(args.args)
-        success = validate_extensions(repo_root, val_args.lang, val_args.name)
+        val_args = val_parser.parse_args(args.args)
+        success = validate_extensions(repo_root, val_args.lang or val_args.target, val_args.name or val_args.target)
         sys.exit(0 if success else 1)
 
     if args.command == "bump-version":
         bump_parser = argparse.ArgumentParser(prog="cli.py bump-version")
-        bump_parser.add_argument("--lang", required=True, help="Target extension lang")
-        bump_parser.add_argument("--name", required=True, help="Target extension directory name")
+        bump_parser.add_argument("target", nargs="?", help="Target extension name (e.g. vegamovies)")
+        bump_parser.add_argument("--lang", help="Target extension lang")
+        bump_parser.add_argument("--name", help="Target extension directory name")
         bump_args = bump_parser.parse_args(args.args)
-        success = bump_version(repo_root, bump_args.lang, bump_args.name)
+        success = bump_version(repo_root, bump_args.lang or bump_args.target, bump_args.name or bump_args.target)
         sys.exit(0 if success else 1)
 
     if args.command == "info":
         info_parser = argparse.ArgumentParser(prog="cli.py info")
-        info_parser.add_argument("--lang", required=True, help="Target extension lang")
-        info_parser.add_argument("--name", required=True, help="Target extension directory name")
+        info_parser.add_argument("target", nargs="?", help="Target extension name (e.g. vegamovies)")
+        info_parser.add_argument("--lang", help="Target extension lang")
+        info_parser.add_argument("--name", help="Target extension directory name")
         info_args = info_parser.parse_args(args.args)
-        success = show_info(repo_root, info_args.lang, info_args.name)
+        success = show_info(repo_root, info_args.lang or info_args.target, info_args.name or info_args.target)
         sys.exit(0 if success else 1)
 
     if args.command == "fetch-icon":
         fetch_parser = argparse.ArgumentParser(prog="cli.py fetch-icon")
         fetch_parser.add_argument("--url", required=True, help="Target website URL")
-        fetch_parser.add_argument("--lang", default="en", help="Target extension lang")
-        fetch_parser.add_argument("--name", required=True, help="Target extension directory name")
+        fetch_parser.add_argument("target", nargs="?", help="Target extension name")
+        fetch_parser.add_argument("--lang", help="Target extension lang")
+        fetch_parser.add_argument("--name", help="Target extension directory name")
 
         icon_args = fetch_parser.parse_args(args.args)
-        out_path = repo_root / "src" / icon_args.lang / icon_args.name / "res" / "drawable" / "ic_launcher.png"
+        lang, name = resolve_extension_target(repo_root, icon_args.target, icon_args.lang, icon_args.name)
+        out_path = repo_root / "src" / (lang or "en") / (name or "") / "res" / "drawable" / "ic_launcher.png"
         success = fetch_icon(icon_args.url, out_path)
         sys.exit(0 if success else 1)
 
