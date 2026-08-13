@@ -487,7 +487,9 @@ class Vegamovies : Source() {
                                     val embedHtml = embedResp?.body?.string() ?: ""
                                     Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedHtml)?.groupValues?.get(1)
                                         ?: Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedHtml)?.groupValues?.get(1)
-                                } else null
+                                } else {
+                                    null
+                                }
 
                             if (!m3u8Url.isNullOrBlank()) {
                                 videoList.addAll(
