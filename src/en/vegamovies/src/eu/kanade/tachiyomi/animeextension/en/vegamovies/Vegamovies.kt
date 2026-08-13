@@ -17,13 +17,13 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
-import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingMapNotNull
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
 import java.net.URLEncoder
+import java.util.Collections
 
 class Vegamovies : Source() {
 
@@ -196,19 +196,18 @@ class Vegamovies : Source() {
         val content = doc.selectFirst("div.entry-content") ?: return emptyList()
 
         // Gather all download links on the page (nexdrive, vcloud, btn links)
-        val downloadAnchors = content.select("a[href*=nexdrive], a[href*=vcloud], a[href*=fast-dl], a.btn[href*=http]")
+        val downloadAnchors = content.select("a[href]")
             .mapNotNull { a ->
                 val href = a.attr("abs:href")
-                if (href.isNotBlank() && !href.contains("telegram") && href != "$baseUrl/" && !href.contains("#")) {
+                if (href.isNotBlank() && (href.contains("nexdrive") || href.contains("vcloud") || href.contains("fast-dl") || href.contains("vgmlinks")) &&
+                    !href.contains("telegram") && href != "$baseUrl/" && !href.contains("#")
+                ) {
                     href
-                } else {
-                    null
-                }
+                } else null
             }.distinct()
 
-        val episodeHosterMap = mutableMapOf<Int, MutableList<ParsedHoster>>()
-        val movieHosterList = mutableListOf<ParsedHoster>()
-        var foundAnyEpisodes = false
+        val episodeHosterMap = Collections.synchronizedMap(mutableMapOf<Int, MutableList<ParsedHoster>>())
+        val movieHosterList = Collections.synchronizedList(mutableListOf<ParsedHoster>())
 
         // Fetch redirect/nexdrive pages in parallel
         downloadAnchors.parallelCatchingMapNotNull { linkUrl ->
@@ -218,7 +217,7 @@ class Vegamovies : Source() {
                 val nexHtml = resp.body.string()
                 val nexDoc = Jsoup.parse(nexHtml, linkUrl)
 
-                // Detect quality label from page title or headings
+                // Detect quality label from page text
                 val qualityLabel = Regex("""(480p|720p|1080p|2160p|4k)""", RegexOption.IGNORE_CASE)
                     .find(nexDoc.text())?.value?.uppercase() ?: ""
 
@@ -232,7 +231,6 @@ class Vegamovies : Source() {
                     val epMatch = epRegex.find(part)
                     if (epMatch != null) {
                         hasEpInPage = true
-                        foundAnyEpisodes = true
                         val epNum = epMatch.groupValues[1].toIntOrNull() ?: 1
                         val pDoc = Jsoup.parse(part, linkUrl)
                         pDoc.select("a[href]").forEach { a ->
@@ -240,10 +238,8 @@ class Vegamovies : Source() {
                             val text = a.text().trim()
                             val hosterName = getCleanHosterName(href, text, qualityLabel)
                             if (hosterName != null) {
-                                synchronized(episodeHosterMap) {
-                                    episodeHosterMap.getOrPut(epNum) { mutableListOf() }
-                                        .add(ParsedHoster(hosterName, href))
-                                }
+                                episodeHosterMap.getOrPut(epNum) { mutableListOf() }
+                                    .add(ParsedHoster(hosterName, href))
                             }
                         }
                     }
@@ -256,9 +252,7 @@ class Vegamovies : Source() {
                         val text = a.text().trim()
                         val hosterName = getCleanHosterName(href, text, qualityLabel)
                         if (hosterName != null) {
-                            synchronized(movieHosterList) {
-                                movieHosterList.add(ParsedHoster(hosterName, href))
-                            }
+                            movieHosterList.add(ParsedHoster(hosterName, href))
                         }
                     }
                 }
@@ -267,7 +261,7 @@ class Vegamovies : Source() {
 
         val episodes = mutableListOf<SEpisode>()
 
-        if (foundAnyEpisodes && episodeHosterMap.isNotEmpty()) {
+        if (episodeHosterMap.isNotEmpty()) {
             // TV Series with individual episodes
             episodeHosterMap.keys.sorted().forEach { epNum ->
                 val hosters = episodeHosterMap[epNum] ?: emptyList()
@@ -275,7 +269,7 @@ class Vegamovies : Source() {
                 episodes.add(
                     SEpisode.create().apply {
                         name = "${seasonPrefix}Episode $epNum"
-                        setUrlWithoutDomain("EP_PAYLOAD:$payload")
+                        url = "EP_PAYLOAD:$payload"
                         episode_number = epNum.toFloat()
                         scanlator = audioTag
                     },
@@ -287,7 +281,7 @@ class Vegamovies : Source() {
             episodes.add(
                 SEpisode.create().apply {
                     name = "Full Movie"
-                    setUrlWithoutDomain(if (payload.isNotBlank()) "EP_PAYLOAD:$payload" else anime.url)
+                    url = if (payload.isNotBlank()) "EP_PAYLOAD:$payload" else anime.url
                     episode_number = 1f
                     scanlator = audioTag
                 },
@@ -325,8 +319,8 @@ class Vegamovies : Source() {
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val hosters = mutableListOf<Hoster>()
 
-        if (episode.url.startsWith("EP_PAYLOAD:")) {
-            val raw = episode.url.removePrefix("EP_PAYLOAD:")
+        if (episode.url.contains("EP_PAYLOAD:")) {
+            val raw = episode.url.substringAfter("EP_PAYLOAD:")
             raw.split(";;").forEach { item ->
                 val parts = item.split("|")
                 if (parts.size >= 2) {
@@ -365,24 +359,60 @@ class Vegamovies : Source() {
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val url = hoster.hosterUrl
         val refHeaders = headersBuilder().set("Referer", url).build()
-        return listOf(url).parallelCatchingFlatMap { src ->
+        val videoList = mutableListOf<Video>()
+
+        runCatching {
             when {
-                src.contains("dood", ignoreCase = true) ->
-                    doodExtractor.videosFromUrl(src)
+                url.contains("dood", ignoreCase = true) ->
+                    videoList.addAll(doodExtractor.videosFromUrl(url))
 
-                src.contains("filemoon", ignoreCase = true) ->
-                    filemoonExtractor.videosFromUrl(src, prefix = "${hoster.hosterName} - ", headers = refHeaders)
+                url.contains("filemoon", ignoreCase = true) ->
+                    videoList.addAll(filemoonExtractor.videosFromUrl(url, prefix = "${hoster.hosterName} - ", headers = refHeaders))
 
-                src.contains("streamtape", ignoreCase = true) ->
-                    streamtapeExtractor.videoFromUrl(src, quality = "${hoster.hosterName} - StreamTape")?.let { listOf(it) } ?: emptyList()
+                url.contains("streamtape", ignoreCase = true) ->
+                    streamtapeExtractor.videoFromUrl(url, quality = "${hoster.hosterName} - StreamTape")?.let { videoList.add(it) }
 
-                src.contains("streamwish", ignoreCase = true) || src.contains("awish", ignoreCase = true) ->
-                    streamwishExtractor.videosFromUrl(src, prefix = "${hoster.hosterName} - ")
+                url.contains("streamwish", ignoreCase = true) || url.contains("awish", ignoreCase = true) ->
+                    videoList.addAll(streamwishExtractor.videosFromUrl(url, prefix = "${hoster.hosterName} - "))
 
-                else ->
-                    universalExtractor.videosFromUrl(src, refHeaders)
+                else -> {
+                    val resp = client.newCall(GET(url, refHeaders)).execute()
+                    val doc = resp.asJsoup()
+                    doc.select("a[href]").forEach { a ->
+                        val href = a.attr("abs:href")
+                        if (href.startsWith("http") && !href.contains("telegram") && !href.contains("#") &&
+                            (href.contains(".m3u8") || href.contains(".mp4") || href.contains(".mkv") ||
+                             href.contains("googleusercontent") || href.contains("drive.google") ||
+                             href.contains("tinyurl") || href.contains("fast-dl") || href.contains("vcloud"))
+                        ) {
+                            videoList.add(
+                                Video(
+                                    videoUrl = href,
+                                    videoTitle = hoster.hosterName,
+                                    headers = refHeaders,
+                                ),
+                            )
+                        }
+                    }
+                    if (videoList.isEmpty()) {
+                        val extracted = universalExtractor.videosFromUrl(url, refHeaders)
+                        if (extracted.isNotEmpty()) {
+                            videoList.addAll(extracted)
+                        } else {
+                            videoList.add(
+                                Video(
+                                    videoUrl = url,
+                                    videoTitle = hoster.hosterName,
+                                    headers = refHeaders,
+                                ),
+                            )
+                        }
+                    }
+                }
             }
         }
+
+        return videoList
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
