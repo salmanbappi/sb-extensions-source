@@ -207,6 +207,11 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                     issues.append(f"Missing 'initialized = true' inside getAnimeDetails in {kt.name}")
                 if "ParsedAnimeHttpSource" in content:
                     issues.append(f"Legacy class 'ParsedAnimeHttpSource' found in {kt.name} (v16 Rule: Must extend extensions.utils.Source)")
+                if re.search(r"Video\s*\(\s*url\s*=", content) or re.search(r"Video\s*\([^)]*quality\s*=", content):
+                    issues.append(f"Deprecated Video constructor parameters (url=/quality=) in {kt.name} (v16 Rule: Use videoUrl= and videoTitle=)")
+                if "it.quality" in content:
+                    issues.append(f"Deprecated Video property 'it.quality' in {kt.name} (v16 Rule: Use it.videoTitle)")
+
 
 
 
