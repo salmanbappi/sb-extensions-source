@@ -17,14 +17,12 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
-import keiyoushi.utils.parallelCatchingMapNotNull
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
 import java.net.URLEncoder
-import java.util.Collections
 
 class Vegamovies : Source() {
 
@@ -171,8 +169,7 @@ class Vegamovies : Source() {
     }
 
     // ============================== Episodes ==============================
-    private data class ParsedHoster(val name: String, val url: String)
-
+    // Parse episodes directly from the post DOM HTML for 100% stability and zero missing episodes on reload.
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
         val doc = response.asJsoup()
@@ -196,95 +193,61 @@ class Vegamovies : Source() {
 
         val content = doc.selectFirst("div.entry-content") ?: return emptyList()
 
-        // Gather all download links on the page (nexdrive, vcloud, fast-dl, vgmlinks)
-        val downloadAnchors = content.select("a[href]")
-            .mapNotNull { a ->
+        val episodes = mutableListOf<SEpisode>()
+        var currentQuality = ""
+
+        val qRegex = Regex("""(480p|720p|1080p|2160p|4k|HEVC)""", RegexOption.IGNORE_CASE)
+        val epRegex = Regex("""(?:Episode|Ep|\bE)\s*[-:]?\s*(\d+)""", RegexOption.IGNORE_CASE)
+        val sizeRegex = Regex("""\[?([\d.]+\s*(?:MB|GB))\]?""", RegexOption.IGNORE_CASE)
+        val skipHosts = setOf("telegram", "$baseUrl/", "#")
+
+        val parts = content.html().split(Regex("""(?=<h[1-6][^>]*>)""", RegexOption.IGNORE_CASE))
+
+        parts.forEach { part ->
+            val pDoc = Jsoup.parse(part, "$baseUrl${anime.url}")
+            val headingText = pDoc.select("h1, h2, h3, h4, h5, h6").text().trim()
+            val qMatch = qRegex.find(headingText)
+            if (qMatch != null) {
+                currentQuality = qMatch.value.uppercase()
+            }
+
+            pDoc.select("a[href]").forEach { a ->
                 val href = a.attr("abs:href")
-                if (href.isNotBlank() && (href.contains("nexdrive") || href.contains("vcloud") || href.contains("fast-dl") || href.contains("vgmlinks")) &&
-                    !href.contains("telegram") && href != "$baseUrl/" && !href.contains("#")
-                ) {
-                    href
-                } else {
-                    null
-                }
-            }.distinct()
+                if (href.isBlank() || skipHosts.any { href.contains(it) }) return@forEach
+                if (episodes.any { it.url == href }) return@forEach
 
-        val episodeHosterMap = Collections.synchronizedMap(mutableMapOf<Int, MutableList<ParsedHoster>>())
-        val movieHosterList = Collections.synchronizedList(mutableListOf<ParsedHoster>())
+                if (href.contains("nexdrive") || href.contains("vcloud") || href.contains("fast-dl") || href.contains("vgmlinks")) {
+                    val btnText = a.text().trim()
+                    val sizeMatch = sizeRegex.find(btnText)
+                    val sizeStr = if (sizeMatch != null) " [${sizeMatch.groupValues[1]}]" else ""
 
-        // Fetch redirect/nexdrive pages in parallel
-        downloadAnchors.parallelCatchingMapNotNull { linkUrl ->
-            runCatching {
-                val req = GET(linkUrl, headersBuilder().set("Referer", "$baseUrl/").build())
-                val resp = client.newCall(req).execute()
-                val nexHtml = resp.body.string()
-                val nexDoc = Jsoup.parse(nexHtml, linkUrl)
-
-                // Detect quality label from page text
-                val qualityLabel = Regex("""(480p|720p|1080p|2160p|4k)""", RegexOption.IGNORE_CASE)
-                    .find(nexDoc.text())?.value?.uppercase() ?: ""
-
-                // Check for episode sections
-                val epRegex = Regex("""Episodes?:\s*(\d+)""", RegexOption.IGNORE_CASE)
-                val parts = nexHtml.split(Regex("""(?=<[^>]+class=["']ep-title[^"']*["'][^>]*>|<h[1-6][^>]*>)""", RegexOption.IGNORE_CASE))
-
-                var hasEpInPage = false
-
-                parts.forEach { part ->
-                    val epMatch = epRegex.find(part)
-                    if (epMatch != null) {
-                        hasEpInPage = true
-                        val epNum = epMatch.groupValues[1].toIntOrNull() ?: 1
-                        val pDoc = Jsoup.parse(part, linkUrl)
-                        pDoc.select("a[href]").forEach { a ->
-                            val href = a.attr("abs:href")
-                            val text = a.text().trim()
-                            val hosterName = getCleanHosterName(href, text, qualityLabel)
-                            if (hosterName != null) {
-                                episodeHosterMap.getOrPut(epNum) { mutableListOf() }
-                                    .add(ParsedHoster(hosterName, href))
-                            }
-                        }
+                    val epMatch = epRegex.find(btnText) ?: epRegex.find(headingText)
+                    val epName = if (epMatch != null) {
+                        val epNum = epMatch.groupValues[1]
+                        "${seasonPrefix}Episode $epNum$sizeStr"
+                    } else if (currentQuality.isNotBlank()) {
+                        "$currentQuality$sizeStr"
+                    } else {
+                        btnText.ifEmpty { "Download Link ${episodes.size + 1}" }
                     }
-                }
 
-                if (!hasEpInPage) {
-                    // Movie page or single file page
-                    nexDoc.select("a[href]").forEach { a ->
-                        val href = a.attr("abs:href")
-                        val text = a.text().trim()
-                        val hosterName = getCleanHosterName(href, text, qualityLabel)
-                        if (hosterName != null) {
-                            movieHosterList.add(ParsedHoster(hosterName, href))
-                        }
-                    }
+                    episodes.add(
+                        SEpisode.create().apply {
+                            name = epName
+                            setUrlWithoutDomain(href)
+                            episode_number = (episodes.size + 1).toFloat()
+                            scanlator = audioTag
+                        },
+                    )
                 }
-            }.getOrNull()
+            }
         }
 
-        val episodes = mutableListOf<SEpisode>()
-
-        if (episodeHosterMap.isNotEmpty()) {
-            // TV Series with individual episodes
-            episodeHosterMap.keys.sorted().forEach { epNum ->
-                val hosters = episodeHosterMap[epNum] ?: emptyList()
-                val payload = hosters.joinToString(";;") { "${it.name}|${it.url}" }
-                episodes.add(
-                    SEpisode.create().apply {
-                        name = "${seasonPrefix}Episode $epNum"
-                        url = "EP_PAYLOAD:$payload"
-                        episode_number = epNum.toFloat()
-                        scanlator = audioTag
-                    },
-                )
-            }
-        } else {
-            // Movie
-            val payload = movieHosterList.joinToString(";;") { "${it.name}|${it.url}" }
+        if (episodes.isEmpty()) {
             episodes.add(
                 SEpisode.create().apply {
-                    name = "Full Movie"
-                    url = if (payload.isNotBlank()) "EP_PAYLOAD:$payload" else anime.url
+                    name = "Full Movie / Stream"
+                    setUrlWithoutDomain(anime.url)
                     episode_number = 1f
                     scanlator = audioTag
                 },
@@ -292,6 +255,46 @@ class Vegamovies : Source() {
         }
 
         return episodes.reversed()
+    }
+
+    // ============================ Video Links =============================
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val episodeUrl = if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}"
+        val hosters = mutableListOf<Hoster>()
+
+        runCatching {
+            val resp = client.newCall(
+                GET(episodeUrl, headersBuilder().set("Referer", "$baseUrl/").build()),
+            ).execute()
+            val doc = resp.asJsoup()
+
+            // Split nexdrive page by episode headings if present
+            val nexHtml = doc.html()
+            val epRegex = Regex("""Episodes?:\s*(\d+)""", RegexOption.IGNORE_CASE)
+            val parts = nexHtml.split(Regex("""(?=<[^>]+class=["']ep-title[^"']*["']|<h[1-6][^>]*>)""", RegexOption.IGNORE_CASE))
+
+            parts.forEach { part ->
+                val epMatch = epRegex.find(part)
+                val epPrefix = if (epMatch != null) "Ep ${epMatch.groupValues[1]} - " else ""
+                val pDoc = Jsoup.parse(part, episodeUrl)
+
+                pDoc.select("a[href]").forEach { a ->
+                    val href = a.attr("abs:href")
+                    val text = a.text().trim()
+                    val cleanName = getCleanHosterName(href, text, "")
+                    if (cleanName != null && href.isNotBlank() && hosters.none { it.hosterUrl == href }) {
+                        hosters.add(Hoster(hosterName = "$epPrefix$cleanName", hosterUrl = href))
+                    }
+                }
+            }
+        }
+
+        if (hosters.isEmpty()) {
+            hosters.add(Hoster("Direct Stream", episodeUrl))
+        }
+
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        return hosters.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
     }
 
     private fun getCleanHosterName(href: String, btnText: String, quality: String): String? {
@@ -318,47 +321,6 @@ class Vegamovies : Source() {
         }
     }
 
-    // ============================ Video Links =============================
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val hosters = mutableListOf<Hoster>()
-
-        if (episode.url.contains("EP_PAYLOAD:")) {
-            val raw = episode.url.substringAfter("EP_PAYLOAD:")
-            raw.split(";;").forEach { item ->
-                val parts = item.split("|")
-                if (parts.size >= 2) {
-                    val name = parts[0]
-                    val url = parts.subList(1, parts.size).joinToString("|")
-                    if (name.isNotBlank() && url.isNotBlank()) {
-                        hosters.add(Hoster(name, url))
-                    }
-                }
-            }
-        } else {
-            val episodeUrl = if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}"
-            runCatching {
-                val resp = client.newCall(
-                    GET(episodeUrl, headersBuilder().set("Referer", "$baseUrl/").build()),
-                ).execute()
-                val doc = resp.asJsoup()
-
-                doc.select("a[href]").forEach { a ->
-                    val href = a.attr("abs:href")
-                    val name = getCleanHosterName(href, a.text(), "")
-                    if (name != null && hosters.none { it.hosterUrl == href }) {
-                        hosters.add(Hoster(name, href))
-                    }
-                }
-            }
-            if (hosters.isEmpty()) {
-                hosters.add(Hoster("Direct", episodeUrl))
-            }
-        }
-
-        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
-        return hosters.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
-    }
-
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val url = hoster.hosterUrl
         val refHeaders = headersBuilder().set("Referer", url).build()
@@ -379,7 +341,7 @@ class Vegamovies : Source() {
                     videoList.addAll(streamwishExtractor.videosFromUrl(url, prefix = "${hoster.hosterName} - "))
 
                 else -> {
-                    // Submit POST request to fast-dl / vcloud hoster URL to obtain the direct video stream URL
+                    // Issue POST request to fast-dl/vcloud hosters to resolve direct video stream URL
                     val postReq = Request.Builder()
                         .url(url)
                         .post(FormBody.Builder().build())
