@@ -197,7 +197,7 @@ def list_extensions(repo_root: Path):
     print(f"\nTotal: {total} extension module(s) installed.")
 
 
-def publish_extension(repo_root: Path, target_lang: str = None, target_name: str = None, commit_msg: str = None) -> bool:
+def publish_extension(repo_root: Path, target_lang: str = None, target_name: str = None, commit_msg: str = None, no_bump: bool = False) -> bool:
     """Validates extension, bumps version code, stages git files, commits, and pushes to remote GitHub repository."""
     lang, name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
     if not lang or not name:
@@ -218,10 +218,13 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
         return False
 
     # 2. Bump version
-    print("\n2️⃣ Bumping version code...")
-    if not bump_version(repo_root, lang, name):
-        print("❌ Failed to bump version code.")
-        return False
+    if no_bump:
+        print("\n2️⃣ Skipping version code bump (--no-bump specified).")
+    else:
+        print("\n2️⃣ Bumping version code...")
+        if not bump_version(repo_root, lang, name):
+            print("❌ Failed to bump version code.")
+            return False
 
     # 3. Stage changes
     print("\n3️⃣ Staging git changes...")
@@ -234,9 +237,19 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
     cmd_commit = ["git", "commit", "-m", msg]
     subprocess.run(cmd_commit, cwd=repo_root, check=True)
 
-    # 5. Push
-    print("\n5️⃣ Pushing to GitHub remote...")
-    cmd_push = ["git", "push", "origin", "master"]
+    # 5. Detect active branch dynamically
+    active_branch = "master"
+    try:
+        branch_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root, capture_output=True, text=True, check=True)
+        branch_name = branch_res.stdout.strip()
+        if branch_name and branch_name != "HEAD":
+            active_branch = branch_name
+    except Exception:
+        pass
+
+    # 6. Push
+    print(f"\n5️⃣ Pushing to GitHub remote (origin/{active_branch})...")
+    cmd_push = ["git", "push", "origin", active_branch]
     result = subprocess.run(cmd_push, cwd=repo_root)
     if result.returncode == 0:
         print(f"\n🎉 Successfully published {name} (src/{lang}/{name}) to GitHub!")
@@ -657,8 +670,9 @@ Examples:
         pub_parser.add_argument("--lang", help="Target extension lang")
         pub_parser.add_argument("--name", help="Target extension directory name")
         pub_parser.add_argument("-m", "--message", help="Commit message")
+        pub_parser.add_argument("--no-bump", action="store_true", help="Skip version bump if version code was already incremented")
         pub_args = pub_parser.parse_args(args.args)
-        success = publish_extension(repo_root, pub_args.lang or pub_args.target, pub_args.name or pub_args.target, pub_args.message)
+        success = publish_extension(repo_root, pub_args.lang or pub_args.target, pub_args.name or pub_args.target, pub_args.message, no_bump=pub_args.no_bump)
         sys.exit(0 if success else 1)
 
     if args.command == "validate":
