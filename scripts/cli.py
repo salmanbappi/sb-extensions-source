@@ -240,6 +240,14 @@ def main():
             "script": None,
             "desc": "Download website favicon and convert it into res/drawable/ic_launcher.png."
         },
+        "fetch-metadata": {
+            "script": "fetch_metadata.py",
+            "desc": "Fetch and merge anime/movie episode metadata from external APIs (Jikan, AniList, Kitsu, TMDB)."
+        },
+        "detect-extractors": {
+            "script": "detect_extractors.py",
+            "desc": "Auto-detect required video extractors from embed URLs or extension codebase, and update build.gradle dependencies."
+        },
         "test-scraper": {
             "script": "test_scraper.py",
             "desc": "Test live HTTP requests, Jsoup CSS selectors, regex patterns, or JSON API payloads locally without Gradle."
@@ -260,25 +268,25 @@ def main():
         epilog=f"""
 Available Commands ({len(commands_info)} Total):
 ----------------------------------------
-  1. create          {commands_info['create']['desc']}
-  2. validate        {commands_info['validate']['desc']}
-  3. bump-version    {commands_info['bump-version']['desc']}
-  4. info            {commands_info['info']['desc']}
-  5. fetch-icon      {commands_info['fetch-icon']['desc']}
-  6. test-scraper    {commands_info['test-scraper']['desc']}
-  7. test-extractor  {commands_info['test-extractor']['desc']}
-  8. list-extractors {commands_info['list-extractors']['desc']}
+  1. create            {commands_info['create']['desc']}
+  2. validate          {commands_info['validate']['desc']}
+  3. bump-version      {commands_info['bump-version']['desc']}
+  4. info              {commands_info['info']['desc']}
+  5. fetch-icon        {commands_info['fetch-icon']['desc']}
+  6. fetch-metadata    {commands_info['fetch-metadata']['desc']}
+  7. detect-extractors {commands_info['detect-extractors']['desc']}
+  8. test-scraper      {commands_info['test-scraper']['desc']}
+  9. test-extractor    {commands_info['test-extractor']['desc']}
+ 10. list-extractors   {commands_info['list-extractors']['desc']}
 
 Examples:
   python3 scripts/cli.py create --name "AnimeFlix" --lang "en" --siteType "html"
+  python3 scripts/cli.py detect-extractors --url "https://filemoon.sx/e/example"
+  python3 scripts/cli.py fetch-metadata --mal-id 21 --title "One Piece"
   python3 scripts/cli.py validate
-  python3 scripts/cli.py bump-version --lang "en" --name "vegamovies"
-  python3 scripts/cli.py info --lang "en" --name "vegamovies"
-  python3 scripts/cli.py fetch-icon --url "https://vegamoviess.you/" --lang "en" --name "vegamovies"
-  python3 scripts/cli.py test-scraper --url "https://vegamoviess.you/397593-swapnasundari-2026-hindi-audio-camrip-720p-480p-1080p.html"
-  python3 scripts/cli.py list-extractors
 """
     )
+
 
     parser.add_argument("command", choices=list(commands_info.keys()), help="Subcommand to run")
     parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments passed to the subcommand")
