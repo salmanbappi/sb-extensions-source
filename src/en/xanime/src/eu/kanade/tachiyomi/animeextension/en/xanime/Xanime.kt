@@ -7,12 +7,14 @@ import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -355,8 +357,29 @@ class Xanime : Source() {
 
                     if (excludedTypes.any { it.equals(srcType, ignoreCase = true) }) continue
 
+                    val subtitleTracks = mutableListOf<Track>()
+                    val trackRef = resolveRef(obj["track"], objs)
+                    if (trackRef is JsonArray) {
+                        for (tItem in trackRef) {
+                            val tObj = (resolveRef(tItem, objs) as? JsonObject) ?: (tItem as? JsonObject) ?: continue
+                            val label = resolveString(tObj["label"], objs) ?: "Subtitle"
+                            val trackPath = resolveString(tObj["trackPath"], objs) ?: continue
+                            if (trackPath.isNotBlank()) {
+                                subtitleTracks.add(Track(url = fixSubUrl(trackPath), lang = label))
+                            }
+                        }
+                    }
+
+                    val encodedSubs = if (subtitleTracks.isNotEmpty()) {
+                        "|subs=" + subtitleTracks.joinToString(";") { sub ->
+                            "${sub.lang.replace(";", "").replace("=", "")}=${sub.url}"
+                        }
+                    } else {
+                        ""
+                    }
+
                     val name = "$srcType - Server $srcName"
-                    hosterList.add(Hoster(hosterName = name, hosterUrl = souPath))
+                    hosterList.add(Hoster(hosterName = name, hosterUrl = "$souPath$encodedSubs"))
                 }
             }
         }
@@ -365,13 +388,31 @@ class Xanime : Source() {
         return hosterList.sortedByDescending { it.hosterName.startsWith(prefType, ignoreCase = true) }
     }
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> = playlistUtils.extractFromHls(
-        playlistUrl = hoster.hosterUrl,
-        referer = "$baseUrl/",
-        masterHeaders = headers,
-        videoHeaders = headers,
-        videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
-    )
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val parts = hoster.hosterUrl.split("|subs=")
+        val playlistUrl = parts[0]
+        val subtitles = if (parts.size > 1 && parts[1].isNotBlank()) {
+            parts[1].split(";").mapNotNull { subStr ->
+                val subParts = subStr.split("=", limit = 2)
+                if (subParts.size == 2 && subParts[1].isNotBlank()) {
+                    Track(url = subParts[1], lang = subParts[0])
+                } else {
+                    null
+                }
+            }
+        } else {
+            emptyList()
+        }
+
+        return playlistUtils.extractFromHls(
+            playlistUrl = playlistUrl,
+            referer = "$baseUrl/",
+            masterHeaders = headers,
+            videoHeaders = headers,
+            videoNameGen = { quality -> "${hoster.hosterName} - $quality" },
+            subtitleList = subtitles,
+        )
+    }
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
@@ -453,7 +494,7 @@ class Xanime : Source() {
     }
 
     private fun resolveRef(ref: JsonElement?, objs: List<JsonElement>): JsonElement? {
-        val strVal = getJsonString(ref) ?: return ref
+        val strVal = getJsonString(ref)?.removeSuffix("!") ?: return ref
         val idx = strVal.toIntOrNull(36) ?: return ref
         return if (idx in 0 until objs.size) objs[idx] else ref
     }
@@ -461,6 +502,16 @@ class Xanime : Source() {
     private fun resolveString(ref: JsonElement?, objs: List<JsonElement>): String? {
         val resolved = resolveRef(ref, objs)
         return getJsonString(resolved)
+    }
+
+    private fun fixSubUrl(url: String): String {
+        if (url.isBlank()) return ""
+        return when {
+            url.startsWith("http://") || url.startsWith("https://") -> url
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("/") -> "$baseUrl$url"
+            else -> "$baseUrl/$url"
+        }
     }
 
     private fun fixCoverUrl(url: String): String {
