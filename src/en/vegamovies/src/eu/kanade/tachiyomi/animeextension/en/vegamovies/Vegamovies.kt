@@ -151,6 +151,10 @@ class Vegamovies : Source() {
             status = SAnime.COMPLETED
             initialized = true
             description = buildString {
+                if (!plotText.isNullOrBlank()) {
+                    append(plotText)
+                    append("\n\n")
+                }
                 (infoMap["imdb rating"] ?: infoMap["imdb"])?.let { append("IMDb Rating: $it\n") }
                 infoMap["movie name"]?.let { append("Movie Name: $it\n") }
                 infoMap["release year"]?.let { append("Release Year: $it\n") }
@@ -161,10 +165,6 @@ class Vegamovies : Source() {
                 infoMap["quality"]?.let { append("Quality: $it\n") }
                 genreText?.let { append("Genres: $it\n") }
                 infoMap["cast"]?.let { append("Cast: $it\n") }
-                if (!plotText.isNullOrBlank()) {
-                    if (isNotEmpty()) append("\n")
-                    append("Plot Synopsis\n$plotText")
-                }
             }.trim()
         }
     }
