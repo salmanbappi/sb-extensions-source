@@ -228,14 +228,14 @@ def generate_html_kotlin_source(lang: str, pkg_name: str, class_name: str, base_
         val prefServer = preferences.getString(PREF_SERVER_KEY, "DoodStream") ?: "DoodStream"
 
         return sortedWith(
-            compareByDescending<Video> { it.quality.contains(prefServer, ignoreCase = true) }
-                .thenByDescending { it.quality.contains(prefQuality, ignoreCase = true) }
+            compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
         )
     }
 """ if with_prefs else ""
 
     companion_block = f"""
-    companion {{
+    companion object {{
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_SERVER_KEY = "pref_server"
         private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd", Locale.US)
@@ -311,7 +311,7 @@ class {class_name} : Source() {{
 
     override fun videoFromElement(element: Element): Video {{
         val videoUrl = element.attr("abs:src")
-        return Video(videoUrl, "Standard", videoUrl)
+        return Video(videoUrl = videoUrl, videoTitle = "Standard")
     }}
 
     override fun videoUrlParse(document: Document): String = ""
@@ -389,13 +389,13 @@ def generate_api_kotlin_source(lang: str, pkg_name: str, class_name: str, base_u
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, "1080p") ?: "1080p"
         return sortedWith(
-            compareByDescending<Video> { it.quality.contains(prefQuality, ignoreCase = true) }
+            compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) }
         )
     }
 """ if with_prefs else ""
 
     companion_block = f"""
-    companion {{
+    companion object {{
         private const val PREF_QUALITY_KEY = "pref_quality"
     }}
 """ if with_prefs else ""
@@ -465,7 +465,7 @@ class {class_name} : AnimeHttpSource() {{
     override fun videoListParse(response: Response): List<Video> {{
         val streams = response.parseAs<List<StreamDto>>()
         return streams.map {{ stream ->
-            Video(stream.url, stream.quality ?: "Auto", stream.url)
+            Video(videoUrl = stream.url, videoTitle = stream.quality ?: "Auto")
         }}
     }}
 {sort_videos_block}
