@@ -53,9 +53,7 @@ class Vegamovies : Source() {
     }
 
     // ============================== Latest ================================
-    override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        return getPopularAnime(page)
-    }
+    override suspend fun getLatestUpdates(page: Int): AnimesPage = getPopularAnime(page)
 
     private fun parseAnimeListPage(response: Response, page: Int): AnimesPage {
         val doc = response.asJsoup()
@@ -166,7 +164,7 @@ class Vegamovies : Source() {
                     setUrlWithoutDomain(href)
                     episode_number = (episodes.size + 1).toFloat()
                     scanlator = if (fullText.contains("Dual", ignoreCase = true)) "Dual Audio" else "Sub / Dub"
-                }
+                },
             )
         }
 
@@ -176,7 +174,7 @@ class Vegamovies : Source() {
                     name = "Full Movie / Watch Stream"
                     setUrlWithoutDomain(anime.url)
                     episode_number = 1f
-                }
+                },
             )
         }
 
@@ -239,8 +237,8 @@ class Vegamovies : Source() {
                             Video(
                                 videoUrl = videoUrl,
                                 videoTitle = "${hoster.hosterName} - Direct Stream",
-                                headers = headersBuilder().set("Referer", url).build()
-                            )
+                                headers = headersBuilder().set("Referer", url).build(),
+                            ),
                         )
                     }
                 }
@@ -260,8 +258,8 @@ class Vegamovies : Source() {
                             Video(
                                 videoUrl = videoUrl,
                                 videoTitle = "${hoster.hosterName} - Direct Stream",
-                                headers = headersBuilder().set("Referer", url).build()
-                            )
+                                headers = headersBuilder().set("Referer", url).build(),
+                            ),
                         )
                     }
                 }
@@ -283,7 +281,7 @@ class Vegamovies : Source() {
 
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
 
