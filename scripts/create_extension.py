@@ -123,12 +123,12 @@ def generate_html_kotlin_source(lang: str, pkg_name: str, class_name: str, base_
         "import android.content.SharedPreferences",
         "import androidx.preference.ListPreference",
         "import androidx.preference.PreferenceScreen",
+        "import extensions.utils.Source",
         "import eu.kanade.tachiyomi.animesource.model.AnimeFilterList",
         "import eu.kanade.tachiyomi.animesource.model.AnimesPage",
         "import eu.kanade.tachiyomi.animesource.model.SAnime",
         "import eu.kanade.tachiyomi.animesource.model.SEpisode",
         "import eu.kanade.tachiyomi.animesource.model.Video",
-        "import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource",
         "import eu.kanade.tachiyomi.network.GET",
         "import okhttp3.Request",
         "import okhttp3.Response",
@@ -246,7 +246,7 @@ def generate_html_kotlin_source(lang: str, pkg_name: str, class_name: str, base_
 
 {import_block}
 
-class {class_name} : ParsedAnimeHttpSource() {{
+class {class_name} : Source() {{
 
     override val name = "{class_name}"
 

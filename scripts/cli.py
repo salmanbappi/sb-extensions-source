@@ -202,6 +202,9 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                     issues.append(f"Mismatched package declaration in {kt.name} (Expected: package {expected_pkg})")
                 if "getAnimeDetails" in content and "initialized = true" not in content:
                     issues.append(f"Missing 'initialized = true' inside getAnimeDetails in {kt.name}")
+                if "ParsedAnimeHttpSource" in content:
+                    issues.append(f"Legacy class 'ParsedAnimeHttpSource' found in {kt.name} (v16 Rule: Must extend extensions.utils.Source)")
+
 
             if issues:
                 issue_count += 1
