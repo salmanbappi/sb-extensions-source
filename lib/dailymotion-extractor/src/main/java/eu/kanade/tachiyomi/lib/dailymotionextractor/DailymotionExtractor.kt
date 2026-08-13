@@ -29,6 +29,8 @@ class DailymotionExtractor(private val client: OkHttpClient, private val headers
         .apply { block() }
         .build()
 
+    private val json: Json by injectLazy()
+
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     fun videosFromUrl(url: String, prefix: String = "Dailymotion - ", baseUrl: String = "", password: String? = null): List<Video> {
@@ -47,11 +49,9 @@ class DailymotionExtractor(private val client: OkHttpClient, private val headers
 
         return when {
             parsed.qualities != null && parsed.error == null -> videosFromDailyResponse(parsed, prefix)
-
             parsed.error?.type == "password_protected" && parsed.id != null -> {
                 videosFromProtectedUrl(url, prefix, parsed.id, htmlString, ts, v1st, baseUrl, password)
             }
-
             else -> emptyList()
         }
     }
