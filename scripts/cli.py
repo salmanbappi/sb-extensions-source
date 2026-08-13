@@ -263,6 +263,10 @@ def main():
             "script": "sync_lib.py",
             "desc": "Synchronize and update shared lib/ extractor modules from upstream repositories (Yuzono/Keiyoushi/Aniyomiorg)."
         },
+        "verify-extractors": {
+            "script": "verify_extractors.py",
+            "desc": "Empirically test video extractors against live HTTP video playback behavior instead of relying blindly on upstream."
+        },
         "test-scraper": {
             "script": "test_scraper.py",
             "desc": "Test live HTTP requests, Jsoup CSS selectors, regex patterns, or JSON API payloads locally without Gradle."
@@ -292,16 +296,18 @@ Available Commands ({len(commands_info)} Total):
   7. auto-maintain     {commands_info['auto-maintain']['desc']}
   8. detect-extractors {commands_info['detect-extractors']['desc']}
   9. sync-lib          {commands_info['sync-lib']['desc']}
- 10. test-scraper      {commands_info['test-scraper']['desc']}
- 11. test-extractor    {commands_info['test-extractor']['desc']}
- 12. list-extractors   {commands_info['list-extractors']['desc']}
+ 10. verify-extractors {commands_info['verify-extractors']['desc']}
+ 11. test-scraper      {commands_info['test-scraper']['desc']}
+ 12. test-extractor    {commands_info['test-extractor']['desc']}
+ 13. list-extractors   {commands_info['list-extractors']['desc']}
 
 Examples:
-  python3 scripts/cli.py auto-maintain
+  python3 scripts/cli.py verify-extractors --url "https://filemoon.sx/e/example"
   python3 scripts/cli.py sync-lib --module dood-extractor
   python3 scripts/cli.py validate
 """
     )
+
 
 
 
