@@ -33,7 +33,7 @@ object StreamObfuscationSolver {
                     in 'a'..'z' -> ((c - 'a' + shift + 26) % 26 + 'a'.code).toChar()
                     in 'A'..'Z' -> ((c - 'A' + shift + 26) % 26 + 'A'.code).toChar()
                     else -> c
-                }
+                },
             )
         }
         return sb.toString()
@@ -42,11 +42,9 @@ object StreamObfuscationSolver {
     /**
      * Converts integer char code lists (e.g. "104,116,116,112,58,47,47...") into text.
      */
-    fun parseCharCodes(input: String, delimiter: String = ","): String {
-        return input.split(delimiter).mapNotNull { codeStr ->
-            codeStr.trim().toIntOrNull()?.toChar()?.toString()
-        }.joinToString("")
-    }
+    fun parseCharCodes(input: String, delimiter: String = ","): String = input.split(delimiter).mapNotNull { codeStr ->
+        codeStr.trim().toIntOrNull()?.toChar()?.toString()
+    }.joinToString("")
 
     /**
      * Decodes Base64 payloads with automatic padding repair and URL-safe character mapping.

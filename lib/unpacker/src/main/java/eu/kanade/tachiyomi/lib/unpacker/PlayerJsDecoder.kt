@@ -6,7 +6,7 @@ object PlayerJsDecoder {
 
     data class PlaylistItem(
         val label: String?,
-        val url: String
+        val url: String,
     )
 
     /**
@@ -91,6 +91,6 @@ object PlayerJsDecoder {
     }
 
     private val DEFAULT_TRASH = listOf(
-        "//", "_", "bk0", "bk1", "bk2", "bk3", "bk4", "=0", "=1", "=2", "=3", "=4"
+        "//", "_", "bk0", "bk1", "bk2", "bk3", "bk4", "=0", "=1", "=2", "=3", "=4",
     )
 }
