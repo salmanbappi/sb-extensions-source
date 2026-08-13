@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""
+Aniyomi Extension Engine Master CLI Tool
+Unified entrypoint for AI agents and developers to scaffold, test, validate, and manage extensions.
+"""
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+
+def fetch_icon(url: str, output_path: Path):
+    """Fetches favicon from target URL and converts it to 192x192 PNG launcher icon."""
+    print(f"🔍 Fetching favicon from: {url}")
+    domain = url.split("//")[-1].split("/")[0]
+    base_url = f"https://{domain}"
+
+    fav_candidates = [
+        f"{base_url}/favicon.ico",
+        f"{base_url}/favicon.png",
+        f"{base_url}/apple-touch-icon.png",
+        f"{base_url}/apple-touch-icon-precomposed.png",
+    ]
+
+    # Try HTML scrape for explicit icon tags
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
+            icon_tags = re.findall(r'<link[^>]+rel=\"[^\"]*(?:icon|shortcut|apple)[^\"]*\"[^>]+href=\"([^\"]+)\"', html, re.IGNORECASE)
+            for href in icon_tags:
+                if href.startswith("//"):
+                    fav_candidates.insert(0, f"https:{href}")
+                elif href.startswith("http"):
+                    fav_candidates.insert(0, href)
+                elif href.startswith("/"):
+                    fav_candidates.insert(0, f"{base_url}{href}")
+    except Exception as e:
+        print(f"  [!] Note: HTML scrap for favicon failed ({e}), using default favicon paths...")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_raw = output_path.parent / "temp_favicon_raw"
+
+    downloaded = False
+    for fav_url in fav_candidates:
+        try:
+            req = urllib.request.Request(fav_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    with open(temp_raw, "wb") as f:
+                        f.write(resp.read())
+                    downloaded = True
+                    print(f"  [+] Downloaded favicon from: {fav_url}")
+                    break
+        except Exception:
+            continue
+
+    if not downloaded:
+        print(f"  [!] Could not fetch live favicon from {url}. Icon generation requires manual placement or fallback.")
+        return False
+
+    # Convert using ImageMagick 'convert' or 'magick'
+    cmd = ["convert", str(temp_raw), "-background", "none", "-gravity", "center", "-extent", "200x200", "-resize", "192x192", str(output_path)]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"  [✓] Converted launcher icon saved to: {output_path}")
+        if temp_raw.exists():
+            temp_raw.unlink()
+        return True
+    except Exception:
+        # Fallback to saving raw PNG if convert fails
+        if temp_raw.exists():
+            temp_raw.rename(output_path)
+            print(f"  [✓] Saved raw icon to: {output_path}")
+            return True
+        return False
+
+
+def validate_extensions(repo_root: Path, target_lang: str = None, target_name: str = None):
+    """Statically validates extension modules without running Gradle APK builds."""
+    src_root = repo_root / "src"
+    if not src_root.exists():
+        print("❌ No src/ directory found.")
+        return
+
+    print("🔎 Auditing and Validating Extension Modules (Static Code Analysis)...\n")
+
+    valid_count = 0
+    issue_count = 0
+
+    langs = [target_lang] if target_lang else [d.name for d in src_root.iterdir() if d.is_dir()]
+
+    for lang in sorted(langs):
+        lang_dir = src_root / lang
+        if not lang_dir.exists():
+            continue
+
+        ext_dirs = [target_name] if target_name else [d.name for d in lang_dir.iterdir() if d.is_dir()]
+
+        for ext_name in sorted(ext_dirs):
+            ext_path = lang_dir / ext_name
+            if not ext_path.exists():
+                print(f"❌ Module src/{lang}/{ext_name} not found.")
+                continue
+
+            issues = []
+
+            # 1. Check build.gradle
+            gradle_file = ext_path / "build.gradle"
+            if not gradle_file.exists():
+                issues.append("Missing build.gradle")
+
+            # 2. Check AndroidManifest.xml
+            manifest_file = ext_path / "AndroidManifest.xml"
+            if not manifest_file.exists():
+                issues.append("Missing AndroidManifest.xml")
+
+            # 3. Check App Icon
+            icon_file = ext_path / "res" / "drawable" / "ic_launcher.png"
+            fallback_icon = ext_path / "res" / "drawable-xxhdpi" / "icon.png"
+            if not icon_file.exists() and not fallback_icon.exists():
+                issues.append("Missing launcher icon (res/drawable/ic_launcher.png)")
+
+            # 4. Check Kotlin source files & Package declaration
+            kt_dir = ext_path / "src" / "eu" / "kanade" / "tachiyomi" / "animeextension" / lang / ext_name
+            kt_files = list(kt_dir.glob("*.kt")) if kt_dir.exists() else []
+            if not kt_files:
+                issues.append(f"Missing main Kotlin source in: src/eu/kanade/tachiyomi/animeextension/{lang}/{ext_name}/")
+
+            expected_pkg = f"eu.kanade.tachiyomi.animeextension.{lang}.{ext_name}"
+            for kt in kt_files:
+                content = kt.read_text(encoding="utf-8", errors="ignore")
+                if not content.startswith(f"package {expected_pkg}"):
+                    issues.append(f"Mismatched package declaration in {kt.name} (Expected: package {expected_pkg})")
+
+            if issues:
+                issue_count += 1
+                print(f"❌ src/{lang}/{ext_name}:")
+                for iss in issues:
+                    print(f"   • {iss}")
+            else:
+                valid_count += 1
+                print(f"  ✓ src/{lang}/{ext_name} - OK")
+
+    print(f"\nSummary: {valid_count} extension module(s) passed static validation. {issue_count} module(s) had issues.")
+
+
+def main():
+    repo_root = Path(__file__).resolve().parent.parent
+    scripts_dir = repo_root / "scripts"
+
+    commands_info = {
+        "create": {
+            "script": "create_extension.py",
+            "desc": "Scaffold a new Aniyomi extension module (HTML, API, or Theme) with preferences, metadata, and extractors."
+        },
+        "validate": {
+            "script": None,
+            "desc": "Perform static analysis validation on extension modules without Gradle APK compilation."
+        },
+        "fetch-icon": {
+            "script": None,
+            "desc": "Download website favicon and convert it into res/drawable/ic_launcher.png."
+        },
+        "test-scraper": {
+            "script": "test_scraper.py",
+            "desc": "Test live HTTP requests, Jsoup CSS selectors, regex patterns, or JSON API payloads locally without Gradle."
+        },
+        "test-extractor": {
+            "script": "test_extractors.py",
+            "desc": "Test video embed link extraction logic (DoodStream, StreamTape, FileMoon, MixDrop, VidSrc) locally."
+        },
+        "list-extractors": {
+            "script": None,
+            "desc": "List all 65 pre-built video extractor libraries available in the lib/ directory."
+        }
+    }
+
+    parser = argparse.ArgumentParser(
+        description="🚀 Aniyomi AI Extension Engine Master CLI",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=f"""
+Available Commands ({len(commands_info)} Total):
+----------------------------------------
+  1. create          {commands_info['create']['desc']}
+  2. validate        {commands_info['validate']['desc']}
+  3. fetch-icon      {commands_info['fetch-icon']['desc']}
+  4. test-scraper    {commands_info['test-scraper']['desc']}
+  5. test-extractor  {commands_info['test-extractor']['desc']}
+  6. list-extractors {commands_info['list-extractors']['desc']}
+
+Examples:
+  python3 scripts/cli.py create --name "AnimeFlix" --lang "en" --siteType "html"
+  python3 scripts/cli.py validate
+  python3 scripts/cli.py fetch-icon --url "https://vegamoviess.you/" --lang "en" --name "vegamovies"
+  python3 scripts/cli.py test-scraper --url "https://vegamoviess.you/397593-swapnasundari-2026-hindi-audio-camrip-720p-480p-1080p.html"
+  python3 scripts/cli.py list-extractors
+"""
+    )
+
+    parser.add_argument("command", choices=list(commands_info.keys()), help="Subcommand to run")
+    parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments passed to the subcommand")
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
+    args = parser.parse_args()
+
+    if args.command == "list-extractors":
+        lib_dir = repo_root / "lib"
+        extractors = sorted([d.name for d in lib_dir.iterdir() if d.is_dir()])
+        print(f"📦 Found {len(extractors)} pre-built extractor modules in lib/\n")
+        for i, ext in enumerate(extractors, 1):
+            print(f"  {i:2d}. {ext}")
+        print("\nSee .agents/skills/extractor-registry/SKILL.md for usage code snippets.")
+        sys.exit(0)
+
+    if args.command == "validate":
+        target_lang = None
+        target_name = None
+        if args.args:
+            if "--lang" in args.args:
+                idx = args.args.index("--lang")
+                if idx + 1 < len(args.args):
+                    target_lang = args.args[idx + 1]
+            if "--name" in args.args:
+                idx = args.args.index("--name")
+                if idx + 1 < len(args.args):
+                    target_name = args.args[idx + 1]
+        validate_extensions(repo_root, target_lang, target_name)
+        sys.exit(0)
+
+    if args.command == "fetch-icon":
+        fetch_parser = argparse.ArgumentParser(prog="cli.py fetch-icon")
+        fetch_parser.add_argument("--url", required=True, help="Target website URL")
+        fetch_parser.add_argument("--lang", default="en", help="Target extension lang")
+        fetch_parser.add_argument("--name", required=True, help="Target extension directory name")
+
+        icon_args = fetch_parser.parse_args(args.args)
+        out_path = repo_root / "src" / icon_args.lang / icon_args.name / "res" / "drawable" / "ic_launcher.png"
+        success = fetch_icon(icon_args.url, out_path)
+        sys.exit(0 if success else 1)
+
+    script_name = commands_info[args.command]["script"]
+    script_path = scripts_dir / script_name
+
+    cmd = [sys.executable, str(script_path)] + args.args
+    result = subprocess.run(cmd)
+    sys.exit(result.returncode)
+
+
+if __name__ == "__main__":
+    main()
