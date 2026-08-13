@@ -287,9 +287,8 @@ class Vegamovies : Source() {
                         if (link.contains(".m3u8") || link.contains(".mp4") || link.contains("googleusercontent") || link.contains(".mkv")) {
                             videoList.add(
                                 Video(
-                                    url = link,
-                                    quality = "${hoster.hosterName} - Direct Stream",
                                     videoUrl = link,
+                                    videoTitle = "${hoster.hosterName} - Direct Stream",
                                     headers = headersBuilder().set("Referer", url).build(),
                                     subtitleTracks = emptyList(),
                                 ),
@@ -311,9 +310,8 @@ class Vegamovies : Source() {
                                 if (directLink.startsWith("http") && !directLink.contains("telegram")) {
                                     videoList.add(
                                         Video(
-                                            url = directLink,
-                                            quality = "${hoster.hosterName} - Stream Link",
                                             videoUrl = directLink,
+                                            videoTitle = "${hoster.hosterName} - Stream Link",
                                             headers = headersBuilder().set("Referer", url).build(),
                                             subtitleTracks = emptyList(),
                                         ),
@@ -340,8 +338,8 @@ class Vegamovies : Source() {
         val prefServer = preferences.getString(PREF_SERVER_KEY, "Fast 10Gbps") ?: "Fast 10Gbps"
 
         return sortedWith(
-            compareByDescending<Video> { it.quality.contains(prefServer, ignoreCase = true) }
-                .thenByDescending { it.quality.contains(prefQuality, ignoreCase = true) },
+            compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
 
