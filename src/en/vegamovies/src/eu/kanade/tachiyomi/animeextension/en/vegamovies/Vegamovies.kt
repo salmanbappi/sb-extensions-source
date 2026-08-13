@@ -368,6 +368,15 @@ class Vegamovies : Source() {
 
             landingLinks.forEach { (landingUrl, btnText) ->
                 runCatching {
+                    val directServer = getServerName(landingUrl)
+                    if (directServer != null) {
+                        val qualityLabel = extractQualityLabel("", btnText)
+                        val list = hosterMap.getOrPut(directServer) { mutableListOf() }
+                        if (list.none { it.second == landingUrl }) {
+                            list.add(Pair(qualityLabel, landingUrl))
+                        }
+                    }
+
                     val nexResp = client.newCall(GET(landingUrl, headersBuilder().set("Referer", "$baseUrl/").build())).execute()
                     val nexDoc = nexResp.asJsoup()
                     val lHtml = nexDoc.html()
@@ -417,9 +426,9 @@ class Vegamovies : Source() {
     }
 
     private fun getServerName(href: String): String? = when {
-        href.contains("hdvb", ignoreCase = true) || href.contains("watch", ignoreCase = true) -> "HDVB Player"
+        href.contains("hdvb", ignoreCase = true) || href.contains("watch", ignoreCase = true) || href.contains("player", ignoreCase = true) -> "HDVB Player"
         href.contains("fast-dl", ignoreCase = true) || href.contains("fastcloud", ignoreCase = true) || href.contains("fastdownload", ignoreCase = true) -> "Fast Download"
-        href.contains("vcloud", ignoreCase = true) -> "V-Cloud"
+        href.contains("vcloud", ignoreCase = true) || href.contains("nexdrive", ignoreCase = true) || href.contains("vgmlinks", ignoreCase = true) -> "V-Cloud"
         href.contains("dood", ignoreCase = true) -> "DoodStream"
         href.contains("filemoon", ignoreCase = true) -> "Filemoon"
         href.contains("streamtape", ignoreCase = true) -> "StreamTape"
@@ -470,7 +479,7 @@ class Vegamovies : Source() {
 
                 runCatching {
                     when {
-                        url.contains("hdvb", ignoreCase = true) || url.contains("watch", ignoreCase = true) -> {
+                        url.contains("hdvb", ignoreCase = true) || url.contains("watch", ignoreCase = true) || url.contains("player", ignoreCase = true) -> {
                             val hdvbResp = runCatching { client.newCall(GET(url, refHeaders)).execute() }.getOrNull()
                             val hdvbHtml = hdvbResp?.body?.string() ?: ""
 
@@ -498,14 +507,14 @@ class Vegamovies : Source() {
                                         referer = url,
                                         masterHeaders = refHeaders,
                                         videoHeaders = refHeaders,
-                                        videoNameGen = { q -> "$qualityLabel - HDVB Player ($q)" },
+                                        videoNameGen = { q -> "HDVB Player - $q ($qualityLabel)" },
                                     ),
                                 )
                             } else {
                                 videoList.add(
                                     Video(
                                         videoUrl = url,
-                                        videoTitle = "$qualityLabel - HDVB Player",
+                                        videoTitle = "HDVB Player - $qualityLabel",
                                         headers = refHeaders,
                                     ),
                                 )
@@ -613,8 +622,8 @@ class Vegamovies : Source() {
             title = "Preferred Server",
             default = PREF_SERVER_DEFAULT,
             summary = "%s",
-            entries = listOf("Watch Online (Player)", "Fast Download", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
-            entryValues = listOf("Watch Online (Player)", "Fast Download", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
+            entries = listOf("HDVB Player", "Fast Download", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
+            entryValues = listOf("HDVB Player", "Fast Download", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
         )
     }
 
@@ -622,6 +631,6 @@ class Vegamovies : Source() {
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
         private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "Watch Online (Player)"
+        private const val PREF_SERVER_DEFAULT = "HDVB Player"
     }
 }
