@@ -474,7 +474,13 @@ class Vegamovies : Source() {
                                 ),
                             )
                         } else {
-                            videoList.add(Video(playlistUrl, "${hoster.hosterName} - Direct Stream", refHeaders))
+                            videoList.add(
+                                Video(
+                                    videoUrl = playlistUrl,
+                                    videoTitle = "${hoster.hosterName} - Direct Stream",
+                                    headers = refHeaders,
+                                ),
+                            )
                         }
                     }
                 }
