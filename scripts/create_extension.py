@@ -69,6 +69,19 @@ def generate_build_gradle(ext_name: str, ext_class: str, theme_pkg: str = None, 
         ""
     ])
 
+    lines.append("dependencies {")
+    if with_extractors:
+        lines.append('    implementation(project(":lib:dood-extractor"))')
+        lines.append('    implementation(project(":lib:streamtape-extractor"))')
+        lines.append('    implementation(project(":lib:filemoon-extractor"))')
+        lines.append('    implementation(project(":lib:universal-extractor"))')
+        lines.append('    implementation(project(":lib:unpacker"))')
+    else:
+        lines.append("    // Add extractor dependencies here if needed")
+    lines.append("}")
+    lines.append("")
+    return "\n".join(lines)
+
 
 def generate_android_manifest() -> str:
     return """<?xml version="1.0" encoding="utf-8"?>
@@ -100,19 +113,6 @@ def generate_android_manifest() -> str:
 </manifest>
 """
 
-
-    lines.append("dependencies {")
-    if with_extractors:
-        lines.append('    implementation(project(":lib:dood-extractor"))')
-        lines.append('    implementation(project(":lib:streamtape-extractor"))')
-        lines.append('    implementation(project(":lib:filemoon-extractor"))')
-        lines.append('    implementation(project(":lib:universal-extractor"))')
-        lines.append('    implementation(project(":lib:unpacker"))')
-    else:
-        lines.append("    // Add extractor dependencies here if needed")
-    lines.append("}")
-    lines.append("")
-    return "\n".join(lines)
 
 
 def generate_html_kotlin_source(lang: str, pkg_name: str, class_name: str, base_url: str, with_prefs: bool, with_extractors: bool, with_metadata: bool) -> str:
