@@ -1,0 +1,11 @@
+ext {
+    extName = 'AniKuro'
+    extClass = '.Anikuro'
+    extVersionCode = 1
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    // Add extractor dependencies here if needed
+}
