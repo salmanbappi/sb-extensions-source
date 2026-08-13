@@ -427,6 +427,9 @@ class Vegamovies : Source() {
     }
 
     private fun isPreferredServer(serverName: String, prefServer: String): Boolean {
+        if (prefServer.contains("Fast", ignoreCase = true)) {
+            return serverName.contains("Fast", ignoreCase = true)
+        }
         if (prefServer.contains("HDVB", ignoreCase = true) || prefServer.contains("Watch", ignoreCase = true)) {
             return serverName.contains("HDVB", ignoreCase = true) || serverName.contains("Watch", ignoreCase = true)
         }
@@ -499,12 +502,21 @@ class Vegamovies : Source() {
                             val unpackedScripts = scriptTexts.mapNotNull { autoUnpacker(it) }.joinToString("\n")
                             val fullContent = "$hdvbHtml\n$unpackedScripts"
 
-                            val m3u8Match = Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(fullContent)
-                                ?: Regex("""src:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(fullContent)
-                                ?: Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(fullContent)
-                                ?: Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""", RegexOption.IGNORE_CASE).find(fullContent)
+                            var m3u8Url = Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(fullContent)?.groupValues?.get(1)
+                                ?: Regex("""src:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(fullContent)?.groupValues?.get(1)
+                                ?: Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(fullContent)?.groupValues?.get(1)
+                                ?: Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""", RegexOption.IGNORE_CASE).find(fullContent)?.groupValues?.get(1)
 
-                            var m3u8Url = m3u8Match?.groupValues?.get(1)
+                            if (m3u8Url.isNullOrBlank()) {
+                                Regex("""aHR0c[A-Za-z0-9+/=]+""").findAll(fullContent).forEach { m ->
+                                    runCatching {
+                                        val decoded = String(android.util.Base64.decode(m.value, android.util.Base64.DEFAULT))
+                                        if (decoded.contains(".m3u8")) {
+                                            m3u8Url = decoded
+                                        }
+                                    }
+                                }
+                            }
 
                             if (m3u8Url.isNullOrBlank()) {
                                 val iframeSrc = hdvbDoc?.selectFirst("iframe[src]")?.attr("abs:src")
@@ -522,13 +534,31 @@ class Vegamovies : Source() {
                                         ?: Regex("""src:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedFull)?.groupValues?.get(1)
                                         ?: Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE).find(embedFull)?.groupValues?.get(1)
                                         ?: Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""", RegexOption.IGNORE_CASE).find(embedFull)?.groupValues?.get(1)
+
+                                    if (m3u8Url.isNullOrBlank()) {
+                                        Regex("""aHR0c[A-Za-z0-9+/=]+""").findAll(embedFull).forEach { m ->
+                                            runCatching {
+                                                val decoded = String(android.util.Base64.decode(m.value, android.util.Base64.DEFAULT))
+                                                if (decoded.contains(".m3u8")) {
+                                                    m3u8Url = decoded
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
                             if (!m3u8Url.isNullOrBlank()) {
+                                var finalM3u8 = m3u8Url!!
+                                if (finalM3u8.startsWith("//")) {
+                                    finalM3u8 = "https:$finalM3u8"
+                                } else if (finalM3u8.startsWith("/")) {
+                                    val domainUrl = url.substringBefore("/watch").substringBefore("/embed").trimEnd('/')
+                                    finalM3u8 = "$domainUrl$finalM3u8"
+                                }
                                 videoList.addAll(
                                     playlistUtils.extractFromHls(
-                                        m3u8Url,
+                                        finalM3u8,
                                         referer = url,
                                         masterHeaders = refHeaders,
                                         videoHeaders = refHeaders,
@@ -647,8 +677,8 @@ class Vegamovies : Source() {
             title = "Preferred Server",
             default = PREF_SERVER_DEFAULT,
             summary = "%s",
-            entries = listOf("HDVB Player", "Fast Download", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
-            entryValues = listOf("HDVB Player", "Fast Download", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
+            entries = listOf("Fast Download", "HDVB Player", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
+            entryValues = listOf("Fast Download", "HDVB Player", "V-Cloud", "Filemoon", "StreamWish", "DoodStream", "StreamTape"),
         )
     }
 
@@ -656,6 +686,6 @@ class Vegamovies : Source() {
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
         private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "HDVB Player"
+        private const val PREF_SERVER_DEFAULT = "Fast Download"
     }
 }
