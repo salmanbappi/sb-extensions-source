@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
@@ -34,6 +35,12 @@ class Vegamovies : Source() {
     override val lang = "en"
 
     override val supportsLatest = true
+
+    override val client by lazy {
+        network.client.newBuilder()
+            .addInterceptor(CloudflareInterceptor(network.client))
+            .build()
+    }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -411,6 +418,7 @@ class Vegamovies : Source() {
 
     private fun getServerName(href: String): String? = when {
         href.contains("fast-dl", ignoreCase = true) -> "Fast Download"
+        href.contains("vcloud", ignoreCase = true) -> "V-Cloud"
         href.contains("dood", ignoreCase = true) -> "DoodStream"
         href.contains("filemoon", ignoreCase = true) -> "Filemoon"
         href.contains("streamtape", ignoreCase = true) -> "StreamTape"
