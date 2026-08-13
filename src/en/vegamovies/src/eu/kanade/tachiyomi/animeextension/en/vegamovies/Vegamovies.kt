@@ -369,7 +369,7 @@ class Vegamovies : Source() {
 
             landingLinks.forEach { (landingUrl, btnText) ->
                 runCatching {
-                    val directServer = getServerName(landingUrl)
+                    val directServer = getServerName(landingUrl, btnText)
                     if (directServer != null) {
                         val qualityLabel = extractQualityLabel("", btnText)
                         val list = hosterMap.getOrPut(directServer) { mutableListOf() }
@@ -386,7 +386,7 @@ class Vegamovies : Source() {
                         bDoc.select("a[href]").forEach { na ->
                             val nHref = na.attr("abs:href")
                             val nText = na.text().trim()
-                            val serverName = getServerName(nHref)
+                            val serverName = getServerName(nHref, nText)
                             if (serverName != null && nHref.startsWith("http")) {
                                 val qualityLabel = extractQualityLabel(nText, btnText)
                                 val list = hosterMap.getOrPut(serverName) { mutableListOf() }
@@ -433,15 +433,18 @@ class Vegamovies : Source() {
         return serverName.contains(prefServer, ignoreCase = true)
     }
 
-    private fun getServerName(href: String): String? = when {
-        href.contains("hdvb", ignoreCase = true) || href.contains("watch", ignoreCase = true) || href.contains("player", ignoreCase = true) -> "HDVB Player"
-        href.contains("fast-dl", ignoreCase = true) || href.contains("fastcloud", ignoreCase = true) || href.contains("fastdownload", ignoreCase = true) -> "Fast Download"
-        href.contains("vcloud", ignoreCase = true) || href.contains("nexdrive", ignoreCase = true) || href.contains("vgmlinks", ignoreCase = true) -> "V-Cloud"
-        href.contains("dood", ignoreCase = true) -> "DoodStream"
-        href.contains("filemoon", ignoreCase = true) -> "Filemoon"
-        href.contains("streamtape", ignoreCase = true) -> "StreamTape"
-        href.contains("streamwish", ignoreCase = true) || href.contains("awish", ignoreCase = true) -> "StreamWish"
-        else -> null
+    private fun getServerName(href: String, text: String = ""): String? {
+        val combined = "$href $text".lowercase()
+        return when {
+            combined.contains("hdvb") || combined.contains("watch online") || combined.contains("online player") || combined.contains("play online") || combined.contains("/watch") || combined.contains("/stream") || combined.contains("/embed") -> "HDVB Player"
+            combined.contains("fast-dl") || combined.contains("fastcloud") || combined.contains("fast download") || combined.contains("fast-cloud") -> "Fast Download"
+            combined.contains("vcloud") || combined.contains("v-cloud") || combined.contains("nexdrive") || combined.contains("vgmlinks") -> "V-Cloud"
+            combined.contains("dood") -> "DoodStream"
+            combined.contains("filemoon") -> "Filemoon"
+            combined.contains("streamtape") -> "StreamTape"
+            combined.contains("streamwish") || combined.contains("awish") -> "StreamWish"
+            else -> null
+        }
     }
 
     private fun extractQualityLabel(btnText: String, landingText: String): String {
@@ -487,7 +490,7 @@ class Vegamovies : Source() {
 
                 runCatching {
                     when {
-                        url.contains("hdvb", ignoreCase = true) || url.contains("watch", ignoreCase = true) || url.contains("player", ignoreCase = true) -> {
+                        url.contains("hdvb", ignoreCase = true) || url.contains("watch", ignoreCase = true) || url.contains("player", ignoreCase = true) || url.contains("stream", ignoreCase = true) -> {
                             val hdvbResp = runCatching { client.newCall(GET(url, refHeaders)).execute() }.getOrNull()
                             val hdvbDoc = hdvbResp?.asJsoup()
                             val hdvbHtml = hdvbDoc?.html() ?: ""
@@ -532,6 +535,14 @@ class Vegamovies : Source() {
                                         videoNameGen = { q -> "HDVB Player - $q ($qualityLabel)" },
                                     ),
                                 )
+                            } else {
+                                videoList.add(
+                                    Video(
+                                        videoUrl = url,
+                                        videoTitle = "HDVB Player - $qualityLabel",
+                                        headers = refHeaders,
+                                    ),
+                                )
                             }
                         }
 
@@ -571,7 +582,7 @@ class Vegamovies : Source() {
                                         videoNameGen = { q -> "$qualityLabel - $q" },
                                     ),
                                 )
-                            } else if (finalStreamUrl.contains(".mp4") || finalStreamUrl.contains(".mkv") || finalStreamUrl.contains(".avi") || finalStreamUrl.contains(".webm") || finalStreamUrl.contains("drive.google.com/uc") || finalStreamUrl.contains("pixeldrain")) {
+                            } else {
                                 videoList.add(
                                     Video(
                                         videoUrl = finalStreamUrl,
