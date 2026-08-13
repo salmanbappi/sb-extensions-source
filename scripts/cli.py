@@ -252,7 +252,13 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
     src_root = repo_root / "src"
     if not src_root.exists():
         print("❌ No src/ directory found.")
-        return
+        return False
+
+    resolved_lang, resolved_name = resolve_extension_target(repo_root, target=target_name, lang=target_lang, name=target_name)
+    if resolved_name:
+        target_name = resolved_name
+        if resolved_lang:
+            target_lang = resolved_lang
 
     print("🔎 Auditing and Validating Extension Modules (Static Code Analysis)...\n")
 
@@ -308,6 +314,8 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                 pkg_match = re.search(r"^\s*package\s+([^\s;]+)", content, re.MULTILINE)
                 if not pkg_match or pkg_match.group(1) != expected_pkg:
                     issues.append(f"Mismatched package declaration in {kt.name} (Expected: package {expected_pkg})")
+                if "companion {" in content and "companion object {" not in content:
+                    issues.append(f"Syntax error in {kt.name}: 'companion {{' missing 'object' keyword (must be 'companion object {{')")
                 if "getAnimeDetails" in content and "initialized = true" not in content:
                     issues.append(f"Missing 'initialized = true' inside getAnimeDetails in {kt.name}")
                 if "ParsedAnimeHttpSource" in content:
@@ -319,9 +327,6 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                     issues.append(f"Deprecated Video constructor in {kt.name} (v16 Rule: Use Video(videoUrl=, videoTitle=, headers=))")
                 if "it.quality" in content:
                     issues.append(f"Deprecated Video property 'it.quality' in {kt.name} (v16 Rule: Use it.videoTitle)")
-
-
-
 
             if issues:
                 issue_count += 1
