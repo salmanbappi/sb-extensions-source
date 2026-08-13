@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.en.anikuro
 
-import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -12,6 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
+import keiyoushi.utils.addListPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -40,6 +40,17 @@ class Anikuro : Source() {
         ignoreUnknownKeys = true
         explicitNulls = false
         isLenient = true
+    }
+
+    companion {
+        private const val PREF_TYPE_KEY = "pref_type"
+        private const val PREF_TYPE_DEFAULT = "ALL"
+
+        private const val PREF_PROVIDER_KEY = "pref_provider"
+        private const val PREF_PROVIDER_DEFAULT = "ALL"
+
+        private const val PREF_QUALITY_KEY = "pref_quality"
+        private const val PREF_QUALITY_DEFAULT = "1080"
     }
 
     // ============================== Popular ===============================
@@ -307,22 +318,21 @@ class Anikuro : Source() {
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        val typePref = ListPreference(screen.context).apply {
-            key = PREF_TYPE_KEY
-            title = "Preferred Audio / Type"
-            entries = arrayOf("All", "Sub", "Dub")
-            entryValues = arrayOf("ALL", "SUB", "DUB")
-            setDefaultValue(PREF_TYPE_DEFAULT)
-            summary = "%s"
-            setOnPreferenceChangeListener { _, newValue ->
-                preferences.edit().putString(PREF_TYPE_KEY, newValue as String).commit()
-            }
-        }
+        screen.addListPreference(
+            key = PREF_TYPE_KEY,
+            title = "Preferred Audio / Type",
+            default = PREF_TYPE_DEFAULT,
+            summary = "%s",
+            entries = listOf("All", "Sub", "Dub"),
+            entryValues = listOf("ALL", "SUB", "DUB"),
+        )
 
-        val providerPref = ListPreference(screen.context).apply {
-            key = PREF_PROVIDER_KEY
-            title = "Preferred Provider / Server"
-            entries = arrayOf(
+        screen.addListPreference(
+            key = PREF_PROVIDER_KEY,
+            title = "Preferred Provider / Server",
+            default = PREF_PROVIDER_DEFAULT,
+            summary = "%s",
+            entries = listOf(
                 "All Servers",
                 "AniKuro",
                 "Anikoto",
@@ -336,8 +346,8 @@ class Anikuro : Source() {
                 "AniDB",
                 "AnimeDunya",
                 "AnimeVerse",
-            )
-            entryValues = arrayOf(
+            ),
+            entryValues = listOf(
                 "ALL",
                 "AniKuro",
                 "Anikoto",
@@ -351,29 +361,17 @@ class Anikuro : Source() {
                 "AniDB",
                 "AnimeDunya",
                 "AnimeVerse",
-            )
-            setDefaultValue(PREF_PROVIDER_DEFAULT)
-            summary = "%s"
-            setOnPreferenceChangeListener { _, newValue ->
-                preferences.edit().putString(PREF_PROVIDER_KEY, newValue as String).commit()
-            }
-        }
+            ),
+        )
 
-        val qualityPref = ListPreference(screen.context).apply {
-            key = PREF_QUALITY_KEY
-            title = "Preferred Quality"
-            entries = arrayOf("1080p", "720p", "480p", "360p", "Default")
-            entryValues = arrayOf("1080", "720", "480", "360", "Default")
-            setDefaultValue(PREF_QUALITY_DEFAULT)
-            summary = "%s"
-            setOnPreferenceChangeListener { _, newValue ->
-                preferences.edit().putString(PREF_QUALITY_KEY, newValue as String).commit()
-            }
-        }
-
-        screen.addPreference(typePref)
-        screen.addPreference(providerPref)
-        screen.addPreference(qualityPref)
+        screen.addListPreference(
+            key = PREF_QUALITY_KEY,
+            title = "Preferred Quality",
+            default = PREF_QUALITY_DEFAULT,
+            summary = "%s",
+            entries = listOf("1080p", "720p", "480p", "360p", "Default"),
+            entryValues = listOf("1080", "720", "480", "360", "Default"),
+        )
     }
 
     // ============================ Data Classes ============================
@@ -520,13 +518,4 @@ class Anikuro : Source() {
         val label: String? = null,
         val lang: String? = null,
     )
-
-    companion {
-        private const val PREF_TYPE_KEY = "pref_type"
-        private const val PREF_TYPE_DEFAULT = "ALL"
-        private const val PREF_PROVIDER_KEY = "pref_provider"
-        private const val PREF_PROVIDER_DEFAULT = "ALL"
-        private const val PREF_QUALITY_KEY = "pref_quality"
-        private const val PREF_QUALITY_DEFAULT = "1080"
-    }
 }
