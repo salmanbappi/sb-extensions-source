@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
@@ -15,6 +16,7 @@ import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
 import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
 import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
@@ -57,14 +59,14 @@ class Vegamovies : Source() {
 
     private fun parseAnimeListPage(response: Response, page: Int): AnimesPage {
         val doc = response.asJsoup()
-        val animeList = doc.select("article.post-item").mapNotNull { element ->
-            val linkEl = element.selectFirst("h3.entry-title a, a.blog-img") ?: return@mapNotNull null
+        val animeList = doc.select("article.post-item, div.post-item").mapNotNull { element ->
+            val linkEl = element.selectFirst("h3.entry-title a, a.blog-img, a") ?: return@mapNotNull null
             val href = linkEl.attr("href")
-            if (href.isBlank()) return@mapNotNull null
+            if (href.isBlank() || href == "$baseUrl/" || href.contains("#")) return@mapNotNull null
 
             val titleText = linkEl.attr("title").ifEmpty { linkEl.text() }
             val imgEl = element.selectFirst("img.blog-picture, img")
-            val imgUrl = imgEl?.attr("abs:src")?.ifEmpty { imgEl?.attr("src") }
+            val imgUrl = imgEl?.attr("abs:src")?.ifEmpty { imgEl.attr("src") }
 
             SAnime.create().apply {
                 title = titleText.trim()
@@ -93,35 +95,61 @@ class Vegamovies : Source() {
         val response = client.newCall(GET("$baseUrl${anime.url}", headers)).execute()
         val doc = response.asJsoup()
 
-        val titleText = doc.selectFirst("h3.entry-title, h1.entry-title, h3")?.text() ?: anime.title
-        val thumbnail = doc.selectFirst("div.entry-content img[src*=/uploads/], img.blog-picture")?.attr("abs:src")
+        val titleText = doc.selectFirst("h1.entry-title, h3.entry-title")?.text()?.trim() ?: anime.title
+        val thumbnail = doc.selectFirst("div.entry-content img[src*=/covers/], div.entry-content img[src*=/uploads/], img.blog-picture")?.attr("abs:src")
             ?: anime.thumbnail_url
 
-        val bodyText = doc.select("div.entry-content").text()
+        val content = doc.selectFirst("div.entry-content")
+        val paragraphs = content?.select("p, div")?.map { it.text().trim() }?.filter { it.isNotBlank() } ?: emptyList()
 
-        val genreText = Regex("""Genres:\s*([^\n<]+)""", RegexOption.IGNORE_CASE)
-            .find(bodyText)?.groupValues?.get(1)?.trim()
+        var langText: String? = null
+        var genreText: String? = null
+        var scoreText: String? = null
+        var qualityText: String? = null
+        var plotText: String? = null
 
-        val scoreText = Regex("""IMDb Rating:\s*([^\n<]+)""", RegexOption.IGNORE_CASE)
-            .find(bodyText)?.groupValues?.get(1)?.trim()
-
-        val synopsisText = Regex("""Movie-SYNOPSIS/PLOT:\s*([^\n<]+)""", RegexOption.IGNORE_CASE)
-            .find(bodyText)?.groupValues?.get(1)?.trim() ?: ""
+        paragraphs.forEach { p ->
+            if (p.contains("Language:", ignoreCase = true) || p.contains("Audio:", ignoreCase = true)) {
+                langText = p.substringAfter(":").trim()
+            }
+            if (p.contains("Genres:", ignoreCase = true) || p.contains("Genre:", ignoreCase = true)) {
+                genreText = p.substringAfter(":").trim()
+            }
+            if (p.contains("IMDb Rating:", ignoreCase = true) || p.contains("IMDB:", ignoreCase = true)) {
+                scoreText = p.substringAfter(":").trim()
+            }
+            if (p.contains("Quality:", ignoreCase = true)) {
+                qualityText = p.substringAfter(":").trim()
+            }
+            if (p.length > 50 && !p.contains("Vegamovies", ignoreCase = true) && !p.contains("Download", ignoreCase = true) && !p.contains("Language", ignoreCase = true) && !p.contains("Quality", ignoreCase = true)) {
+                if (plotText == null) {
+                    plotText = p
+                }
+            }
+        }
 
         return anime.apply {
             title = titleText
             thumbnail_url = thumbnail
-            genre = genreText
+            genre = genreText ?: doc.select("div.entry-content a[href*=/category/], div.entry-content a[href*=/genre/]").joinToString(", ") { it.text() }
             status = SAnime.COMPLETED
             initialized = true
             description = buildString {
                 if (!scoreText.isNullOrBlank()) {
-                    append("★ IMDb: $scoreText\n\n")
+                    append("★ IMDb Rating: $scoreText\n\n")
                 }
-                if (synopsisText.isNotBlank()) {
-                    append(synopsisText)
-                } else if (bodyText.isNotBlank()) {
-                    append(bodyText.take(500))
+                if (!langText.isNullOrBlank()) {
+                    append("🔊 Audio / Language: $langText\n")
+                }
+                if (!qualityText.isNullOrBlank()) {
+                    append("🎥 Quality: $qualityText\n")
+                }
+                if (!genreText.isNullOrBlank()) {
+                    append("🏷️ Genres: $genreText\n")
+                }
+                if (isNotEmpty()) append("\n")
+                if (!plotText.isNullOrBlank()) {
+                    append("📖 Plot Synopsis:\n$plotText")
                 }
             }.trim()
         }
@@ -133,21 +161,21 @@ class Vegamovies : Source() {
         val doc = response.asJsoup()
         val episodes = mutableListOf<SEpisode>()
 
-        val content = doc.selectFirst("div.entry-content, main") ?: doc
-        val dwdLinks = content.select("a[href*=nexdrive], a[href*=vcloud], a[href*=fast-dl], a[href*=vgmlinks], a.btn")
+        val content = doc.selectFirst("div.entry-content") ?: doc
+        val dwdLinks = content.select("a[href*=nexdrive], a[href*=vcloud], a[href*=fast-dl], a[href*=vgmlinks], a[href*=filepress], a[href*=gdtot], a.btn")
 
         dwdLinks.forEachIndexed { index, a ->
             val href = a.attr("abs:href")
-            if (href.isBlank() || href == "$baseUrl/" || href.contains("#")) return@forEachIndexed
+            if (href.isBlank() || href == "$baseUrl/" || href.contains("#") || href.contains("telegram")) return@forEachIndexed
 
             val text = a.text().trim()
             val parentText = a.parent()?.text() ?: ""
             val fullText = "$text $parentText"
 
-            val qualityMatch = Regex("""(480p|720p|1080p|2160p|4k|ep\s*\d+|episode\s*\d+)""", RegexOption.IGNORE_CASE)
+            val qualityMatch = Regex("""(480p|720p|1080p|2160p|4k|HEVC)""", RegexOption.IGNORE_CASE)
                 .findAll(fullText).map { it.value }.toList().lastOrNull() ?: ""
 
-            val sizeMatch = Regex("""\[([\d\.]+(?:MB|GB))\]""", RegexOption.IGNORE_CASE)
+            val sizeMatch = Regex("""\[([\d\.]+\s*(?:MB|GB))\]""", RegexOption.IGNORE_CASE)
                 .find(text)?.groupValues?.get(1) ?: ""
 
             val epName = buildString {
@@ -156,14 +184,22 @@ class Vegamovies : Source() {
                     if (isNotEmpty()) append(" ")
                     append("[$sizeMatch]")
                 }
-            }.ifEmpty { text.ifEmpty { "Download Link ${index + 1}" } }
+            }.ifEmpty { text.ifEmpty { "Download Server ${index + 1}" } }
+
+            val isDual = fullText.contains("Dual", ignoreCase = true) || fullText.contains("Hindi", ignoreCase = true)
+            val audioTag = when {
+                fullText.contains("Dual Audio", ignoreCase = true) -> "Dual Audio (Hindi + English)"
+                fullText.contains("Multi Audio", ignoreCase = true) -> "Multi Audio"
+                fullText.contains("Hindi", ignoreCase = true) -> "Hindi Audio"
+                else -> "Subbed / Original Audio"
+            }
 
             episodes.add(
                 SEpisode.create().apply {
                     name = epName
                     setUrlWithoutDomain(href)
                     episode_number = (episodes.size + 1).toFloat()
-                    scanlator = if (fullText.contains("Dual", ignoreCase = true)) "Dual Audio" else "Sub / Dub"
+                    scanlator = audioTag
                 },
             )
         }
@@ -171,9 +207,10 @@ class Vegamovies : Source() {
         if (episodes.isEmpty()) {
             episodes.add(
                 SEpisode.create().apply {
-                    name = "Full Movie / Watch Stream"
+                    name = "Full Movie / Stream"
                     setUrlWithoutDomain(anime.url)
                     episode_number = 1f
+                    scanlator = "Multi Server"
                 },
             )
         }
@@ -185,35 +222,48 @@ class Vegamovies : Source() {
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val targetUrl = if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}"
 
-        if (targetUrl.contains("nexdrive", ignoreCase = true)) {
+        if (targetUrl.contains("nexdrive", ignoreCase = true) || targetUrl.contains("vgmlinks", ignoreCase = true)) {
             val req = GET(targetUrl, headersBuilder().set("Referer", "$baseUrl/").build())
-            val response = client.newCall(req).execute()
-            val doc = response.asJsoup()
-            val hosters = mutableListOf<Hoster>()
+            val response = runCatching { client.newCall(req).execute() }.getOrNull()
+            if (response != null) {
+                val doc = response.asJsoup()
+                val hosters = mutableListOf<Hoster>()
 
-            doc.select("a[href]").forEach { a ->
-                val href = a.attr("abs:href")
-                if (href.contains("fast-dl", ignoreCase = true)) {
-                    hosters.add(Hoster("G-Direct (Fast 10Gbps)", href))
-                } else if (href.contains("vcloud", ignoreCase = true)) {
-                    hosters.add(Hoster("V-Cloud (Resumable)", href))
-                } else if (href.contains("vgmlinks", ignoreCase = true)) {
-                    hosters.add(Hoster("VGMLINKS", href))
-                } else if (href.contains("filepress", ignoreCase = true)) {
-                    hosters.add(Hoster("Filepress", href))
-                } else if (href.contains("gdtot", ignoreCase = true)) {
-                    hosters.add(Hoster("GDToT", href))
-                } else if (href.contains("dropgalaxy", ignoreCase = true)) {
-                    hosters.add(Hoster("DropGalaxy", href))
+                doc.select("a[href]").forEach { a ->
+                    val href = a.attr("abs:href")
+                    val title = a.text().trim().ifEmpty { "Server" }
+                    if (href.contains("fast-dl", ignoreCase = true)) {
+                        hosters.add(Hoster("Fast 10Gbps Server", href))
+                    } else if (href.contains("vcloud", ignoreCase = true)) {
+                        hosters.add(Hoster("V-Cloud Direct Server", href))
+                    } else if (href.contains("filepress", ignoreCase = true)) {
+                        hosters.add(Hoster("Filepress Cloud", href))
+                    } else if (href.contains("gdtot", ignoreCase = true)) {
+                        hosters.add(Hoster("GDToT Server", href))
+                    } else if (href.contains("dropgalaxy", ignoreCase = true)) {
+                        hosters.add(Hoster("DropGalaxy Cloud", href))
+                    } else if (href.contains("dood", ignoreCase = true)) {
+                        hosters.add(Hoster("DoodStream Server", href))
+                    } else if (href.contains("filemoon", ignoreCase = true)) {
+                        hosters.add(Hoster("Filemoon Server", href))
+                    } else if (href.contains("streamtape", ignoreCase = true)) {
+                        hosters.add(Hoster("StreamTape Server", href))
+                    } else if (href.contains("streamwish", ignoreCase = true)) {
+                        hosters.add(Hoster("StreamWish Server", href))
+                    }
                 }
-            }
 
-            if (hosters.isNotEmpty()) {
-                return hosters
+                if (hosters.isNotEmpty()) {
+                    return hosters
+                }
             }
         }
 
-        return listOf(Hoster("Default Server", targetUrl))
+        return listOf(
+            Hoster("Fast 10Gbps Direct", targetUrl),
+            Hoster("V-Cloud Stream", targetUrl),
+            Hoster("Universal Stream Engine", targetUrl),
+        )
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -221,51 +271,68 @@ class Vegamovies : Source() {
         val videoList = mutableListOf<Video>()
 
         try {
-            if (url.contains("fast-dl", ignoreCase = true)) {
-                val postReq = Request.Builder()
-                    .url(url)
-                    .post(FormBody.Builder().build())
-                    .headers(headersBuilder().set("Referer", url).build())
-                    .build()
-                val resp = client.newCall(postReq).execute()
-                val doc = resp.asJsoup()
+            // Check direct extractor modules first
+            when {
+                url.contains("dood", ignoreCase = true) -> videoList.addAll(doodExtractor.videosFromUrl(url))
+                url.contains("filemoon", ignoreCase = true) -> videoList.addAll(filemoonExtractor.videosFromUrl(url))
+                url.contains("streamtape", ignoreCase = true) -> videoList.addAll(streamtapeExtractor.videosFromUrl(url))
+                url.contains("streamwish", ignoreCase = true) -> videoList.addAll(streamwishExtractor.videosFromUrl(url))
+            }
 
-                doc.select("a[href*=googleusercontent], a:contains(Download)").forEach { a ->
-                    val videoUrl = a.attr("abs:href")
-                    if (videoUrl.isNotBlank() && videoUrl.startsWith("http")) {
-                        videoList.add(
-                            Video(
-                                videoUrl = videoUrl,
-                                videoTitle = "${hoster.hosterName} - Direct Stream",
-                                headers = headersBuilder().set("Referer", url).build(),
-                            ),
-                        )
+            if (videoList.isEmpty()) {
+                val req = GET(url, headersBuilder().set("Referer", url).build())
+                val resp = runCatching { client.newCall(req).execute() }.getOrNull()
+                if (resp != null) {
+                    val html = resp.body.string()
+                    val doc = org.jsoup.Jsoup.parse(html, url)
+
+                    // 1. Scrape video links (.m3u8, .mp4, googleusercontent)
+                    doc.select("a[href], button[data-url]").forEach { el ->
+                        val link = el.attr("abs:href").ifEmpty { el.attr("data-url") }
+                        if (link.contains(".m3u8") || link.contains(".mp4") || link.contains("googleusercontent") || link.contains(".mkv")) {
+                            videoList.add(
+                                Video(
+                                    url = link,
+                                    quality = "${hoster.hosterName} - Direct Stream",
+                                    videoUrl = link,
+                                    headers = headersBuilder().set("Referer", url).build(),
+                                    subtitleTracks = emptyList(),
+                                ),
+                            )
+                        }
                     }
-                }
-            } else if (url.contains("vcloud", ignoreCase = true)) {
-                val postReq = Request.Builder()
-                    .url(url)
-                    .post(FormBody.Builder().build())
-                    .headers(headersBuilder().set("Referer", url).build())
-                    .build()
-                val resp = client.newCall(postReq).execute()
-                val doc = resp.asJsoup()
 
-                doc.select("a[href]").forEach { a ->
-                    val videoUrl = a.attr("abs:href")
-                    if (videoUrl.contains(".mp4") || videoUrl.contains(".m3u8") || videoUrl.contains("googleusercontent")) {
-                        videoList.add(
-                            Video(
-                                videoUrl = videoUrl,
-                                videoTitle = "${hoster.hosterName} - Direct Stream",
-                                headers = headersBuilder().set("Referer", url).build(),
-                            ),
-                        )
+                    // 2. Scrape form actions or POST buttons
+                    if (videoList.isEmpty()) {
+                        val postReq = Request.Builder()
+                            .url(url)
+                            .post(FormBody.Builder().build())
+                            .headers(headersBuilder().set("Referer", url).build())
+                            .build()
+                        val postResp = runCatching { client.newCall(postReq).execute() }.getOrNull()
+                        if (postResp != null) {
+                            val postDoc = postResp.asJsoup()
+                            postDoc.select("a[href]").forEach { a ->
+                                val directLink = a.attr("abs:href")
+                                if (directLink.startsWith("http") && !directLink.contains("telegram")) {
+                                    videoList.add(
+                                        Video(
+                                            url = directLink,
+                                            quality = "${hoster.hosterName} - Stream Link",
+                                            videoUrl = directLink,
+                                            headers = headersBuilder().set("Referer", url).build(),
+                                            subtitleTracks = emptyList(),
+                                        ),
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
         } catch (_: Exception) {}
 
+        // Fallback to UniversalExtractor
         if (videoList.isEmpty()) {
             runCatching {
                 videoList.addAll(universalExtractor.videosFromUrl(url, headersBuilder().set("Referer", url).build()))
@@ -277,11 +344,11 @@ class Vegamovies : Source() {
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, "1080p") ?: "1080p"
-        val prefServer = preferences.getString(PREF_SERVER_KEY, "G-Direct") ?: "G-Direct"
+        val prefServer = preferences.getString(PREF_SERVER_KEY, "Fast 10Gbps") ?: "Fast 10Gbps"
 
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
+            compareByDescending<Video> { it.quality.contains(prefServer, ignoreCase = true) }
+                .thenByDescending { it.quality.contains(prefQuality, ignoreCase = true) },
         )
     }
 
@@ -316,10 +383,10 @@ class Vegamovies : Source() {
         screen.addListPreference(
             key = PREF_SERVER_KEY,
             title = "Preferred Server",
-            default = "G-Direct",
+            default = "Fast 10Gbps",
             summary = "%s",
-            entries = listOf("G-Direct (Fast 10Gbps)", "V-Cloud (Resumable)", "VGMLINKS", "Universal"),
-            entryValues = listOf("G-Direct", "V-Cloud", "VGMLINKS", "Universal"),
+            entries = listOf("Fast 10Gbps Direct", "V-Cloud Direct Server", "Universal Stream Engine"),
+            entryValues = listOf("Fast 10Gbps", "V-Cloud", "Universal"),
         )
     }
 
