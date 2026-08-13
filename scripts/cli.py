@@ -248,6 +248,10 @@ def main():
             "script": "detect_extractors.py",
             "desc": "Auto-detect required video extractors from embed URLs or extension codebase, and update build.gradle dependencies."
         },
+        "sync-lib": {
+            "script": "sync_lib.py",
+            "desc": "Synchronize and update shared lib/ extractor modules from upstream repositories (Yuzono/Keiyoushi/Aniyomiorg)."
+        },
         "test-scraper": {
             "script": "test_scraper.py",
             "desc": "Test live HTTP requests, Jsoup CSS selectors, regex patterns, or JSON API payloads locally without Gradle."
@@ -275,17 +279,21 @@ Available Commands ({len(commands_info)} Total):
   5. fetch-icon        {commands_info['fetch-icon']['desc']}
   6. fetch-metadata    {commands_info['fetch-metadata']['desc']}
   7. detect-extractors {commands_info['detect-extractors']['desc']}
-  8. test-scraper      {commands_info['test-scraper']['desc']}
-  9. test-extractor    {commands_info['test-extractor']['desc']}
- 10. list-extractors   {commands_info['list-extractors']['desc']}
+  8. sync-lib          {commands_info['sync-lib']['desc']}
+  9. test-scraper      {commands_info['test-scraper']['desc']}
+ 10. test-extractor    {commands_info['test-extractor']['desc']}
+ 11. list-extractors   {commands_info['list-extractors']['desc']}
 
 Examples:
   python3 scripts/cli.py create --name "AnimeFlix" --lang "en" --siteType "html"
+  python3 scripts/cli.py sync-lib --module dood-extractor
+  python3 scripts/cli.py sync-lib --all --check
   python3 scripts/cli.py detect-extractors --url "https://filemoon.sx/e/example"
   python3 scripts/cli.py fetch-metadata --mal-id 21 --title "One Piece"
   python3 scripts/cli.py validate
 """
     )
+
 
 
     parser.add_argument("command", choices=list(commands_info.keys()), help="Subcommand to run")
