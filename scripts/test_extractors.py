@@ -33,7 +33,7 @@ class JsUnpacker:
     def unpack(source: str) -> str:
         """Unpacks Dean Edwards packed JavaScript code (radix 2..95, multi-pass)."""
         packed_pattern = re.compile(
-            r"\}\s*\('(.*?)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'(.*?)'\.split\('\|'\)",
+            r"\}\s*\(\s*['\"](.*?)['\"]\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*['\"](.*?)['\"]\s*\.split\(\s*['\"]\|['\"]\s*\)",
             re.DOTALL | re.IGNORECASE
         )
 
@@ -99,21 +99,25 @@ class PlayerJsDecoder:
         if not str_val:
             return ""
 
-        if str_val.startswith("#2") or str_val.startswith("#"):
-            str_val = str_val[2:] if str_val.startswith("#2") else str_val[1:]
-            for trash in trash_list:
-                if trash:
-                    str_val = str_val.replace(trash, "")
+        # Match prefixes like #0, #1, #2, #3, #, //_//
+        str_val = re.sub(r"^(?:#\d?|//_//)", "", str_val)
 
-            try:
-                pad = len(str_val) % 4
-                if pad > 0:
-                    str_val += "=" * (4 - pad)
-                decoded = base64.b64decode(str_val).decode('utf-8', errors='ignore')
-                if "http" in decoded or "//" in decoded or "." in decoded:
-                    return decoded
-            except Exception:
-                pass
+        for trash in trash_list:
+            if trash and trash != "_":
+                str_val = str_val.replace(trash, "")
+
+        # Handle standard and URL-safe base64
+        str_val = str_val.replace("-", "+").replace("_", "/")
+        pad = len(str_val) % 4
+        if pad > 0:
+            str_val += "=" * (4 - pad)
+
+        try:
+            decoded = base64.b64decode(str_val).decode('utf-8', errors='ignore')
+            if "http" in decoded or "//" in decoded or "." in decoded:
+                return decoded
+        except Exception:
+            pass
 
         return str_val
 

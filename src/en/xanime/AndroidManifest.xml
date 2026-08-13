@@ -12,6 +12,9 @@
         tools:replace="android:allowBackup,android:icon,android:label">
 
         <meta-data
+            android:name="tachiyomi.animeextension.versionId"
+            android:value="2" />
+        <meta-data
             android:name="tachiyomi.animeextension.class"
             android:value="${extClass}" />
         <meta-data

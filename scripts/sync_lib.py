@@ -105,8 +105,11 @@ def check_module_updates(repo_root: Path, module_name: str, upstream_key: str = 
             continue
 
         local_content = kt_path.read_text(encoding="utf-8")
-        local_hash = hashlib.sha256(local_content.encode("utf-8")).hexdigest()
-        upstream_hash = hashlib.sha256(upstream_content.encode("utf-8")).hexdigest()
+        local_norm = local_content.replace("\r\n", "\n")
+        upstream_norm = upstream_content.replace("\r\n", "\n")
+
+        local_hash = hashlib.sha256(local_norm.encode("utf-8")).hexdigest()
+        upstream_hash = hashlib.sha256(upstream_norm.encode("utf-8")).hexdigest()
 
         if local_hash != upstream_hash:
             print(f"  ⚡ Update available for {module_name} ({kt_path.name})")
@@ -135,7 +138,10 @@ def sync_module(repo_root: Path, module_name: str, upstream_key: str = "keiyoush
             continue
 
         local_content = kt_path.read_text(encoding="utf-8")
-        if local_content != upstream_content:
+        local_norm = local_content.replace("\r\n", "\n")
+        upstream_norm = upstream_content.replace("\r\n", "\n")
+
+        if local_norm != upstream_norm:
             print(f"🚀 Updating lib/{module_name}/{rel_path}...")
             if not dry_run:
                 kt_path.write_text(upstream_content, encoding="utf-8")
