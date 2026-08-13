@@ -254,123 +254,105 @@ class Vegamovies : Source() {
         }
 
         val content = doc.selectFirst("div.entry-content") ?: return emptyList()
+        val postHtml = content.html()
+
+        val seasonRegex = Regex("""Season\s*(\d+)|\bS(\d+)\b""", RegexOption.IGNORE_CASE)
+        val sMatch = seasonRegex.find(doc.select("h1.entry-title").text()) ?: seasonRegex.find(postHtml)
+        val globalSeason = sMatch?.let { (it.groupValues[1].ifEmpty { it.groupValues[2] }).toIntOrNull() } ?: 1
 
         val episodes = mutableListOf<SEpisode>()
-        var currentSeason: Int? = globalSeason
-        var currentQuality = ""
 
-        val qRegex = Regex("""(480p|720p|1080p|2160p|4k|HEVC)""", RegexOption.IGNORE_CASE)
-        val seasonRegex = Regex("""Season\s*(\d+)|\bS(\d+)\b""", RegexOption.IGNORE_CASE)
+        // 1. Extract landing links (nexdrive/vcloud/fast-dl/vgmlinks)
+        val landingLinks = mutableListOf<Pair<String, String>>()
+        content.select("a[href]").forEach { a ->
+            val href = a.attr("abs:href")
+            val text = a.text().trim()
+            if (href.startsWith("http") && (href.contains("nexdrive") || href.contains("vcloud") || href.contains("vgmlinks") || href.contains("fast-dl"))) {
+                if (landingLinks.none { it.first == href }) {
+                    landingLinks.add(Pair(href, text))
+                }
+            }
+        }
+
+        // 2. Try fetching landing pages to extract TV series episode links
+        landingLinks.forEach { (landingUrl, btnText) ->
+            runCatching {
+                val resp = client.newCall(GET(landingUrl, headersBuilder().set("Referer", "$baseUrl/").build())).execute()
+                val lHtml = resp.body.string()
+
+                val epBlocks = lHtml.split(Regex("""(?=<div[^>]+class=["']ep-title["']|<h[1-6][^>]*>)""", RegexOption.IGNORE_CASE))
+                epBlocks.forEach { block ->
+                    val epTitleMatch = Regex("""class=["']ep-title["'][^>]*>(.*?)</div""", RegexOption.IGNORE_CASE).find(block)
+                        ?: Regex("""<h[1-6][^>]*>(.*?)</h[1-6]>""", RegexOption.IGNORE_CASE).find(block)
+                    val blockTitle = epTitleMatch?.groupValues?.get(1)?.replace(Regex("""<[^>]+>"""), "")?.trim() ?: ""
+
+                    val epNumMatch = Regex("""(?:Episodes?|Ep)\s*:\s*(\d+)""", RegexOption.IGNORE_CASE).find(blockTitle)
+                    if (epNumMatch != null) {
+                        val epNum = epNumMatch.groupValues[1].toIntOrNull() ?: 1
+                        val bDoc = Jsoup.parse(block, landingUrl)
+                        bDoc.select("a[href]").forEach { a ->
+                            val href = a.attr("abs:href")
+                            val text = a.text().trim()
+                            val cleanName = getCleanHosterName(href, text, "")
+                            if (cleanName != null && href.startsWith("http") && episodes.none { it.url == href }) {
+                                val sStr = "S${globalSeason.toString().padStart(2, '0')}"
+                                val epName = "$sStr Episode ${epNum.toString().padStart(2, '0')} - $cleanName [$btnText]"
+                                val calculatedNum = (globalSeason * 1000f) + epNum
+                                episodes.add(
+                                    SEpisode.create().apply {
+                                        name = epName
+                                        setUrlWithoutDomain(href)
+                                        episode_number = calculatedNum
+                                        scanlator = audioTag
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If landing pages revealed TV series episodes, return them
+        if (episodes.isNotEmpty()) {
+            return episodes.reversed()
+        }
+
+        // Fallback: If direct episode buttons exist in post HTML
         val epRegex = Regex("""(?:Episode|Ep|\bE)\s*[-:]?\s*(\d+)""", RegexOption.IGNORE_CASE)
-        val sizeRegex = Regex("""\[?([\d.]+\s*(?:MB|GB))\]?""", RegexOption.IGNORE_CASE)
-        val skipHosts = setOf("telegram", "facebook", "twitter", "instagram", "youtube", "wp-content", "wp-includes", ".jpg", ".png", ".webp", ".jpeg", "#")
-
-        val parts = content.html().split(
-            Regex("""(?=<h[1-6][^>]*>|<p[^>]*>\s*<strong|<div[^>]*class=["'][^"']*(?:dl-|btn|box|download)[^"']*["'])""", RegexOption.IGNORE_CASE),
-        )
-
-        parts.forEach { part ->
-            val pDoc = Jsoup.parse(part, "$baseUrl${anime.url}")
-            val headerText = pDoc.select("h1, h2, h3, h4, h5, h6, strong, p").text().trim()
-
-            val sMatch = seasonRegex.find(headerText)
-            if (sMatch != null) {
-                val sNum = (sMatch.groupValues[1].ifEmpty { sMatch.groupValues[2] }).toIntOrNull()
-                if (sNum != null) {
-                    currentSeason = sNum
-                }
-            }
-
-            val qMatch = qRegex.find(headerText)
-            if (qMatch != null) {
-                currentQuality = qMatch.value.uppercase()
-            }
-
-            pDoc.select("a[href]").forEach { a ->
-                val href = a.attr("abs:href")
-                if (href.isBlank() || href == "$baseUrl/" || skipHosts.any { href.contains(it, ignoreCase = true) }) return@forEach
-                if (episodes.any { it.url == href }) return@forEach
-
-                val btnText = a.text().trim()
-                val isDownloadLink = href.contains("nexdrive") || href.contains("vcloud") ||
-                    href.contains("fast-dl") || href.contains("vgmlinks") ||
-                    href.contains("filepress") || href.contains("driveleech") ||
-                    href.contains("gdtot") || href.contains("devgdrive") ||
-                    a.hasClass("maxbutton") || a.hasClass("btn") ||
-                    btnText.contains("Download", ignoreCase = true) ||
-                    btnText.contains("Episode", ignoreCase = true) ||
-                    btnText.contains("Ep ", ignoreCase = true) ||
-                    btnText.contains("Batch", ignoreCase = true) ||
-                    btnText.contains("Zip", ignoreCase = true) ||
-                    btnText.contains("V-Cloud", ignoreCase = true) ||
-                    btnText.contains("Fast", ignoreCase = true)
-
-                if (!isDownloadLink) return@forEach
-
-                val sizeMatch = sizeRegex.find(btnText) ?: sizeRegex.find(headerText)
-                val sizeStr = if (sizeMatch != null) " [${sizeMatch.groupValues[1]}]" else ""
-
-                val epMatch = epRegex.find(btnText) ?: epRegex.find(headerText)
-                val sPrefix = currentSeason?.let { "S${it.toString().padStart(2, '0')} " } ?: ""
-
-                val epName = when {
-                    epMatch != null -> {
-                        val epNum = epMatch.groupValues[1]
-                        val qualStr = if (currentQuality.isNotBlank() && !btnText.contains(currentQuality, ignoreCase = true)) " [$currentQuality]" else ""
-                        "${sPrefix}Episode $epNum$qualStr$sizeStr"
-                    }
-
-                    btnText.contains("Zip", ignoreCase = true) || btnText.contains("Batch", ignoreCase = true) || btnText.contains("Complete", ignoreCase = true) -> {
-                        val qualStr = if (currentQuality.isNotBlank() && !btnText.contains(currentQuality, ignoreCase = true)) " [$currentQuality]" else ""
-                        "${sPrefix}Batch Zip$qualStr$sizeStr"
-                    }
-
-                    currentQuality.isNotBlank() -> {
-                        "$sPrefix$currentQuality$sizeStr"
-                    }
-
-                    else -> {
-                        btnText.ifEmpty { "${sPrefix}Download Link ${episodes.size + 1}" }
-                    }
-                }
-
-                val epNum = epMatch?.groupValues?.get(1)?.toFloatOrNull() ?: (episodes.size + 1).toFloat()
-                val calculatedEpNumber = if (currentSeason != null && epMatch != null) {
-                    (currentSeason!! * 1000f) + epNum
-                } else {
-                    epNum
-                }
-
+        content.select("a[href]").forEach { a ->
+            val href = a.attr("abs:href")
+            val text = a.text().trim()
+            val epMatch = epRegex.find(text)
+            if (epMatch != null && href.startsWith("http") && episodes.none { it.url == href }) {
+                val epNum = epMatch.groupValues[1].toFloatOrNull() ?: 1f
+                val sStr = "S${globalSeason.toString().padStart(2, '0')}"
+                val epName = "$sStr Episode ${epMatch.groupValues[1]} - $text"
+                val calculatedNum = (globalSeason * 1000f) + epNum
                 episodes.add(
                     SEpisode.create().apply {
                         name = epName
                         setUrlWithoutDomain(href)
-                        episode_number = calculatedEpNumber
+                        episode_number = calculatedNum
                         scanlator = audioTag
                     },
                 )
             }
         }
 
-        val hasTvEpisodes = episodes.any { ep ->
-            val epName = ep.name
-            epName.contains("Episode", ignoreCase = true) ||
-                epName.contains("Ep ", ignoreCase = true) ||
-                Regex("""S\d+\s*E\d+""", RegexOption.IGNORE_CASE).containsMatchIn(epName)
+        if (episodes.isNotEmpty()) {
+            return episodes.reversed()
         }
 
-        if (!hasTvEpisodes || episodes.isEmpty()) {
-            return listOf(
-                SEpisode.create().apply {
-                    name = "Full Movie"
-                    setUrlWithoutDomain(anime.url)
-                    episode_number = 1f
-                    scanlator = audioTag
-                },
-            )
-        }
-
-        return episodes.reversed()
+        // 3. Otherwise (Single Movie post), return 1 Single Movie Episode
+        return listOf(
+            SEpisode.create().apply {
+                name = "Full Movie"
+                setUrlWithoutDomain(anime.url)
+                episode_number = 1f
+                scanlator = audioTag
+            },
+        )
     }
 
     // ============================ Video Links =============================
@@ -378,13 +360,18 @@ class Vegamovies : Source() {
         val episodeUrl = if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}"
         val hosters = mutableListOf<Hoster>()
 
+        // 1. Direct hoster link check (fast-dl, vcloud, etc.)
+        val cleanDirectName = getCleanHosterName(episodeUrl, episode.name, "")
+        if (cleanDirectName != null) {
+            hosters.add(Hoster(cleanDirectName, episodeUrl))
+            return hosters
+        }
+
+        // 2. Movie post page / Landing page check
         runCatching {
-            val resp = client.newCall(
-                GET(episodeUrl, headersBuilder().set("Referer", "$baseUrl/").build()),
-            ).execute()
+            val resp = client.newCall(GET(episodeUrl, headersBuilder().set("Referer", "$baseUrl/").build())).execute()
             val doc = resp.asJsoup()
 
-            // 1. Check Watch Online section (IndStreamPlayer / rasta428jem player)
             val ttMatch = Regex("""src:\s*['"]?(tt\d+)['"]?""", RegexOption.IGNORE_CASE).find(doc.html())
             if (ttMatch != null) {
                 val imdbId = ttMatch.groupValues[1]
@@ -392,22 +379,22 @@ class Vegamovies : Source() {
                 hosters.add(Hoster("Watch Online (Player)", watchUrl))
             }
 
-            // 2. Parse nexdrive / download hosters
-            val nexHtml = doc.html()
-            val epRegex = Regex("""Episodes?:\s*(\d+)""", RegexOption.IGNORE_CASE)
-            val parts = nexHtml.split(Regex("""(?=<[^>]+class=["']ep-title[^"']*["']|<h[1-6][^>]*>)""", RegexOption.IGNORE_CASE))
-
-            parts.forEach { part ->
-                val epMatch = epRegex.find(part)
-                val epPrefix = if (epMatch != null) "Ep ${epMatch.groupValues[1]} - " else ""
-                val pDoc = Jsoup.parse(part, episodeUrl)
-
-                pDoc.select("a[href]").forEach { a ->
-                    val href = a.attr("abs:href")
-                    val text = a.text().trim()
-                    val cleanName = getCleanHosterName(href, text, "")
-                    if (cleanName != null && href.isNotBlank() && hosters.none { it.hosterUrl == href }) {
-                        hosters.add(Hoster(hosterName = "$epPrefix$cleanName", hosterUrl = href))
+            // Parse nexdrive/vcloud/fast-dl landing links
+            doc.select("a[href]").forEach { a ->
+                val href = a.attr("abs:href")
+                val btnText = a.text().trim()
+                if (href.startsWith("http") && (href.contains("nexdrive") || href.contains("vcloud") || href.contains("vgmlinks") || href.contains("fast-dl"))) {
+                    runCatching {
+                        val nexResp = client.newCall(GET(href, headersBuilder().set("Referer", "$baseUrl/").build())).execute()
+                        val nexDoc = nexResp.asJsoup()
+                        nexDoc.select("a[href]").forEach { na ->
+                            val nHref = na.attr("abs:href")
+                            val nText = na.text().trim()
+                            val cleanName = getCleanHosterName(nHref, nText, btnText)
+                            if (cleanName != null && nHref.startsWith("http") && hosters.none { it.hosterUrl == nHref }) {
+                                hosters.add(Hoster(hosterName = cleanName, hosterUrl = nHref))
+                            }
+                        }
                     }
                 }
             }
