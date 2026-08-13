@@ -18,6 +18,7 @@ import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.parallelCatchingMapNotNull
+import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
@@ -195,7 +196,7 @@ class Vegamovies : Source() {
 
         val content = doc.selectFirst("div.entry-content") ?: return emptyList()
 
-        // Gather all download links on the page (nexdrive, vcloud, btn links)
+        // Gather all download links on the page (nexdrive, vcloud, fast-dl, vgmlinks)
         val downloadAnchors = content.select("a[href]")
             .mapNotNull { a ->
                 val href = a.attr("abs:href")
@@ -203,9 +204,7 @@ class Vegamovies : Source() {
                     !href.contains("telegram") && href != "$baseUrl/" && !href.contains("#")
                 ) {
                     href
-                } else {
-                    null
-                }
+                } else null
             }.distinct()
 
         val episodeHosterMap = Collections.synchronizedMap(mutableMapOf<Int, MutableList<ParsedHoster>>())
@@ -378,16 +377,30 @@ class Vegamovies : Source() {
                     videoList.addAll(streamwishExtractor.videosFromUrl(url, prefix = "${hoster.hosterName} - "))
 
                 else -> {
-                    val resp = client.newCall(GET(url, refHeaders)).execute()
-                    val doc = resp.asJsoup()
+                    // Submit POST request to fast-dl / vcloud hoster URL to obtain the direct video stream URL
+                    val postReq = Request.Builder()
+                        .url(url)
+                        .post(FormBody.Builder().build())
+                        .headers(refHeaders)
+                        .build()
+                    val postResp = runCatching { client.newCall(postReq).execute() }.getOrNull()
+                    val doc = postResp?.asJsoup() ?: client.newCall(GET(url, refHeaders)).execute().asJsoup()
+
+                    val vdLink = doc.selectFirst("a#vd, a[cf-cache]")?.attr("abs:href")
+                    if (!vdLink.isNullOrBlank()) {
+                        videoList.add(
+                            Video(
+                                videoUrl = vdLink,
+                                videoTitle = "${hoster.hosterName} - Direct Stream",
+                                headers = refHeaders,
+                            ),
+                        )
+                    }
+
                     doc.select("a[href]").forEach { a ->
                         val href = a.attr("abs:href")
                         if (href.startsWith("http") && !href.contains("telegram") && !href.contains("#") &&
-                            (
-                                href.contains(".m3u8") || href.contains(".mp4") || href.contains(".mkv") ||
-                                    href.contains("googleusercontent") || href.contains("drive.google") ||
-                                    href.contains("tinyurl") || href.contains("fast-dl") || href.contains("vcloud")
-                                )
+                            href != vdLink && (href.contains("googleusercontent") || href.contains(".mp4") || href.contains(".mkv") || href.contains(".m3u8"))
                         ) {
                             videoList.add(
                                 Video(
@@ -398,18 +411,11 @@ class Vegamovies : Source() {
                             )
                         }
                     }
+
                     if (videoList.isEmpty()) {
                         val extracted = universalExtractor.videosFromUrl(url, refHeaders)
                         if (extracted.isNotEmpty()) {
                             videoList.addAll(extracted)
-                        } else {
-                            videoList.add(
-                                Video(
-                                    videoUrl = url,
-                                    videoTitle = hoster.hosterName,
-                                    headers = refHeaders,
-                                ),
-                            )
                         }
                     }
                 }
