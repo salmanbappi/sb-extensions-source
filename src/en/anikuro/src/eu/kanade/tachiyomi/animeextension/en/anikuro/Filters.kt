@@ -15,60 +15,65 @@ object Filters {
         fun isDefault() = state == 0
     }
 
-    class SortFilter : SelectFilter(
-        "Sort By",
-        arrayOf(
-            Pair("Popularity", "POPULARITY_DESC"),
-            Pair("Trending", "TRENDING_DESC"),
-            Pair("Score", "SCORE_DESC"),
-            Pair("Start Date", "START_DATE_DESC"),
-            Pair("Episodes", "EPISODES_DESC"),
-        ),
-    )
+    class SortFilter :
+        SelectFilter(
+            "Sort By",
+            arrayOf(
+                Pair("Popularity", "POPULARITY_DESC"),
+                Pair("Trending", "TRENDING_DESC"),
+                Pair("Score", "SCORE_DESC"),
+                Pair("Start Date", "START_DATE_DESC"),
+                Pair("Episodes", "EPISODES_DESC"),
+            ),
+        )
 
-    class FormatFilter : SelectFilter(
-        "Format",
-        arrayOf(
-            Pair("All", ""),
-            Pair("TV", "TV"),
-            Pair("TV Short", "TV_SHORT"),
-            Pair("Movie", "MOVIE"),
-            Pair("Special", "SPECIAL"),
-            Pair("OVA", "OVA"),
-            Pair("ONA", "ONA"),
-            Pair("Music", "MUSIC"),
-        ),
-    )
+    class FormatFilter :
+        SelectFilter(
+            "Format",
+            arrayOf(
+                Pair("All", ""),
+                Pair("TV", "TV"),
+                Pair("TV Short", "TV_SHORT"),
+                Pair("Movie", "MOVIE"),
+                Pair("Special", "SPECIAL"),
+                Pair("OVA", "OVA"),
+                Pair("ONA", "ONA"),
+                Pair("Music", "MUSIC"),
+            ),
+        )
 
-    class StatusFilter : SelectFilter(
-        "Status",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Releasing", "RELEASING"),
-            Pair("Finished", "FINISHED"),
-            Pair("Not Yet Released", "NOT_YET_RELEASED"),
-            Pair("Cancelled", "CANCELLED"),
-            Pair("Hiatus", "HIATUS"),
-        ),
-    )
+    class StatusFilter :
+        SelectFilter(
+            "Status",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Releasing", "RELEASING"),
+                Pair("Finished", "FINISHED"),
+                Pair("Not Yet Released", "NOT_YET_RELEASED"),
+                Pair("Cancelled", "CANCELLED"),
+                Pair("Hiatus", "HIATUS"),
+            ),
+        )
 
-    class SeasonFilter : SelectFilter(
-        "Season",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Winter", "WINTER"),
-            Pair("Spring", "SPRING"),
-            Pair("Summer", "SUMMER"),
-            Pair("Fall", "FALL"),
-        ),
-    )
+    class SeasonFilter :
+        SelectFilter(
+            "Season",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Winter", "WINTER"),
+                Pair("Spring", "SPRING"),
+                Pair("Summer", "SUMMER"),
+                Pair("Fall", "FALL"),
+            ),
+        )
 
     class CheckBoxVal(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
 
-    class GenreFilter : AnimeFilter.Group<CheckBoxVal>(
-        "Genres",
-        GENRES.map { CheckBoxVal(it.first, it.second) },
-    ) {
+    class GenreFilter :
+        AnimeFilter.Group<CheckBoxVal>(
+            "Genres",
+            GENRES.map { CheckBoxVal(it.first, it.second) },
+        ) {
         fun selectedGenres(): List<String> = state.filter { it.state }.map { it.id }
     }
 
