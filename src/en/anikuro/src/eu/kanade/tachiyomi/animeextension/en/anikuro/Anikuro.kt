@@ -43,7 +43,7 @@ class Anikuro : Source() {
         isLenient = true
     }
 
-    companion {
+    companion object {
         private const val PREF_TYPE_KEY = "pref_type"
         private const val PREF_TYPE_DEFAULT = "ALL"
 
