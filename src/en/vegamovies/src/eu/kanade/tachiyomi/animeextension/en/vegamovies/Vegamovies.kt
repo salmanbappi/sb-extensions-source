@@ -409,16 +409,14 @@ class Vegamovies : Source() {
         }.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
     }
 
-    private fun getServerName(href: String): String? {
-        return when {
-            href.contains("fast-dl", ignoreCase = true) -> "Fast Download"
-            href.contains("vcloud", ignoreCase = true) -> "V-Cloud"
-            href.contains("dood", ignoreCase = true) -> "DoodStream"
-            href.contains("filemoon", ignoreCase = true) -> "Filemoon"
-            href.contains("streamtape", ignoreCase = true) -> "StreamTape"
-            href.contains("streamwish", ignoreCase = true) || href.contains("awish", ignoreCase = true) -> "StreamWish"
-            else -> null
-        }
+    private fun getServerName(href: String): String? = when {
+        href.contains("fast-dl", ignoreCase = true) -> "Fast Download"
+        href.contains("vcloud", ignoreCase = true) -> "V-Cloud"
+        href.contains("dood", ignoreCase = true) -> "DoodStream"
+        href.contains("filemoon", ignoreCase = true) -> "Filemoon"
+        href.contains("streamtape", ignoreCase = true) -> "StreamTape"
+        href.contains("streamwish", ignoreCase = true) || href.contains("awish", ignoreCase = true) -> "StreamWish"
+        else -> null
     }
 
     private fun extractQualityLabel(btnText: String, landingText: String): String {
