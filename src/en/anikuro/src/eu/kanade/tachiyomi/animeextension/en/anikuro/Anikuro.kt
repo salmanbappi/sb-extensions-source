@@ -14,9 +14,18 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonNames
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
@@ -157,6 +166,7 @@ class Anikuro : Source() {
                 ?: anime.title
             thumbnail_url = data.images?.cover
                 ?: data.coverImage?.extraLarge
+                ?: data.coverImage?.large
                 ?: anime.thumbnail_url
             genre = data.genres?.joinToString(", ")
             author = data.studio
@@ -428,22 +438,69 @@ class Anikuro : Source() {
         val perPage: Int? = null,
     )
 
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     private data class AnimeItemDto(
         val id: Int? = null,
         val title: TitleDto? = null,
         val images: ImagesDto? = null,
+        @JsonNames("coverimage")
         val coverImage: CoverImageDto? = null,
         val banner: String? = null,
     )
 
     @Serializable
+    private data class TitleSurrogate(
+        val userPreferred: String? = null,
+        val english: String? = null,
+        val romaji: String? = null,
+        val native: String? = null,
+    )
+
+    @Serializable(with = TitleSerializer::class)
     private data class TitleDto(
         val userPreferred: String? = null,
         val english: String? = null,
         val romaji: String? = null,
         val native: String? = null,
     )
+
+    private object TitleSerializer : KSerializer<TitleDto> {
+        override val descriptor: SerialDescriptor = TitleSurrogate.serializer().descriptor
+
+        override fun deserialize(decoder: Decoder): TitleDto {
+            val jsonDecoder = decoder as? JsonDecoder ?: return TitleDto()
+            return runCatching {
+                val element = jsonDecoder.decodeJsonElement()
+                when {
+                    element is JsonObject -> {
+                        val surrogate = jsonDecoder.json.decodeFromJsonElement(TitleSurrogate.serializer(), element)
+                        TitleDto(
+                            userPreferred = surrogate.userPreferred,
+                            english = surrogate.english,
+                            romaji = surrogate.romaji,
+                            native = surrogate.native,
+                        )
+                    }
+                    element is JsonPrimitive && element.isString -> {
+                        val str = element.content
+                        TitleDto(userPreferred = str, english = str, romaji = str, native = str)
+                    }
+                    else -> TitleDto()
+                }
+            }.getOrDefault(TitleDto())
+        }
+
+        override fun serialize(encoder: Encoder, value: TitleDto) {
+            val surrogate = TitleSurrogate(
+                userPreferred = value.userPreferred,
+                english = value.english,
+                romaji = value.romaji,
+                native = value.native,
+            )
+            TitleSurrogate.serializer().serialize(encoder, surrogate)
+        }
+    }
 
     @Serializable
     private data class ImagesDto(
@@ -453,11 +510,45 @@ class Anikuro : Source() {
     )
 
     @Serializable
+    private data class CoverImageSurrogate(
+        val extraLarge: String? = null,
+        val large: String? = null,
+        val medium: String? = null,
+    )
+
+    @Serializable(with = CoverImageSerializer::class)
     private data class CoverImageDto(
         val extraLarge: String? = null,
         val large: String? = null,
         val medium: String? = null,
     )
+
+    private object CoverImageSerializer : KSerializer<CoverImageDto> {
+        override val descriptor: SerialDescriptor = CoverImageSurrogate.serializer().descriptor
+
+        override fun deserialize(decoder: Decoder): CoverImageDto {
+            val jsonDecoder = decoder as? JsonDecoder ?: return CoverImageDto()
+            return runCatching {
+                val element = jsonDecoder.decodeJsonElement()
+                when {
+                    element is JsonObject -> {
+                        val surrogate = jsonDecoder.json.decodeFromJsonElement(CoverImageSurrogate.serializer(), element)
+                        CoverImageDto(extraLarge = surrogate.extraLarge, large = surrogate.large, medium = surrogate.medium)
+                    }
+                    element is JsonPrimitive && element.isString -> {
+                        val str = element.content
+                        CoverImageDto(extraLarge = str, large = str, medium = str)
+                    }
+                    else -> CoverImageDto()
+                }
+            }.getOrDefault(CoverImageDto())
+        }
+
+        override fun serialize(encoder: Encoder, value: CoverImageDto) {
+            val surrogate = CoverImageSurrogate(extraLarge = value.extraLarge, large = value.large, medium = value.medium)
+            CoverImageSurrogate.serializer().serialize(encoder, surrogate)
+        }
+    }
 
     @Serializable
     private data class AnimeDetailResponseDto(
@@ -465,6 +556,7 @@ class Anikuro : Source() {
         val data: AnimeDetailDataDto? = null,
     )
 
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     private data class AnimeDetailDataDto(
         val id: Int? = null,
@@ -472,6 +564,7 @@ class Anikuro : Source() {
         val description: String? = null,
         val genres: List<String>? = null,
         val images: ImagesDto? = null,
+        @JsonNames("coverimage")
         val coverImage: CoverImageDto? = null,
         val averageScore: Int? = null,
         val status: String? = null,
