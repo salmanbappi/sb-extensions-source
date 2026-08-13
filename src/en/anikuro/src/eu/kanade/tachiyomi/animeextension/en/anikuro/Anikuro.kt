@@ -81,20 +81,25 @@ class Anikuro : Source() {
                     is Filters.SortFilter -> {
                         if (!filter.isDefault()) addQueryParameter("sort", filter.selectedValue())
                     }
+
                     is Filters.FormatFilter -> {
                         if (!filter.isDefault()) addQueryParameter("format", filter.selectedValue())
                     }
+
                     is Filters.StatusFilter -> {
                         if (!filter.isDefault()) addQueryParameter("status", filter.selectedValue())
                     }
+
                     is Filters.SeasonFilter -> {
                         if (!filter.isDefault()) addQueryParameter("season", filter.selectedValue())
                     }
+
                     is Filters.GenreFilter -> {
                         filter.selectedGenres().forEach { genre ->
                             addQueryParameter("genres", genre)
                         }
                     }
+
                     else -> {}
                 }
             }
@@ -301,7 +306,7 @@ class Anikuro : Source() {
 
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.startsWith(prefType, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) },
         )
     }
 
