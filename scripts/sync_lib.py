@@ -142,13 +142,6 @@ def sync_module(repo_root: Path, module_name: str, upstream_key: str = "keiyoush
             updated_count += 1
 
 
-        local_content = kt_path.read_text(encoding="utf-8")
-        if local_content != upstream_content:
-            print(f"🚀 Updating lib/{module_name}/{rel_path}...")
-            if not dry_run:
-                kt_path.write_text(upstream_content, encoding="utf-8")
-            updated_count += 1
-
     if updated_count > 0:
         print(f"✅ Successfully synced {updated_count} file(s) in lib/{module_name}")
         return True

@@ -294,6 +294,7 @@ class {class_name} : Source() {{
         genre = document.select("div.genres a").joinToString(", ") {{ it.text() }}
         description = document.select("div.description").text()
         thumbnail_url = document.select("div.poster img").attr("abs:src")
+        initialized = true
         status = when (document.select("span.status").text().lowercase()) {{
             "ongoing" -> SAnime.ONGOING
             "completed" -> SAnime.COMPLETED
