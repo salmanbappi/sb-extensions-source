@@ -43,7 +43,8 @@ class Vegamovies : Source() {
     private val doodExtractor by lazy { DoodExtractor(client) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
-    private val streamwishExtractor by lazy { StreamWishExtractor(client) }
+    private val streamwishExtractor by lazy { StreamWishExtractor(client, headers) }
+
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
