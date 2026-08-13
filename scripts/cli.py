@@ -109,12 +109,12 @@ def bump_version(repo_root: Path, target_lang: str, target_name: str) -> bool:
         return False
 
 
-def show_info(repo_root: Path, target_lang: str, target_name: str):
+def show_info(repo_root: Path, target_lang: str, target_name: str) -> bool:
     """Displays detailed summary of an extension module."""
     ext_path = repo_root / "src" / target_lang / target_name
     if not ext_path.exists():
         print(f"❌ Extension src/{target_lang}/{target_name} not found.")
-        return
+        return False
 
     print(f"ℹ️ Module Info: src/{target_lang}/{target_name}\n" + "=" * 50)
     gradle_file = ext_path / "build.gradle"
@@ -138,6 +138,8 @@ def show_info(repo_root: Path, target_lang: str, target_name: str):
     print(f"  • Manifest: {'✓ Present' if manifest_file.exists() else '❌ Missing'}")
     print(f"  • Launcher Icon: {'✓ Present' if icon_file.exists() else '❌ Missing'}")
     print(f"  • Kotlin Source Files ({len(kt_files)}): {', '.join(f.name for f in kt_files)}")
+    return True
+
 
 
 def validate_extensions(repo_root: Path, target_lang: str = None, target_name: str = None):
@@ -216,6 +218,8 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                 print(f"  ✓ src/{lang}/{ext_name} - OK")
 
     print(f"\nSummary: {valid_count} extension module(s) passed static validation. {issue_count} module(s) had issues.")
+    return issue_count == 0
+
 
 
 def main():
@@ -313,6 +317,9 @@ Examples:
 
     if args.command == "list-extractors":
         lib_dir = repo_root / "lib"
+        if not lib_dir.exists():
+            print("❌ lib/ directory not found.")
+            sys.exit(1)
         extractors = sorted([d.name for d in lib_dir.iterdir() if d.is_dir()])
         print(f"📦 Found {len(extractors)} pre-built extractor modules in lib/\n")
         for i, ext in enumerate(extractors, 1):
@@ -321,19 +328,12 @@ Examples:
         sys.exit(0)
 
     if args.command == "validate":
-        target_lang = None
-        target_name = None
-        if args.args:
-            if "--lang" in args.args:
-                idx = args.args.index("--lang")
-                if idx + 1 < len(args.args):
-                    target_lang = args.args[idx + 1]
-            if "--name" in args.args:
-                idx = args.args.index("--name")
-                if idx + 1 < len(args.args):
-                    target_name = args.args[idx + 1]
-        validate_extensions(repo_root, target_lang, target_name)
-        sys.exit(0)
+        val_parser = argparse.ArgumentParser(prog="cli.py validate")
+        val_parser.add_argument("--lang", help="Target extension lang")
+        val_parser.add_argument("--name", help="Target extension directory name")
+        val_args, _ = val_parser.parse_known_args(args.args)
+        success = validate_extensions(repo_root, val_args.lang, val_args.name)
+        sys.exit(0 if success else 1)
 
     if args.command == "bump-version":
         bump_parser = argparse.ArgumentParser(prog="cli.py bump-version")
@@ -348,8 +348,8 @@ Examples:
         info_parser.add_argument("--lang", required=True, help="Target extension lang")
         info_parser.add_argument("--name", required=True, help="Target extension directory name")
         info_args = info_parser.parse_args(args.args)
-        show_info(repo_root, info_args.lang, info_args.name)
-        sys.exit(0)
+        success = show_info(repo_root, info_args.lang, info_args.name)
+        sys.exit(0 if success else 1)
 
     if args.command == "fetch-icon":
         fetch_parser = argparse.ArgumentParser(prog="cli.py fetch-icon")
@@ -372,3 +372,4 @@ Examples:
 
 if __name__ == "__main__":
     main()
+
