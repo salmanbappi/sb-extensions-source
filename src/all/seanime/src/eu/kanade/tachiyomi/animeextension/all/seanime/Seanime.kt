@@ -610,8 +610,8 @@ class Seanime :
 
         if (response.isSuccessful) {
             val aniListResponse = response.parseAs<AniListResponse>(json)
-            val list = aniListResponse.data.Page.media.map { it.toSAnime() }
-            val hasNext = aniListResponse.data.Page.pageInfo?.hasNextPage ?: (list.size >= 20)
+            val list = aniListResponse.data?.Page?.media?.map { it.toSAnime() } ?: emptyList()
+            val hasNext = aniListResponse.data?.Page?.pageInfo?.hasNextPage ?: (list.size >= 20)
             return AnimesPage(list, hasNext)
         } else {
             response.close()

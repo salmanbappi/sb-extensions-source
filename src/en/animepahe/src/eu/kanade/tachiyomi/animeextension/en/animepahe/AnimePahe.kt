@@ -204,9 +204,9 @@ class AnimePahe : Source() {
             val searchData = response.parseAs<ResponseDto<SearchResultDto>>()
             val animeList = searchData.items.map { anime ->
                 SAnime.create().apply {
-                    title = anime.title
+                    title = anime.title.orEmpty()
                     thumbnail_url = anime.poster
-                    val animeId = anime.id
+                    val animeId = anime.id ?: 0
                     setUrlWithoutDomain("/a/$animeId")
                 }
             }
