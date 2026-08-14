@@ -231,20 +231,20 @@ class Nagordola : Source() {
         val body = response.body?.string().orEmpty()
         if (response.request.url.encodedPath.endsWith("search")) {
             val res = json.decodeFromString<AListResponse<AListSearchResponse>>(body)
-            val animeList = res.data?.content?.filter { it.is_dir }?.map {
+            val animeList = res.data?.content?.filter { it.is_dir == true && !it.name.isNullOrBlank() }?.map {
                 SAnime.create().apply {
-                    title = it.name
-                    url = "${it.parent}/${it.name}".replace("//", "/")
+                    title = it.name.orEmpty()
+                    url = "${it.parent.orEmpty()}/${it.name.orEmpty()}".replace("//", "/")
                 }
             } ?: emptyList()
             return AnimesPage(animeList, false)
         } else {
             val res = json.decodeFromString<AListResponse<AListListResponse>>(body)
             val currentPath = json.decodeFromString<AListPathPayload>(response.request.body.bodyString()).path
-            val animeList = res.data?.content?.filter { it.is_dir }?.map {
+            val animeList = res.data?.content?.filter { it.is_dir == true && !it.name.isNullOrBlank() }?.map {
                 SAnime.create().apply {
-                    title = it.name
-                    url = "$currentPath/${it.name}".replace("//", "/")
+                    title = it.name.orEmpty()
+                    url = "$currentPath/${it.name.orEmpty()}".replace("//", "/")
                 }
             } ?: emptyList()
             return AnimesPage(animeList, (res.data?.total ?: 0) > PAGE_LIMIT * 30) // Simplified pagination check
@@ -296,14 +296,15 @@ class Nagordola : Source() {
         val res = json.decodeFromString<AListResponse<AListListResponse>>(response.body?.string().orEmpty())
 
         res.data?.content?.forEach { file ->
-            if (file.is_dir) {
-                parseDirectory("$path/${file.name}", episodes, depth + 1)
-            } else if (isVideoFile(file.name)) {
+            val fileName = file.name ?: return@forEach
+            if (file.is_dir == true) {
+                parseDirectory("$path/$fileName", episodes, depth + 1)
+            } else if (isVideoFile(fileName)) {
                 episodes.add(
                     SEpisode.create().apply {
-                        name = file.name
-                        url = "$path/${file.name}".replace("//", "/")
-                        episode_number = parseEpisodeNumber(file.name)
+                        name = fileName
+                        url = "$path/$fileName".replace("//", "/")
+                        episode_number = parseEpisodeNumber(fileName)
                     },
                 )
             }
