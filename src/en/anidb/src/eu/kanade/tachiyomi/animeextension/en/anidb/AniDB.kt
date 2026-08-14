@@ -25,7 +25,7 @@ import okhttp3.Response
 
 @Serializable
 data class EpisodeListDto(
-    val episodes: List<EpisodeDto>? = null
+    val episodes: List<EpisodeDto>? = null,
 )
 
 @Serializable
@@ -33,19 +33,19 @@ data class EpisodeDto(
     val id: Long? = null,
     val number: Float? = null,
     val number2: Float? = null,
-    val filler: Boolean = false
+    val filler: Boolean = false,
 )
 
 @Serializable
 data class LanguageListDto(
-    val languages: List<LanguageDto>? = null
+    val languages: List<LanguageDto>? = null,
 )
 
 @Serializable
 data class LanguageDto(
     val code: String? = null,
     val name: String? = null,
-    val embed_url: String? = null
+    val embed_url: String? = null,
 )
 
 class AniDB : Source() {

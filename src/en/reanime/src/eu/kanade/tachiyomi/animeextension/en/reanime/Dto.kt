@@ -12,7 +12,7 @@ class SearchResponseDto(
     val limit: Int? = null,
     val offset: Int? = null,
     val results: List<AnimeDto>? = null,
-    val total: Int? = null
+    val total: Int? = null,
 )
 
 @Serializable
@@ -78,7 +78,7 @@ class CoverDto(
 
 @Serializable
 class EpisodeListDto(
-    val data: List<EpisodeDto>? = null
+    val data: List<EpisodeDto>? = null,
 )
 
 @Serializable
@@ -98,7 +98,7 @@ class EpisodeDto(
 @Serializable
 class VideoResponseDto(
     val success: Boolean? = null,
-    val servers: List<VideoServerDto>? = null
+    val servers: List<VideoServerDto>? = null,
 )
 
 @Serializable
@@ -227,7 +227,7 @@ class RelationDto(
 @Serializable
 class RecommendationsDto(
     val recommendations: List<RecommendationDto>? = null,
-    val success: Boolean? = null
+    val success: Boolean? = null,
 )
 
 @Serializable
@@ -266,7 +266,7 @@ class FlixcloudChapterDto(
 @Serializable
 class FlixcloudSubtitleDto(
     val url: String? = null,
-    val language: String? = null
+    val language: String? = null,
 )
 
 @Serializable
@@ -297,7 +297,7 @@ class SkipTimes(
 @Serializable
 class DecFlixCloudTokenResponseDto(
     val status: Int? = null,
-    val result: DecFlixCloudTokenResultDto? = null
+    val result: DecFlixCloudTokenResultDto? = null,
 )
 
 @Serializable
@@ -309,7 +309,7 @@ class DecFlixCloudTokenResultDto(
 @Serializable
 class DecFlixCloudStreamResponseDto(
     val status: Int? = null,
-    val result: DecFlixCloudStreamResultDto? = null
+    val result: DecFlixCloudStreamResultDto? = null,
 )
 
 @Serializable

@@ -50,7 +50,7 @@ data class LibraryCollectionListDto(
 @Serializable
 data class LibraryCollectionEntryDto(
     val mediaId: Int? = null,
-    val media: BaseMediaDto? = null
+    val media: BaseMediaDto? = null,
 )
 
 @Serializable
@@ -81,7 +81,7 @@ data class MediaCoverImageDto(
 
 @Serializable
 data class AnimeEntryResponseDto(
-    val data: AnimeEntryDataDto? = null
+    val data: AnimeEntryDataDto? = null,
 )
 
 @Serializable
@@ -101,7 +101,7 @@ data class DownloadInfoDto(
 data class DownloadInfoEpisodeDto(
     val episodeNumber: Int? = null,
     val aniDBEpisode: String = "",
-    val episode: EpisodeDto? = null
+    val episode: EpisodeDto? = null,
 )
 
 @Serializable
@@ -111,12 +111,12 @@ data class EpisodeDto(
     val episodeTitle: String? = null,
     val isDownloaded: Boolean = false,
     val localFile: LocalFileDto? = null,
-    val episodeMetadata: EpisodeMetadataDto? = null
+    val episodeMetadata: EpisodeMetadataDto? = null,
 )
 
 @Serializable
 data class LocalFileDto(
-    val path: String? = null
+    val path: String? = null,
 )
 
 @Serializable
@@ -127,7 +127,7 @@ data class EpisodeMetadataDto(
 
 @Serializable
 data class OnlineEpisodeListResponseDto(
-    val data: OnlineEpisodeListResponseDataDto? = null
+    val data: OnlineEpisodeListResponseDataDto? = null,
 )
 
 @Serializable
@@ -142,12 +142,12 @@ data class OnlineEpisodeDto(
     val url: String? = null,
     val title: String = "",
     val image: String? = null,
-    val description: String? = null
+    val description: String? = null,
 )
 
 @Serializable
 data class OnlineEpisodeSourceDto(
-    val data: OnlineEpisodeSourceDataDto? = null
+    val data: OnlineEpisodeSourceDataDto? = null,
 )
 
 @Serializable
@@ -172,23 +172,23 @@ data class SeanimeExtensionListResponseDto(
 @Serializable
 data class SeanimeExtensionDto(
     val id: String? = null,
-    val name: String? = null
+    val name: String? = null,
 )
 
 @Serializable
 data class AniListResponse(
-    val data: AniListData? = null
+    val data: AniListData? = null,
 )
 
 @Serializable
 data class AniListData(
-    val Page: AniListPage? = null
+    val Page: AniListPage? = null,
 )
 
 @Serializable
 data class AniListPage(
     val media: List<AniListMedia>? = null,
-    val pageInfo: AniListPageInfo? = null
+    val pageInfo: AniListPageInfo? = null,
 )
 
 @Serializable
@@ -214,7 +214,7 @@ data class AniListMedia(
 
 @Serializable
 data class AniListRelationsResponse(
-    val data: AniListRelationsData? = null
+    val data: AniListRelationsData? = null,
 )
 
 @Serializable
@@ -244,7 +244,7 @@ data class AniListRelationsNode(
     val id: Int? = null,
     val type: String? = null,
     val title: MediaTitleDto? = null,
-    val coverImage: MediaCoverImageDto? = null
+    val coverImage: MediaCoverImageDto? = null,
 )
 
 @Serializable

@@ -121,43 +121,43 @@ class AllAnimeExtractor(private val client: OkHttpClient, private val headers: H
 
     @Serializable
     data class VersionResponse(
-    val episodeIframeHead: String? = null
-)
+        val episodeIframeHead: String? = null,
+    )
 
     @Serializable
     data class VideoLink(
-    val links: List<Link>? = null
-) {
+        val links: List<Link>? = null,
+    ) {
         @Serializable
         data class Link(
-    val link: String? = null,
-    val hls: Boolean? = null,
-    val mp4: Boolean? = null,
-    val dash: Boolean? = null,
-    val crIframe: Boolean? = null,
-    val resolutionStr: String? = null,
-    val subtitles: List<Subtitles>? = null,
-    val rawUrls: RawUrl? = null,
-    val portData: Stream? = null
-) {
+            val link: String? = null,
+            val hls: Boolean? = null,
+            val mp4: Boolean? = null,
+            val dash: Boolean? = null,
+            val crIframe: Boolean? = null,
+            val resolutionStr: String? = null,
+            val subtitles: List<Subtitles>? = null,
+            val rawUrls: RawUrl? = null,
+            val portData: Stream? = null,
+        ) {
             @Serializable
             data class Subtitles(
-    val lang: String? = null,
-    val src: String? = null,
-    val label: String? = null
-)
+                val lang: String? = null,
+                val src: String? = null,
+                val label: String? = null,
+            )
 
             @Serializable
             data class Stream(
-    val streams: List<StreamObject>? = null
-) {
+                val streams: List<StreamObject>? = null,
+            ) {
                 @Serializable
                 data class StreamObject(
-    val format: String? = null,
-    val url: String? = null,
-    val audio_lang: String? = null,
-    val hardsub_lang: String? = null
-)
+                    val format: String? = null,
+                    val url: String? = null,
+                    val audio_lang: String? = null,
+                    val hardsub_lang: String? = null,
+                )
             }
 
             @Serializable
@@ -167,10 +167,10 @@ class AllAnimeExtractor(private val client: OkHttpClient, private val headers: H
             ) {
                 @Serializable
                 data class DashStreamObject(
-    val bandwidth: Long? = null,
-    val height: Int? = null,
-    val url: String? = null
-)
+                    val bandwidth: Long? = null,
+                    val height: Int? = null,
+                    val url: String? = null,
+                )
             }
         }
     }

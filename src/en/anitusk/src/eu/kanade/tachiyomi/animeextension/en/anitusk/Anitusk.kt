@@ -855,7 +855,7 @@ class Anitusk :
 @Serializable
 data class GraphQLRequest(
     val query: String? = null,
-    val variables: GraphQLVariables? = null
+    val variables: GraphQLVariables? = null,
 )
 
 @Serializable
@@ -873,7 +873,7 @@ data class GraphQLVariables(
 
 @Serializable
 data class AnilistGraphQLResponse(
-    val data: AnilistData? = null
+    val data: AnilistData? = null,
 )
 
 @Serializable
@@ -890,7 +890,7 @@ data class AnilistPage(
 
 @Serializable
 data class AnilistPageInfo(
-    val hasNextPage: Boolean? = null
+    val hasNextPage: Boolean? = null,
 )
 
 @Serializable
@@ -932,19 +932,19 @@ data class AnilistStudios(
 
 @Serializable
 data class AnilistStudioNode(
-    val name: String? = null
+    val name: String? = null,
 )
 
 @Serializable
 data class AnilistNextAiringEpisode(
-    val episode: Int? = null
+    val episode: Int? = null,
 )
 
 @Serializable
 data class AnilistStreamingEpisode(
     val title: String? = null,
     val thumbnail: String? = null,
-    val url: String? = null
+    val url: String? = null,
 )
 
 @Serializable
@@ -963,7 +963,7 @@ data class StreamItem(
     val isActive: Boolean? = null,
     val referer: String? = null,
     val server: String? = null,
-    val priority: Int? = null
+    val priority: Int? = null,
 )
 
 @Serializable
@@ -1000,7 +1000,7 @@ data class EpisodeItem(
     val image: String? = null,
     val airDate: String? = null,
     val description: String? = null,
-    val filler: Boolean? = null
+    val filler: Boolean? = null,
 )
 
 class AnituskCloudflareInterceptor(
@@ -1070,7 +1070,7 @@ data class KitsuMappingResponse(
 @Serializable
 data class KitsuMappingData(
     val id: String? = null,
-    val relationships: KitsuRelationships? = null
+    val relationships: KitsuRelationships? = null,
 )
 
 @Serializable
@@ -1090,12 +1090,12 @@ data class KitsuLinks(
 
 @Serializable
 data class KitsuAnimeResponse(
-    val data: KitsuAnimeData? = null
+    val data: KitsuAnimeData? = null,
 )
 
 @Serializable
 data class KitsuAnimeData(
-    val id: String? = null
+    val id: String? = null,
 )
 
 @Serializable
@@ -1105,7 +1105,7 @@ data class KitsuEpisodesResponse(
 
 @Serializable
 data class KitsuEpisodeData(
-    val attributes: KitsuEpisodeAttributes? = null
+    val attributes: KitsuEpisodeAttributes? = null,
 )
 
 @Serializable
@@ -1113,7 +1113,7 @@ data class KitsuEpisodeAttributes(
     val number: Int? = null,
     val synopsis: String? = null,
     val description: String? = null,
-    val thumbnail: KitsuThumbnail? = null
+    val thumbnail: KitsuThumbnail? = null,
 )
 
 @Serializable

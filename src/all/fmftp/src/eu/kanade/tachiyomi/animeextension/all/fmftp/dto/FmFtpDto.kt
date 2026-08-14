@@ -24,14 +24,14 @@ data class FmFtpContent(
     val views: Int? = null,
     val online_rating: Double? = null,
     val Library: FmFtpLibrary? = null,
-    val episodes: List<FmFtpEpisode>? = null
+    val episodes: List<FmFtpEpisode>? = null,
 )
 
 @Serializable
 data class FmFtpLibrary(
     val id: Int? = null,
     val name: String? = null,
-    val type: String? = null
+    val type: String? = null,
 )
 
 @Serializable
@@ -42,5 +42,5 @@ data class FmFtpEpisode(
     val episode_number: Int? = null,
     val runtime: Int? = null,
     val still_path: String? = null,
-    val overview: String? = null
+    val overview: String? = null,
 )

@@ -1127,7 +1127,7 @@ class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
 @Serializable
 data class GraphQLRequest(
     val query: String? = null,
-    val variables: GraphQLVariables? = null
+    val variables: GraphQLVariables? = null,
 )
 
 @Serializable
@@ -1153,17 +1153,17 @@ data class AnimeCatalogFilterInput(
 @Serializable
 data class AnimeSortInput(
     val field: String? = null,
-    val direction: String? = null
+    val direction: String? = null,
 )
 
 @Serializable
 data class CatalogAnimeResponse(
-    val data: CatalogAnimeData? = null
+    val data: CatalogAnimeData? = null,
 )
 
 @Serializable
 data class CatalogAnimeData(
-    val catalogAnime: CatalogAnimeContent? = null
+    val catalogAnime: CatalogAnimeContent? = null,
 )
 
 @Serializable
@@ -1200,12 +1200,12 @@ data class AnimeCatalogItem(
 
 @Serializable
 data class GetAnimeResponse(
-    val data: GetAnimeData? = null
+    val data: GetAnimeData? = null,
 )
 
 @Serializable
 data class GetAnimeData(
-    val anime: AnimeDetailsItem? = null
+    val anime: AnimeDetailsItem? = null,
 )
 
 @Serializable
@@ -1233,7 +1233,7 @@ data class RestEpisode(
     val img: String? = null,
     val isFiller: Boolean? = null,
     val hasSub: Boolean? = null,
-    val hasDub: Boolean? = null
+    val hasDub: Boolean? = null,
 )
 
 @Serializable
@@ -1253,7 +1253,7 @@ data class ProviderItem(
     val default: Boolean? = null,
     val tip: String? = null,
     val type: String? = null,
-    val url: String? = null
+    val url: String? = null,
 )
 
 @Serializable
@@ -1267,7 +1267,7 @@ data class SourcesResponse(
 data class SourceItem(
     val url: String? = null,
     val quality: String? = null,
-    val type: String? = null
+    val type: String? = null,
 )
 
 @Serializable
@@ -1277,7 +1277,7 @@ data class TrackItem(
     val lang: String? = null,
     val label: String? = null,
     val kind: String? = null,
-    val default: Boolean? = null
+    val default: Boolean? = null,
 )
 
 private class LocalProxyServer(

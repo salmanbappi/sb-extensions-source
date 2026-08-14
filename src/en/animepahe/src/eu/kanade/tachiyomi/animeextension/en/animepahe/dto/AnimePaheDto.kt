@@ -29,7 +29,7 @@ data class LatestAnimeDto(
 data class SearchResultDto(
     val title: String? = null,
     val poster: String? = null,
-    val id: Int? = null
+    val id: Int? = null,
 )
 
 @Serializable

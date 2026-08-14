@@ -507,7 +507,7 @@ class AnivixInterceptor(private val cookieJar: CookieJar) : Interceptor {
 @Serializable
 data class GraphQLRequest(
     val query: String? = null,
-    val variables: GraphQLVariables? = null
+    val variables: GraphQLVariables? = null,
 )
 
 @Serializable
@@ -532,7 +532,7 @@ data class AnimeEpisodesResponse(
 data class AnimeEpisode(
     val episodeId: String? = null,
     val number: Int? = null,
-    val title: String? = null
+    val title: String? = null,
 )
 
 @Serializable
@@ -554,17 +554,17 @@ data class AnimeSource(
 data class AnimeSubtitle(
     val url: String? = null,
     val lang: String? = null,
-    val label: String? = null
+    val label: String? = null,
 )
 
 @Serializable
 data class AnilistGraphQLResponse(
-    val data: AnilistData? = null
+    val data: AnilistData? = null,
 )
 
 @Serializable
 data class AnilistData(
-    val Page: AnilistPage? = null
+    val Page: AnilistPage? = null,
 )
 
 @Serializable
