@@ -130,7 +130,8 @@ class ZinkMovies : Source() {
 
     private fun cleanAnimeTitle(title: String): String = title
         .replace(Regex("""\s*\{[^}]*\}"""), "")
-        .replace(Regex("""\s*(Dual Audio|Multi Audio|Hindi Dubbed|Hindi Movie|CR WEB-DL|WEB-DL|BluRay|HDTC|ESubs|MSubs|NF).*""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s*(Dual Audio|Multi Audio|Hindi Dubbed|Hindi Movie|CR WEB-DL|WEB-DL|BluRay|HDTC|ESubs|MSubs|NF|Hollywood|Bollywood).*""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""(?i)\s*ZinkMovies(\.org|\.mobi)?"""), "")
         .trim()
         .ifEmpty { title.trim() }
 
@@ -138,7 +139,7 @@ class ZinkMovies : Source() {
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val doc = client.newCall(GET("$baseUrl${anime.url}", headers)).execute().asJsoup()
 
-        val rawTitle = doc.selectFirst("div.data h1, h1")?.text() ?: anime.title
+        val rawTitle = doc.selectFirst(".sheader h1, .data h1, .post-title h1, h1:not(.text-logo), .entry-title")?.text() ?: anime.title
         val posterEl = doc.selectFirst("div.poster img, .sheader .poster img, img[itemprop=image]")
         val posterUrl = posterEl?.attr("data-lazy-src")?.ifEmpty { posterEl.attr("abs:src").ifEmpty { posterEl.attr("src") } }
 
@@ -236,9 +237,9 @@ class ZinkMovies : Source() {
             }
         }
 
-        // 2. Direct File Buttons (Single Movie)
-        val fileButtons = doc.select("a[href*=/file/], div.movie-button-container a, a.movie-simple-button")
-        if (fileButtons.isNotEmpty()) {
+        // 2. Check for Movie File Buttons / DooPlay Link Tables / LinkStore Movie Pages
+        val hasMovieButtons = doc.select("a[href*=/file/], div.movie-button-container a, a.movie-simple-button, #download .links_table tr, .links_table tr, a[href*=/links/], a[href*=linkstore]").isNotEmpty()
+        if (hasMovieButtons) {
             return listOf(
                 SEpisode.create().apply {
                     name = "Full Movie"
@@ -266,12 +267,48 @@ class ZinkMovies : Source() {
         val qualityFiles = mutableListOf<Pair<String, String>>()
 
         if (isMovie) {
-            // Collect all movie quality buttons
+            // 1. Direct movie quality buttons
             doc.select("a[href*=/file/], div.movie-button-container a, a.movie-simple-button").forEach { btn ->
                 val href = btn.attr("abs:href").ifEmpty { btn.attr("href") }
-                if (href.isNotBlank() && href.contains("/file/") && qualityFiles.none { it.second == href }) {
+                if (href.isNotBlank() && qualityFiles.none { it.second == href }) {
                     val quality = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(btn.text())?.groupValues?.get(1)?.uppercase() ?: "HD"
                     qualityFiles.add(Pair(quality, href))
+                }
+            }
+
+            // 2. DooPlay Download Links Table (e.g. Inside Out 2)
+            doc.select("#download .links_table tr, .links_table tr, tr[id^=link-]").forEach { tr ->
+                val linkEl = tr.selectFirst("a[href*=/links/], td a[href*=/links/], td:first-child a") ?: return@forEach
+                val linkHref = linkEl.attr("abs:href").ifEmpty { linkEl.attr("href") }
+                if (linkHref.isBlank() || linkHref.contains("#") || linkHref.startsWith("javascript")) return@forEach
+
+                val qText = tr.selectFirst("strong.quality, td:nth-child(2)")?.text() ?: ""
+                val quality = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(qText)?.groupValues?.get(1)?.uppercase()
+                    ?: Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(linkEl.text())?.groupValues?.get(1)?.uppercase()
+                    ?: "HD"
+
+                val resolvedUrl = resolveLinkRedirect(linkHref)
+                if (resolvedUrl.isNotBlank() && qualityFiles.none { it.second == resolvedUrl }) {
+                    qualityFiles.add(Pair(quality, resolvedUrl))
+                }
+            }
+
+            // 3. Single Movie LinkStore
+            doc.select("a[href*=linkstore.zinkcloud.net], a[href*=linkstore.]").forEach { lsBtn ->
+                val lsHref = lsBtn.attr("abs:href").ifEmpty { lsBtn.attr("href") }
+                val lsText = lsBtn.text().trim()
+                if (lsHref.isNotBlank() && !lsText.contains("Season", ignoreCase = true)) {
+                    runCatching {
+                        val lsDoc = client.newCall(GET(lsHref, headers)).execute().asJsoup()
+                        val pageTitle = lsDoc.title()
+                        val quality = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(pageTitle)?.groupValues?.get(1)?.uppercase() ?: "HD"
+                        lsDoc.select("a[href*=/file/]").forEach { epLink ->
+                            val fHref = epLink.attr("abs:href").ifEmpty { epLink.attr("href") }
+                            if (fHref.isNotBlank() && qualityFiles.none { it.second == fHref }) {
+                                qualityFiles.add(Pair(quality, fHref))
+                            }
+                        }
+                    }
                 }
             }
         } else {
@@ -333,101 +370,160 @@ class ZinkMovies : Source() {
         }.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
     }
 
+    private fun resolveLinkRedirect(linkUrl: String): String = try {
+        val noRedirectClient = client.newBuilder().followRedirects(false).build()
+        val resp = noRedirectClient.newCall(
+            GET(linkUrl, headers.newBuilder().set("Referer", "$baseUrl/").build()),
+        ).execute()
+        val loc = resp.header("Location") ?: ""
+        resp.close()
+        loc.ifBlank {
+            val resp2 = client.newCall(GET(linkUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())).execute()
+            val finalUrl = resp2.request.url.toString()
+            resp2.close()
+            finalUrl
+        }
+    } catch (e: Exception) {
+        ""
+    }
+
     private fun resolveServersForFile(fileUrl: String): Map<String, String> {
         val result = mutableMapOf<String, String>()
-        val fileId = fileUrl.substringAfterLast("/file/").substringBefore("?").substringBefore("/")
-        if (fileId.isBlank()) return result
-
-        val hostUrl = fileUrl.toHttpUrlOrNull()
-        val baseCloud = if (hostUrl != null) "${hostUrl.scheme}://${hostUrl.host}" else "https://new4.zinkcloud.net"
+        if (fileUrl.isBlank()) return result
 
         try {
-            // 1. Request masked route token
-            val tokenUrl = "$baseCloud/ajax_generate_token.php?random_id=$fileId"
-            val formBody = FormBody.Builder()
-                .add("random_id", fileId)
-                .build()
+            // A. Handle GDFlix / Direct file pages
+            if (fileUrl.contains("gdflix", ignoreCase = true) || fileUrl.contains("gdlink", ignoreCase = true)) {
+                val gdResp = client.newCall(GET(fileUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())).execute()
+                val gdHtml = gdResp.body.string()
+                gdResp.close()
 
-            val tokenReq = Request.Builder()
-                .url(tokenUrl)
-                .post(formBody)
-                .headers(headers.newBuilder().set("Referer", fileUrl).set("X-Requested-With", "XMLHttpRequest").build())
-                .build()
+                val gdDoc = Jsoup.parse(gdHtml, fileUrl)
 
-            val tokenResp = client.newCall(tokenReq).execute()
-            val tokenJsonStr = tokenResp.body.string()
-            tokenResp.close()
-
-            val tokenJson = json.parseToJsonElement(tokenJsonStr).jsonObject
-            val token = tokenJson["token"]?.jsonPrimitive?.content ?: ""
-            if (token.isBlank()) return result
-
-            // 2. Fetch DL Page
-            val dlUrl = "$baseCloud/dl/$token"
-            val dlResp = client.newCall(GET(dlUrl, headers.newBuilder().set("Referer", fileUrl).build())).execute()
-            val dlHtml = dlResp.body.string()
-            dlResp.close()
-
-            val dlDoc = Jsoup.parse(dlHtml, dlUrl)
-
-            // Extract Server Handler URL
-            val serverHandlerUrl = Regex("""const\s+SERVER_HANDLER_URL\s*=\s*["']([^"']+)["']""")
-                .find(dlHtml)?.groupValues?.get(1) ?: "https://new4.zinkcloud.net/server-handler.php"
-
-            // 3. Query server-handler
-            val targetServers = listOf(
-                Pair("worker", "Fast Cloud"),
-                Pair("hubcloud", "HubCloud"),
-                Pair("gdflix", "GDFlix"),
-                Pair("filepress", "FilePress"),
-            )
-
-            targetServers.forEach { (apiServerKey, displayServerName) ->
-                try {
-                    val reqJson = """{"server":"$apiServerKey","random_id":"$fileId"}"""
-                    val postReq = Request.Builder()
-                        .url(serverHandlerUrl)
-                        .post(reqJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                        .headers(headers.newBuilder().set("Referer", dlUrl).set("X-Requested-With", "XMLHttpRequest").build())
-                        .build()
-
-                    val sResp = client.newCall(postReq).execute()
-                    val sJsonStr = sResp.body.string()
-                    sResp.close()
-
-                    val sObj = json.parseToJsonElement(sJsonStr).jsonObject
-                    val isSuccess = sObj["success"]?.jsonPrimitive?.booleanOrNull ?: false
-                    val resUrl = sObj["url"]?.jsonPrimitive?.content ?: ""
-
-                    if (isSuccess && resUrl.isNotBlank()) {
-                        result[displayServerName] = resUrl
-                    }
-                } catch (e: Exception) {
-                    // skip server failure
+                // 1. Instant DL [10GBPS]
+                val instantHref = gdDoc.selectFirst("a[href*=instant.busycdn.xyz], a:contains(Instant DL)")?.let {
+                    it.attr("abs:href").ifEmpty { it.attr("href") }
+                } ?: ""
+                if (instantHref.isNotBlank()) {
+                    result["GDFlix"] = instantHref
+                    result["Fast Cloud"] = instantHref
                 }
+
+                // 2. FAST CLOUD / ZIPDISK
+                val cflareHref = gdDoc.selectFirst("a[href*=/cflare/]")?.let {
+                    it.attr("abs:href").ifEmpty { it.attr("href") }
+                } ?: ""
+                if (cflareHref.isNotBlank()) {
+                    result.putIfAbsent("Fast Cloud", cflareHref)
+                }
+
+                // 3. Direct server buttons
+                gdDoc.select("a.btn[href], a[class*=btn][href]").forEach { a ->
+                    val href = a.attr("abs:href").ifEmpty { a.attr("href") }
+                    val label = a.text().lowercase()
+                    if (href.isBlank() || href == fileUrl || href.startsWith("javascript")) return@forEach
+
+                    when {
+                        label.contains("hubcloud") || href.contains("hubcloud") -> result.putIfAbsent("HubCloud", href)
+                        label.contains("filepress") || href.contains("filebee") -> result.putIfAbsent("FilePress", href)
+                    }
+                }
+                return result
             }
 
-            // 4. Parse direct anchor links on DL page
-            dlDoc.select("a.btn[href], a[class*=btn][href]").forEach { a ->
-                val href = a.attr("abs:href").ifEmpty { a.attr("href") }
-                val label = a.text().lowercase()
-                if (href.isBlank() || href == dlUrl || href.startsWith("whatsapp") || href.startsWith("javascript")) return@forEach
+            // B. Handle ZinkCloud (new4.zinkcloud.net/file/...)
+            val fileId = fileUrl.substringAfterLast("/file/").substringBefore("?").substringBefore("/")
+            if (fileId.isNotBlank()) {
+                val hostUrl = fileUrl.toHttpUrlOrNull()
+                val baseCloud = if (hostUrl != null) "${hostUrl.scheme}://${hostUrl.host}" else "https://new4.zinkcloud.net"
 
-                when {
-                    label.contains("hubcloud") || href.contains("hubcloud") -> {
-                        result.putIfAbsent("HubCloud", href)
+                // 1. Request masked route token
+                val tokenUrl = "$baseCloud/ajax_generate_token.php?random_id=$fileId"
+                val formBody = FormBody.Builder()
+                    .add("random_id", fileId)
+                    .build()
+
+                val tokenReq = Request.Builder()
+                    .url(tokenUrl)
+                    .post(formBody)
+                    .headers(headers.newBuilder().set("Referer", fileUrl).set("X-Requested-With", "XMLHttpRequest").build())
+                    .build()
+
+                val tokenResp = client.newCall(tokenReq).execute()
+                val tokenJsonStr = tokenResp.body.string()
+                tokenResp.close()
+
+                val tokenJson = json.parseToJsonElement(tokenJsonStr).jsonObject
+                val token = tokenJson["token"]?.jsonPrimitive?.content ?: ""
+                if (token.isNotBlank()) {
+                    // 2. Fetch DL Page
+                    val dlUrl = "$baseCloud/dl/$token"
+                    val dlResp = client.newCall(GET(dlUrl, headers.newBuilder().set("Referer", fileUrl).build())).execute()
+                    val dlHtml = dlResp.body.string()
+                    dlResp.close()
+
+                    val dlDoc = Jsoup.parse(dlHtml, dlUrl)
+
+                    // Extract Server Handler URL
+                    val serverHandlerUrl = Regex("""const\s+SERVER_HANDLER_URL\s*=\s*["']([^"']+)["']""")
+                        .find(dlHtml)?.groupValues?.get(1) ?: "https://new4.zinkcloud.net/server-handler.php"
+
+                    // 3. Query server-handler
+                    val targetServers = listOf(
+                        Pair("worker", "Fast Cloud"),
+                        Pair("hubcloud", "HubCloud"),
+                        Pair("gdflix", "GDFlix"),
+                        Pair("filepress", "FilePress"),
+                    )
+
+                    targetServers.forEach { (apiServerKey, displayServerName) ->
+                        try {
+                            val reqJson = """{"server":"$apiServerKey","random_id":"$fileId"}"""
+                            val postReq = Request.Builder()
+                                .url(serverHandlerUrl)
+                                .post(reqJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                                .headers(headers.newBuilder().set("Referer", dlUrl).set("X-Requested-With", "XMLHttpRequest").build())
+                                .build()
+
+                            val sResp = client.newCall(postReq).execute()
+                            val sJsonStr = sResp.body.string()
+                            sResp.close()
+
+                            val sObj = json.parseToJsonElement(sJsonStr).jsonObject
+                            val isSuccess = sObj["success"]?.jsonPrimitive?.booleanOrNull ?: false
+                            val resUrl = sObj["url"]?.jsonPrimitive?.content ?: ""
+
+                            if (isSuccess && resUrl.isNotBlank()) {
+                                result[displayServerName] = resUrl
+                            }
+                        } catch (e: Exception) {
+                            // skip server failure
+                        }
                     }
 
-                    label.contains("gdflix") || href.contains("gdlink") -> {
-                        result.putIfAbsent("GDFlix", href)
-                    }
+                    // 4. Parse direct anchor links on DL page
+                    dlDoc.select("a.btn[href], a[class*=btn][href]").forEach { a ->
+                        val href = a.attr("abs:href").ifEmpty { a.attr("href") }
+                        val label = a.text().lowercase()
+                        if (href.isBlank() || href == dlUrl || href.startsWith("whatsapp") || href.startsWith("javascript")) return@forEach
 
-                    label.contains("filepress") || href.contains("filebee") -> {
-                        result.putIfAbsent("FilePress", href)
-                    }
+                        when {
+                            label.contains("hubcloud") || href.contains("hubcloud") -> {
+                                result.putIfAbsent("HubCloud", href)
+                            }
 
-                    label.contains("gcloud") || href.contains("gdshare") -> {
-                        result.putIfAbsent("GCloud", href)
+                            label.contains("gdflix") || href.contains("gdlink") -> {
+                                result.putIfAbsent("GDFlix", href)
+                            }
+
+                            label.contains("filepress") || href.contains("filebee") -> {
+                                result.putIfAbsent("FilePress", href)
+                            }
+
+                            label.contains("gcloud") || href.contains("gdshare") -> {
+                                result.putIfAbsent("GCloud", href)
+                            }
+                        }
                     }
                 }
             }
@@ -446,20 +542,46 @@ class ZinkMovies : Source() {
         }
 
         val videoList = qualityEntries.parallelCatchingFlatMap { (quality, serverUrl) ->
-            when (serverName) {
-                "Fast Cloud" -> {
+            when {
+                serverUrl.contains("instant.busycdn.xyz") || serverUrl.contains("busycdn") -> {
+                    val redirectUrl = getRedirectUrl(serverUrl, "$baseUrl/")
+                    val finalStreamUrl = if (redirectUrl.contains("?url=")) {
+                        URLDecoder.decode(redirectUrl.substringAfter("?url="), "UTF-8")
+                    } else {
+                        redirectUrl
+                    }
+                    if (finalStreamUrl.isNotBlank()) {
+                        listOf(
+                            Video(
+                                videoUrl = finalStreamUrl,
+                                videoTitle = "$quality - $serverName",
+                                headers = headers,
+                                resolution = parseResolution(quality),
+                            ),
+                        )
+                    } else {
+                        emptyList()
+                    }
+                }
+
+                serverName == "HubCloud" || serverUrl.contains("hubcloud") || serverUrl.contains("gamerxyt") -> {
+                    resolveHubCloud(serverUrl, quality)
+                }
+
+                serverName == "Fast Cloud" -> {
+                    val finalUrl = if (serverUrl.contains("/cflare/")) {
+                        getRedirectUrl(serverUrl, "$baseUrl/")
+                    } else {
+                        serverUrl
+                    }
                     listOf(
                         Video(
-                            videoUrl = serverUrl,
+                            videoUrl = finalUrl,
                             videoTitle = "$quality - Fast Cloud",
                             headers = headers,
                             resolution = parseResolution(quality),
                         ),
                     )
-                }
-
-                "HubCloud" -> {
-                    resolveHubCloud(serverUrl, quality)
                 }
 
                 else -> {
@@ -577,15 +699,23 @@ class ZinkMovies : Source() {
     }
 
     private fun getRedirectUrl(url: String, referer: String): String = try {
+        val noRedirectClient = client.newBuilder().followRedirects(false).build()
         val req = Request.Builder()
             .url(url)
             .head()
             .headers(headers.newBuilder().set("Referer", referer).build())
             .build()
-        val resp = client.newCall(req).execute()
-        val finalUrl = resp.request.url.toString()
+        val resp = noRedirectClient.newCall(req).execute()
+        val loc = resp.header("Location") ?: ""
         resp.close()
-        finalUrl
+        if (loc.isNotBlank()) {
+            loc
+        } else {
+            val fullResp = client.newCall(GET(url, headers.newBuilder().set("Referer", referer).build())).execute()
+            val finalUrl = fullResp.request.url.toString()
+            fullResp.close()
+            finalUrl
+        }
     } catch (e: Exception) {
         url
     }

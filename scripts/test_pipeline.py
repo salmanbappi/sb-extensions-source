@@ -116,9 +116,16 @@ class PipelineTester:
             print(f"  ✓ Fetched details page ({len(detail_html)} bytes)")
 
             # Heuristic check for title, synopsis, rating
-            h1_match = re.search(r'<h1[^>]*>(.*?)</h1>', detail_html, re.IGNORECASE | re.DOTALL)
-            if h1_match:
-                print(f"  ✓ Title parsed: {re.sub(r'<[^>]+>', '', h1_match.group(1)).strip()}")
+            h1_tags = re.findall(r'<h1([^>]*)>(.*?)</h1>', detail_html, re.IGNORECASE | re.DOTALL)
+            parsed_title = ""
+            for attrs, content in h1_tags:
+                if "text-logo" not in attrs and "logo" not in attrs:
+                    parsed_title = re.sub(r'<[^>]+>', '', content).strip()
+                    break
+            if not parsed_title and h1_tags:
+                parsed_title = re.sub(r'<[^>]+>', '', h1_tags[-1][1]).strip()
+            if parsed_title:
+                print(f"  ✓ Title parsed: {parsed_title}")
 
             genres = re.findall(r'<a[^>]+href=["\'][^"\']*(?:genre|category)[^"\']*["\'][^>]*>(.*?)</a>', detail_html, re.IGNORECASE)
             if genres:
