@@ -21,6 +21,6 @@
             tools:replace="android:value" />
         <meta-data
             android:name="tachiyomi.animeextension.versionId"
-            android:value="2" />
+            android:value="2" tools:replace="android:value" />
     </application>
 </manifest>

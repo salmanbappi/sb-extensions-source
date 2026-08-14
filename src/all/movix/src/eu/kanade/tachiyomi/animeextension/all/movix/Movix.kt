@@ -211,14 +211,14 @@ class Movix : Source() {
                 title = movie.title
                 thumbnail_url = movie.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
                 description = movie.overview
-                genre = movie.genres?.mapNotNull { it.name }?.joinToString() ?: ""
+                genre = movie.genres.mapNotNull { it.name }.joinToString() ?: ""
                 status = SAnime.COMPLETED
             } else if (requestUrl.contains("/tmdb/tv/")) {
                 val tv = json.decodeFromString<TmdbTvDetails>(responseBody)
                 title = tv.name
                 thumbnail_url = tv.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
                 description = tv.overview
-                genre = tv.genres?.mapNotNull { it.name }?.joinToString() ?: ""
+                genre = tv.genres.mapNotNull { it.name }.joinToString() ?: ""
                 status = if (tv.in_production == false) SAnime.COMPLETED else SAnime.ONGOING
             }
         }
@@ -268,7 +268,7 @@ class Movix : Source() {
             val semaphore = Semaphore(5)
 
             coroutineScope {
-                val deferredEpisodes = (tv.seasons ?: emptyList())
+                val deferredEpisodes = tv.seasons
                     .filter { (it.season_number ?: 0) > 0 }
                     .map { season ->
                         async {
@@ -278,7 +278,7 @@ class Movix : Source() {
                                     val seasonResponse = client.newCall(GET(seasonUrl, headers)).execute()
                                     if (seasonResponse.isSuccessful) {
                                         val seasonDetails = json.decodeFromString<TmdbSeasonDetails>(seasonResponse.body.string())
-                                        (seasonDetails.episodes ?: emptyList()).map { episode ->
+                                        seasonDetails.episodes.map { episode ->
                                             SEpisode.create().apply {
                                                 name = "S${season.season_number} E${episode.episode_number}: ${episode.name ?: "Episode ${episode.episode_number}"}"
                                                 episode_number = (episode.episode_number ?: 0).toFloat() + ((season.season_number ?: 0) * 1000f)
@@ -429,12 +429,12 @@ class Movix : Source() {
 
                         val details = mutableListOf<String>()
                         if (!source.language.isNullOrEmpty()) {
-                            details.add(source.language!!)
+                            details.add(source.language)
                         } else if (!source.flag.isNullOrEmpty()) {
-                            details.add(source.flag!!.uppercase())
+                            details.add(source.flag.uppercase())
                         }
                         if (!source.title.isNullOrEmpty()) {
-                            details.add(source.title!!)
+                            details.add(source.title)
                         }
                         if (details.isNotEmpty()) {
                             label += " [${details.joinToString(" - ")}]"
