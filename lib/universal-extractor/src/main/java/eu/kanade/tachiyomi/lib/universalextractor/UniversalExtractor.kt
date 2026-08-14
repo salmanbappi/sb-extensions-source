@@ -60,35 +60,26 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
-                    val clickScript = """
-                        (function() {
-                            var attempts = 0;
-                            var interval = setInterval(function() {
-                                attempts++;
-                                if (attempts > 20) { clearInterval(interval); return; }
-                                try {
-                                    if (window.jwplayer && typeof window.jwplayer === 'function') {
-                                        window.jwplayer().play();
-                                    }
-                                } catch (e) {}
-                                try {
-                                    var v = document.querySelector('video');
-                                    if (v) { v.play(); }
-                                } catch (e) {}
-                                try {
-                                    var btns = document.querySelectorAll('.ZHnjvd, .kFwPee, .jw-icon-display, .jw-display-icon-container, #player, .play-button, button, [role="button"], [jsaction], .vds-play-button, svg, .play-icon, #play, .play');
-                                    for (var i = 0; i < btns.length; i++) {
-                                        btns[i].click();
-                                    }
-                                } catch (e) {}
-                            }, 300);
-                        })();
-                    """.trimIndent()
                     handler.postDelayed({
                         try {
-                            view.evaluateJavascript(clickScript, null)
+                            view.evaluateJavascript(
+                                """
+                                (function() {
+                                    try {
+                                        if (window.jwplayer && typeof window.jwplayer === 'function') {
+                                            window.jwplayer().play();
+                                        }
+                                    } catch (e) {}
+                                    var v = document.querySelector('video');
+                                    if (v) { v.play(); }
+                                    var btns = document.querySelectorAll('.ZHnjvd, .kFwPee, .jw-icon-display, .jw-display-icon-container, #player, .play-button, button, [role="button"], [jsaction]');
+                                    btns.forEach(function(b) { b.click(); });
+                                })();
+                                """.trimIndent(),
+                                null,
+                            )
                         } catch (e: Exception) {}
-                    }, 200)
+                    }, 500)
                 }
             }
 
