@@ -186,13 +186,14 @@ def bump_theme(repo_root: Path, theme_name: str, mode: str = "base") -> bool:
     if mode in ("variants", "all"):
         src_dir = repo_root / "src"
         count = 0
-        for g_file in src_dir.rglob("build.gradle"):
-            g_txt = g_file.read_text(encoding="utf-8", errors="ignore")
-            if f"themePkg = '{theme_clean}'" in g_txt or f'themePkg = "{theme_clean}"' in g_txt:
-                ext_name = g_file.parent.name
-                lang_name = g_file.parent.parent.name
-                bump_version(repo_root, lang_name, ext_name)
-                count += 1
+        if src_dir.exists():
+            for g_file in src_dir.rglob("build.gradle"):
+                g_txt = g_file.read_text(encoding="utf-8", errors="ignore")
+                if re.search(rf"themePkg\s*=\s*['\"]{re.escape(theme_clean)}['\"]", g_txt):
+                    ext_name = g_file.parent.name
+                    lang_name = g_file.parent.parent.name
+                    bump_version(repo_root, lang_name, ext_name)
+                    count += 1
         print(f"✅ Bumped {count} variant module(s) for theme '{theme_clean}'.")
 
     return True
@@ -248,21 +249,31 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
         except Exception as e:
             print(f"  ⚠️ Warning: Live HTTP check encountered: {e}")
 
-    # 2. Update Kotlin files
-    print("\n2️⃣ Updating baseUrl in Kotlin source files...")
+    # 2. Update Kotlin & Gradle files
+    print("\n2️⃣ Updating baseUrl in Kotlin source files & build.gradle...")
     kt_dir = ext_path / "src"
     updated_files = 0
-    for kt_file in kt_dir.rglob("*.kt"):
-        txt = kt_file.read_text(encoding="utf-8")
-        
-        # Replace baseUrl default constants or hardcoded override
-        new_txt = re.sub(r'PREF_BASE_URL_DEFAULT\s*=\s*["\'][^"\']+["\']', f'PREF_BASE_URL_DEFAULT = "{new_domain_clean}"', txt)
-        new_txt = re.sub(r'override\s+val\s+baseUrl\s*=\s*["\'][^"\']+["\']', f'override val baseUrl = "{new_domain_clean}"', new_txt)
-        
-        if txt != new_txt:
-            kt_file.write_text(new_txt, encoding="utf-8")
+    if kt_dir.exists():
+        for kt_file in kt_dir.rglob("*.kt"):
+            txt = kt_file.read_text(encoding="utf-8")
+            
+            # Replace baseUrl default constants or hardcoded override
+            new_txt = re.sub(r'PREF_BASE_URL_DEFAULT\s*=\s*["\'][^"\']+["\']', f'PREF_BASE_URL_DEFAULT = "{new_domain_clean}"', txt)
+            new_txt = re.sub(r'override\s+val\s+baseUrl\s*=\s*["\'][^"\']+["\']', f'override val baseUrl = "{new_domain_clean}"', new_txt)
+            
+            if txt != new_txt:
+                kt_file.write_text(new_txt, encoding="utf-8")
+                updated_files += 1
+                print(f"  ✓ Updated {kt_file.name}")
+
+    gradle_file = ext_path / "build.gradle"
+    if gradle_file.exists():
+        g_txt = gradle_file.read_text(encoding="utf-8")
+        new_g_txt = re.sub(r'baseUrl\s*=\s*["\'][^"\']+["\']', f"baseUrl = '{new_domain_clean}'", g_txt)
+        if g_txt != new_g_txt:
+            gradle_file.write_text(new_g_txt, encoding="utf-8")
             updated_files += 1
-            print(f"  ✓ Updated {kt_file.name}")
+            print(f"  ✓ Updated build.gradle")
 
     # 3. Bump version code
     print("\n3️⃣ Incrementing extension version code...")
@@ -1157,7 +1168,10 @@ def main():
 
             icon_args = fetch_parser.parse_args(args.args)
             lang, name = resolve_extension_target(repo_root, icon_args.target, icon_args.lang, icon_args.name)
-            out_path = repo_root / "src" / (lang or "en") / (name or "") / "res" / "drawable" / "ic_launcher.png"
+            if not name:
+                print("❌ Error: Target extension name is required (e.g. `cli.py fetch-icon --url <url> <target>`).")
+                sys.exit(1)
+            out_path = repo_root / "src" / (lang or "en") / name / "res" / "drawable" / "ic_launcher.png"
             success = fetch_icon(icon_args.url, out_path)
             sys.exit(0 if success else 1)
 
