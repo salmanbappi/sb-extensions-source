@@ -296,7 +296,7 @@ class Vegamovies : Source() {
             val episodes = detectedEpisodes.sorted().map { epNum ->
                 val sStr = "S${globalSeason.toString().padStart(2, '0')}"
                 val epName = "$sStr Episode ${epNum.toString().padStart(2, '0')}"
-                val calculatedNum = (globalSeason * 1000f) + epNum
+                val calculatedNum = epNum.toFloat()
                 SEpisode.create().apply {
                     name = epName
                     setUrlWithoutDomain("${anime.url}#ep=$epNum&season=$globalSeason")
@@ -322,7 +322,7 @@ class Vegamovies : Source() {
             val episodes = postEpisodes.sorted().map { epNum ->
                 val sStr = "S${globalSeason.toString().padStart(2, '0')}"
                 val epName = "$sStr Episode ${epNum.toString().padStart(2, '0')}"
-                val calculatedNum = (globalSeason * 1000f) + epNum
+                val calculatedNum = epNum.toFloat()
                 SEpisode.create().apply {
                     name = epName
                     setUrlWithoutDomain("${anime.url}#ep=$epNum&season=$globalSeason")
