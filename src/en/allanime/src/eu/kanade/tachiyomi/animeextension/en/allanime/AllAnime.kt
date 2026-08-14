@@ -482,11 +482,13 @@ class AllAnime : Source() {
 
         val animeList = (parsed.data?.shows?.edges ?: emptyList()).map { ani ->
             SAnime.create().apply {
-                title = (when (preferences.titleStyle) {
-                    "romaji" -> ani.name
-                    "eng" -> ani.englishName
-                    else -> ani.nativeName
-                } ?: ani.name).orEmpty()
+                title = (
+                    when (preferences.titleStyle) {
+                        "romaji" -> ani.name
+                        "eng" -> ani.englishName
+                        else -> ani.nativeName
+                    } ?: ani.name
+                    ).orEmpty()
                 thumbnail_url = ani.thumbnail?.let(::thumbnailUrl)
                 url = "${ani.id ?: ""}<&sep>${ani.slugTime ?: ""}<&sep>${(ani.name ?: "").slugify()}"
             }
