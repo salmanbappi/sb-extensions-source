@@ -322,7 +322,7 @@ class AllAnime : Source() {
 
             when {
                 videoUrl.startsWith("/apivtwo/") && INTERAL_HOSTER_NAMES.any {
-                    Regex("""\b${it.lowercase()}\b""").find(video.sourceName.lowercase()) != null &&
+                    Regex("""\b${it.lowercase()}\b""").find(video.sourceName?.lowercase() ?: "") != null &&
                         hosterSelection.contains(it.lowercase())
                 } ->
                     Server(videoUrl, "internal ${video.sourceName}", video.priority)
@@ -342,7 +342,7 @@ class AllAnime : Source() {
         val iframeEndpoint = runCatching {
             client.newCall(GET("${preferences.siteUrl}/getVersion")).awaitSuccess()
                 .parseAs<AllAnimeExtractor.VersionResponse>()
-                .episodeIframeHead
+                .episodeIframeHead ?: FALLBACK_PLAYER_DOMAIN
         }.getOrDefault(FALLBACK_PLAYER_DOMAIN)
 
         return serverList.parallelCatchingFlatMap { server ->
@@ -480,15 +480,15 @@ class AllAnime : Source() {
     private fun parseAnime(response: Response): AnimesPage {
         val parsed = response.parseAs<SearchResult>()
 
-        val animeList = parsed.data.shows.edges.map { ani ->
+        val animeList = (parsed.data?.shows?.edges ?: emptyList()).map { ani ->
             SAnime.create().apply {
-                title = when (preferences.titleStyle) {
+                title = (when (preferences.titleStyle) {
                     "romaji" -> ani.name
                     "eng" -> ani.englishName
                     else -> ani.nativeName
-                } ?: ani.name
+                } ?: ani.name).orEmpty()
                 thumbnail_url = ani.thumbnail?.let(::thumbnailUrl)
-                url = "${ani.id}<&sep>${ani.slugTime ?: ""}<&sep>${ani.name.slugify()}"
+                url = "${ani.id ?: ""}<&sep>${ani.slugTime ?: ""}<&sep>${(ani.name ?: "").slugify()}"
             }
         }
 

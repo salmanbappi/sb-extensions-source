@@ -67,11 +67,11 @@ class FlixHub : Source() {
             ).execute()
             val jsonString = response.body.string()
             val searchResult = myJson.decodeFromString<SearchResponseDto>(jsonString)
-            val animes = searchResult.results
-                .filter { it.is_available && !it.watch_url.isNullOrBlank() }
+            val animes = (searchResult.results ?: emptyList())
+                .filter { (it.is_available == true) && !it.watch_url.isNullOrBlank() }
                 .map { dto ->
                     SAnime.create().apply {
-                        title = dto.title
+                        title = dto.title.orEmpty()
                         setUrlWithoutDomain(dto.watch_url!!)
                         thumbnail_url = dto.poster ?: ""
                     }
