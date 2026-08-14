@@ -18,6 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 
@@ -338,6 +339,79 @@ val items = doc.select("{sel}").map {{ element ->
 
 
 # ==============================================================================
+# Extension Auto-Resolution Helpers
+# ==============================================================================
+
+REPO_ROOT = Path(__file__).resolve().parent.parent if "__file__" in globals() else Path.cwd()
+
+
+def resolve_extension_target(repo_root: Path, target: Optional[str] = None, lang: Optional[str] = None, name: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+    """Helper to resolve (lang, name) from target positional argument (e.g. 'moviewala' or 'en/moviewala')."""
+    src_dir = repo_root / "src"
+
+    if target and "/" in target:
+        parts = target.split("/", 1)
+        return parts[0], parts[1]
+
+    if lang and "/" in lang:
+        parts = lang.split("/", 1)
+        return parts[0], parts[1]
+
+    if name and "/" in name:
+        parts = name.split("/", 1)
+        return parts[0], parts[1]
+
+    resolved_name = name or target
+    resolved_lang = lang
+
+    if resolved_name and src_dir.exists():
+        if resolved_lang and (src_dir / resolved_lang / resolved_name).exists():
+            return resolved_lang, resolved_name
+        for lang_dir in sorted(src_dir.iterdir()):
+            if lang_dir.is_dir() and (lang_dir / resolved_name).exists():
+                return lang_dir.name, resolved_name
+
+    return resolved_lang, resolved_name
+
+
+def inspect_extension_module(repo_root: Path, lang: str, name: str) -> Tuple[Optional[str], Dict[str, str]]:
+    """Extracts baseUrl and default headers from extension source files."""
+    ext_dir = repo_root / "src" / lang / name
+    if not ext_dir.exists():
+        return None, {}
+
+    base_url = None
+    extracted_headers = {}
+
+    for kt_file in ext_dir.rglob("*.kt"):
+        content = kt_file.read_text(encoding="utf-8", errors="ignore")
+        if not base_url:
+            m_base = re.search(r'(?:baseUrl|defaultBaseUrl)\s*=\s*["\'](https?://[^"\']+)["\']', content)
+            if m_base:
+                base_url = m_base.group(1).rstrip("/")
+
+        m_ua = re.search(r'["\']User-Agent["\']\s*,\s*["\']([^"\']+)["\']', content, re.IGNORECASE)
+        if m_ua:
+            extracted_headers["User-Agent"] = m_ua.group(1)
+
+        m_ref = re.search(r'["\']Referer["\']\s*,\s*["\']([^"\']+)["\']', content, re.IGNORECASE)
+        if m_ref:
+            extracted_headers["Referer"] = m_ref.group(1)
+
+        m_origin = re.search(r'["\']Origin["\']\s*,\s*["\']([^"\']+)["\']', content, re.IGNORECASE)
+        if m_origin:
+            extracted_headers["Origin"] = m_origin.group(1)
+
+    if base_url:
+        if "Referer" not in extracted_headers:
+            extracted_headers["Referer"] = f"{base_url}/"
+        if "Origin" not in extracted_headers:
+            extracted_headers["Origin"] = base_url
+
+    return base_url, extracted_headers
+
+
+# ==============================================================================
 # CLI Entrypoint
 # ==============================================================================
 
@@ -346,7 +420,8 @@ def main():
         description="Lightweight local scraping & endpoint verification tool with media discovery and interactive REPL.",
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument("--url", required=True, help="Target URL to request")
+    parser.add_argument("target", nargs="?", help="Target URL (e.g. 'https://example.com') or extension module name (e.g. 'moviewala')")
+    parser.add_argument("-u", "--url", help="Target URL to request (optional if target module/URL is passed)")
     parser.add_argument("-X", "--method", default="GET", help="HTTP Method (GET, POST, HEAD, OPTIONS)")
     parser.add_argument("-H", "--header", action="append", help="Custom header in 'Key: Value' format (can be specified multiple times)")
     parser.add_argument("--raw-headers", help="Raw DevTools request headers copied directly from Network tab")
@@ -363,13 +438,40 @@ def main():
 
     args = parser.parse_args()
 
+    target_url = args.url
+    injected_headers = {}
+
+    if not target_url and args.target:
+        if args.target.startswith("http://") or args.target.startswith("https://"):
+            target_url = args.target
+        else:
+            lang, name = resolve_extension_target(REPO_ROOT, target=args.target)
+            if lang and name:
+                base_url, ext_headers = inspect_extension_module(REPO_ROOT, lang, name)
+                if base_url:
+                    target_url = base_url
+                    injected_headers.update(ext_headers)
+                    print(f"🔍 Auto-detected target extension: src/{lang}/{name}")
+                    print(f"🌐 Resolved Base URL: {target_url}")
+                    if injected_headers:
+                        print(f"🛡️  Auto-injected headers: {', '.join(injected_headers.keys())}")
+                else:
+                    print(f"⚠️ Extension src/{lang}/{name} found, but baseUrl could not be extracted.")
+            else:
+                print(f"❌ Could not resolve '{args.target}' as an extension module or URL.")
+
+    if not target_url:
+        parser.print_help()
+        print("\n❌ Error: Please specify a target URL or extension module name.")
+        sys.exit(1)
+
     session = ScraperSession(
         cookie_jar_path=args.cookie_jar,
         insecure=args.insecure,
         raw_cookie=args.cookie
     )
 
-    headers = {}
+    headers = dict(injected_headers)
     if args.raw_headers:
         headers.update(parse_raw_devtools_headers(args.raw_headers))
     if args.header:
@@ -379,14 +481,14 @@ def main():
                 headers[k.strip()] = v.strip()
 
     if args.interactive:
-        run_interactive_repl(session, args.url, headers)
+        run_interactive_repl(session, target_url, headers)
         return
 
     # Standard Execution
-    print(f"🚀 Sending {args.method} request to: {args.url}")
+    print(f"🚀 Sending {args.method} request to: {target_url}")
     try:
         status, body, resp_headers, elapsed = session.fetch(
-            url=args.url,
+            url=target_url,
             method=args.method,
             headers=headers,
             data=args.data

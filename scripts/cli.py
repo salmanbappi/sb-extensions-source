@@ -1111,8 +1111,12 @@ def main():
             val_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
             val_parser.add_argument("--lang", help="Target extension lang")
             val_parser.add_argument("--name", help="Target extension directory name")
+            val_parser.add_argument("--all", action="store_true", help="Validate all extensions")
             val_args = val_parser.parse_args(args.args)
-            lang, name = resolve_extension_target(repo_root, val_args.target, val_args.lang, val_args.name)
+            if val_args.all:
+                lang, name = None, None
+            else:
+                lang, name = resolve_extension_target(repo_root, val_args.target, val_args.lang, val_args.name)
             success = validate_extensions(repo_root, lang, name)
             sys.exit(0 if success else 1)
 
