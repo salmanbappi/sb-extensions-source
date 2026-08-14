@@ -201,7 +201,7 @@ class Anivix : Source() {
     override fun searchAnimeParse(response: Response): AnimesPage {
         val responseBody = response.body.string()
         val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
-        val animeList = anilistRes.data.Page.media.map { media ->
+        val animeList = anilistRes.data?.Page?.media?.map { media ->
             SAnime.create().apply {
                 url = "/anime/${media.id}"
                 title = media.title.english ?: media.title.romaji ?: "Unknown Title"
@@ -209,7 +209,7 @@ class Anivix : Source() {
                 description = media.description
                 genre = media.genres.joinToString()
             }
-        }
+        } ?: emptyList()
         return AnimesPage(animeList, animeList.isNotEmpty())
     }
 
@@ -245,7 +245,7 @@ class Anivix : Source() {
     override fun animeDetailsParse(response: Response): SAnime {
         val responseBody = response.body.string()
         val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
-        val media = anilistRes.data.Page.media.firstOrNull() ?: throw Exception("Anime not found")
+        val media = anilistRes.data?.Page?.media?.firstOrNull() ?: throw Exception("Anime not found")
 
         return SAnime.create().apply {
             title = media.title.english ?: media.title.romaji ?: "Unknown Title"
@@ -279,7 +279,7 @@ class Anivix : Source() {
                 episodes.add(
                     SEpisode.create().apply {
                         name = "Episode ${episode.number}: ${episode.title ?: "Episode ${episode.number}"}"
-                        episode_number = episode.number.toFloat()
+                        episode_number = (episode.number ?: 0).toFloat()
                         url = "/anime/${episode.episodeId}"
                     },
                 )
@@ -309,8 +309,9 @@ class Anivix : Source() {
 
         animeStream.sources.forEach { source ->
             val streamUrl = absoluteUrl(source.url)
-            val subtitleTracks = source.tracks.map { track ->
-                Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
+            val subtitleTracks = source.tracks.mapNotNull { track ->
+                val trackUrl = track.url ?: return@mapNotNull null
+                Track(absoluteUrl(trackUrl), track.label ?: track.lang ?: "English")
             }
             try {
                 val extractedVideos = playlistUtils.extractFromHls(
