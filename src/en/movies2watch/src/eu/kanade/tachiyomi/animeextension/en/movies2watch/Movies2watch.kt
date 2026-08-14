@@ -331,47 +331,60 @@ class Movies2watch : Source() {
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val embedUrl = hoster.hosterUrl
-        val embedHeaders = headers.newBuilder().set("Referer", "$baseUrl/").build()
+        val rawUrl = hoster.hosterUrl
         val prefix = "${hoster.hosterName} - "
 
         return runCatching {
+            val resolvedUrl = runCatching {
+                val req = GET(rawUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())
+                client.newCall(req).execute().use { resp ->
+                    resp.request.url.toString()
+                }
+            }.getOrDefault(rawUrl)
+
+            val embedHeaders = headers.newBuilder()
+                .set("Referer", resolvedUrl)
+                .build()
+
             when {
-                embedUrl.contains("vidsrc", ignoreCase = true) -> {
-                    runCatching { vidsrcExtractor.videosFromUrl(embedUrl, hoster.hosterName) }.getOrDefault(emptyList())
+                resolvedUrl.contains("vidmoly", ignoreCase = true) || rawUrl.contains("vidmoly", ignoreCase = true) -> {
+                    runCatching { vidmolyExtractor.videosFromUrl(resolvedUrl, prefix) }
+                        .getOrElse { vidmolyExtractor.videosFromUrl(rawUrl, prefix) }
                 }
 
-                embedUrl.contains("vidmoly", ignoreCase = true) -> {
-                    runCatching { vidmolyExtractor.videosFromUrl(embedUrl, prefix) }.getOrDefault(emptyList())
+                resolvedUrl.contains("filemoon", ignoreCase = true) || resolvedUrl.contains("moonplayer", ignoreCase = true) -> {
+                    runCatching { filemoonExtractor.videosFromUrl(resolvedUrl, prefix = prefix, headers = embedHeaders) }
+                        .getOrElse { filemoonExtractor.videosFromUrl(rawUrl, prefix = prefix, headers = embedHeaders) }
                 }
 
-                embedUrl.contains("filemoon", ignoreCase = true) || embedUrl.contains("moonplayer", ignoreCase = true) -> {
-                    runCatching { filemoonExtractor.videosFromUrl(embedUrl, prefix = prefix, headers = embedHeaders) }.getOrDefault(emptyList())
+                resolvedUrl.contains("streamtape", ignoreCase = true) -> {
+                    streamtapeExtractor.videoFromUrl(resolvedUrl)?.let(::listOf)
+                        ?: streamtapeExtractor.videoFromUrl(rawUrl)?.let(::listOf)
+                        ?: emptyList()
                 }
 
-                embedUrl.contains("streamtape", ignoreCase = true) -> {
-                    runCatching { streamtapeExtractor.videoFromUrl(embedUrl)?.let(::listOf) }.getOrDefault(null) ?: emptyList()
+                resolvedUrl.contains("dood", ignoreCase = true) || resolvedUrl.contains("ds2play", ignoreCase = true) -> {
+                    runCatching { doodExtractor.videosFromUrl(resolvedUrl) }
+                        .getOrElse { doodExtractor.videosFromUrl(rawUrl) }
                 }
 
-                embedUrl.contains("dood", ignoreCase = true) || embedUrl.contains("ds2play", ignoreCase = true) -> {
-                    runCatching { doodExtractor.videosFromUrl(embedUrl) }.getOrDefault(emptyList())
-                }
-
-                embedUrl.contains(".m3u8") -> {
+                resolvedUrl.contains(".m3u8") -> {
                     playlistUtils.extractFromHls(
-                        playlistUrl = embedUrl,
-                        referer = "$baseUrl/",
+                        playlistUrl = resolvedUrl,
+                        referer = resolvedUrl,
                         videoNameGen = { quality -> "$prefix$quality" },
                     )
                 }
 
                 else -> {
-                    universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
+                    universalExtractor.videosFromUrl(resolvedUrl, embedHeaders, prefix = hoster.hosterName)
                 }
+            }.ifEmpty {
+                universalExtractor.videosFromUrl(resolvedUrl, embedHeaders, prefix = hoster.hosterName)
+            }.ifEmpty {
+                universalExtractor.videosFromUrl(rawUrl, headers.newBuilder().set("Referer", "$baseUrl/").build(), prefix = hoster.hosterName)
             }
-        }.getOrDefault(emptyList()).ifEmpty {
-            universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
-        }
+        }.getOrDefault(emptyList())
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
