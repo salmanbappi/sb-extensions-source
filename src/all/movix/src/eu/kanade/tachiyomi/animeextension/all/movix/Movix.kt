@@ -211,14 +211,14 @@ class Movix : Source() {
                 title = movie.title
                 thumbnail_url = movie.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
                 description = movie.overview
-                genre = movie.genres.joinToString { it.name }
+                genre = movie.genres?.mapNotNull { it.name }?.joinToString() ?: ""
                 status = SAnime.COMPLETED
             } else if (requestUrl.contains("/tmdb/tv/")) {
                 val tv = json.decodeFromString<TmdbTvDetails>(responseBody)
                 title = tv.name
                 thumbnail_url = tv.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
                 description = tv.overview
-                genre = tv.genres.joinToString { it.name }
+                genre = tv.genres?.mapNotNull { it.name }?.joinToString() ?: ""
                 status = if (tv.in_production == false) SAnime.COMPLETED else SAnime.ONGOING
             }
         }
@@ -268,8 +268,8 @@ class Movix : Source() {
             val semaphore = Semaphore(5)
 
             coroutineScope {
-                val deferredEpisodes = tv.seasons
-                    .filter { it.season_number > 0 }
+                val deferredEpisodes = (tv.seasons ?: emptyList())
+                    .filter { (it.season_number ?: 0) > 0 }
                     .map { season ->
                         async {
                             semaphore.withPermit {
@@ -278,10 +278,10 @@ class Movix : Source() {
                                     val seasonResponse = client.newCall(GET(seasonUrl, headers)).execute()
                                     if (seasonResponse.isSuccessful) {
                                         val seasonDetails = json.decodeFromString<TmdbSeasonDetails>(seasonResponse.body.string())
-                                        seasonDetails.episodes.map { episode ->
+                                        (seasonDetails.episodes ?: emptyList()).map { episode ->
                                             SEpisode.create().apply {
                                                 name = "S${season.season_number} E${episode.episode_number}: ${episode.name ?: "Episode ${episode.episode_number}"}"
-                                                episode_number = episode.episode_number.toFloat() + (season.season_number * 1000f)
+                                                episode_number = (episode.episode_number ?: 0).toFloat() + ((season.season_number ?: 0) * 1000f)
                                                 url = "/tv/${tv.id}/${season.season_number}/${episode.episode_number}"
                                             }
                                         }

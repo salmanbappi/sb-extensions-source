@@ -96,7 +96,7 @@ class CastleTv : Source() {
         val filteredItems = mutableListOf<ContentItem>()
         val sdf = java.text.SimpleDateFormat("yyyy", java.util.Locale.US)
 
-        decryptedResponse.data.rows?.forEach { row ->
+        decryptedResponse.data?.rows?.forEach { row ->
             // 1. Filter rows by category filter if specified
             if (categoryFilter.isNotBlank() && row.name?.contains(categoryFilter, ignoreCase = true) != true) {
                 return@forEach
@@ -380,7 +380,7 @@ class CastleTv : Source() {
 
         val decryptedJson = decryptData(encryptedData, securityKey) ?: return emptyList()
         val detailsResponse = json.decodeFromString<MovieDetailsResponse>(decryptedJson)
-        val details = detailsResponse.data
+        val details = detailsResponse.data ?: return emptyList()
 
         val episodes = mutableListOf<SEpisode>()
 
@@ -457,7 +457,7 @@ class CastleTv : Source() {
         val detailsUrl = "$baseUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&clientType=1&lang=en-US&movieId=$movieId&packageName=com.external.castle"
         val responseBody = client.newCall(GET(detailsUrl)).execute().use { it.body.string() }
         val detailsDecrypted = decryptData(responseBody, securityKey) ?: return emptyList()
-        val details = json.decodeFromString<MovieDetailsResponse>(detailsDecrypted).data
+        val details = json.decodeFromString<MovieDetailsResponse>(detailsDecrypted).data ?: return emptyList()
 
         val ep = details.episodes?.find { it.id?.toString() == episodeId } ?: return emptyList()
         val availableTracks = ep.tracks ?: emptyList()
@@ -498,7 +498,7 @@ class CastleTv : Source() {
                 if (encryptedData.isBlank()) return@parallelCatchingMapNotNull null
 
                 val decryptedJson = decryptData(encryptedData, securityKey) ?: return@parallelCatchingMapNotNull null
-                val videoData = json.decodeFromString<VideoResponse>(decryptedJson).data
+                val videoData = json.decodeFromString<VideoResponse>(decryptedJson).data ?: return@parallelCatchingMapNotNull null
 
                 if (videoData.videoUrl != null && videoData.permissionDenied != true) {
                     val qualityName = when (resolution) {
@@ -561,7 +561,7 @@ class CastleTv : Source() {
                     if (encryptedData.isBlank()) return@parallelCatchingMapNotNull null
 
                     val decryptedJson = decryptData(encryptedData, securityKey) ?: return@parallelCatchingMapNotNull null
-                    val videoData = json.decodeFromString<VideoResponse>(decryptedJson).data
+                    val videoData = json.decodeFromString<VideoResponse>(decryptedJson).data ?: return@parallelCatchingMapNotNull null
 
                     if (videoData.videoUrl != null && videoData.permissionDenied != true) {
                         val qualityName = when (resolution) {

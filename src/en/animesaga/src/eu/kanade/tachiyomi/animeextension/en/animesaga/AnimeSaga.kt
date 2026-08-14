@@ -157,7 +157,7 @@ class AnimeSaga :
     override fun searchAnimeParse(response: Response): AnimesPage {
         val responseBody = response.body.string()
         val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
-        val pageInfo = anilistRes.data.Page
+        val pageInfo = anilistRes.data?.Page
         if (pageInfo == null || pageInfo.media.isEmpty()) {
             return AnimesPage(emptyList(), false)
         }
@@ -230,7 +230,7 @@ class AnimeSaga :
             }
             val responseBody = response.body.string()
             val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
-            return anilistRes.data.Media
+            return anilistRes.data?.Media
         } catch (e: Exception) {
             return null
         }
