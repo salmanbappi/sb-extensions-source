@@ -398,15 +398,15 @@ class Seanime :
     }
 
     private fun LibraryCollectionEntryDto.toSAnime(): SAnime = SAnime.create().apply {
-        val animeTitle = media.title?.userPreferred
-            ?: media.title?.english
-            ?: media.title?.romaji
+        val animeTitle = media?.title?.userPreferred
+            ?: media?.title?.english
+            ?: media?.title?.romaji
             ?: "Anime $mediaId"
         title = animeTitle
-        thumbnail_url = media.coverImage?.large ?: media.coverImage?.medium
-        description = media.description
-        genre = media.genres.joinToString(", ")
-        status = when (media.status?.uppercase()) {
+        thumbnail_url = media?.coverImage?.large ?: media?.coverImage?.medium
+        description = media?.description
+        genre = media?.genres?.joinToString(", ") ?: ""
+        status = when (media?.status?.uppercase()) {
             "FINISHED" -> SAnime.COMPLETED
             "RELEASING" -> SAnime.ONGOING
             else -> SAnime.UNKNOWN
@@ -858,7 +858,7 @@ class Seanime :
                         val epName = ep.displayTitle ?: "Episode ${ep.episodeNumber}"
                         val epSubTitle = ep.episodeTitle
                         name = if (!epSubTitle.isNullOrBlank()) "$epName - $epSubTitle" else epName
-                        episode_number = ep.episodeNumber.toFloat()
+                        episode_number = (ep.episodeNumber ?: 0).toFloat()
                         if (showEpisodeMetadata) {
                             summary = ep.episodeMetadata?.summary
                             preview_url = ep.episodeMetadata?.image
@@ -947,7 +947,7 @@ class Seanime :
                                 val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-source", headers, body)).await()
                                 if (response.isSuccessful) {
                                     val sourceDto = response.parseAs<OnlineEpisodeSourceDto>(json)
-                                    provider to sourceDto.data.videoSources
+                                    provider to (sourceDto.data?.videoSources ?: emptyList())
                                 } else {
                                     response.close()
                                     null
@@ -960,7 +960,7 @@ class Seanime :
                 }
 
                 val allVideos = videoList.flatMap { (provider, videoSources) ->
-                    val providerName = provider.name ?: provider.id.replaceFirstChar { it.uppercase() }
+                    val providerName = provider.name ?: (provider.id?.replaceFirstChar { it.uppercase() } ?: "Provider")
                     videoSources.flatMap { vs ->
                         val videoHeaders = okhttp3.Headers.Builder().apply {
                             headers.forEach { (name, value) -> add(name, value) }
@@ -1084,7 +1084,7 @@ class Seanime :
         }
 
         val result = response.parseAs<AniListRelationsResponse>(json)
-        val media = result.data.media ?: return emptyList()
+        val media = result.data?.media ?: return emptyList()
 
         // 1. Extract and convert relations (prequels and sequels)
         val prequelsAndSequels = media.relations?.edges

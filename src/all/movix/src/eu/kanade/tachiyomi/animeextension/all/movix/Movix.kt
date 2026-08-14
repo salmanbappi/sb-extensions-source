@@ -729,8 +729,7 @@ data class ServerResponse(
     val url: String? = null,
     val stream_url: String? = null,
     val stream_urls: List<String>? = null,
-    val qualities: Map<String? = null,
-    String>? = null,
+    val qualities: Map<String, String>? = null,
     val sources: JsonElement? = null
 )
 
@@ -739,8 +738,7 @@ data class SourceItem(
     val url: String? = null,
     val link: String? = null,
     val stream_url: String? = null,
-    val qualities: Map<String? = null,
-    String>? = null,
+    val qualities: Map<String, String>? = null,
     val label: String? = null,
     val server: String? = null,
     val language: String? = null,
