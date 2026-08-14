@@ -666,7 +666,7 @@ data class TmdbResult(
     val overview: String? = null,
     val release_date: String? = null,
     val first_air_date: String? = null,
-    val vote_average: Float? = null
+    val vote_average: Float? = null,
 )
 
 @Serializable
@@ -683,14 +683,14 @@ data class TmdbTvDetails(
 @Serializable
 data class TmdbGenre(
     val id: Int? = null,
-    val name: String? = null
+    val name: String? = null,
 )
 
 @Serializable
 data class TmdbSeason(
     val season_number: Int? = null,
     val episode_count: Int? = null,
-    val name: String? = null
+    val name: String? = null,
 )
 
 @Serializable
@@ -703,7 +703,7 @@ data class TmdbSeasonDetails(
 data class TmdbEpisode(
     val episode_number: Int? = null,
     val name: String? = null,
-    val season_number: Int? = null
+    val season_number: Int? = null,
 )
 
 @Serializable
@@ -720,7 +720,7 @@ data class VidLinkResponse(
     val success: Boolean? = null,
     val url: String? = null,
     val ref: String? = null,
-    val sig: String? = null
+    val sig: String? = null,
 )
 
 @Serializable
@@ -730,7 +730,7 @@ data class ServerResponse(
     val stream_url: String? = null,
     val stream_urls: List<String>? = null,
     val qualities: Map<String, String>? = null,
-    val sources: JsonElement? = null
+    val sources: JsonElement? = null,
 )
 
 @Serializable
@@ -743,7 +743,7 @@ data class SourceItem(
     val server: String? = null,
     val language: String? = null,
     val flag: String? = null,
-    val title: String? = null
+    val title: String? = null,
 )
 
 private data class ServerInfo(val name: String, val apiPath: String)
