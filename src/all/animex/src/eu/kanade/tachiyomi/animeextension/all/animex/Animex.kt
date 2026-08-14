@@ -432,16 +432,16 @@ class Animex : Source() {
     override fun searchAnimeParse(response: Response): AnimesPage {
         val responseBody = response.body.string()
         val result = json.decodeFromString<CatalogAnimeResponse>(responseBody)
-        val animeList = result.data.catalogAnime.items.map { item ->
+        val animeList = result.data?.catalogAnime?.items?.map { item ->
             SAnime.create().apply {
                 val titleSlug = item.id.substringBeforeLast("-")
                 url = "/anime/$titleSlug-${item.anilistId}?id=${item.id}"
                 title = item.titleEnglish ?: item.titleRomaji ?: "Unknown Title"
                 thumbnail_url = item.coverImage?.extraLarge
                 description = item.description
-                genre = item.genres.joinToString()
+                genre = item.genres?.joinToString() ?: ""
             }
-        }
+        } ?: emptyList()
         return AnimesPage(animeList, animeList.size >= 30)
     }
 
@@ -482,7 +482,7 @@ class Animex : Source() {
     override fun animeDetailsParse(response: Response): SAnime {
         val responseBody = response.body.string()
         val result = json.decodeFromString<GetAnimeResponse>(responseBody)
-        val anime = result.data.anime ?: throw Exception("Anime not found")
+        val anime = result.data?.anime ?: throw Exception("Anime not found")
 
         return SAnime.create().apply {
             title = anime.titleEnglish ?: anime.titleRomaji ?: "Unknown Title"
@@ -493,7 +493,7 @@ class Animex : Source() {
                 anime.seasonYear?.let { append("\nYear: $it") }
                 anime.season?.let { append("\nSeason: $it") }
             }
-            genre = anime.genres.joinToString()
+            genre = anime.genres?.joinToString() ?: ""
             status = when (anime.status?.uppercase()) {
                 "FINISHED" -> SAnime.COMPLETED
                 "RELEASING" -> SAnime.ONGOING
@@ -555,7 +555,7 @@ class Animex : Source() {
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val result = json.decodeFromString<GetAnimeResponse>(response.body.string())
-                    result.data.anime?.id
+                    result.data?.anime?.id
                 } else {
                     null
                 }
@@ -589,7 +589,7 @@ class Animex : Source() {
         val episodes = restEpisodes.map { episode ->
             SEpisode.create().apply {
                 name = "Episode ${episode.number}${episode.titles?.en?.let { ": $it" } ?: ""}"
-                episode_number = episode.number.toFloat()
+                episode_number = (episode.number ?: 0).toFloat()
                 url = if (anilistId.isNotEmpty()) {
                     "/watch/$titleSlug-$anilistId-episode-${episode.number}?id=$slug"
                 } else {
@@ -650,7 +650,7 @@ class Animex : Source() {
         val disabledServers = preferences.getStringSet("pref_disabled_servers", emptySet()) ?: emptySet()
 
         val allTasks = (serversData.subProviders.map { it to "sub" } + serversData.dubProviders.map { it to "dub" })
-            .filter { (provider, _) -> provider.id.lowercase() !in disabledServers }
+            .filter { (provider, _) -> (provider.id?.lowercase() ?: "") !in disabledServers }
 
         val tasks = if (type.isNullOrEmpty()) {
             allTasks
@@ -668,7 +668,7 @@ class Animex : Source() {
         val videos = coroutineScope {
             tasks.map { (provider, apiType) ->
                 async {
-                    val providerId = provider.id
+                    val providerId = provider.id ?: "PROVIDER"
                     val categoryLabel = apiType.uppercase()
                     val subStyle = if (apiType == "dub") {
                         ""
@@ -681,7 +681,7 @@ class Animex : Source() {
                     }
 
                     if (provider.type == "embed" && provider.url != null) {
-                        val embedUrl = absoluteUrl(provider.url)
+                        val embedUrl = absoluteUrl(provider.url ?: "")
                         if (embedUrl.contains("ok.ru") || embedUrl.contains("okru")) {
                             try {
                                 val okruClient = client.newBuilder()
@@ -708,6 +708,7 @@ class Animex : Source() {
                                 val embedHeaders = headersBuilder().apply {
                                     removeAll("Origin")
                                     removeAll("Accept")
+                                    set("Referer", "https://mp4upload.com/")
                                 }.build()
                                 val mp4uploadExtractor = Mp4uploadExtractor(client)
                                 val mp4Prefix = "${providerId.uppercase()}: ($categoryLabel)$subStyle "
@@ -734,13 +735,15 @@ class Animex : Source() {
                             client.newCall(sourcesRequest).execute().use { sourcesResponse ->
                                 if (sourcesResponse.isSuccessful) {
                                     val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
-                                    val subtitleTracks = sourcesData.tracks?.map { track ->
-                                        Track(absoluteUrl(track.url), track.label ?: track.lang ?: "English")
+                                    val subtitleTracks = sourcesData.tracks?.mapNotNull { track ->
+                                        val trackUrl = track.url ?: return@mapNotNull null
+                                        Track(absoluteUrl(trackUrl), track.label ?: track.lang ?: "English")
                                     } ?: emptyList()
 
                                     val providerVideos = mutableListOf<Video>()
                                     sourcesData.sources.forEach { source ->
-                                        val streamUrl = absoluteUrl(source.url)
+                                        val sourceUrl = source.url ?: return@forEach
+                                        val streamUrl = absoluteUrl(sourceUrl)
                                         val providerName = providerId.uppercase()
                                         val quality = source.quality ?: "Auto"
                                         val categoryLabel = apiType.uppercase()
