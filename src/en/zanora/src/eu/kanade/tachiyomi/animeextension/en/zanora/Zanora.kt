@@ -337,36 +337,36 @@ class Zanora : Source() {
                 ?.map { Track(it.file, it.label) }
                 ?.let(playlistUtils::fixSubtitles)
                 ?: run {
-                // Fallback: the embed page wraps an iframe — scrape that iframe for subtitle tracks
-                val embedPageHtml = runCatching {
-                    val embedReq = GET(embedUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())
-                    client.newCall(embedReq).execute().body.string()
-                }.getOrNull() ?: ""
-
-                val iframeUrl = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-                    .find(embedPageHtml)?.groupValues?.get(1)
-                    ?.let { if (it.startsWith("//")) "https:$it" else it }
-                    ?.takeIf { it.startsWith("http") }
-
-                val pageToScrape = if (!iframeUrl.isNullOrBlank()) {
-                    runCatching {
-                        val iframeReq = GET(iframeUrl, headers.newBuilder().set("Referer", embedUrl).build())
-                        client.newCall(iframeReq).execute().body.string()
+                    // Fallback: the embed page wraps an iframe — scrape that iframe for subtitle tracks
+                    val embedPageHtml = runCatching {
+                        val embedReq = GET(embedUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())
+                        client.newCall(embedReq).execute().body.string()
                     }.getOrNull() ?: ""
-                } else {
-                    embedPageHtml
+
+                    val iframeUrl = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                        .find(embedPageHtml)?.groupValues?.get(1)
+                        ?.let { if (it.startsWith("//")) "https:$it" else it }
+                        ?.takeIf { it.startsWith("http") }
+
+                    val pageToScrape = if (!iframeUrl.isNullOrBlank()) {
+                        runCatching {
+                            val iframeReq = GET(iframeUrl, headers.newBuilder().set("Referer", embedUrl).build())
+                            client.newCall(iframeReq).execute().body.string()
+                        }.getOrNull() ?: ""
+                    } else {
+                        embedPageHtml
+                    }
+
+                    val trackPattern = Regex("""["']?file["']?\s*:\s*["']([^"']+\.(?:vtt|srt)[^"']*)["'][^}]*["']?label["']?\s*:\s*["']([^"']*)["']""")
+                    val altPattern = Regex("""["']?label["']?\s*:\s*["']([^"']*)["'][^}]*["']?file["']?\s*:\s*["']([^"']+\.(?:vtt|srt)[^"']*)["']""")
+                    val htmlTrackPattern = Regex("""<track[^>]+src=["']([^"']+)["'][^>]*label=["']([^"']*)["']""", RegexOption.IGNORE_CASE)
+
+                    val tracks = mutableListOf<Track>()
+                    trackPattern.findAll(pageToScrape).forEach { m -> tracks.add(Track(m.groupValues[1], m.groupValues[2])) }
+                    if (tracks.isEmpty()) altPattern.findAll(pageToScrape).forEach { m -> tracks.add(Track(m.groupValues[2], m.groupValues[1])) }
+                    if (tracks.isEmpty()) htmlTrackPattern.findAll(pageToScrape).forEach { m -> tracks.add(Track(m.groupValues[1], m.groupValues[2])) }
+                    tracks.let(playlistUtils::fixSubtitles)
                 }
-
-                val trackPattern = Regex("""["']?file["']?\s*:\s*["']([^"']+\.(?:vtt|srt)[^"']*)["'][^}]*["']?label["']?\s*:\s*["']([^"']*)["']""")
-                val altPattern = Regex("""["']?label["']?\s*:\s*["']([^"']*)["'][^}]*["']?file["']?\s*:\s*["']([^"']+\.(?:vtt|srt)[^"']*)["']""")
-                val htmlTrackPattern = Regex("""<track[^>]+src=["']([^"']+)["'][^>]*label=["']([^"']*)["']""", RegexOption.IGNORE_CASE)
-
-                val tracks = mutableListOf<Track>()
-                trackPattern.findAll(pageToScrape).forEach { m -> tracks.add(Track(m.groupValues[1], m.groupValues[2])) }
-                if (tracks.isEmpty()) altPattern.findAll(pageToScrape).forEach { m -> tracks.add(Track(m.groupValues[2], m.groupValues[1])) }
-                if (tracks.isEmpty()) htmlTrackPattern.findAll(pageToScrape).forEach { m -> tracks.add(Track(m.groupValues[1], m.groupValues[2])) }
-                tracks.let(playlistUtils::fixSubtitles)
-            }
 
             val extracted = runCatching {
                 megaCloudExtractor.getVideosFromUrl(embedUrl, type = audioType, name = prefix)
