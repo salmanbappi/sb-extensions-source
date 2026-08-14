@@ -332,12 +332,11 @@ class Zanora : Source() {
             val embedUrl = srcDto.link
             val prefix = "$hostName - $audioType"
 
-            val zanoraSubtitles = if (!srcDto.tracks.isNullOrEmpty()) {
-                srcDto.tracks
-                    .filter { it.kind == "captions" || it.kind == "subtitles" }
-                    .map { Track(it.file, it.label) }
-                    .let(playlistUtils::fixSubtitles)
-            } else {
+            val zanoraSubtitles = srcDto.tracks
+                ?.filter { it.kind == "captions" || it.kind == "subtitles" }
+                ?.map { Track(it.file, it.label) }
+                ?.let(playlistUtils::fixSubtitles)
+                ?: run {
                 // Fallback: the embed page wraps an iframe — scrape that iframe for subtitle tracks
                 val embedPageHtml = runCatching {
                     val embedReq = GET(embedUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())

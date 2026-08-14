@@ -76,7 +76,7 @@ class AllAnime : Source() {
     override fun popularAnimeParse(response: Response): AnimesPage {
         val parsed = response.parseAs<PopularResult>()
 
-        val animeList = parsed.data.queryPopular.recommendations.mapNotNull {
+        val animeList = (parsed.data?.queryPopular?.recommendations ?: emptyList()).mapNotNull {
             if (it.anyCard == null) return@mapNotNull null
             SAnime.create().apply {
                 title = when (preferences.titleStyle) {
@@ -193,22 +193,22 @@ class AllAnime : Source() {
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val show = response.parseAs<DetailsResult>().data.show
+        val show = response.parseAs<DetailsResult>().data?.show
 
         return SAnime.create().apply {
-            genre = show.genres?.joinToString()
-            status = parseStatus(show.status)
-            author = show.studios?.firstOrNull()
+            genre = show?.genres?.joinToString()
+            status = parseStatus(show?.status)
+            author = show?.studios?.firstOrNull()
             description = buildString {
                 append(
                     Jsoup.parseBodyFragment(
-                        show.description?.replace("<br>", "br2n") ?: "",
+                        show?.description?.replace("<br>", "br2n") ?: "",
                     ).text().replace("br2n", "\n"),
                 )
                 append("\n\n")
-                append("Type: ${show.type ?: "Unknown"}")
-                append("\nAired: ${show.season?.quarter ?: "-"} ${show.season?.year ?: "-"}")
-                append("\nScore: ${show.score ?: "-"}★")
+                append("Type: ${show?.type ?: "Unknown"}")
+                append("\nAired: ${show?.season?.quarter ?: "-"} ${show?.season?.year ?: "-"}")
+                append("\nScore: ${show?.score ?: "-"}★")
             }
         }
     }
@@ -230,10 +230,12 @@ class AllAnime : Source() {
         val medias = response.parseAs<SeriesResult>()
 
         val episodesDetail = if (subPref == "sub") {
-            medias.data.show.availableEpisodesDetail.sub!!
+            medias.data?.show?.availableEpisodesDetail?.sub
         } else {
-            medias.data.show.availableEpisodesDetail.dub!!
-        }
+            medias.data?.show?.availableEpisodesDetail?.dub
+        } ?: emptyList()
+
+        val showId = medias.data?.show?.id ?: ""
 
         return episodesDetail.map { ep ->
             val numName = ep.toIntOrNull() ?: (ep.toFloatOrNull() ?: "1")
@@ -243,7 +245,7 @@ class AllAnime : Source() {
                 name = "Episode $numName ($subPref)"
                 url = buildJsonObject {
                     putJsonObject("variables") {
-                        put("showId", medias.data.show.id)
+                        put("showId", showId)
                         put("translationType", subPref)
                         put("episodeString", ep)
                     }
@@ -288,14 +290,14 @@ class AllAnime : Source() {
 
         // 1. Check for encrypted response (tobeparsed present)
         val tobeparsed = runCatching {
-            responseBody.parseAs<EncryptedEpisodeResult>().data.tobeparsed
+            responseBody.parseAs<EncryptedEpisodeResult>().data?.tobeparsed
         }.getOrNull()
 
         // 2. If encrypted, decrypt directly (errors surface to user); otherwise parse as plain text
         val sourceUrls = if (!tobeparsed.isNullOrBlank()) {
             decryptTobeparsed(tobeparsed).parseAs<DecryptedEpisodeResult>().episode?.sourceUrls
         } else {
-            responseBody.parseAs<EpisodeResult>().data.episode?.sourceUrls
+            responseBody.parseAs<EpisodeResult>().data?.episode?.sourceUrls
         } ?: emptyList()
 
         val hosterSelection = preferences.getHosters
@@ -314,7 +316,8 @@ class AllAnime : Source() {
 
         val serverList = mutableListOf<Server>()
         sourceUrls.forEach { video ->
-            val videoUrl = video.sourceUrl.decryptSource()
+            val rawSourceUrl = video.sourceUrl ?: return@forEach
+            val videoUrl = rawSourceUrl.decryptSource()
 
             val matchingMapping = mappings.firstOrNull { (altHoster, urlMatches) ->
                 altHosterSelection.contains(altHoster) && videoUrl.containsAny(urlMatches)

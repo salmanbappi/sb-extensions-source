@@ -19,5 +19,8 @@
             android:name="tachiyomi.animeextension.nsfw"
             android:value="${nsfw}"
             tools:replace="android:value" />
+        <meta-data
+            android:name="tachiyomi.animeextension.versionId"
+            android:value="2" />
     </application>
 </manifest>
