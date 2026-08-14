@@ -15,7 +15,6 @@ import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
 import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
-import eu.kanade.tachiyomi.lib.vidsrcextractor.VidsrcExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
@@ -61,7 +60,6 @@ class Movies2watch : Source() {
     private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val vidmolyExtractor by lazy { VidMolyExtractor(client, headers) }
-    private val vidsrcExtractor by lazy { VidsrcExtractor(client, headers) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
@@ -310,7 +308,16 @@ class Movies2watch : Source() {
                 srvDoc.select(".sv-item, a[data-srv]").forEach { el ->
                     val srvName = el.attr("data-srv").ifBlank { el.text().trim() }
                     val srvUrl = el.attr("data-id").trim()
-                    if (srvUrl.isNotBlank() && srvName !in excludedServers) {
+
+                    // Exclude non-working bot-blocked/broken third-party embeds
+                    val isBroken = srvName.contains("videasy", ignoreCase = true) ||
+                        srvName.contains("vidsrc", ignoreCase = true) ||
+                        srvName.contains("vidfast", ignoreCase = true) ||
+                        srvUrl.contains("videasy", ignoreCase = true) ||
+                        srvUrl.contains("vidsrc", ignoreCase = true) ||
+                        srvUrl.contains("vidfast", ignoreCase = true)
+
+                    if (srvUrl.isNotBlank() && !isBroken && srvName !in excludedServers) {
                         hosters.add(Hoster(hosterName = srvName, hosterUrl = srvUrl))
                     }
                 }
@@ -320,7 +327,10 @@ class Movies2watch : Source() {
         if (hosters.isEmpty()) {
             epDoc.select("iframe[src], iframe[data-src]").forEachIndexed { idx, iframe ->
                 val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-                if (src.isNotBlank()) {
+                val isBroken = src.contains("videasy", ignoreCase = true) ||
+                    src.contains("vidsrc", ignoreCase = true) ||
+                    src.contains("vidfast", ignoreCase = true)
+                if (src.isNotBlank() && !isBroken) {
                     hosters.add(Hoster(hosterName = "Server ${idx + 1}", hosterUrl = src))
                 }
             }
@@ -410,8 +420,8 @@ class Movies2watch : Source() {
             title = "Preferred Server",
             default = PREF_SERVER_DEFAULT,
             summary = "%s",
-            entries = listOf("Auto", "UpCloud", "Vidmoly", "Videasy", "Vidsrc", "Vidfast"),
-            entryValues = listOf("auto", "UpCloud", "Vidmoly", "Videasy", "Vidsrc", "Vidfast"),
+            entries = listOf("Auto", "UpCloud", "Vidmoly"),
+            entryValues = listOf("auto", "UpCloud", "Vidmoly"),
         )
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
@@ -425,8 +435,8 @@ class Movies2watch : Source() {
             key = PREF_EXCLUDE_SERVERS_KEY,
             title = "Exclude Servers",
             summary = "Select servers to hide from playback",
-            entries = listOf("UpCloud", "Vidmoly", "Videasy", "Vidsrc", "Vidfast"),
-            entryValues = listOf("UpCloud", "Vidmoly", "Videasy", "Vidsrc", "Vidfast"),
+            entries = listOf("UpCloud", "Vidmoly"),
+            entryValues = listOf("UpCloud", "Vidmoly"),
             default = emptySet(),
         )
     }
