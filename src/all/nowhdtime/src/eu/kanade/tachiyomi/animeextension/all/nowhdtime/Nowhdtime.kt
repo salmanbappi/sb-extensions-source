@@ -206,10 +206,11 @@ class Nowhdtime :
             val playersJson = playersRegex.find(html)?.groupValues?.get(1) ?: return emptyList()
             val players = jsonParser.decodeFromString<List<PlayerDto>>(playersJson)
             players.forEach { player ->
+                val pUrl = player.url ?: return@forEach
                 hosters.add(
                     Hoster(
-                        hosterName = player.server,
-                        hosterUrl = player.url,
+                        hosterName = player.server ?: "Server",
+                        hosterUrl = pUrl,
                     ),
                 )
             }
@@ -239,10 +240,11 @@ class Nowhdtime :
             val postResponse = client.newCall(postRequest).execute()
             val responseData = jsonParser.decodeFromString<EpisodeDetailsResponse>(postResponse.body.string())
             responseData.players.forEach { player ->
+                val pUrl = player.url ?: return@forEach
                 hosters.add(
                     Hoster(
-                        hosterName = player.server,
-                        hosterUrl = player.url,
+                        hosterName = player.server ?: "Server",
+                        hosterUrl = pUrl,
                     ),
                 )
             }
