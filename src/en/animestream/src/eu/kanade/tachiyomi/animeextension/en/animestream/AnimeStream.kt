@@ -55,7 +55,8 @@ class AnimeStream : Source() {
 
     // ============================== Popular ==============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/popular?per_page=24&page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request =
+        GET("$baseUrl/api/v1/videos/popular?limit=20&page=$page", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val popularList = response.parseAs<List<PopularItemDto>>(json)
@@ -66,12 +67,13 @@ class AnimeStream : Source() {
                 thumbnail_url = item.image?.replace("/60x90/", "/480x720/")
             }
         }
-        return AnimesPage(animeList, animeList.size >= 24)
+        return AnimesPage(animeList, animeList.size >= 20)
     }
 
     // ============================== Latest ==============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/v1/videos/new?page=$page&limit=24", headers)
+    override fun latestUpdatesRequest(page: Int): Request =
+        GET("$baseUrl/api/v1/videos/new?limit=20&page=$page", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
@@ -118,7 +120,7 @@ class AnimeStream : Source() {
                     thumbnail_url = item.image?.replace("/60x90/", "/480x720/")
                 }
             }
-            return AnimesPage(animeList, animeList.size >= 24)
+            return AnimesPage(animeList, animeList.size >= 20)
         }
 
         val searchResult = responseData.parseAs<SearchResponseDto>(json)
@@ -403,7 +405,9 @@ class AnimeStream : Source() {
         AudioFilter(),
     )
 
-    private fun extractMediaId(url: String): String = MEDIA_ID_REGEX.find(url)?.groupValues?.get(1) ?: ""
+    private fun extractMediaId(url: String): String {
+        return MEDIA_ID_REGEX.find(url)?.groupValues?.get(1) ?: ""
+    }
 
     private fun getLocaleName(locale: String): String = when (locale.lowercase()) {
         "ja-jp" -> "Japanese (RAW)"
