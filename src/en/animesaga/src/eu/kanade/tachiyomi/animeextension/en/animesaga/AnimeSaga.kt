@@ -240,7 +240,7 @@ class AnimeSaga :
         val anilistId = anime.url.substringAfter("/anime/").toIntOrNull() ?: return anime
         val media = fetchAnilistMedia(anilistId) ?: return anime
 
-        val studios = media.studios?.nodes?.joinToString { it.name } ?: ""
+        val studios = media.studios?.nodes?.mapNotNull { it.name }?.joinToString() ?: ""
         val score = media.averageScore?.let { it.toFloat() / 10.0f } ?: 0.0f
 
         return SAnime.create().apply {
@@ -323,7 +323,7 @@ class AnimeSaga :
                 )
                 url = json.encodeToString(payload)
                 name = item.title?.takeIf { it.isNotBlank() }?.let { "Episode ${item.number} - $it" } ?: "Episode ${item.number}"
-                episode_number = item.number.toFloat()
+                episode_number = (item.number ?: 0).toFloat()
 
                 val thumb = item.img
                 if (!thumb.isNullOrBlank()) {
@@ -356,7 +356,7 @@ class AnimeSaga :
             "&type=sub" +
             "&animeId=${payload.anilistId}"
 
-        if (payload.romaji.isNotEmpty()) {
+        if (!payload.romaji.isNullOrEmpty()) {
             streamUrl += "&romajiTitle=${Uri.encode(payload.romaji)}"
         }
         if (payload.malId != null) {
@@ -590,8 +590,10 @@ class AnimeSaga :
                     }
 
                     if (directUrl.isNotEmpty()) {
-                        val tracks = streamRes.tracks.map {
-                            Track(it.file, it.label)
+                        val tracks = streamRes.tracks.mapNotNull {
+                            val file = it.file ?: return@mapNotNull null
+                            val label = it.label ?: "Subtitles"
+                            Track(file, label)
                         }
 
                         val refHeaders = Headers.Builder().set("Referer", "https://megaplay.buzz/").build()
