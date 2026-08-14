@@ -532,7 +532,7 @@ class Anitusk :
                     stream.type == "hls" -> {
                         val refererUrl = stream.referer ?: "https://kwik.cx/"
                         val refHeaders = headersBuilder().set("Referer", refererUrl).build()
-                        val streamUrl = stream.url ?: continue
+                        val streamUrl = stream.url ?: return@parallelCatchingFlatMapBlocking emptyList()
 
                         val rawVideos = playlistUtils.extractFromHls(
                             streamUrl,
@@ -553,7 +553,7 @@ class Anitusk :
                     stream.type == "mp4" -> {
                         val refererUrl = stream.referer ?: "https://allmanga.to/"
                         val refHeaders = headersBuilder().set("Referer", refererUrl).build()
-                        val streamUrl = stream.url ?: continue
+                        val streamUrl = stream.url ?: return@parallelCatchingFlatMapBlocking emptyList()
                         videoList.add(
                             Video(
                                 videoUrl = streamUrl,
@@ -564,7 +564,7 @@ class Anitusk :
                     }
 
                     stream.type == "embed" -> {
-                        val embedUrl = stream.url ?: continue
+                        val embedUrl = stream.url ?: return@parallelCatchingFlatMapBlocking emptyList()
                         when {
                             embedUrl.contains("playmogo.com") || embedUrl.contains("dood") -> {
                                 val extractor = DoodExtractor(client)
