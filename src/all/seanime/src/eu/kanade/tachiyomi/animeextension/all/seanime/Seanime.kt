@@ -798,8 +798,8 @@ class Seanime :
             val response = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
             if (response.isSuccessful) {
                 val entryDto = response.parseAs<AnimeEntryResponseDto>(json)
-                val allEpisodes = entryDto.data.episodes
-                val localEpisodes = allEpisodes.filter { it.isDownloaded }
+                val allEpisodes = entryDto.data?.episodes ?: emptyList()
+                val localEpisodes = allEpisodes.filter { it.isDownloaded == true }
 
                 if (localEpisodes.isEmpty()) {
                     throw Exception("No downloaded episodes found in library. Switch to 'Torrent Stream' or 'Online Stream' mode in extension settings.")
@@ -811,7 +811,7 @@ class Seanime :
                         val epName = ep.displayTitle ?: "Episode ${ep.episodeNumber}"
                         val epSubTitle = ep.episodeTitle
                         name = if (!epSubTitle.isNullOrBlank()) "$epName - $epSubTitle" else epName
-                        episode_number = ep.episodeNumber.toFloat()
+                        episode_number = (ep.episodeNumber ?: 0).toFloat()
                         if (showEpisodeMetadata) {
                             summary = ep.episodeMetadata?.summary
                             preview_url = ep.episodeMetadata?.image
@@ -827,27 +827,28 @@ class Seanime :
             if (response.isSuccessful) {
                 val entryDto = response.parseAs<AnimeEntryResponseDto>(json)
 
-                val episodesList = entryDto.data.downloadInfo?.episodesToDownload
+                val episodesList = entryDto.data?.downloadInfo?.episodesToDownload
                 if (!episodesList.isNullOrEmpty()) {
                     return episodesList.map { downloadInfoEp ->
                         val ep = downloadInfoEp.episode
                         SEpisode.create().apply {
-                            val aniDBEp = downloadInfoEp.aniDBEpisode
-                            this.url = "torrent:$mediaId:${ep.episodeNumber}:$aniDBEp"
-                            val epName = ep.displayTitle ?: "Episode ${ep.episodeNumber}"
-                            val epSubTitle = ep.episodeTitle
+                            val epNum = ep?.episodeNumber ?: 0
+                            val aniDBEp = downloadInfoEp.aniDBEpisode ?: epNum
+                            this.url = "torrent:$mediaId:$epNum:$aniDBEp"
+                            val epName = ep?.displayTitle ?: "Episode $epNum"
+                            val epSubTitle = ep?.episodeTitle
                             name = if (!epSubTitle.isNullOrBlank()) "$epName - $epSubTitle" else epName
-                            episode_number = ep.episodeNumber.toFloat()
+                            episode_number = (ep?.episodeNumber ?: 0).toFloat()
                             if (showEpisodeMetadata) {
-                                summary = ep.episodeMetadata?.summary
-                                preview_url = ep.episodeMetadata?.image
+                                summary = ep?.episodeMetadata?.summary
+                                preview_url = ep?.episodeMetadata?.image
                             }
                         }
                     }.sortedByDescending { it.episode_number }
                 }
 
                 // Fall back to entryDto.data.episodes
-                val allEpisodes = entryDto.data.episodes
+                val allEpisodes = entryDto.data?.episodes ?: emptyList()
                 if (allEpisodes.isEmpty()) {
                     throw Exception("No episodes found for this title. Try switching to 'Online Stream' mode in extension settings.")
                 }
@@ -935,7 +936,7 @@ class Seanime :
                 // 2. Concurrently fetch video sources from all providers
                 val videoList = withContext(Dispatchers.IO) {
                     providers.map { provider ->
-                        async {
+                        async<Pair<SeanimeExtensionDto, List<OnlineVideoSourceDto>>?> {
                             try {
                                 val body = buildJsonObject {
                                     put("episodeNumber", episodeNumber)
@@ -968,8 +969,11 @@ class Seanime :
                         }.build()
 
                         val audioType = if (dubbed) "Dub" else "Sub"
-                        val formattedTitle = "[$providerName] ${vs.server} (${vs.quality} - $audioType)"
-                        listOf(Video(videoUrl = vs.url, videoTitle = formattedTitle, headers = videoHeaders))
+                        val serverName = vs.server ?: "Server"
+                        val qualityName = vs.quality ?: "Auto"
+                        val streamUrl = vs.url ?: return@flatMap emptyList()
+                        val formattedTitle = "[$providerName] $serverName ($qualityName - $audioType)"
+                        listOf(Video(videoUrl = streamUrl, videoTitle = formattedTitle, headers = videoHeaders))
                     }
                 }
 
