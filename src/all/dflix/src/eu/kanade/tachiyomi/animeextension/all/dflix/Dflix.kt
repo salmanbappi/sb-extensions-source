@@ -382,7 +382,7 @@ class Dflix : Source() {
                 url = it.videoUrl
                 name = "${it.seasonEpisode} - ${it.episodeName}".trim()
                 episode_number = (distinctList.size - index).toFloat()
-                scanlator = "${it.videoTitle}  •  ${it.size}"
+                scanlator = "${it.videoQuality}  •  ${it.size}"
             }
         }
     }
@@ -403,7 +403,7 @@ class Dflix : Source() {
     data class EpisodeData(
         val seasonEpisode: String,
         val videoUrl: String,
-        val quality: String,
+        val videoQuality: String,
         val episodeName: String,
         val size: String,
     ) {

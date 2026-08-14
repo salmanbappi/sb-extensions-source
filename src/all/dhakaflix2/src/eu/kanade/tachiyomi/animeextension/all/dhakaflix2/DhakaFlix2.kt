@@ -759,7 +759,7 @@ class DhakaFlix2(
             url = it.videoUrl
             name = if (it.seasonEpisode.isNotEmpty()) "${it.seasonEpisode} - ${it.episodeName}".trim() else it.episodeName
             episode_number = parseEpisodeNumber(it.seasonEpisode)
-            scanlator = "${it.videoTitle} ${it.size}".trim()
+            scanlator = "${it.videoQuality} ${it.size}".trim()
         }
     }.reversed()
 
@@ -783,5 +783,5 @@ class DhakaFlix2(
     override fun episodeListParse(response: Response): List<SEpisode> = throw Exception("Not used")
     override fun videoListParse(response: Response): List<Video> = throw Exception("Not used")
 
-    data class EpisodeData(val seasonEpisode: String, val videoUrl: String, val quality: String, val episodeName: String, val size: String)
+    data class EpisodeData(val seasonEpisode: String, val videoUrl: String, val videoQuality: String, val episodeName: String, val size: String)
 }
