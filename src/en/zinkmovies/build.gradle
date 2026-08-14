@@ -1,16 +1,8 @@
 ext {
     extName = 'ZinkMovies'
     extClass = '.ZinkMovies'
-    extVersionCode = 1
+    extVersionCode = 2
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
-
-dependencies {
-    implementation(project(":lib:universal-extractor"))
-    implementation(project(":lib:playlist-utils"))
-    implementation(project(":lib:filemoon-extractor"))
-    implementation(project(":lib:streamtape-extractor"))
-    implementation(project(":lib:dood-extractor"))
-}

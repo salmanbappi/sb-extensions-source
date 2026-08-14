@@ -5,23 +5,23 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
-import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
-import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
-import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Locale
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.parallelCatchingFlatMap
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -34,11 +34,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.jsoup.Jsoup
-import java.net.URLDecoder
-import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Locale
-import kotlin.time.Duration.Companion.seconds
 
 class ZinkMovies : Source() {
 
@@ -60,13 +55,6 @@ class ZinkMovies : Source() {
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
-
-    // Shared Extractors
-    private val doodExtractor by lazy { DoodExtractor(client) }
-    private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
-    private val filemoonExtractor by lazy { FilemoonExtractor(client) }
-    private val universalExtractor by lazy { UniversalExtractor(client) }
-    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -99,7 +87,6 @@ class ZinkMovies : Source() {
                         categoryPath = filter.toUriPart()
                     }
                 }
-
                 else -> {}
             }
         }
@@ -140,11 +127,13 @@ class ZinkMovies : Source() {
         return AnimesPage(animeList, hasNext)
     }
 
-    private fun cleanAnimeTitle(title: String): String = title
-        .replace(Regex("""\s*\{[^}]*\}"""), "")
-        .replace(Regex("""\s*(Dual Audio|Multi Audio|Hindi Dubbed|Hindi Movie|CR WEB-DL|WEB-DL|BluRay|HDTC|ESubs|MSubs|NF).*""", RegexOption.IGNORE_CASE), "")
-        .trim()
-        .ifEmpty { title.trim() }
+    private fun cleanAnimeTitle(title: String): String {
+        return title
+            .replace(Regex("""\s*\{[^}]*\}"""), "")
+            .replace(Regex("""\s*(Dual Audio|Multi Audio|Hindi Dubbed|Hindi Movie|CR WEB-DL|WEB-DL|BluRay|HDTC|ESubs|MSubs|NF).*""", RegexOption.IGNORE_CASE), "")
+            .trim()
+            .ifEmpty { title.trim() }
+    }
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
@@ -187,83 +176,147 @@ class ZinkMovies : Source() {
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val doc = client.newCall(GET("$baseUrl${anime.url}", headers)).execute().asJsoup()
-        val episodes = mutableListOf<SEpisode>()
 
         // 1. Check for LinkStore batch buttons (TV Shows)
         val linkStoreButtons = doc.select("a[href*=linkstore.zinkcloud.net], a[href*=linkstore.]")
 
         if (linkStoreButtons.isNotEmpty()) {
-            val seasonEpisodes = linkStoreButtons.parallelCatchingFlatMap { btn ->
+            val totalSeasons = linkStoreButtons.map { btn ->
+                Regex("""(?i)Season\s*0*(\d+)""").find(btn.text())?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            }.distinct().size
+
+            val epDataMap = mutableMapOf<Pair<Int, Int>, MutableList<Pair<String, String>>>()
+
+            linkStoreButtons.parallelCatchingFlatMap { btn ->
                 val linkStoreUrl = btn.attr("href")
                 val btnText = btn.text().trim()
                 val seasonNum = Regex("""(?i)Season\s*0*(\d+)""").find(btnText)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-                val qualityLabel = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(btnText)?.groupValues?.get(1)?.uppercase() ?: ""
+                val qualityLabel = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(btnText)?.groupValues?.get(1)?.uppercase() ?: "HD"
 
                 val lsDoc = client.newCall(GET(linkStoreUrl, headers)).execute().asJsoup()
-                lsDoc.select("a[href*=/file/]").mapNotNull { epLink ->
+                lsDoc.select("a[href*=/file/]").forEach { epLink ->
                     val epHref = epLink.attr("href")
                     val epText = epLink.text().trim()
-                    if (epHref.isBlank() || epText.contains("Zip", ignoreCase = true)) return@mapNotNull null
+                    if (epHref.isBlank() || epText.contains("Zip", ignoreCase = true)) return@forEach
 
-                    val epNum = Regex("""(?i)EPISODE\s*-\s*0*(\d+)""").find(epText)?.groupValues?.get(1)?.toFloatOrNull()
-                        ?: Regex("""(?i)E0*(\d+)""").find(epText)?.groupValues?.get(1)?.toFloatOrNull()
-                        ?: 1f
+                    val epNum = Regex("""(?i)EPISODE\s*-\s*0*(\d+)""").find(epText)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: Regex("""(?i)E0*(\d+)""").find(epText)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: 1
 
-                    val epSize = Regex("""\(([^)]+)\)""").find(epText)?.groupValues?.get(1) ?: ""
-
-                    SEpisode.create().apply {
-                        name = buildString {
-                            append("Season $seasonNum - Episode ${epNum.toInt()}")
-                            if (qualityLabel.isNotBlank()) append(" [$qualityLabel]")
-                            if (epSize.isNotBlank()) append(" ($epSize)")
+                    synchronized(epDataMap) {
+                        val list = epDataMap.getOrPut(Pair(seasonNum, epNum)) { mutableListOf() }
+                        if (list.none { it.second == epHref }) {
+                            list.add(Pair(qualityLabel, epHref))
                         }
-                        url = epHref
-                        episode_number = epNum + (seasonNum - 1) * 1000
-                        scanlator = qualityLabel.ifBlank { null }
                     }
                 }
+                emptyList<Unit>()
             }
-            if (seasonEpisodes.isNotEmpty()) {
-                return seasonEpisodes.distinctBy { it.name }
+
+            if (epDataMap.isNotEmpty()) {
+                return epDataMap.entries.sortedWith(
+                    compareBy<Map.Entry<Pair<Int, Int>, List<Pair<String, String>>>> { it.key.first }
+                        .thenBy { it.key.second },
+                ).map { (key, qualities) ->
+                    val (seasonNum, epNum) = key
+                    val epName = if (totalSeasons > 1) {
+                        "Season $seasonNum - Episode $epNum"
+                    } else {
+                        "Episode $epNum"
+                    }
+                    val combinedUrl = qualities.joinToString(";;") { "${it.first}|${it.second}" }
+
+                    SEpisode.create().apply {
+                        name = epName
+                        url = combinedUrl
+                        episode_number = epNum + (seasonNum - 1) * 1000f
+                    }
+                }
             }
         }
 
         // 2. Direct File Buttons (Movies)
         val fileButtons = doc.select("a[href*=/file/], div.movie-button-container a, a.movie-simple-button")
         if (fileButtons.isNotEmpty()) {
-            fileButtons.forEachIndexed { idx, btn ->
+            val movieQualities = mutableListOf<Pair<String, String>>()
+            fileButtons.forEach { btn ->
                 val fileHref = btn.attr("href")
-                if (fileHref.isBlank() || !fileHref.contains("/file/")) return@forEachIndexed
+                if (fileHref.isBlank() || !fileHref.contains("/file/")) return@forEach
                 val btnText = btn.text().trim()
-                val quality = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(btnText)?.groupValues?.get(1)?.uppercase() ?: ""
+                val quality = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(btnText)?.groupValues?.get(1)?.uppercase() ?: "HD"
+                if (movieQualities.none { it.second == fileHref }) {
+                    movieQualities.add(Pair(quality, fileHref))
+                }
+            }
 
-                episodes.add(
+            if (movieQualities.isNotEmpty()) {
+                val combinedUrl = movieQualities.joinToString(";;") { "${it.first}|${it.second}" }
+                return listOf(
                     SEpisode.create().apply {
-                        name = if (btnText.isNotBlank()) btnText else "Movie - Option ${idx + 1}"
-                        url = fileHref
-                        episode_number = (idx + 1).toFloat()
-                        scanlator = quality.ifBlank { null }
+                        name = "Full Movie"
+                        url = combinedUrl
+                        episode_number = 1f
                     },
                 )
             }
         }
 
-        return episodes
+        return emptyList()
     }
 
-    // ============================ Video Links =============================
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val fileUrl = episode.url
+    // ============================ Video Links & Hosters ===================
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+
+        val qualityFiles = if (episode.url.contains(";;")) {
+            episode.url.split(";;").mapNotNull { item ->
+                val parts = item.split("|")
+                if (parts.size >= 2) Pair(parts[0], parts[1]) else null
+            }
+        } else if (episode.url.contains("|")) {
+            val parts = episode.url.split("|")
+            listOf(Pair(parts[0], parts[1]))
+        } else {
+            listOf(Pair("HD", episode.url))
+        }
+
+        // Map: ServerName -> List of "Quality|StreamOrPageUrl"
+        val serverMap = mutableMapOf<String, MutableList<Pair<String, String>>>()
+
+        qualityFiles.parallelCatchingFlatMap { (quality, fileUrl) ->
+            val resolvedServers = resolveServersForFile(fileUrl)
+            synchronized(serverMap) {
+                resolvedServers.forEach { (serverName, url) ->
+                    if (serverName !in excludedServers) {
+                        val list = serverMap.getOrPut(serverName) { mutableListOf() }
+                        if (list.none { it.first == quality && it.second == url }) {
+                            list.add(Pair(quality, url))
+                        }
+                    }
+                }
+            }
+            emptyList<Unit>()
+        }
+
+        return serverMap.map { (serverName, entries) ->
+            Hoster(
+                hosterName = serverName,
+                hosterUrl = entries.joinToString(";;") { "${it.first}|${it.second}" },
+            )
+        }.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
+    }
+
+    private fun resolveServersForFile(fileUrl: String): Map<String, String> {
+        val result = mutableMapOf<String, String>()
         val fileId = fileUrl.substringAfterLast("/file/").substringBefore("?").substringBefore("/")
-        if (fileId.isBlank()) return emptyList()
+        if (fileId.isBlank()) return result
 
         val hostUrl = fileUrl.toHttpUrlOrNull()
         val baseCloud = if (hostUrl != null) "${hostUrl.scheme}://${hostUrl.host}" else "https://new4.zinkcloud.net"
 
-        val videoList = mutableListOf<Video>()
-
         try {
-            // Step 1: Request masked route token via AJAX
+            // 1. Request masked route token
             val tokenUrl = "$baseCloud/ajax_generate_token.php?random_id=$fileId"
             val formBody = FormBody.Builder()
                 .add("random_id", fileId)
@@ -281,10 +334,9 @@ class ZinkMovies : Source() {
 
             val tokenJson = json.parseToJsonElement(tokenJsonStr).jsonObject
             val token = tokenJson["token"]?.jsonPrimitive?.content ?: ""
+            if (token.isBlank()) return result
 
-            if (token.isBlank()) return emptyList()
-
-            // Step 2: Fetch DL Page
+            // 2. Fetch DL Page
             val dlUrl = "$baseCloud/dl/$token"
             val dlResp = client.newCall(GET(dlUrl, headers.newBuilder().set("Referer", fileUrl).build())).execute()
             val dlHtml = dlResp.body.string()
@@ -296,12 +348,17 @@ class ZinkMovies : Source() {
             val serverHandlerUrl = Regex("""const\s+SERVER_HANDLER_URL\s*=\s*["']([^"']+)["']""")
                 .find(dlHtml)?.groupValues?.get(1) ?: "https://new4.zinkcloud.net/server-handler.php"
 
-            // Step 3: Query server-handler for worker, hubcloud, and mirrors
-            val targetServers = listOf("worker", "hubcloud", "gdflix", "filepress")
+            // 3. Query server-handler
+            val targetServers = listOf(
+                Pair("worker", "Fast Cloud"),
+                Pair("hubcloud", "HubCloud"),
+                Pair("gdflix", "GDFlix"),
+                Pair("filepress", "FilePress"),
+            )
 
-            targetServers.forEach { serverName ->
+            targetServers.forEach { (apiServerKey, displayServerName) ->
                 try {
-                    val reqJson = """{"server":"$serverName","random_id":"$fileId"}"""
+                    val reqJson = """{"server":"$apiServerKey","random_id":"$fileId"}"""
                     val postReq = Request.Builder()
                         .url(serverHandlerUrl)
                         .post(reqJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
@@ -314,66 +371,34 @@ class ZinkMovies : Source() {
 
                     val sObj = json.parseToJsonElement(sJsonStr).jsonObject
                     val isSuccess = sObj["success"]?.jsonPrimitive?.booleanOrNull ?: false
-                    val resultUrl = sObj["url"]?.jsonPrimitive?.content ?: ""
+                    val resUrl = sObj["url"]?.jsonPrimitive?.content ?: ""
 
-                    if (isSuccess && resultUrl.isNotBlank()) {
-                        when (serverName) {
-                            "worker" -> {
-                                videoList.add(
-                                    Video(
-                                        videoUrl = resultUrl,
-                                        videoTitle = "Fast Cloud (Direct Worker)",
-                                        headers = headers,
-                                    ),
-                                )
-                            }
-
-                            "hubcloud" -> {
-                                videoList.addAll(resolveHubCloud(resultUrl))
-                            }
-
-                            else -> {
-                                if (resultUrl.endsWith(".mp4") || resultUrl.endsWith(".mkv") || resultUrl.contains(".m3u8")) {
-                                    videoList.add(
-                                        Video(
-                                            videoUrl = resultUrl,
-                                            videoTitle = serverName.replaceFirstChar { it.uppercase() },
-                                            headers = headers,
-                                        ),
-                                    )
-                                }
-                            }
-                        }
+                    if (isSuccess && resUrl.isNotBlank()) {
+                        result[displayServerName] = resUrl
                     }
                 } catch (e: Exception) {
-                    // skip individual server failures
+                    // skip server failure
                 }
             }
 
-            // Step 4: Parse direct anchor links inside the DL page
+            // 4. Parse direct anchor links on DL page
             dlDoc.select("a.btn[href], a[class*=btn][href]").forEach { a ->
-                val linkHref = a.attr("abs:href").ifEmpty { a.attr("href") }
-                val linkText = a.text().lowercase()
-
-                if (linkHref.isBlank() || linkHref == dlUrl || linkHref.startsWith("whatsapp") || linkHref.startsWith("javascript")) return@forEach
+                val href = a.attr("abs:href").ifEmpty { a.attr("href") }
+                val label = a.text().lowercase()
+                if (href.isBlank() || href == dlUrl || href.startsWith("whatsapp") || href.startsWith("javascript")) return@forEach
 
                 when {
-                    linkHref.contains("hubcloud") -> {
-                        videoList.addAll(resolveHubCloud(linkHref))
+                    label.contains("hubcloud") || href.contains("hubcloud") -> {
+                        result.putIfAbsent("HubCloud", href)
                     }
-
-                    linkHref.contains("filepress") || linkHref.contains("filebee") -> {
-                        // FilePress mirror
+                    label.contains("gdflix") || href.contains("gdlink") -> {
+                        result.putIfAbsent("GDFlix", href)
                     }
-
-                    linkHref.endsWith(".mp4") || linkHref.endsWith(".mkv") || linkHref.contains(".m3u8") -> {
-                        videoList.add(
-                            Video(
-                                videoUrl = linkHref,
-                                videoTitle = a.text().trim().ifBlank { "Direct Mirror" },
-                                headers = headers,
-                            ),
-                        )
+                    label.contains("filepress") || href.contains("filebee") -> {
+                        result.putIfAbsent("FilePress", href)
+                    }
+                    label.contains("gcloud") || href.contains("gdshare") -> {
+                        result.putIfAbsent("GCloud", href)
                     }
                 }
             }
@@ -381,10 +406,48 @@ class ZinkMovies : Source() {
             // ignore
         }
 
-        return videoList.distinctBy { it.videoUrl }
+        return result
     }
 
-    private fun resolveHubCloud(hubCloudUrl: String): List<Video> {
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val serverName = hoster.hosterName
+        val qualityEntries = hoster.hosterUrl.split(";;").mapNotNull { item ->
+            val parts = item.split("|")
+            if (parts.size >= 2) Pair(parts[0], parts[1]) else null
+        }
+
+        val videoList = qualityEntries.parallelCatchingFlatMap { (quality, serverUrl) ->
+            when (serverName) {
+                "Fast Cloud" -> {
+                    listOf(
+                        Video(
+                            videoUrl = serverUrl,
+                            videoTitle = "$quality - Fast Cloud",
+                            headers = headers,
+                            resolution = parseResolution(quality),
+                        ),
+                    )
+                }
+                "HubCloud" -> {
+                    resolveHubCloud(serverUrl, quality)
+                }
+                else -> {
+                    listOf(
+                        Video(
+                            videoUrl = serverUrl,
+                            videoTitle = "$quality - $serverName",
+                            headers = headers,
+                            resolution = parseResolution(quality),
+                        ),
+                    )
+                }
+            }
+        }
+
+        return videoList.distinctBy { it.videoUrl }.sortVideos()
+    }
+
+    private fun resolveHubCloud(hubCloudUrl: String, baseQuality: String): List<Video> {
         val list = mutableListOf<Video>()
         try {
             val resp = client.newCall(GET(hubCloudUrl, headers)).execute()
@@ -401,9 +464,10 @@ class ZinkMovies : Source() {
                 val doc2 = resp2.asJsoup()
                 resp2.close()
 
-                val headerQuality = doc2.selectFirst("div.card-header")?.text()?.let { text ->
+                val cardHeaderQuality = doc2.selectFirst("div.card-header")?.text()?.let { text ->
                     Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(text)?.groupValues?.get(1)?.uppercase()
-                } ?: ""
+                }
+                val qualityLabel = cardHeaderQuality ?: baseQuality
 
                 doc2.select("a.btn, a[class*=btn]").forEach { btn ->
                     val href = btn.attr("abs:href").ifEmpty { btn.attr("href") }
@@ -416,13 +480,13 @@ class ZinkMovies : Source() {
                                 list.add(
                                     Video(
                                         videoUrl = directLink,
-                                        videoTitle = "HubCloud (FSL)" + if (headerQuality.isNotBlank()) " - $headerQuality" else "",
+                                        videoTitle = "$qualityLabel - HubCloud [FSL]",
                                         headers = headers,
+                                        resolution = parseResolution(qualityLabel),
                                     ),
                                 )
                             }
                         }
-
                         label.contains("10gbps") || label.contains("10 gbps") -> {
                             try {
                                 val gpdlResp = client.newCall(GET(href, headers)).execute()
@@ -435,8 +499,9 @@ class ZinkMovies : Source() {
                                         list.add(
                                             Video(
                                                 videoUrl = direct,
-                                                videoTitle = "HubCloud (10Gbps)" + if (headerQuality.isNotBlank()) " - $headerQuality" else "",
+                                                videoTitle = "$qualityLabel - HubCloud [10Gbps]",
                                                 headers = headers,
+                                                resolution = parseResolution(qualityLabel),
                                             ),
                                         )
                                     }
@@ -444,8 +509,9 @@ class ZinkMovies : Source() {
                                     list.add(
                                         Video(
                                             videoUrl = finalUrl,
-                                            videoTitle = "HubCloud (10Gbps)" + if (headerQuality.isNotBlank()) " - $headerQuality" else "",
+                                            videoTitle = "$qualityLabel - HubCloud [10Gbps]",
                                             headers = headers,
+                                            resolution = parseResolution(qualityLabel),
                                         ),
                                     )
                                 }
@@ -453,7 +519,6 @@ class ZinkMovies : Source() {
                                 // ignore
                             }
                         }
-
                         label.contains("pixeldrain") || label.contains("pixel") -> {
                             val pxlMatch = Regex("""var\s+pxl\s*=\s*"([^"]+)"""").find(doc2.html())
                             val realLink = pxlMatch?.groupValues?.get(1) ?: href
@@ -462,8 +527,9 @@ class ZinkMovies : Source() {
                                 list.add(
                                     Video(
                                         videoUrl = "https://pixeldrain.com/api/file/$fileId?download",
-                                        videoTitle = "HubCloud (Pixeldrain)" + if (headerQuality.isNotBlank()) " - $headerQuality" else "",
+                                        videoTitle = "$qualityLabel - HubCloud [Pixeldrain]",
                                         headers = headers,
+                                        resolution = parseResolution(qualityLabel),
                                     ),
                                 )
                             }
@@ -477,28 +543,39 @@ class ZinkMovies : Source() {
         return list
     }
 
-    private fun getRedirectUrl(url: String, referer: String): String = try {
-        val req = Request.Builder()
-            .url(url)
-            .head()
-            .headers(headers.newBuilder().set("Referer", referer).build())
-            .build()
-        val resp = client.newCall(req).execute()
-        val finalUrl = resp.request.url.toString()
-        resp.close()
-        finalUrl
-    } catch (e: Exception) {
-        url
+    private fun getRedirectUrl(url: String, referer: String): String {
+        return try {
+            val req = Request.Builder()
+                .url(url)
+                .head()
+                .headers(headers.newBuilder().set("Referer", referer).build())
+                .build()
+            val resp = client.newCall(req).execute()
+            val finalUrl = resp.request.url.toString()
+            resp.close()
+            finalUrl
+        } catch (e: Exception) {
+            url
+        }
+    }
+
+    private fun parseResolution(quality: String): Int {
+        return when {
+            quality.contains("2160", ignoreCase = true) || quality.contains("4k", ignoreCase = true) -> 2160
+            quality.contains("1080", ignoreCase = true) -> 1080
+            quality.contains("720", ignoreCase = true) -> 720
+            quality.contains("480", ignoreCase = true) -> 480
+            quality.contains("360", ignoreCase = true) -> 360
+            else -> 0
+        }
     }
 
     // ============================ Preferences & Sorting ===================
     override fun List<Video>.sortVideos(): List<Video> {
-        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
 
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(prefServer, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+            compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) }
                 .thenByDescending { it.resolution ?: 0 },
         )
     }
@@ -515,8 +592,8 @@ class ZinkMovies : Source() {
             title = "Preferred Server",
             default = PREF_SERVER_DEFAULT,
             summary = "%s",
-            entries = listOf("Fast Cloud", "HubCloud", "Auto"),
-            entryValues = listOf("Fast Cloud", "HubCloud", "auto"),
+            entries = listOf("Fast Cloud", "HubCloud", "GDFlix", "FilePress"),
+            entryValues = listOf("Fast Cloud", "HubCloud", "GDFlix", "FilePress"),
         )
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
@@ -529,9 +606,9 @@ class ZinkMovies : Source() {
         screen.addSetPreference(
             key = PREF_EXCLUDE_SERVERS_KEY,
             title = "Exclude Servers",
-            summary = "Select servers to hide from playback",
-            entries = listOf("Fast Cloud", "HubCloud"),
-            entryValues = listOf("Fast Cloud", "HubCloud"),
+            summary = "Select server folders to hide",
+            entries = listOf("Fast Cloud", "HubCloud", "GDFlix", "FilePress"),
+            entryValues = listOf("Fast Cloud", "HubCloud", "GDFlix", "FilePress"),
             default = emptySet(),
         )
     }
