@@ -186,11 +186,13 @@ class AniDB : Source() {
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val data = response.parseAs<EpisodeListDto>()
-        val minEpNumber = data.episodes.minOfOrNull { it.number } ?: 0f
+        val episodes = data.episodes ?: emptyList()
+        val minEpNumber = episodes.minOfOrNull { it.number ?: 0f } ?: 0f
         val offset = if (minEpNumber > 1f) minEpNumber - 1f else 0f
-        return data.episodes.map { ep ->
+        return episodes.map { ep ->
             SEpisode.create().apply {
-                val adjustedNumber = ep.number - offset
+                val epNum = ep.number ?: 0f
+                val adjustedNumber = epNum - offset
                 val adjustedNumber2 = ep.number2?.let { it - offset }
                 val label = if (adjustedNumber2 != null && adjustedNumber2 != 0f && adjustedNumber2 != adjustedNumber) {
                     "${adjustedNumber.toInt()}–${adjustedNumber2.toInt()}"
@@ -198,11 +200,11 @@ class AniDB : Source() {
                     adjustedNumber.toInt().toString()
                 }
                 name = "Episode $label"
-                if (ep.filler) {
+                if (ep.filler == true) {
                     name += " (Filler)"
                 }
                 episode_number = adjustedNumber
-                url = ep.id.toString()
+                url = (ep.id ?: 0).toString()
             }
         }.reversed()
     }
@@ -214,8 +216,9 @@ class AniDB : Source() {
     override fun videoListParse(response: Response): List<Video> {
         val data = response.parseAs<LanguageListDto>()
 
-        return data.languages.parallelCatchingFlatMapBlocking { lang ->
-            val embedResponse = client.newCall(GET(lang.embed_url, headers)).execute()
+        return (data.languages ?: emptyList()).parallelCatchingFlatMapBlocking { lang ->
+            val embedUrl = lang.embed_url ?: return@parallelCatchingFlatMapBlocking emptyList()
+            val embedResponse = client.newCall(GET(embedUrl, headers)).execute()
             val html = embedResponse.body.string()
             val m3u8Url = m3u8Regex.find(html)?.groupValues?.get(1)
                 ?: return@parallelCatchingFlatMapBlocking emptyList()
@@ -225,7 +228,7 @@ class AniDB : Source() {
                 referer = "$baseUrl/",
                 masterHeaders = headers,
                 videoHeaders = headers,
-                videoNameGen = { quality -> "${lang.name} - $quality" },
+                videoNameGen = { quality -> "${lang.name ?: "Video"} - $quality" },
             )
         }
     }
