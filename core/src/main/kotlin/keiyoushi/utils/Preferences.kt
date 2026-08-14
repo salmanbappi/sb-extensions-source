@@ -564,4 +564,3 @@ fun PreferenceScreen.addBaseUrlPreference(
         },
     )
 }
-

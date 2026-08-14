@@ -230,18 +230,18 @@ class FlixHub : Source() {
 
 @Serializable
 data class SearchResponseDto(
-    val results: List<SearchResultDto>,
+    val results: List<SearchResultDto>? = null
 )
 
 @Serializable
 data class SearchResultDto(
     val tmdb_id: String? = null,
-    val title: String,
-    val type: String,
+    val title: String? = null,
+    val type: String? = null,
     val year: String? = null,
     val poster: String? = null,
-    val is_available: Boolean,
-    val watch_url: String? = null,
+    val is_available: Boolean? = null,
+    val watch_url: String? = null
 )
 
 object UriEncoder {

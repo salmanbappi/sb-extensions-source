@@ -27,9 +27,9 @@ data class LatestAnimeDto(
 
 @Serializable
 data class SearchResultDto(
-    val title: String,
-    val poster: String,
-    val id: Int,
+    val title: String? = null,
+    val poster: String? = null,
+    val id: Int? = null
 )
 
 @Serializable

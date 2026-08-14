@@ -341,6 +341,7 @@ class CastleTv : Source() {
     override fun getFilterList(): AnimeFilterList = getCastleTvFilters()
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        anime.initialized = true
         val movieId = anime.url
         val securityKey = getSecurityKey() ?: return anime
         val detailsUrl = "$baseUrl/film-api/v1.9.9/movie?channel=IndiaA&clientType=1&clientType=1&lang=en-US&movieId=$movieId&packageName=com.external.castle"

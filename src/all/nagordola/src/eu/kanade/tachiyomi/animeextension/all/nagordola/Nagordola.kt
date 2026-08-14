@@ -263,6 +263,7 @@ class Nagordola : Source() {
     // =========================== Anime Details ============================
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        anime.initialized = true
         val source = preferences.getString(PREF_POSTER_SOURCE, "tmdb")
         if (source == "omdb") {
             val apiKey = preferences.getString(PREF_OMDB_API_KEY, "") ?: ""
@@ -380,9 +381,9 @@ class Nagordola : Source() {
 
 @Serializable
 data class OMDbResponse(
-    val Response: String,
+    val Response: String? = null,
     val Poster: String? = null,
-    val Error: String? = null,
+    val Error: String? = null
 )
 
 @Serializable
@@ -396,19 +397,34 @@ data class TMDbResult(
 )
 
 @Serializable
-data class AListResponse<T>(val code: Int, val message: String, val data: T? = null)
+data class AListResponse<T>(
+    val code: Int? = null,
+    val message: String? = null,
+    val data: T? = null
+)
 
 @Serializable
-data class AListFile(val name: String, val size: Long, val is_dir: Boolean, val thumb: String = "")
+data class AListFile(
+    val name: String? = null,
+    val size: Long? = null,
+    val is_dir: Boolean? = null,
+    val thumb: String = ""
+)
 
 @Serializable
 data class AListListResponse(val content: List<AListFile>? = emptyList(), val total: Int = 0)
 
 @Serializable
-data class AListSearchFile(val parent: String, val name: String, val is_dir: Boolean)
+data class AListSearchFile(
+    val parent: String? = null,
+    val name: String? = null,
+    val is_dir: Boolean? = null
+)
 
 @Serializable
 data class AListSearchResponse(val content: List<AListSearchFile>? = emptyList(), val total: Int = 0)
 
 @Serializable
-data class AListGetFile(val raw_url: String)
+data class AListGetFile(
+    val raw_url: String? = null
+)

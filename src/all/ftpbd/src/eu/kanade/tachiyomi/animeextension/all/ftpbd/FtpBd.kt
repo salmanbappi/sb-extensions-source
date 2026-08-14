@@ -508,6 +508,7 @@ class FtpBd(
 
     // ============================== Details ===============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        anime.initialized = true
         val source = preferences.getString(PREF_POSTER_SOURCE, "tmdb")
         if (source == "omdb") {
             val apiKey = preferences.getString(PREF_OMDB_API_KEY, "") ?: ""
@@ -668,9 +669,9 @@ class FtpBd(
 
 @Serializable
 data class OMDbResponse(
-    val Response: String,
+    val Response: String? = null,
     val Poster: String? = null,
-    val Error: String? = null,
+    val Error: String? = null
 )
 
 @Serializable
