@@ -160,7 +160,7 @@ class Anitusk :
     override fun searchAnimeParse(response: Response): AnimesPage {
         val responseBody = response.body.string()
         val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
-        val pageInfo = anilistRes.data.Page
+        val pageInfo = anilistRes.data?.Page
         if (pageInfo == null || pageInfo.media.isEmpty()) {
             return AnimesPage(emptyList(), false)
         }
@@ -176,7 +176,7 @@ class Anitusk :
                 }
                 thumbnail_url = media.coverImage?.extraLarge ?: media.coverImage?.large
                 description = media.description
-                genre = media.genres.joinToString()
+                genre = media.genres?.joinToString() ?: ""
             }
         }
         return AnimesPage(animeList, pageInfo.pageInfo?.hasNextPage ?: (animeList.size == 24))
@@ -197,17 +197,17 @@ class Anitusk :
     override fun animeDetailsParse(response: Response): SAnime {
         val responseBody = response.body.string()
         val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
-        val media = anilistRes.data.Media ?: throw Exception("Anime details not found")
+        val media = anilistRes.data?.Media ?: throw Exception("Anime details not found")
 
         return SAnime.create().apply {
             val titleLang = preferences.getString(PREF_TITLE_LANG_KEY, "english") ?: "english"
             title = when (titleLang) {
-                "romaji" -> media.title.romaji ?: media.title.english ?: media.title.native ?: "Unknown Title"
-                "native" -> media.title.native ?: media.title.english ?: media.title.romaji ?: "Unknown Title"
-                else -> media.title.english ?: media.title.romaji ?: media.title.native ?: "Unknown Title"
+                "romaji" -> media.title?.romaji ?: media.title?.english ?: media.title?.native ?: "Unknown Title"
+                "native" -> media.title?.native ?: media.title?.english ?: media.title?.romaji ?: "Unknown Title"
+                else -> media.title?.english ?: media.title?.romaji ?: media.title?.native ?: "Unknown Title"
             }
             thumbnail_url = media.coverImage?.extraLarge ?: media.coverImage?.large
-            genre = media.genres.joinToString()
+            genre = media.genres?.joinToString() ?: ""
             status = when (media.status) {
                 "FINISHED" -> SAnime.COMPLETED
                 "RELEASING" -> SAnime.ONGOING
@@ -285,7 +285,7 @@ class Anitusk :
                 return emptyMap()
             }
             val animeJson = json.decodeFromString<KitsuAnimeResponse>(animeResponse.body.string())
-            val kitsuId = animeJson.data.id
+            val kitsuId = animeJson.data?.id ?: return emptyMap()
 
             var offset = 0
             var hasMore = true
@@ -301,14 +301,14 @@ class Anitusk :
                     break
                 }
                 val epJson = json.decodeFromString<KitsuEpisodesResponse>(epResponse.body.string())
-                val episodesData = epJson.data
+                val episodesData = epJson.data ?: emptyList()
                 if (episodesData.isEmpty()) {
                     break
                 }
                 for (ep in episodesData) {
-                    val epNum = ep.attributes.number
-                    val summaryText = ep.attributes.synopsis?.takeIf { it.isNotBlank() } ?: ep.attributes.description?.takeIf { it.isNotBlank() }
-                    val thumbnailText = ep.attributes.thumbnail?.medium ?: ep.attributes.thumbnail?.original ?: ep.attributes.thumbnail?.large ?: ep.attributes.thumbnail?.small
+                    val epNum = ep.attributes?.number ?: continue
+                    val summaryText = ep.attributes?.synopsis?.takeIf { it.isNotBlank() } ?: ep.attributes?.description?.takeIf { it.isNotBlank() }
+                    val thumbnailText = ep.attributes?.thumbnail?.medium ?: ep.attributes?.thumbnail?.original ?: ep.attributes?.thumbnail?.large ?: ep.attributes?.thumbnail?.small
                     kitsuMap[epNum] = Pair(summaryText, thumbnailText)
                 }
                 offset += episodesData.size
@@ -335,9 +335,9 @@ class Anitusk :
 
         val responseBody = response.body.string()
         val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
-        val media = anilistRes.data.Media ?: throw Exception("Anime not found on AniList")
+        val media = anilistRes.data?.Media ?: throw Exception("Anime not found on AniList")
 
-        val airedEps = media.nextAiringEpisode?.let { it.episode - 1 } ?: media.episodes ?: 0
+        val airedEps = media.nextAiringEpisode?.episode?.let { it - 1 } ?: media.episodes ?: 0
         val totalEps = if (airedEps > 0) airedEps else media.episodes ?: 0
 
         if (totalEps <= 0) {
@@ -348,12 +348,13 @@ class Anitusk :
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
         val list = mutableListOf<SEpisode>()
 
+        val streamingEps = media.streamingEpisodes ?: emptyList()
         for (i in 1..totalEps) {
-            val streamEp = if (media.streamingEpisodes.size == totalEps) {
-                media.streamingEpisodes[i - 1]
+            val streamEp = if (streamingEps.size == totalEps) {
+                streamingEps[i - 1]
             } else {
-                media.streamingEpisodes.find { ep ->
-                    val title = ep.title.lowercase()
+                streamingEps.find { ep ->
+                    val title = ep.title?.lowercase() ?: ""
                     title.startsWith("episode $i ") ||
                         title.startsWith("episode $i:") ||
                         title.startsWith("episode $i -") ||
@@ -531,9 +532,10 @@ class Anitusk :
                     stream.type == "hls" -> {
                         val refererUrl = stream.referer ?: "https://kwik.cx/"
                         val refHeaders = headersBuilder().set("Referer", refererUrl).build()
+                        val streamUrl = stream.url ?: continue
 
                         val rawVideos = playlistUtils.extractFromHls(
-                            stream.url,
+                            streamUrl,
                             referer = refererUrl,
                             videoNameGen = { quality -> "${hoster.hosterName} - $quality (${type.uppercase()})" },
                         ).map { v ->
@@ -551,9 +553,10 @@ class Anitusk :
                     stream.type == "mp4" -> {
                         val refererUrl = stream.referer ?: "https://allmanga.to/"
                         val refHeaders = headersBuilder().set("Referer", refererUrl).build()
+                        val streamUrl = stream.url ?: continue
                         videoList.add(
                             Video(
-                                videoUrl = stream.url,
+                                videoUrl = streamUrl,
                                 videoTitle = "${hoster.hosterName} - MP4 (${stream.quality ?: "1080p"}) (${type.uppercase()})",
                                 headers = refHeaders,
                             ),
@@ -561,7 +564,7 @@ class Anitusk :
                     }
 
                     stream.type == "embed" -> {
-                        val embedUrl = stream.url
+                        val embedUrl = stream.url ?: continue
                         when {
                             embedUrl.contains("playmogo.com") || embedUrl.contains("dood") -> {
                                 val extractor = DoodExtractor(client)
