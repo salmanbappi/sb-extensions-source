@@ -140,8 +140,8 @@ class ReAnime : Source() {
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val dto = response.parseAs<SearchResponseDto>()
-        val animes = dto.results.mapNotNull { it.toSAnime(titleLanguage) }
-        val hasNextPage = (dto.offset + dto.limit) < dto.total
+        val animes = (dto.results ?: emptyList()).mapNotNull { it.toSAnime(titleLanguage) }
+        val hasNextPage = ((dto.offset ?: 0) + (dto.limit ?: 0)) < (dto.total ?: 0)
 
         return AnimesPage(animes, hasNextPage)
     }
@@ -230,8 +230,8 @@ class ReAnime : Source() {
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val dto = response.parseAs<SearchResponseDto>()
-        val animes = dto.results.mapNotNull { it.toSAnime(titleLanguage) }
-        val hasNextPage = (dto.offset + dto.limit) < dto.total
+        val animes = (dto.results ?: emptyList()).mapNotNull { it.toSAnime(titleLanguage) }
+        val hasNextPage = ((dto.offset ?: 0) + (dto.limit ?: 0)) < (dto.total ?: 0)
 
         return AnimesPage(animes, hasNextPage)
     }
@@ -496,7 +496,7 @@ class ReAnime : Source() {
             res.use {
                 if (!it.isSuccessful) return emptyList()
                 val dto = it.parseAs<RecommendationsDto>()
-                if (dto.success) dto.recommendations else emptyList()
+                if (dto.success == true) (dto.recommendations ?: emptyList()) else emptyList()
             }
         } catch (_: Exception) {
             emptyList()
@@ -522,7 +522,7 @@ class ReAnime : Source() {
             throw Exception("Could not parse episode list. The anime may not have episodes yet.")
         }
 
-        val visibleEpisodes = dto.data.filterNot { it.isFiller && hideFiller }
+        val visibleEpisodes = (dto.data ?: emptyList()).filterNot { (it.isFiller == true) && hideFiller }
 
         if (visibleEpisodes.isEmpty()) {
             throw Exception("No episodes available for this anime yet. It may not have aired.")
@@ -596,7 +596,7 @@ class ReAnime : Source() {
             it.parseAs<VideoResponseDto>()
         }
 
-        if (!parsed.success || parsed.servers.isNullOrEmpty()) return emptyList()
+        if (parsed.success != true || parsed.servers.isNullOrEmpty()) return emptyList()
 
         val hosterMap = mutableMapOf<String, MutableList<VideoServerDto>>()
         parsed.servers.forEach { server ->
@@ -708,8 +708,10 @@ class ReAnime : Source() {
             }
 
             val subtitleTracks = embedDataDto.subtitles
-                ?.map { Track(it.url, it.language ?: "Unknown") }
-                ?: emptyList()
+                ?.mapNotNull { sub ->
+                    val subUrl = sub.url ?: return@mapNotNull null
+                    Track(subUrl, sub.language ?: "Unknown")
+                } ?: emptyList()
 
             val skipTimes = embedDataDto.toSkipTimes()
 
