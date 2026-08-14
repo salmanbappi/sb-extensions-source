@@ -486,10 +486,10 @@ class MovieBox : Source() {
                         val date = parseDate(metaEp?.released)
                         date_upload = if (date > 0L) date else System.currentTimeMillis()
                         if (!metaEp?.overview.isNullOrBlank()) {
-                            summary = metaEp.overview
+                            summary = metaEp?.overview
                         }
                         if (showThumbnails && !metaEp?.thumbnail.isNullOrBlank()) {
-                            preview_url = metaEp.thumbnail
+                            preview_url = metaEp?.thumbnail
                         }
                     },
                 )

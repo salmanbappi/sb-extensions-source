@@ -420,12 +420,14 @@ class Nowhdtime :
                 if (response.isSuccessful) {
                     val body = response.body.string()
                     val responseJson = jsonParser.decodeFromString<EncryptedResponse>(body)
-                    val decrypted = decodeCustomBase64(responseJson.data, "RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW+/=")
+                    val rawEncrypted = responseJson.data ?: return@runCatching
+                    val decrypted = decodeCustomBase64(rawEncrypted, "RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW+/=")
 
                     when (type) {
                         "movies5f" -> {
                             val data = jsonParser.decodeFromString<CatflixResponse>(decrypted)
                             data.data?.downloads?.forEach { dl ->
+                                val streamUrl = dl.url ?: return@forEach
                                 val headers = Headers.Builder()
                                     .add("Origin", "https://fmoviesunblocked.net")
                                     .add("Referer", "https://fmoviesunblocked.net/")
@@ -433,10 +435,9 @@ class Nowhdtime :
                                     .build()
                                 videos.add(
                                     Video(
-                                        videoUrl = dl.url,
+                                        videoUrl = streamUrl,
                                         videoTitle = "$serverName - Movies5f - ${dl.resolution}p",
                                         headers = headers,
-                                        resolution = dl.resolution,
                                     ),
                                 )
                             }
@@ -445,16 +446,16 @@ class Nowhdtime :
                         "klikxxi" -> {
                             val data = jsonParser.decodeFromString<OphimResponse>(decrypted)
                             data.sources.forEach { src ->
+                                val streamUrl = src.url ?: return@forEach
                                 val headers = Headers.Builder()
                                     .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
                                     .add("Referer", "https://vidnest.fun/")
                                     .build()
                                 videos.add(
                                     Video(
-                                        videoUrl = src.url,
+                                        videoUrl = streamUrl,
                                         videoTitle = "$serverName - Klikxxi - ${src.quality}",
                                         headers = headers,
-                                        resolution = if (src.quality == "auto") 1080 else src.quality.replace("p", "").toIntOrNull() ?: 1080,
                                     ),
                                 )
                             }
@@ -463,17 +464,16 @@ class Nowhdtime :
                         "vidlink" -> {
                             val data = jsonParser.decodeFromString<HexaResponse>(decrypted)
                             data.data?.stream?.qualities?.forEach { (res, item) ->
+                                val streamUrl = item.url ?: return@forEach
                                 val headers = Headers.Builder()
                                     .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
                                     .add("Referer", "https://vidnest.fun/")
                                     .build()
-                                val resolutionInt = res.replace("p", "").toIntOrNull() ?: 1080
                                 videos.add(
                                     Video(
-                                        videoUrl = item.url,
+                                        videoUrl = streamUrl,
                                         videoTitle = "$serverName - Vidlink - ${res}p",
                                         headers = headers,
-                                        resolution = resolutionInt,
                                     ),
                                 )
                             }

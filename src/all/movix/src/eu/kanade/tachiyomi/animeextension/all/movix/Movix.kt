@@ -429,12 +429,12 @@ class Movix : Source() {
 
                         val details = mutableListOf<String>()
                         if (!source.language.isNullOrEmpty()) {
-                            details.add(source.language)
+                            details.add(source.language!!)
                         } else if (!source.flag.isNullOrEmpty()) {
-                            details.add(source.flag.uppercase())
+                            details.add(source.flag!!.uppercase())
                         }
                         if (!source.title.isNullOrEmpty()) {
-                            details.add(source.title)
+                            details.add(source.title!!)
                         }
                         if (details.isNotEmpty()) {
                             label += " [${details.joinToString(" - ")}]"
