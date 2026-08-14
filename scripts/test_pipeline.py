@@ -66,7 +66,7 @@ class PipelineTester:
         print_stage(1, "Anime Listing (Popular / Search)")
         list_url = f"{self.base_url}/page/1/?s={urllib.parse.quote(query)}" if query else f"{self.base_url}/"
         print(f"  -> Requesting: {list_url}")
-        
+
         try:
             html = self.fetch(list_url)
         except Exception as e:
@@ -114,12 +114,12 @@ class PipelineTester:
         try:
             detail_html = self.fetch(target_anime_url)
             print(f"  ✓ Fetched details page ({len(detail_html)} bytes)")
-            
+
             # Heuristic check for title, synopsis, rating
             h1_match = re.search(r'<h1[^>]*>(.*?)</h1>', detail_html, re.IGNORECASE | re.DOTALL)
             if h1_match:
                 print(f"  ✓ Title parsed: {re.sub(r'<[^>]+>', '', h1_match.group(1)).strip()}")
-            
+
             genres = re.findall(r'<a[^>]+href=["\'][^"\']*(?:genre|category)[^"\']*["\'][^>]*>(.*?)</a>', detail_html, re.IGNORECASE)
             if genres:
                 clean_genres = [re.sub(r"<[^>]+>", "", g).strip() for g in genres if g.strip()]
@@ -132,7 +132,7 @@ class PipelineTester:
         # Stage 3: Episode List
         # ----------------------------------------------------------------------
         print_stage(3, "Episode List & Stable Anchor Verification")
-        
+
         # Check for linkstore buttons (TV Series) or direct files
         linkstore_btns = re.findall(r'<a[^>]+href=["\'](https?://[^"\']*linkstore[^"\']*)["\'][^>]*>(.*?)</a>', detail_html, re.DOTALL)
         if not linkstore_btns:
@@ -184,7 +184,7 @@ class PipelineTester:
 
         print(f"  ✓ Total episodes resolved: {len(detected_episodes)}")
         first_ep = detected_episodes[0]
-        
+
         # Test Numbering Invariant: Season 1 Episode 1 must be 1.0f
         s_num, e_num, sample_url = first_ep
         calculated_num = ((s_num - 1) * 100 + e_num) if len(set(x[0] for x in detected_episodes)) > 1 else e_num
@@ -199,7 +199,7 @@ class PipelineTester:
         # ----------------------------------------------------------------------
         print_stage(4, f"Hoster List (S{s_num} E{e_num})")
         print(f"  -> Sample Episode URL: {sample_url}")
-        
+
         discovered_hosters = ["Fast Cloud", "HubCloud", "GDFlix", "FilePress"]
         print(f"  ✓ 2-Tier Hoster Folders simulated ({len(discovered_hosters)}):")
         for h in discovered_hosters:
@@ -212,7 +212,7 @@ class PipelineTester:
         sample_qualities = ["1080p", "720p", "480p"]
         for q in sample_qualities:
             print(f"     🎬 {q} - Fast Cloud [Resolution: {q.replace('p', '')}]")
-        
+
         print(f"\n{'='*60}")
         print("🎉 5-Stage Verification Pipeline PASSED Successfully!")
         print(f"{'='*60}")

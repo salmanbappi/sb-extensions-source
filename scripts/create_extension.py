@@ -82,7 +82,7 @@ def generate_build_gradle(
     with_extractors: bool = True
 ) -> str:
     nsfw_str = "true" if nsfw else "false"
-    
+
     if theme_pkg:
         return f"""ext {{
     extName = '{ext_name}'
@@ -146,7 +146,6 @@ def generate_android_manifest() -> str:
     </application>
 </manifest>
 """
-
 
 
 def generate_filters_kotlin_source(lang: str, pkg_name: str) -> str:
@@ -265,33 +264,62 @@ def generate_html_kotlin_source(
 """ if with_extractors else ""
 
     video_list_block = """    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val embedUrl = hoster.hosterUrl
+        val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_TYPE_KEY, emptySet()) ?: emptySet()
         val embedHeaders = headers.newBuilder().set("Referer", "$baseUrl/").build()
 
-        return when {
-            embedUrl.contains("dood") || embedUrl.contains("ds2play") ->
-                doodExtractor.videosFromUrl(embedUrl)
-            embedUrl.contains("streamtape") ->
-                streamtapeExtractor.videoFromUrl(embedUrl)?.let { listOf(it) } ?: emptyList()
-            embedUrl.contains("filemoon") || embedUrl.contains("moonplayer") ->
-                filemoonExtractor.videosFromUrl(embedUrl, prefix = "${hoster.hosterName} - ", headers = embedHeaders)
-            embedUrl.endsWith(".m3u8") || embedUrl.contains(".m3u8?") ->
-                playlistUtils.extractFromHls(
-                    playlistUrl = embedUrl,
-                    referer = "$baseUrl/",
-                    videoNameGen = { quality -> "${hoster.hosterName} - $quality" }
-                )
-            else ->
-                universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = "${hoster.hosterName} - ")
+        // Unpack "SUB|embedUrl;;DUB|embedUrl" from provider folder
+        val audioEntries = hoster.hosterUrl.split(";;").mapNotNull { item ->
+            val parts = item.split("|")
+            if (parts.size >= 2) Pair(parts[0], parts[1]) else null
         }
+
+        val videoList = audioEntries.parallelCatchingFlatMap { (audioType, embedUrl) ->
+            if (audioType.uppercase() in excludedAudios) return@parallelCatchingFlatMap emptyList()
+
+            val extractedVideos = when {
+                embedUrl.contains("dood") || embedUrl.contains("ds2play") ->
+                    doodExtractor.videosFromUrl(embedUrl)
+                embedUrl.contains("streamtape") ->
+                    streamtapeExtractor.videoFromUrl(embedUrl)?.let { listOf(it) } ?: emptyList()
+                embedUrl.contains("filemoon") || embedUrl.contains("moonplayer") ->
+                    filemoonExtractor.videosFromUrl(embedUrl, prefix = "${hoster.hosterName} - ", headers = embedHeaders)
+                embedUrl.endsWith(".m3u8") || embedUrl.contains(".m3u8?") ->
+                    playlistUtils.extractFromHls(
+                        playlistUrl = embedUrl,
+                        referer = "$baseUrl/",
+                        videoNameGen = { quality -> "$quality [$audioType]" }
+                    )
+                else ->
+                    universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = "${hoster.hosterName} - ")
+            }
+
+            extractedVideos.map { video ->
+                val baseTitle = video.videoTitle.replace(Regex("""\s*\[(?:SUB|DUB|Soft-Sub)\]""", RegexOption.IGNORE_CASE), "").trim()
+                val finalTitle = if (baseTitle.isNotBlank()) "$baseTitle [$audioType]" else "HD [$audioType]"
+                Video(
+                    videoUrl = video.videoUrl,
+                    videoTitle = finalTitle,
+                    headers = video.headers ?: embedHeaders,
+                    resolution = video.resolution,
+                    subtitleTracks = video.subtitleTracks,
+                )
+            }
+        }
+
+        return videoList.sortVideos()
     }""" if with_extractors else """    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        return listOf(
+        val audioEntries = hoster.hosterUrl.split(";;").mapNotNull { item ->
+            val parts = item.split("|")
+            if (parts.size >= 2) Pair(parts[0], parts[1]) else null
+        }
+
+        return audioEntries.map { (audioType, streamUrl) ->
             Video(
-                videoUrl = hoster.hosterUrl,
-                videoTitle = hoster.hosterName,
+                videoUrl = streamUrl,
+                videoTitle = "${hoster.hosterName} [$audioType]",
                 headers = headers
             )
-        )
+        }
     }"""
 
     sort_videos_block = """
@@ -532,25 +560,32 @@ class {class_name} : Source() {{
 
     // ============================ Video Links =============================
     // 2-Tier Model:
-    // 1. getHosterList(episode) returns List<Hoster> (Server Folders: "Fast Cloud", "HubCloud", "MegaCloud").
-    // 2. getVideoList(hoster) resolves and returns List<Video> (Qualities: 1080p, 720p, 480p) inside that folder.
+    // 1. getHosterList(episode) returns List<Hoster> representing Provider Folders (e.g. "MegaCloud", "VidStreaming", "FileMoon").
+    // 2. getVideoList(hoster) resolves and returns List<Video> with Audio tags next to Quality (e.g. "1080p [Sub]", "1080p [Dub]").
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {{
         val doc = client.newCall(GET("$baseUrl${{episode.url}}", headers)).execute().asJsoup()
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
-        val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_TYPE_KEY, emptySet()) ?: emptySet()
 
-        val hosters = mutableListOf<Hoster>()
+        // Map: ProviderName -> List of "SUB|embedUrl", "DUB|embedUrl"
+        val providerMap = mutableMapOf<String, MutableList<Pair<String, String>>>()
+
         doc.select("iframe.player-iframe, [data-embed]").forEachIndexed {{ idx, iframe ->
             val embedUrl = iframe.absUrl("src").ifBlank {{ iframe.attr("data-embed") }}
             val serverName = iframe.attr("data-server-name").ifBlank {{ "Server ${{idx + 1}}" }}
             val audioType = iframe.attr("data-audio-type").ifBlank {{ "SUB" }}.uppercase()
 
-            if (serverName in excludedServers || audioType in excludedAudios || embedUrl.isBlank()) return@forEachIndexed
-            hosters.add(Hoster(hosterName = "$audioType - $serverName", hosterUrl = embedUrl))
+            if (serverName !in excludedServers && embedUrl.isNotBlank()) {{
+                providerMap.getOrPut(serverName) {{ mutableListOf() }}.add(Pair(audioType, embedUrl))
+            }}
         }}
 
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
-        return hosters.sortedByDescending {{ it.hosterName.contains(prefServer, ignoreCase = true) }}
+        return providerMap.map {{ (providerName, audioList) ->
+            Hoster(
+                hosterName = providerName,
+                hosterUrl = audioList.joinToString(";;") {{ "${{it.first}}|${{it.second}}" }},
+            )
+        }}.sortedByDescending {{ it.hosterName.contains(prefServer, ignoreCase = true) }}
     }}
 
 {video_list_block}

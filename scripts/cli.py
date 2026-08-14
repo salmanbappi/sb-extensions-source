@@ -136,7 +136,7 @@ def bump_version(repo_root: Path, target_lang: str = None, target_name: str = No
         return False
 
     content = gradle_file.read_text(encoding="utf-8")
-    
+
     # Check extVersionCode
     m_ext = re.search(r"extVersionCode\s*=\s*(\d+)", content)
     if m_ext:
@@ -256,11 +256,11 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
     if kt_dir.exists():
         for kt_file in kt_dir.rglob("*.kt"):
             txt = kt_file.read_text(encoding="utf-8")
-            
+
             # Replace baseUrl default constants or hardcoded override
             new_txt = re.sub(r'PREF_BASE_URL_DEFAULT\s*=\s*["\'][^"\']+["\']', f'PREF_BASE_URL_DEFAULT = "{new_domain_clean}"', txt)
             new_txt = re.sub(r'override\s+val\s+baseUrl\s*=\s*["\'][^"\']+["\']', f'override val baseUrl = "{new_domain_clean}"', new_txt)
-            
+
             if txt != new_txt:
                 kt_file.write_text(new_txt, encoding="utf-8")
                 updated_files += 1
@@ -448,7 +448,7 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                 gradle_txt = gradle_file.read_text(encoding="utf-8")
                 if "extVersionCode" not in gradle_txt and "overrideVersionCode" not in gradle_txt:
                     issues.append("Missing extVersionCode or overrideVersionCode in build.gradle")
-                
+
                 # Check extClass format (must start with dot)
                 ext_class_m = re.search(r"extClass\s*=\s*['\"]([^'\"]+)['\"]", gradle_txt)
                 if ext_class_m and not ext_class_m.group(1).startswith("."):
@@ -476,7 +476,7 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                     if not has_feature:
                         issues.append("AndroidManifest.xml missing '<uses-feature android:name=\"tachiyomi.animeextension\"/>'")
 
-                    meta_tags = {elem.attrib.get('{http://schemas.android.com/apk/res/android}name'): elem.attrib.get('{http://schemas.android.com/apk/res/android}value') 
+                    meta_tags = {elem.attrib.get('{http://schemas.android.com/apk/res/android}name'): elem.attrib.get('{http://schemas.android.com/apk/res/android}value')
                                  for elem in root.findall('.//meta-data')}
                     if 'tachiyomi.animeextension.class' not in meta_tags:
                         issues.append("AndroidManifest.xml missing meta-data 'tachiyomi.animeextension.class'")
@@ -527,7 +527,7 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                     issues.append(f"Missing 'initialized = true' inside getAnimeDetails in {kt.name}")
                 if "ParsedAnimeHttpSource" in content:
                     issues.append(f"Legacy class 'ParsedAnimeHttpSource' found in {kt.name} (v16 Rule: Must extend extensions.utils.Source)")
-                
+
                 # Check deprecated Video constructors & properties
                 has_deprecated_named = re.search(r"Video\s*\(\s*url\s*=", content) or re.search(r"Video\s*\([^)]*quality\s*=", content)
                 has_positional_4arg = re.search(r'\bVideo\s*\([^)]*,[^)]*,[^)]*,[^)]*\)', content) and not re.search(r'\bVideo\s*\(\s*videoUrl\s*=', content)
@@ -628,7 +628,7 @@ def format_codebase(repo_root: Path, target_lang: str = None, target_name: str =
             checked_count += 1
             lines = raw_text.splitlines()
             cleaned_lines = [line.rstrip(" \t") for line in lines]
-            
+
             # Collapse 3+ consecutive empty lines to 1
             collapsed = []
             empty_count = 0
