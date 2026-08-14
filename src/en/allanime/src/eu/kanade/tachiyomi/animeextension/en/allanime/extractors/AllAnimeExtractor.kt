@@ -43,31 +43,34 @@ class AllAnimeExtractor(private val client: OkHttpClient, private val headers: H
         ).awaitSuccess()
             .parseAs<VideoLink>()
 
-        return linkJson.links.parallelCatchingFlatMap { link ->
-            val subtitles = link.subtitles?.map { sub ->
+        return (linkJson.links ?: emptyList()).parallelCatchingFlatMap { link ->
+            val subtitles = link.subtitles?.mapNotNull { sub ->
+                val subSrc = sub.src ?: return@mapNotNull null
                 val label = sub.label?.let { " - $it" } ?: ""
-                Track(sub.src, Locale(sub.lang).displayLanguage + label)
+                Track(subSrc, Locale(sub.lang ?: "en").displayLanguage + label)
             }.orEmpty()
 
             when {
                 link.mp4 == true -> {
+                    val linkUrl = link.link ?: return@parallelCatchingFlatMap emptyList()
                     Video(
-                        videoUrl = link.link,
+                        videoUrl = linkUrl,
                         videoTitle = "Original ($name - ${link.resolutionStr})",
                         subtitleTracks = subtitles,
                     ).let(::listOf)
                 }
 
                 link.hls == true -> {
+                    val linkUrl = link.link ?: return@parallelCatchingFlatMap emptyList()
                     val masterHeaders = headers.newBuilder()
                         .add("Accept", "*/*")
-                        .add("Host", link.link.toHttpUrl().host)
+                        .add("Host", linkUrl.toHttpUrl().host)
                         .add("Origin", endPoint)
                         .add("Referer", "$endPoint/")
                         .build()
 
                     playlistUtils.extractFromHls(
-                        link.link,
+                        linkUrl,
                         masterHeaders = masterHeaders,
                         videoHeaders = masterHeaders,
                         videoNameGen = { quality -> "$quality ($name - ${link.resolutionStr})" },
@@ -77,20 +80,21 @@ class AllAnimeExtractor(private val client: OkHttpClient, private val headers: H
 
                 link.crIframe == true -> {
                     link.portData?.streams?.parallelCatchingFlatMap {
+                        val streamUrl = it.url ?: return@parallelCatchingFlatMap emptyList()
                         when (it.format) {
                             "adaptive_dash" ->
                                 Video(
-                                    videoUrl = it.url,
-                                    videoTitle = "Original (AC - Dash${if (it.hardsub_lang.isEmpty()) "" else " - Hardsub: ${it.hardsub_lang}"})",
+                                    videoUrl = streamUrl,
+                                    videoTitle = "Original (AC - Dash${if (it.hardsub_lang.isNullOrEmpty()) "" else " - Hardsub: ${it.hardsub_lang}"})",
                                     subtitleTracks = subtitles,
                                 ).let(::listOf)
 
                             "adaptive_hls" ->
                                 playlistUtils.extractFromHls(
-                                    it.url,
+                                    streamUrl,
                                     masterHeaders = headers,
                                     videoHeaders = headers,
-                                    videoNameGen = { quality -> "$quality (AC - HLS${if (it.hardsub_lang.isEmpty()) "" else " - Hardsub: ${it.hardsub_lang}"})" },
+                                    videoNameGen = { quality -> "$quality (AC - HLS${if (it.hardsub_lang.isNullOrEmpty()) "" else " - Hardsub: ${it.hardsub_lang}"})" },
                                     subtitleList = subtitles,
                                 )
 
@@ -100,14 +104,16 @@ class AllAnimeExtractor(private val client: OkHttpClient, private val headers: H
                 }
 
                 link.dash == true -> {
-                    val audioList = link.rawUrls?.audios?.map {
-                        Track(it.url, bytesIntoHumanReadable(it.bandwidth))
+                    val audioList = link.rawUrls?.audios?.mapNotNull {
+                        val audioUrl = it.url ?: return@mapNotNull null
+                        Track(audioUrl, bytesIntoHumanReadable(it.bandwidth ?: 0L))
                     }.orEmpty()
 
-                    link.rawUrls?.vids?.map {
+                    link.rawUrls?.vids?.mapNotNull {
+                        val vidUrl = it.url ?: return@mapNotNull null
                         Video(
-                            videoUrl = it.url,
-                            videoTitle = "$name - ${it.height} ${bytesIntoHumanReadable(it.bandwidth)}",
+                            videoUrl = vidUrl,
+                            videoTitle = "$name - ${it.height} ${bytesIntoHumanReadable(it.bandwidth ?: 0L)}",
                             audioTracks = audioList,
                             subtitleTracks = subtitles,
                         )
