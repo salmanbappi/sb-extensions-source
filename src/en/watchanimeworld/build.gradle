@@ -10,5 +10,3 @@ dependencies {
     implementation(project(':lib:cloudflare-interceptor'))
     implementation(project(':lib:playlist-utils'))
 }
-
-

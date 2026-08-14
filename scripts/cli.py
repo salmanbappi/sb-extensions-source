@@ -399,8 +399,14 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
     cmd_push = ["git", "push"]
     push_res = subprocess.run(cmd_push, cwd=repo_root, capture_output=True, text=True)
     if push_res.returncode != 0:
-        print(f"❌ Git push failed: {push_res.stderr}")
-        return False
+        if "set-upstream" in push_res.stderr or "no upstream branch" in push_res.stderr:
+            branch_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root, capture_output=True, text=True)
+            current_branch = branch_res.stdout.strip() or "main"
+            print(f"  -> Setting upstream tracking for branch: {current_branch}...")
+            push_res = subprocess.run(["git", "push", "-u", "origin", current_branch], cwd=repo_root, capture_output=True, text=True)
+        if push_res.returncode != 0:
+            print(f"❌ Git push failed: {push_res.stderr}")
+            return False
 
     print("\n🎉 Extension successfully published to GitHub!")
     return True
@@ -1002,6 +1008,34 @@ def main():
             "test-pipeline": {
                 "script": "test_pipeline.py",
                 "desc": "Run full 5-stage automated scraper verification (Popular -> Details -> Episodes -> Hosters -> Video Streams)."
+            },
+            "fix": {
+                "script": "ast_fixer.py",
+                "desc": "Auto-remediate Kotlin AST code smells and API v16 model invariants automatically."
+            },
+            "probe-stream": {
+                "script": "probe_stream.py",
+                "desc": "Deep media inspector for HLS (M3U8), DASH, direct video streams, codecs, and subtitles."
+            },
+            "json-to-dto": {
+                "script": "json_to_dto.py",
+                "desc": "Convert JSON API responses, files, or HAR dumps to null-safe Kotlinx serialization DTOs."
+            },
+            "deobfuscate": {
+                "script": "deobfuscate.py",
+                "desc": "Reverse-engineer Dean Edwards, PlayerJS, CryptoJS AES, and Stego media payloads."
+            },
+            "canary-monitor": {
+                "script": "canary_monitor.py",
+                "desc": "Monitor health across all 65+ video extractors in lib/ and generate health matrices."
+            },
+            "test-filters": {
+                "script": "test_filters.py",
+                "desc": "Combinatorial search filter matrix fuzzer testing filter permutations against live endpoints."
+            },
+            "sandbox": {
+                "script": "sandbox.py",
+                "desc": "Zero-APK fast in-memory Kotlin runtime simulator for popular, search, and detail workflows."
             }
         }
 
@@ -1013,16 +1047,16 @@ def main():
             "Examples:",
             "  python3 scripts/cli.py doctor",
             "  python3 scripts/cli.py create -i",
-            "  python3 scripts/cli.py create-theme streamwish",
-            "  python3 scripts/cli.py migrate-domain vegamovies --new-domain https://vegamovies.example",
-            "  python3 scripts/cli.py bump-lib dood-extractor",
-            "  python3 scripts/cli.py bump-theme anikototheme --all",
+            "  python3 scripts/cli.py fix <module>",
+            "  python3 scripts/cli.py probe-stream 'https://example.com/master.m3u8' --deep",
+            "  python3 scripts/cli.py json-to-dto https://api.site.com/anime/1",
+            "  python3 scripts/cli.py deobfuscate 'eval(function(p,a,c,k,e,r)...)'",
+            "  python3 scripts/cli.py canary-monitor --export",
+            "  python3 scripts/cli.py test-filters <module>",
+            "  python3 scripts/cli.py sandbox <module> --action popular",
             "  python3 scripts/cli.py format <module>",
             "  python3 scripts/cli.py bump-version <module>",
             "  python3 scripts/cli.py publish <module> -m 'fix episode parsing'",
-            "  python3 scripts/cli.py list",
-            "  python3 scripts/cli.py info <module>",
-            "  python3 scripts/cli.py lint",
             "  python3 scripts/cli.py audit-all"
         ])
 

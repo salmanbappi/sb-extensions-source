@@ -48,7 +48,7 @@ def http_request_with_retry(
         req_headers.update(headers)
 
     req = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
-    
+
     last_status = 0
     last_resp_headers = {}
 
@@ -67,7 +67,7 @@ def http_request_with_retry(
         except urllib.error.HTTPError as e:
             last_status = e.code
             last_resp_headers = dict(e.headers)
-            
+
             if e.code in RETRYABLE_STATUS_CODES and attempt < max_retries:
                 # Check for Retry-After header
                 retry_after = e.headers.get("Retry-After")
@@ -125,11 +125,11 @@ def http_post_json(url: str, payload: Dict[str, Any], headers: Optional[Dict[str
 
 class SchemaValidator:
     """Zero-dependency JSON structure and type validation."""
-    
+
     @staticmethod
     def validate(data: Any, schema: Dict[str, Any], path: str = "$") -> Tuple[bool, List[str]]:
         errors = []
-        
+
         if not isinstance(data, dict):
             return False, [f"{path}: expected dict, got {type(data).__name__}"]
 
@@ -264,7 +264,7 @@ def fetch_anilist_metadata(mal_id: str) -> Dict[str, Any]:
         return {"streaming_episodes": {}, "banner": None, "cover": None, "external_links": [], "titles": {}}
 
     res = http_post_json("https://graphql.anilist.co", {"query": query, "variables": {"idMal": mal_id_int}})
-    
+
     result = {
         "streaming_episodes": {},
         "banner": None,
@@ -433,7 +433,7 @@ def fetch_tmdb_episodes(title: str, api_key: str, seasons_spec: str = "1") -> Di
             ep_num = ep.get("episode_number") or running_ep_counter
             still_path = ep.get("still_path")
             thumb = f"https://image.tmdb.org/t/p/w500{still_path}" if still_path else None
-            
+
             index_key = ep_num if len(target_seasons) == 1 else running_ep_counter
             episodes[index_key] = {
                 "season": season_num,

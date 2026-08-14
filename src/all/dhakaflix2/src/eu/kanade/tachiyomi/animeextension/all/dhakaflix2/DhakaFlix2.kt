@@ -571,6 +571,7 @@ class DhakaFlix2(
     override fun searchAnimeParse(response: Response) = popularAnimeParse(response)
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        anime.initialized = true
         val useTmdb = preferences.getBoolean(PREF_USE_TMDB_COVERS, false)
         if (useTmdb) {
             try {
@@ -758,7 +759,7 @@ class DhakaFlix2(
             url = it.videoUrl
             name = if (it.seasonEpisode.isNotEmpty()) "${it.seasonEpisode} - ${it.episodeName}".trim() else it.episodeName
             episode_number = parseEpisodeNumber(it.seasonEpisode)
-            scanlator = "${it.quality} ${it.size}".trim()
+            scanlator = "${it.videoTitle} ${it.size}".trim()
         }
     }.reversed()
 

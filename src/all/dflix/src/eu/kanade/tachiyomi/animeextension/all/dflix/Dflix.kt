@@ -382,7 +382,7 @@ class Dflix : Source() {
                 url = it.videoUrl
                 name = "${it.seasonEpisode} - ${it.episodeName}".trim()
                 episode_number = (distinctList.size - index).toFloat()
-                scanlator = "${it.quality}  •  ${it.size}"
+                scanlator = "${it.videoTitle}  •  ${it.size}"
             }
         }
     }

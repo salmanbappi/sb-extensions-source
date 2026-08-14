@@ -186,8 +186,8 @@ def discover_all_extractors(repo_root: Path) -> List[Dict]:
             continue
 
         mod_name = mod_dir.name
-        kt_files = list(mod_dir.glob("src/main/java/**/*.kt"))
-        
+        kt_files = list(mod_dir.glob("src/main/java/**/*.kt")) + list(mod_dir.glob("src/main/kotlin/**/*.kt"))
+
         main_class = None
         full_package = None
         for kt in kt_files:
@@ -217,6 +217,63 @@ def discover_all_extractors(repo_root: Path) -> List[Dict]:
         })
 
     return registry
+
+
+def inject_extractor_into_source(kt_file: Path, extractors: list[dict], dry_run: bool = False) -> bool:
+    """Injects missing Kotlin imports and lazy declarations for extractors into a Kotlin source file."""
+    if not kt_file.exists():
+        return False
+
+    content = kt_file.read_text(encoding="utf-8")
+    original = content
+    modified = False
+
+    # 1. Inject imports
+    imports_to_add = []
+    for ext in extractors:
+        import_stmt = f"import {ext['package']}"
+        if import_stmt not in content:
+            imports_to_add.append(import_stmt)
+
+    if imports_to_add:
+        # Find last import
+        all_imports = list(re.finditer(r"^import\s+[^\n]+", content, re.MULTILINE))
+        if all_imports:
+            last_import = all_imports[-1]
+            insert_pos = last_import.end()
+            content = content[:insert_pos] + "\n" + "\n".join(imports_to_add) + content[insert_pos:]
+            modified = True
+
+    # 2. Inject lazy declarations inside the main class body
+    KNOWN_SINGLETONS = {"JsUnpacker", "LZString", "CryptoAES", "DataImage"}
+    decls_to_add = []
+    for ext in extractors:
+        cls = ext["class"]
+        if cls in KNOWN_SINGLETONS:
+            continue  # Singleton objects are invoked statically
+
+        prop_name = cls[0].lower() + cls[1:]
+        if not any(prop_name.endswith(suffix) for suffix in ("Extractor", "Utils", "Server", "Fetcher", "Interceptor", "Scraper")):
+            prop_name += "Extractor"
+        decl = f"    private val {prop_name} by lazy {{ {cls}(client) }}"
+        if decl not in content and f"{cls}(" not in content:
+            decls_to_add.append(decl)
+
+    if decls_to_add:
+        cls_match = re.search(r"class\s+[A-Za-z0-9_]+\s*(?:\([^)]*\))?\s*:\s*[^{]+\{", content)
+        if cls_match:
+            insert_pos = cls_match.end()
+            content = content[:insert_pos] + "\n\n" + "\n".join(decls_to_add) + content[insert_pos:]
+            modified = True
+
+    if modified:
+        if dry_run:
+            print(f"[DRY RUN] Would inject {len(extractors)} extractor import(s)/decl(s) into {kt_file.name}")
+        else:
+            kt_file.write_text(content, encoding="utf-8")
+            print(f"🚀 Successfully injected extractor imports/declarations into {kt_file.name}!")
+        return True
+    return False
 
 
 def extract_urls_from_dom_or_text(text: str) -> List[str]:
@@ -255,14 +312,17 @@ def scan_text_for_extractors(text: str, registry: List[Dict]) -> List[Dict]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Auto-detect required extractor libraries for Aniyomi extensions.")
-    parser.add_argument("target", nargs="?", help="Target extension (e.g., '<module>' or '<lang>/<module>')")
+    parser = argparse.ArgumentParser(
+        description="Dynamic Extractor Discovery, Payload Matcher & Dependency Injector"
+    )
+    parser.add_argument("target", nargs="?", help="Target extension name (e.g. 'animestream' or 'en/animestream')")
     parser.add_argument("--lang", help="Target extension lang")
     parser.add_argument("--name", help="Target extension directory name")
     parser.add_argument("--url", help="Sample video embed URL or web page URL")
     parser.add_argument("--html", help="HTML content snippet to analyze")
     parser.add_argument("--fix", action="store_true", help="Automatically insert missing dependencies into build.gradle")
-    parser.add_argument("--dry-run", action="store_true", help="Perform trial run without modifying build.gradle")
+    parser.add_argument("--inject", action="store_true", help="Automatically insert missing imports and lazy declarations into Kotlin source")
+    parser.add_argument("--dry-run", action="store_true", help="Perform trial run without modifying files")
 
     args = parser.parse_args()
     repo_root = Path(__file__).resolve().parent.parent
@@ -328,7 +388,8 @@ def main():
         missing_deps = []
 
         for m in matches:
-            if m["module"] not in gradle_content:
+            mod_pattern = f":lib:{m['module']}"
+            if mod_pattern not in gradle_content:
                 missing_deps.append(m)
 
         if missing_deps:
@@ -336,7 +397,7 @@ def main():
             for m in missing_deps:
                 print(f"  - Missing: {m['dependency']}")
 
-            if args.fix and gradle_file.exists():
+            if (args.fix or args.inject) and gradle_file.exists():
                 if args.dry_run:
                     print("\n[DRY RUN] Would add missing dependencies to build.gradle.")
                 else:
@@ -349,6 +410,14 @@ def main():
                     print("\n🚀 Successfully added missing dependencies to build.gradle!")
         else:
             print(f"✓ All referenced extractor dependencies ({len(matches)} matched) are present in build.gradle.")
+
+        if args.inject and matches and kt_files:
+            main_kt = kt_files[0]
+            for kt in kt_files:
+                if "Source" in kt.name or kt.stem.lower() == target_name.lower():
+                    main_kt = kt
+                    break
+            inject_extractor_into_source(main_kt, matches, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

@@ -576,24 +576,24 @@ class Nowhdtime :
 
     @Serializable
     data class PlayerDto(
-        val type: String,
-        val name: String,
-        val url: String,
-        val server: String,
-    )
+    val type: String? = null,
+    val name: String? = null,
+    val url: String? = null,
+    val server: String? = null
+)
 
     @Serializable
     data class EncryptedResponse(
-        val iv: String = "",
-        val tag: String = "",
-        val data: String,
-    )
+    val iv: String = "",
+    val tag: String = "",
+    val data: String? = null
+)
 
     @Serializable
     data class DecryptedResponse(
-        val status: String,
-        val stream: StreamDto? = null,
-    )
+    val status: String? = null,
+    val stream: StreamDto? = null
+)
 
     @Serializable
     data class StreamDto(
@@ -603,9 +603,9 @@ class Nowhdtime :
 
     @Serializable
     data class DownloadDto(
-        val quality: String,
-        val url: String,
-    )
+    val quality: String? = null,
+    val url: String? = null
+)
 
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain"
@@ -636,9 +636,9 @@ data class CatflixResponse(
 
     @Serializable
     data class DownloadItem(
-        val url: String,
-        val resolution: Int = 1080,
-    )
+    val url: String? = null,
+    val resolution: Int = 1080
+)
 }
 
 @Serializable
@@ -647,10 +647,10 @@ data class OphimResponse(
 ) {
     @Serializable
     data class SourceItem(
-        val url: String,
-        val quality: String = "auto",
-        val type: String = "hls",
-    )
+    val url: String? = null,
+    val quality: String = "auto",
+    val type: String = "hls"
+)
 }
 
 @Serializable
@@ -669,6 +669,6 @@ data class HexaResponse(
 
     @Serializable
     data class QualityItem(
-        val url: String,
-    )
+    val url: String? = null
+)
 }

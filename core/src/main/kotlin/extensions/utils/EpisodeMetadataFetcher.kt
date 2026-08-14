@@ -91,7 +91,7 @@ class EpisodeMetadataFetcher(
 
                 // 2. If primary metadata is incomplete (missing synopsis/thumbnail), query TMDB fallback
                 val needsMoreMetadata = merged.isEmpty() || merged.values.any { it.description.isNullOrBlank() || it.thumbnailUrl.isNullOrBlank() }
-                
+
                 if (needsMoreMetadata && !animeTitle.isNullOrBlank() && tmdbApiKey.isNotBlank()) {
                     logd("Primary metadata incomplete/empty. Fetching from TMDB fallback...")
                     val tmdbEps = fetchTmdbEpisodes(animeTitle)

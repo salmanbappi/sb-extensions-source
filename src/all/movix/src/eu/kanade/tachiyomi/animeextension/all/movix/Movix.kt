@@ -658,7 +658,7 @@ data class TmdbPage(
 
 @Serializable
 data class TmdbResult(
-    val id: Int,
+    val id: Int? = null,
     val title: String? = null,
     val name: String? = null,
     val poster_path: String? = null,
@@ -666,7 +666,7 @@ data class TmdbResult(
     val overview: String? = null,
     val release_date: String? = null,
     val first_air_date: String? = null,
-    val vote_average: Float? = null,
+    val vote_average: Float? = null
 )
 
 @Serializable
@@ -682,15 +682,15 @@ data class TmdbTvDetails(
 
 @Serializable
 data class TmdbGenre(
-    val id: Int,
-    val name: String,
+    val id: Int? = null,
+    val name: String? = null
 )
 
 @Serializable
 data class TmdbSeason(
-    val season_number: Int,
-    val episode_count: Int,
-    val name: String? = null,
+    val season_number: Int? = null,
+    val episode_count: Int? = null,
+    val name: String? = null
 )
 
 @Serializable
@@ -701,9 +701,9 @@ data class TmdbSeasonDetails(
 
 @Serializable
 data class TmdbEpisode(
-    val episode_number: Int,
+    val episode_number: Int? = null,
     val name: String? = null,
-    val season_number: Int,
+    val season_number: Int? = null
 )
 
 @Serializable
@@ -717,10 +717,10 @@ data class TmdbMovieDetails(
 
 @Serializable
 data class VidLinkResponse(
-    val success: Boolean,
+    val success: Boolean? = null,
     val url: String? = null,
     val ref: String? = null,
-    val sig: String? = null,
+    val sig: String? = null
 )
 
 @Serializable
@@ -729,8 +729,9 @@ data class ServerResponse(
     val url: String? = null,
     val stream_url: String? = null,
     val stream_urls: List<String>? = null,
-    val qualities: Map<String, String>? = null,
-    val sources: JsonElement? = null,
+    val qualities: Map<String? = null,
+    String>? = null,
+    val sources: JsonElement? = null
 )
 
 @Serializable
@@ -738,12 +739,13 @@ data class SourceItem(
     val url: String? = null,
     val link: String? = null,
     val stream_url: String? = null,
-    val qualities: Map<String, String>? = null,
+    val qualities: Map<String? = null,
+    String>? = null,
     val label: String? = null,
     val server: String? = null,
     val language: String? = null,
     val flag: String? = null,
-    val title: String? = null,
+    val title: String? = null
 )
 
 private data class ServerInfo(val name: String, val apiPath: String)

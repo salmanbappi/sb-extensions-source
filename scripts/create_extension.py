@@ -250,6 +250,7 @@ def generate_html_kotlin_source(
             "import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor",
             "import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor",
             "import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils",
+            "import keiyoushi.utils.parallelCatchingFlatMap",
         ])
 
     import_block = "\n".join(sorted(set(import_lines)))
@@ -1023,8 +1024,10 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
+import extensions.utils.injectLazy
 import extensions.utils.parseAs
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import kotlin.time.Duration.Companion.seconds
@@ -1038,6 +1041,8 @@ class {class_name} : Source() {{
     override val lang = "{lang}"
 
     override val supportsLatest = true
+
+    private val json: Json by injectLazy()
 
     override val client: OkHttpClient by lazy {{
         network.client.newBuilder()

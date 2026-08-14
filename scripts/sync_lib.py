@@ -71,9 +71,6 @@ def fetch_upstream_file(upstream_key: str, module_name: str, rel_path: Path) -> 
     return None
 
 
-
-
-
 def get_local_extractors(repo_root: Path) -> Dict[str, Path]:
     """Returns dictionary of extractor module name -> module directory Path."""
     lib_dir = repo_root / "lib"

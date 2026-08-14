@@ -1126,8 +1126,8 @@ class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
 
 @Serializable
 data class GraphQLRequest(
-    val query: String,
-    val variables: GraphQLVariables? = null,
+    val query: String? = null,
+    val variables: GraphQLVariables? = null
 )
 
 @Serializable
@@ -1152,18 +1152,18 @@ data class AnimeCatalogFilterInput(
 
 @Serializable
 data class AnimeSortInput(
-    val field: String,
-    val direction: String,
+    val field: String? = null,
+    val direction: String? = null
 )
 
 @Serializable
 data class CatalogAnimeResponse(
-    val data: CatalogAnimeData,
+    val data: CatalogAnimeData? = null
 )
 
 @Serializable
 data class CatalogAnimeData(
-    val catalogAnime: CatalogAnimeContent,
+    val catalogAnime: CatalogAnimeContent? = null
 )
 
 @Serializable
@@ -1200,12 +1200,12 @@ data class AnimeCatalogItem(
 
 @Serializable
 data class GetAnimeResponse(
-    val data: GetAnimeData,
+    val data: GetAnimeData? = null
 )
 
 @Serializable
 data class GetAnimeData(
-    val anime: AnimeDetailsItem?,
+    val anime: AnimeDetailsItem? = null
 )
 
 @Serializable
@@ -1228,12 +1228,12 @@ data class AnimeDetailsItem(
 
 @Serializable
 data class RestEpisode(
-    val number: Int,
+    val number: Int? = null,
     val titles: EpisodeTitles? = null,
     val img: String? = null,
     val isFiller: Boolean? = null,
     val hasSub: Boolean? = null,
-    val hasDub: Boolean? = null,
+    val hasDub: Boolean? = null
 )
 
 @Serializable
@@ -1249,11 +1249,11 @@ data class ServersResponse(
 
 @Serializable
 data class ProviderItem(
-    val id: String,
+    val id: String? = null,
     val default: Boolean? = null,
     val tip: String? = null,
     val type: String? = null,
-    val url: String? = null,
+    val url: String? = null
 )
 
 @Serializable
@@ -1265,19 +1265,19 @@ data class SourcesResponse(
 
 @Serializable
 data class SourceItem(
-    val url: String,
+    val url: String? = null,
     val quality: String? = null,
-    val type: String? = null,
+    val type: String? = null
 )
 
 @Serializable
 data class TrackItem(
     val id: String? = null,
-    val url: String,
+    val url: String? = null,
     val lang: String? = null,
     val label: String? = null,
     val kind: String? = null,
-    val default: Boolean? = null,
+    val default: Boolean? = null
 )
 
 private class LocalProxyServer(

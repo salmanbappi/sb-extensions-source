@@ -4,23 +4,23 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class CastleApiResponse(
-    val code: Int,
-    val msg: String,
-    val data: String? = null,
+    val code: Int? = null,
+    val msg: String? = null,
+    val data: String? = null
 )
 
 @Serializable
 data class SecurityKeyResponse(
-    val code: Int,
-    val msg: String,
-    val data: String,
+    val code: Int? = null,
+    val msg: String? = null,
+    val data: String? = null
 )
 
 @Serializable
 data class DecryptedResponse(
-    val code: Int,
-    val msg: String,
-    val data: HomePageData,
+    val code: Int? = null,
+    val msg: String? = null,
+    val data: HomePageData? = null
 )
 
 @Serializable
@@ -70,9 +70,9 @@ data class ContentItem(
 
 @Serializable
 data class MovieDetailsResponse(
-    val code: Int,
-    val msg: String,
-    val data: MovieDetails,
+    val code: Int? = null,
+    val msg: String? = null,
+    val data: MovieDetails? = null
 )
 
 @Serializable
@@ -172,9 +172,9 @@ data class Titbit(
 
 @Serializable
 data class SearchApiResponse(
-    val code: Int,
-    val msg: String,
-    val data: SearchData,
+    val code: Int? = null,
+    val msg: String? = null,
+    val data: SearchData? = null
 )
 
 @Serializable
@@ -209,9 +209,9 @@ data class SearchResultItem(
 
 @Serializable
 data class VideoResponse(
-    val code: Int,
-    val msg: String,
-    val data: VideoData,
+    val code: Int? = null,
+    val msg: String? = null,
+    val data: VideoData? = null
 )
 
 @Serializable
