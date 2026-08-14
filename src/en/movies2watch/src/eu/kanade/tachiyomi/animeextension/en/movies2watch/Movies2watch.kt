@@ -23,11 +23,11 @@ import extensions.utils.asJsoup
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Response
+import kotlin.time.Duration.Companion.seconds
 
 class Movies2watch : Source() {
 
