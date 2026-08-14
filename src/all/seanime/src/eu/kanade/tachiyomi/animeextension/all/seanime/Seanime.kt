@@ -629,7 +629,7 @@ class Seanime :
             val response = client.newCall(GET("$baseUrl/api/v1/library/anime-entry/$mediaId", headers)).await()
             if (response.isSuccessful) {
                 val entryDto = response.parseAs<AnimeEntryResponseDto>(json)
-                val media = entryDto.data.media
+                val media = entryDto.data?.media ?: return anime
                 return SAnime.create().apply {
                     val animeTitle = media.title?.userPreferred
                         ?: media.title?.english
@@ -638,7 +638,7 @@ class Seanime :
                     title = animeTitle
                     thumbnail_url = media.coverImage?.large ?: media.coverImage?.medium
                     description = media.description
-                    genre = media.genres.joinToString(", ")
+                    genre = media.genres?.joinToString(", ") ?: ""
                     status = when (media.status?.uppercase()) {
                         "FINISHED" -> SAnime.COMPLETED
                         "RELEASING" -> SAnime.ONGOING
@@ -694,7 +694,7 @@ class Seanime :
             val preferredProvider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)!!
             val selectedProviders = if (preferredProvider.isNotBlank()) {
                 providers.filter { provider ->
-                    provider.id.contains(preferredProvider, ignoreCase = true) ||
+                    provider.id?.contains(preferredProvider, ignoreCase = true) == true ||
                         (provider.name?.contains(preferredProvider, ignoreCase = true) == true)
                 }.ifEmpty { providers }
             } else {
@@ -715,7 +715,7 @@ class Seanime :
                             val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-list", headers, body)).await()
                             if (response.isSuccessful) {
                                 val epListResponse = response.parseAs<OnlineEpisodeListResponseDto>(json)
-                                provider to epListResponse.data.episodes
+                                provider to (epListResponse.data?.episodes ?: emptyList())
                             } else {
                                 response.close()
                                 null
@@ -743,7 +743,7 @@ class Seanime :
                                 val response = client.newCall(POST("$baseUrl/api/v1/onlinestream/episode-list", headers, body)).await()
                                 if (response.isSuccessful) {
                                     val epListResponse = response.parseAs<OnlineEpisodeListResponseDto>(json)
-                                    provider to epListResponse.data.episodes
+                                    provider to (epListResponse.data?.episodes ?: emptyList())
                                 } else {
                                     response.close()
                                     null
@@ -787,7 +787,7 @@ class Seanime :
                         epName
                     }
 
-                    episode_number = ep.number.toFloat()
+                    episode_number = (ep.number ?: 0).toFloat()
                     if (showEpisodeMetadata) {
                         summary = ep.description
                         preview_url = ep.image
