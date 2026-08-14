@@ -13,10 +13,15 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Locale
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.parallelCatchingFlatMap
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -29,11 +34,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.jsoup.Jsoup
-import java.net.URLDecoder
-import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Locale
-import kotlin.time.Duration.Companion.seconds
 
 class ZinkMovies : Source() {
 
@@ -87,7 +87,6 @@ class ZinkMovies : Source() {
                         categoryPath = filter.toUriPart()
                     }
                 }
-
                 else -> {}
             }
         }
@@ -128,11 +127,13 @@ class ZinkMovies : Source() {
         return AnimesPage(animeList, hasNext)
     }
 
-    private fun cleanAnimeTitle(title: String): String = title
-        .replace(Regex("""\s*\{[^}]*\}"""), "")
-        .replace(Regex("""\s*(Dual Audio|Multi Audio|Hindi Dubbed|Hindi Movie|CR WEB-DL|WEB-DL|BluRay|HDTC|ESubs|MSubs|NF).*""", RegexOption.IGNORE_CASE), "")
-        .trim()
-        .ifEmpty { title.trim() }
+    private fun cleanAnimeTitle(title: String): String {
+        return title
+            .replace(Regex("""\s*\{[^}]*\}"""), "")
+            .replace(Regex("""\s*(Dual Audio|Multi Audio|Hindi Dubbed|Hindi Movie|CR WEB-DL|WEB-DL|BluRay|HDTC|ESubs|MSubs|NF).*""", RegexOption.IGNORE_CASE), "")
+            .trim()
+            .ifEmpty { title.trim() }
+    }
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
@@ -176,88 +177,72 @@ class ZinkMovies : Source() {
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val doc = client.newCall(GET("$baseUrl${anime.url}", headers)).execute().asJsoup()
 
-        // 1. Check for LinkStore batch buttons (TV Shows)
+        // 1. Check for LinkStore batch buttons (TV Series)
         val linkStoreButtons = doc.select("a[href*=linkstore.zinkcloud.net], a[href*=linkstore.]")
 
         if (linkStoreButtons.isNotEmpty()) {
-            val totalSeasons = linkStoreButtons.map { btn ->
-                Regex("""(?i)Season\s*0*(\d+)""").find(btn.text())?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            }.distinct().size
-
-            val epDataMap = mutableMapOf<Pair<Int, Int>, MutableList<Pair<String, String>>>()
-
-            linkStoreButtons.parallelCatchingFlatMap { btn ->
-                val linkStoreUrl = btn.attr("href")
-                val btnText = btn.text().trim()
-                val seasonNum = Regex("""(?i)Season\s*0*(\d+)""").find(btnText)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-                val qualityLabel = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(btnText)?.groupValues?.get(1)?.uppercase() ?: "HD"
-
-                val lsDoc = client.newCall(GET(linkStoreUrl, headers)).execute().asJsoup()
-                lsDoc.select("a[href*=/file/]").forEach { epLink ->
-                    val epHref = epLink.attr("href")
-                    val epText = epLink.text().trim()
-                    if (epHref.isBlank() || epText.contains("Zip", ignoreCase = true)) return@forEach
-
-                    val epNum = Regex("""(?i)EPISODE\s*-\s*0*(\d+)""").find(epText)?.groupValues?.get(1)?.toIntOrNull()
-                        ?: Regex("""(?i)E0*(\d+)""").find(epText)?.groupValues?.get(1)?.toIntOrNull()
-                        ?: 1
-
-                    synchronized(epDataMap) {
-                        val list = epDataMap.getOrPut(Pair(seasonNum, epNum)) { mutableListOf() }
-                        if (list.none { it.second == epHref }) {
-                            list.add(Pair(qualityLabel, epHref))
-                        }
-                    }
+            // Deduplicate to fetch 1 linkstore page per unique season
+            val seasonBatchMap = mutableMapOf<Int, String>()
+            linkStoreButtons.forEach { btn ->
+                val seasonNum = Regex("""(?i)Season\s*0*(\d+)""").find(btn.text())?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                val href = btn.attr("href")
+                if (href.isNotBlank() && seasonNum !in seasonBatchMap) {
+                    seasonBatchMap[seasonNum] = href
                 }
-                emptyList<Unit>()
             }
 
-            if (epDataMap.isNotEmpty()) {
-                return epDataMap.entries.sortedWith(
-                    compareBy<Map.Entry<Pair<Int, Int>, List<Pair<String, String>>>> { it.key.first }
-                        .thenBy { it.key.second },
-                ).map { (key, qualities) ->
-                    val (seasonNum, epNum) = key
-                    val epName = if (totalSeasons > 1) {
-                        "Season $seasonNum - Episode $epNum"
-                    } else {
-                        "Episode $epNum"
-                    }
-                    val combinedUrl = qualities.joinToString(";;") { "${it.first}|${it.second}" }
+            val totalSeasons = seasonBatchMap.size
+            val episodes = mutableListOf<SEpisode>()
 
-                    SEpisode.create().apply {
-                        name = epName
-                        url = combinedUrl
-                        episode_number = epNum + (seasonNum - 1) * 1000f
+            seasonBatchMap.entries.forEach { (seasonNum, linkStoreUrl) ->
+                runCatching {
+                    val lsDoc = client.newCall(GET(linkStoreUrl, headers)).execute().asJsoup()
+                    val seasonEpNums = mutableSetOf<Int>()
+
+                    lsDoc.select("a[href*=/file/]").forEach { epLink ->
+                        val epText = epLink.text().trim()
+                        if (epText.contains("Zip", ignoreCase = true)) return@forEach
+
+                        val epNum = Regex("""(?i)EPISODE\s*-\s*0*(\d+)""").find(epText)?.groupValues?.get(1)?.toIntOrNull()
+                            ?: Regex("""(?i)E0*(\d+)""").find(epText)?.groupValues?.get(1)?.toIntOrNull()
+                            ?: return@forEach
+
+                        seasonEpNums.add(epNum)
+                    }
+
+                    seasonEpNums.sorted().forEach { epNum ->
+                        val epName = if (totalSeasons > 1) {
+                            "Season $seasonNum - Episode $epNum"
+                        } else {
+                            "Episode $epNum"
+                        }
+
+                        episodes.add(
+                            SEpisode.create().apply {
+                                name = epName
+                                setUrlWithoutDomain("${anime.url}#season=$seasonNum&ep=$epNum")
+                                episode_number = (seasonNum * 1000f) + epNum
+                            },
+                        )
                     }
                 }
+            }
+
+            if (episodes.isNotEmpty()) {
+                return episodes
             }
         }
 
-        // 2. Direct File Buttons (Movies)
+        // 2. Direct File Buttons (Single Movie)
         val fileButtons = doc.select("a[href*=/file/], div.movie-button-container a, a.movie-simple-button")
         if (fileButtons.isNotEmpty()) {
-            val movieQualities = mutableListOf<Pair<String, String>>()
-            fileButtons.forEach { btn ->
-                val fileHref = btn.attr("href")
-                if (fileHref.isBlank() || !fileHref.contains("/file/")) return@forEach
-                val btnText = btn.text().trim()
-                val quality = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(btnText)?.groupValues?.get(1)?.uppercase() ?: "HD"
-                if (movieQualities.none { it.second == fileHref }) {
-                    movieQualities.add(Pair(quality, fileHref))
-                }
-            }
-
-            if (movieQualities.isNotEmpty()) {
-                val combinedUrl = movieQualities.joinToString(";;") { "${it.first}|${it.second}" }
-                return listOf(
-                    SEpisode.create().apply {
-                        name = "Full Movie"
-                        url = combinedUrl
-                        episode_number = 1f
-                    },
-                )
-            }
+            return listOf(
+                SEpisode.create().apply {
+                    name = "Full Movie"
+                    setUrlWithoutDomain("${anime.url}#movie")
+                    episode_number = 1f
+                },
+            )
         }
 
         return emptyList()
@@ -268,16 +253,55 @@ class ZinkMovies : Source() {
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
 
-        val qualityFiles = if (episode.url.contains(";;")) {
-            episode.url.split(";;").mapNotNull { item ->
-                val parts = item.split("|")
-                if (parts.size >= 2) Pair(parts[0], parts[1]) else null
+        val rawUrl = if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}"
+        val baseAnimePath = rawUrl.substringBefore("#")
+        val isMovie = episode.url.contains("#movie") || !episode.url.contains("ep=")
+        val targetSeason = Regex("""season=(\d+)""").find(episode.url)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+        val targetEp = Regex("""ep=(\d+)""").find(episode.url)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+
+        val doc = client.newCall(GET(baseAnimePath, headers)).execute().asJsoup()
+        val qualityFiles = mutableListOf<Pair<String, String>>()
+
+        if (isMovie) {
+            // Collect all movie quality buttons
+            doc.select("a[href*=/file/], div.movie-button-container a, a.movie-simple-button").forEach { btn ->
+                val href = btn.attr("abs:href").ifEmpty { btn.attr("href") }
+                if (href.isNotBlank() && href.contains("/file/") && qualityFiles.none { it.second == href }) {
+                    val quality = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(btn.text())?.groupValues?.get(1)?.uppercase() ?: "HD"
+                    qualityFiles.add(Pair(quality, href))
+                }
             }
-        } else if (episode.url.contains("|")) {
-            val parts = episode.url.split("|")
-            listOf(Pair(parts[0], parts[1]))
         } else {
-            listOf(Pair("HD", episode.url))
+            // TV series: find all linkstore batches for this season
+            val linkStoreButtons = doc.select("a[href*=linkstore.zinkcloud.net], a[href*=linkstore.]")
+            val seasonBatches = linkStoreButtons.filter { btn ->
+                val sNum = Regex("""(?i)Season\s*0*(\d+)""").find(btn.text())?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                sNum == targetSeason
+            }.ifEmpty { linkStoreButtons }
+
+            seasonBatches.forEach { btn ->
+                val href = btn.attr("href")
+                val btnText = btn.text().trim()
+                val quality = Regex("""(?i)(480p|720p|1080p|4k|2160p)""").find(btnText)?.groupValues?.get(1)?.uppercase() ?: "HD"
+
+                runCatching {
+                    val lsDoc = client.newCall(GET(href, headers)).execute().asJsoup()
+                    lsDoc.select("a[href*=/file/]").forEach { epLink ->
+                        val epText = epLink.text().trim()
+                        if (epText.contains("Zip", ignoreCase = true)) return@forEach
+
+                        val epNum = Regex("""(?i)EPISODE\s*-\s*0*(\d+)""").find(epText)?.groupValues?.get(1)?.toIntOrNull()
+                            ?: Regex("""(?i)E0*(\d+)""").find(epText)?.groupValues?.get(1)?.toIntOrNull()
+
+                        if (epNum == targetEp) {
+                            val fileHref = epLink.attr("abs:href").ifEmpty { epLink.attr("href") }
+                            if (fileHref.isNotBlank() && qualityFiles.none { it.second == fileHref }) {
+                                qualityFiles.add(Pair(quality, fileHref))
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Map: ServerName -> List of "Quality|StreamOrPageUrl"
@@ -390,15 +414,12 @@ class ZinkMovies : Source() {
                     label.contains("hubcloud") || href.contains("hubcloud") -> {
                         result.putIfAbsent("HubCloud", href)
                     }
-
                     label.contains("gdflix") || href.contains("gdlink") -> {
                         result.putIfAbsent("GDFlix", href)
                     }
-
                     label.contains("filepress") || href.contains("filebee") -> {
                         result.putIfAbsent("FilePress", href)
                     }
-
                     label.contains("gcloud") || href.contains("gdshare") -> {
                         result.putIfAbsent("GCloud", href)
                     }
@@ -430,11 +451,9 @@ class ZinkMovies : Source() {
                         ),
                     )
                 }
-
                 "HubCloud" -> {
                     resolveHubCloud(serverUrl, quality)
                 }
-
                 else -> {
                     listOf(
                         Video(
@@ -491,7 +510,6 @@ class ZinkMovies : Source() {
                                 )
                             }
                         }
-
                         label.contains("10gbps") || label.contains("10 gbps") -> {
                             try {
                                 val gpdlResp = client.newCall(GET(href, headers)).execute()
@@ -524,7 +542,6 @@ class ZinkMovies : Source() {
                                 // ignore
                             }
                         }
-
                         label.contains("pixeldrain") || label.contains("pixel") -> {
                             val pxlMatch = Regex("""var\s+pxl\s*=\s*"([^"]+)"""").find(doc2.html())
                             val realLink = pxlMatch?.groupValues?.get(1) ?: href
@@ -549,27 +566,31 @@ class ZinkMovies : Source() {
         return list
     }
 
-    private fun getRedirectUrl(url: String, referer: String): String = try {
-        val req = Request.Builder()
-            .url(url)
-            .head()
-            .headers(headers.newBuilder().set("Referer", referer).build())
-            .build()
-        val resp = client.newCall(req).execute()
-        val finalUrl = resp.request.url.toString()
-        resp.close()
-        finalUrl
-    } catch (e: Exception) {
-        url
+    private fun getRedirectUrl(url: String, referer: String): String {
+        return try {
+            val req = Request.Builder()
+                .url(url)
+                .head()
+                .headers(headers.newBuilder().set("Referer", referer).build())
+                .build()
+            val resp = client.newCall(req).execute()
+            val finalUrl = resp.request.url.toString()
+            resp.close()
+            finalUrl
+        } catch (e: Exception) {
+            url
+        }
     }
 
-    private fun parseResolution(quality: String): Int = when {
-        quality.contains("2160", ignoreCase = true) || quality.contains("4k", ignoreCase = true) -> 2160
-        quality.contains("1080", ignoreCase = true) -> 1080
-        quality.contains("720", ignoreCase = true) -> 720
-        quality.contains("480", ignoreCase = true) -> 480
-        quality.contains("360", ignoreCase = true) -> 360
-        else -> 0
+    private fun parseResolution(quality: String): Int {
+        return when {
+            quality.contains("2160", ignoreCase = true) || quality.contains("4k", ignoreCase = true) -> 2160
+            quality.contains("1080", ignoreCase = true) -> 1080
+            quality.contains("720", ignoreCase = true) -> 720
+            quality.contains("480", ignoreCase = true) -> 480
+            quality.contains("360", ignoreCase = true) -> 360
+            else -> 0
+        }
     }
 
     // ============================ Preferences & Sorting ===================
