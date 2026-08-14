@@ -743,6 +743,24 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                             file_warnings.append(f"DTO null-safety violation in {cls_name}.{prop} — missing default fallback (e.g. `? = null`)")
                             break
 
+            # 12. Dynamic / Ephemeral tokens in SEpisode.url
+            if "SEpisode" in content and "setUrlWithoutDomain" in content:
+                if re.search(r'setUrlWithoutDomain\([^)]*(?:\?token=|\?session=|\?sig=|\?expires=)', content):
+                    file_warnings.append("Ephemeral / dynamic token embedded in SEpisode.url — use stable permanent anchor URL (e.g. ${anime.url}#season=$s&ep=$e)")
+
+            # 13. Non-zero base episode numbering (* 1000 offset anti-pattern)
+            if re.search(r'\(\s*(?:globalSeason|seasonNum|seasonVal|season\.season_number|s)\s*\*\s*1000', content):
+                file_warnings.append("Episode numbering offset bug (season * 1000) — triggers false 'Missing 1000 items' badge in AniZen. Use epNum.toFloat() or ((season - 1) * 100 + ep).toFloat()")
+
+            # 14. Missing initialized = true in getAnimeDetails
+            if "getAnimeDetails" in content and "initialized = true" not in content and "abstract class" not in content and "interface " not in content:
+                file_warnings.append("Missing 'initialized = true' inside getAnimeDetails — causes continuous detail re-fetch loops in Aniyomi v16")
+
+            # 15. Preference keys declared outside companion object
+            if re.search(r'private\s+const\s+val\s+PREF_', content):
+                if "companion object" not in content:
+                    file_warnings.append("Preference key constants declared outside companion object — should be inside companion object")
+
             if file_warnings:
                 for w in file_warnings:
                     print(f"  ⚠️  {rel_path}: {w}")
@@ -980,6 +998,10 @@ def main():
             "audit-all": {
                 "script": None,
                 "desc": "Run full repository health audit (validation, linting, cache cleaning, and doc catalog sync)."
+            },
+            "test-pipeline": {
+                "script": "test_pipeline.py",
+                "desc": "Run full 5-stage automated scraper verification (Popular -> Details -> Episodes -> Hosters -> Video Streams)."
             }
         }
 
@@ -1149,6 +1171,34 @@ def main():
                 sys.exit(1)
             lang, name = resolve_extension_target(repo_root, bump_args.target, bump_args.lang, bump_args.name)
             success = bump_version(repo_root, lang, name)
+            sys.exit(0 if success else 1)
+
+        if args.command == "test-pipeline":
+            pipe_parser = argparse.ArgumentParser(prog="cli.py test-pipeline")
+            pipe_parser.add_argument("target", help="Target extension name (e.g. 'zinkmovies' or 'vegamovies') or base URL")
+            pipe_parser.add_argument("--query", "-q", help="Optional search query to test search flow")
+            pipe_args = pipe_parser.parse_args(args.args)
+            from scripts.test_pipeline import PipelineTester
+            target = pipe_args.target
+            if target.startswith("http://") or target.startswith("https://"):
+                base_url = target
+            else:
+                found_base_url = None
+                for kt in repo_root.rglob("*.kt"):
+                    if kt.parent.name == target or target in kt.name.lower():
+                        content = kt.read_text(encoding="utf-8", errors="ignore")
+                        m = re.search(r'PREF_BASE_URL_DEFAULT\s*=\s*["\']([^"\']+)["\']', content)
+                        if not m:
+                            m = re.search(r'override\s+val\s+baseUrl\s*=\s*["\']([^"\']+)["\']', content)
+                        if m:
+                            found_base_url = m.group(1)
+                            break
+                if not found_base_url:
+                    print(f"❌ Could not resolve base URL for module: {target}")
+                    sys.exit(1)
+                base_url = found_base_url
+            tester = PipelineTester(base_url)
+            success = tester.run(query=pipe_args.query)
             sys.exit(0 if success else 1)
 
         if args.command == "info":
