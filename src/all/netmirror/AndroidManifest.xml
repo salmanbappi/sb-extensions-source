@@ -20,5 +20,8 @@
         <meta-data
             android:name="tachiyomi.animeextension.author"
             android:value="${author}" />
+        <meta-data
+            android:name="tachiyomi.animeextension.versionId"
+            android:value="2" />
     </application>
 </manifest>

@@ -283,7 +283,7 @@ class CastleTv : Source() {
         val searchData = searchResponse.data
 
         val sdf = java.text.SimpleDateFormat("yyyy", java.util.Locale.US)
-        var searchRows = searchData.rows ?: emptyList()
+        var searchRows = searchData?.rows ?: emptyList()
 
         if (language != "All") {
             searchRows = searchRows.filter { item ->
@@ -351,7 +351,7 @@ class CastleTv : Source() {
 
         val decryptedJson = decryptData(encryptedData, securityKey) ?: return anime
         val detailsResponse = json.decodeFromString<MovieDetailsResponse>(decryptedJson)
-        val details = detailsResponse.data
+        val details = detailsResponse.data ?: return anime
 
         val animeTitle = anime.title
         val animeThumbnail = anime.thumbnail_url
@@ -398,7 +398,7 @@ class CastleTv : Source() {
                         val seasonDecrypted = decryptData(seasonEncrypted, securityKey)
                         if (seasonDecrypted != null) {
                             val seasonDetails = json.decodeFromString<MovieDetailsResponse>(seasonDecrypted).data
-                            seasonDetails.episodes?.map { ep ->
+                            seasonDetails?.episodes?.map { ep ->
                                 val epName = "S$seasonNumber E${ep.number ?: 0} - ${ep.title ?: ""}"
                                 SEpisode.create().apply {
                                     name = epName
