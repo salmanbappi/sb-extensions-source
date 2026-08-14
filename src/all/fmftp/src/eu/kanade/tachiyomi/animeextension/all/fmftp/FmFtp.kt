@@ -53,7 +53,7 @@ class FmFtp : Source() {
 
             return try {
                 val data = json.decodeFromString<List<FmFtpContent>>(bodyString)
-                val animes = data.sortedByDescending { diceCoefficient(it.title.lowercase(), sanitizedQuery.lowercase()) }
+                val animes = data.sortedByDescending { diceCoefficient((it.title ?: "").lowercase(), sanitizedQuery.lowercase()) }
                     .map { it.toSAnime() }
                 AnimesPage(animes, false)
             } catch (e: Exception) {
@@ -99,7 +99,7 @@ class FmFtp : Source() {
     private fun FmFtpContent.toSAnime(): SAnime = SAnime.create().apply {
         val type = Library?.type ?: "MOVIE"
         url = "/watch?type=$type&id=$id"
-        title = this@toSAnime.title
+        title = this@toSAnime.title.orEmpty()
         thumbnail_url = if (poster_path != null) "https://image.tmdb.org/t/p/w500$poster_path" else null
         genre = this@toSAnime.genre
         description = overview
