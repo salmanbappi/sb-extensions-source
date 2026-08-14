@@ -18,15 +18,10 @@ import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
-import java.net.URLDecoder
-import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Locale
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.parallelCatchingFlatMap
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -39,6 +34,11 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.jsoup.Jsoup
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
 
 class ZinkMovies : Source() {
 
@@ -99,6 +99,7 @@ class ZinkMovies : Source() {
                         categoryPath = filter.toUriPart()
                     }
                 }
+
                 else -> {}
             }
         }
@@ -139,13 +140,11 @@ class ZinkMovies : Source() {
         return AnimesPage(animeList, hasNext)
     }
 
-    private fun cleanAnimeTitle(title: String): String {
-        return title
-            .replace(Regex("""\s*\{[^}]*\}"""), "")
-            .replace(Regex("""\s*(Dual Audio|Multi Audio|Hindi Dubbed|Hindi Movie|CR WEB-DL|WEB-DL|BluRay|HDTC|ESubs|MSubs|NF).*""", RegexOption.IGNORE_CASE), "")
-            .trim()
-            .ifEmpty { title.trim() }
-    }
+    private fun cleanAnimeTitle(title: String): String = title
+        .replace(Regex("""\s*\{[^}]*\}"""), "")
+        .replace(Regex("""\s*(Dual Audio|Multi Audio|Hindi Dubbed|Hindi Movie|CR WEB-DL|WEB-DL|BluRay|HDTC|ESubs|MSubs|NF).*""", RegexOption.IGNORE_CASE), "")
+        .trim()
+        .ifEmpty { title.trim() }
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
@@ -328,9 +327,11 @@ class ZinkMovies : Source() {
                                     ),
                                 )
                             }
+
                             "hubcloud" -> {
                                 videoList.addAll(resolveHubCloud(resultUrl))
                             }
+
                             else -> {
                                 if (resultUrl.endsWith(".mp4") || resultUrl.endsWith(".mkv") || resultUrl.contains(".m3u8")) {
                                     videoList.add(
@@ -360,9 +361,11 @@ class ZinkMovies : Source() {
                     linkHref.contains("hubcloud") -> {
                         videoList.addAll(resolveHubCloud(linkHref))
                     }
+
                     linkHref.contains("filepress") || linkHref.contains("filebee") -> {
                         // FilePress mirror
                     }
+
                     linkHref.endsWith(".mp4") || linkHref.endsWith(".mkv") || linkHref.contains(".m3u8") -> {
                         videoList.add(
                             Video(
@@ -419,6 +422,7 @@ class ZinkMovies : Source() {
                                 )
                             }
                         }
+
                         label.contains("10gbps") || label.contains("10 gbps") -> {
                             try {
                                 val gpdlResp = client.newCall(GET(href, headers)).execute()
@@ -449,6 +453,7 @@ class ZinkMovies : Source() {
                                 // ignore
                             }
                         }
+
                         label.contains("pixeldrain") || label.contains("pixel") -> {
                             val pxlMatch = Regex("""var\s+pxl\s*=\s*"([^"]+)"""").find(doc2.html())
                             val realLink = pxlMatch?.groupValues?.get(1) ?: href
@@ -472,20 +477,18 @@ class ZinkMovies : Source() {
         return list
     }
 
-    private fun getRedirectUrl(url: String, referer: String): String {
-        return try {
-            val req = Request.Builder()
-                .url(url)
-                .head()
-                .headers(headers.newBuilder().set("Referer", referer).build())
-                .build()
-            val resp = client.newCall(req).execute()
-            val finalUrl = resp.request.url.toString()
-            resp.close()
-            finalUrl
-        } catch (e: Exception) {
-            url
-        }
+    private fun getRedirectUrl(url: String, referer: String): String = try {
+        val req = Request.Builder()
+            .url(url)
+            .head()
+            .headers(headers.newBuilder().set("Referer", referer).build())
+            .build()
+        val resp = client.newCall(req).execute()
+        val finalUrl = resp.request.url.toString()
+        resp.close()
+        finalUrl
+    } catch (e: Exception) {
+        url
     }
 
     // ============================ Preferences & Sorting ===================
