@@ -383,7 +383,7 @@ class Nagordola : Source() {
 data class OMDbResponse(
     val Response: String? = null,
     val Poster: String? = null,
-    val Error: String? = null
+    val Error: String? = null,
 )
 
 @Serializable
@@ -400,7 +400,7 @@ data class TMDbResult(
 data class AListResponse<T>(
     val code: Int? = null,
     val message: String? = null,
-    val data: T? = null
+    val data: T? = null,
 )
 
 @Serializable
@@ -408,7 +408,7 @@ data class AListFile(
     val name: String? = null,
     val size: Long? = null,
     val is_dir: Boolean? = null,
-    val thumb: String = ""
+    val thumb: String = "",
 )
 
 @Serializable
@@ -418,7 +418,7 @@ data class AListListResponse(val content: List<AListFile>? = emptyList(), val to
 data class AListSearchFile(
     val parent: String? = null,
     val name: String? = null,
-    val is_dir: Boolean? = null
+    val is_dir: Boolean? = null,
 )
 
 @Serializable
@@ -426,5 +426,5 @@ data class AListSearchResponse(val content: List<AListSearchFile>? = emptyList()
 
 @Serializable
 data class AListGetFile(
-    val raw_url: String? = null
+    val raw_url: String? = null,
 )

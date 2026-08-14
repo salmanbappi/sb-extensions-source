@@ -671,7 +671,7 @@ class FtpBd(
 data class OMDbResponse(
     val Response: String? = null,
     val Poster: String? = null,
-    val Error: String? = null
+    val Error: String? = null,
 )
 
 @Serializable

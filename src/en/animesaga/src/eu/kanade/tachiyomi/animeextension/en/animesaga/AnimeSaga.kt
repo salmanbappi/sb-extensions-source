@@ -1072,7 +1072,7 @@ class LocalProxy(private val client: OkHttpClient) {
 @Serializable
 data class GraphQLRequest(
     val query: String? = null,
-    val variables: GraphQLVariables? = null
+    val variables: GraphQLVariables? = null,
 )
 
 @Serializable
@@ -1090,7 +1090,7 @@ data class GraphQLVariables(
 
 @Serializable
 data class AnilistGraphQLResponse(
-    val data: AnilistData? = null
+    val data: AnilistData? = null,
 )
 
 @Serializable
@@ -1107,7 +1107,7 @@ data class AnilistPage(
 
 @Serializable
 data class AnilistPageInfo(
-    val hasNextPage: Boolean? = null
+    val hasNextPage: Boolean? = null,
 )
 
 @Serializable
@@ -1147,7 +1147,7 @@ data class AnilistStudios(
 
 @Serializable
 data class AnilistStudioNode(
-    val name: String? = null
+    val name: String? = null,
 )
 
 @Serializable
@@ -1172,7 +1172,7 @@ data class EpisodeItem(
     val url: String? = null,
     val description: String? = null,
     val img: String? = null,
-    val airDate: String? = null
+    val airDate: String? = null,
 )
 
 @Serializable
@@ -1190,7 +1190,7 @@ data class TrackItem(
     val file: String? = null,
     val label: String? = null,
     val kind: String? = null,
-    val default: Boolean = false
+    val default: Boolean = false,
 )
 
 @Serializable
@@ -1216,5 +1216,5 @@ data class EpisodePayload(
     val title: String? = null,
     val romaji: String? = null,
     val anilistId: Int? = null,
-    val malId: Int? = null
+    val malId: Int? = null,
 )
