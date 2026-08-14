@@ -119,12 +119,18 @@ apply from: "$rootDir/common.gradle"
 
 def generate_android_manifest() -> str:
     return """<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
     <uses-feature android:name="tachiyomi.animeextension" />
+
     <application
-        android:label="${appName}"
+        android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:label="${appName}"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:allowBackup,android:icon,android:label">
+
         <meta-data
             android:name="tachiyomi.animeextension.class"
             android:value="${extClass}" />
@@ -140,6 +146,7 @@ def generate_android_manifest() -> str:
     </application>
 </manifest>
 """
+
 
 
 def generate_filters_kotlin_source(lang: str, pkg_name: str) -> str:

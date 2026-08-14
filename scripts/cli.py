@@ -482,6 +482,12 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                         issues.append("AndroidManifest.xml missing meta-data 'tachiyomi.animeextension.class'")
                     if meta_tags.get('tachiyomi.animeextension.versionId') != '2':
                         issues.append("AndroidManifest.xml 'tachiyomi.animeextension.versionId' must be '2' (v16 engine)")
+
+                    app_elem = root.find('application')
+                    if app_elem is not None and app_elem.attrib.get('{http://schemas.android.com/apk/res/android}icon'):
+                        tools_replace = app_elem.attrib.get('{http://schemas.android.com/tools}replace', '')
+                        if 'android:icon' not in tools_replace:
+                            issues.append("AndroidManifest.xml <application> defines android:icon but lacks tools:replace=\"...android:icon...\" (will fail Gradle manifest merge with :core)")
                 except Exception as e:
                     issues.append(f"Malformed AndroidManifest.xml: {e}")
 
