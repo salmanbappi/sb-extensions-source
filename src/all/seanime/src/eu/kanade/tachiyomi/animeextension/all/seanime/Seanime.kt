@@ -704,7 +704,7 @@ class Seanime :
             // 2. Concurrently fetch episode lists from selected providers
             var episodesLists = withContext(Dispatchers.IO) {
                 selectedProviders.map { provider ->
-                    async<Pair<OnlineStreamProviderDto, List<OnlineEpisodeDto>>?> {
+                    async<Pair<SeanimeExtensionDto, List<OnlineEpisodeDto>>?> {
                         try {
                             val body = buildJsonObject {
                                 put("mediaId", mediaId)
@@ -732,7 +732,7 @@ class Seanime :
                 val remainingProviders = providers - selectedProviders.toSet()
                 val fallbackLists = withContext(Dispatchers.IO) {
                     remainingProviders.map { provider ->
-                        async<Pair<OnlineStreamProviderDto, List<OnlineEpisodeDto>>?> {
+                        async<Pair<SeanimeExtensionDto, List<OnlineEpisodeDto>>?> {
                             try {
                                 val body = buildJsonObject {
                                     put("mediaId", mediaId)
