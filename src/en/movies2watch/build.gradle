@@ -1,0 +1,18 @@
+ext {
+    extName = 'Movies2Watch'
+    extClass = '.Movies2watch'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:universal-extractor"))
+    implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:vidmoly-extractor"))
+    implementation(project(":lib:vidsrc-extractor"))
+    implementation(project(":lib:dood-extractor"))
+    implementation(project(":lib:streamtape-extractor"))
+    implementation(project(":lib:filemoon-extractor"))
+}

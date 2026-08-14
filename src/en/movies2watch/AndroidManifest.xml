@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="tachiyomi.animeextension" />
+    <application
+        android:label="${appName}"
+        android:icon="@drawable/ic_launcher"
+        android:usesCleartextTraffic="true">
+        <meta-data
+            android:name="tachiyomi.animeextension.class"
+            android:value="${extClass}" />
+        <meta-data
+            android:name="tachiyomi.animeextension.versionId"
+            android:value="2" />
+        <meta-data
+            android:name="tachiyomi.animeextension.nsfw"
+            android:value="${nsfw}" />
+        <meta-data
+            android:name="tachiyomi.animeextension.author"
+            android:value="${author}" />
+    </application>
+</manifest>
