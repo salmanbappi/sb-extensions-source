@@ -499,15 +499,19 @@ class {class_name} : Source() {{
     }}
 
     // ============================== Episodes ==============================
+    // Note: SEpisode.url MUST be permanent and deterministic (e.g., "${anime.url}#season=$s&ep=$e" or "${anime.url}#movie").
+    // Never embed dynamic tokens in SEpisode.url to avoid Tachiyomi/AniZen database invalidation cycles.
+    // Episode numbering: For Season 1, episode_number MUST start at 1.0f (never with a +1000 base offset).
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {{
         val doc = client.newCall(GET("$baseUrl${{anime.url}}", headers)).execute().asJsoup()
-        return doc.select("ul.episodes > li, div.episode-item, .episodes-list a").map {{ element ->
+        return doc.select("ul.episodes > li, div.episode-item, .episodes-list a").mapIndexed {{ idx, element ->
             SEpisode.create().apply {{
                 val link = element.selectFirst("a") ?: element
-                setUrlWithoutDomain(link.attr("href"))
-                name = element.selectFirst("span.name, a.title, .ep-title")?.text() ?: link.text()
+                val rawHref = link.attr("href").ifBlank {{ link.attr("data-href") }}
+                setUrlWithoutDomain(if (rawHref.isNotBlank()) rawHref else "${{anime.url}}#ep=${{idx + 1}}")
+                name = element.selectFirst("span.name, a.title, .ep-title")?.text() ?: link.text().ifBlank {{ "Episode ${{idx + 1}}" }}
                 episode_number = element.selectFirst("span.num")?.text()?.toFloatOrNull()
-                    ?: name.substringAfter("Episode ").substringBefore(" ").toFloatOrNull() ?: 1f
+                    ?: name.substringAfter("Episode ").substringBefore(" ").toFloatOrNull() ?: (idx + 1).toFloat()
 
                 val hasSub = element.selectFirst(".sub-badge, [data-sub='1']") != null
                 val hasDub = element.selectFirst(".dub-badge, [data-dub='1']") != null
@@ -515,7 +519,7 @@ class {class_name} : Source() {{
                     hasSub && hasDub -> "Sub / Dub"
                     hasDub -> "Dub"
                     hasSub -> "Sub"
-                    else -> "Sub"
+                    else -> null
                 }}
 
                 val dateStr = element.selectFirst("span.date, .ep-date")?.text() ?: ""
@@ -527,6 +531,9 @@ class {class_name} : Source() {{
     }}
 
     // ============================ Video Links =============================
+    // 2-Tier Model:
+    // 1. getHosterList(episode) returns List<Hoster> (Server Folders: "Fast Cloud", "HubCloud", "MegaCloud").
+    // 2. getVideoList(hoster) resolves and returns List<Video> (Qualities: 1080p, 720p, 480p) inside that folder.
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {{
         val doc = client.newCall(GET("$baseUrl${{episode.url}}", headers)).execute().asJsoup()
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
