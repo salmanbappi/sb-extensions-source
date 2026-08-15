@@ -205,6 +205,7 @@ data class MiruroResponse(
 data class MiruroProvider(
     val id: String? = null,
     val label: String? = null,
+    val hard: Boolean? = false,
     val source: String? = null,
     val tracks: List<MeguTrack>? = null,
 )
@@ -213,6 +214,7 @@ data class MiruroProvider(
 data class MiruroSource(
     val source: String? = null,
     val name: String? = null,
+    val hard: Boolean? = false,
     val tracks: List<MeguTrack>? = null,
 )
 

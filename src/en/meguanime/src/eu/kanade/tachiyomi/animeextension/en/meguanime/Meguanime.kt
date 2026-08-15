@@ -386,7 +386,6 @@ class Meguanime :
             .build()
 
         return audioLangs.parallelCatchingFlatMapBlocking { lang ->
-            val langTag = lang.uppercase()
             when (hosterType) {
                 "miruro" -> {
                     val url = "$baseUrl/api/miruro?al=$anilistId&ep=$epNum&lang=$lang&all=1"
@@ -402,11 +401,12 @@ class Meguanime :
                     val videoList = mutableListOf<Video>()
 
                     if (!data.source.isNullOrBlank()) {
+                        val mainTag = if (lang == "dub") "[DUB]" else if (subTracks.isNotEmpty()) "[Soft Sub]" else "[Hard Sub]"
                         videoList.addAll(
                             playlistUtils.extractFromHls(
                                 playlistUrl = data.source,
                                 referer = "$baseUrl/",
-                                videoNameGen = { qual -> "[$langTag] Miruro - $qual" },
+                                videoNameGen = { qual -> "$mainTag Miruro - $qual" },
                                 subtitleList = subTracks,
                             ),
                         )
@@ -417,11 +417,13 @@ class Meguanime :
                         val pLabel = provider.label ?: provider.id ?: "Provider"
                         if (!pSource.isNullOrBlank()) {
                             val pTracks = provider.tracks?.mapNotNull { it.toTrack() } ?: subTracks
+                            val isHard = provider.hard == true || (pTracks.isEmpty() && lang != "dub")
+                            val pTag = if (lang == "dub") "[DUB]" else if (isHard) "[Hard Sub]" else "[Soft Sub]"
                             videoList.addAll(
                                 playlistUtils.extractFromHls(
                                     playlistUrl = pSource,
                                     referer = "$baseUrl/",
-                                    videoNameGen = { qual -> "[$langTag] Miruro ($pLabel) - $qual" },
+                                    videoNameGen = { qual -> "$pTag Miruro ($pLabel) - $qual" },
                                     subtitleList = pTracks,
                                 ),
                             )
@@ -443,11 +445,12 @@ class Meguanime :
 
                     val masterUrl = data.source ?: return@parallelCatchingFlatMapBlocking emptyList()
                     val subTracks = data.tracks?.mapNotNull { it.toTrack() } ?: emptyList()
+                    val tag = if (lang == "dub") "[DUB]" else if (subTracks.isNotEmpty()) "[Soft Sub]" else "[Hard Sub]"
 
                     playlistUtils.extractFromHls(
                         playlistUrl = masterUrl,
                         referer = "$baseUrl/",
-                        videoNameGen = { qual -> "[$langTag] Megaplay - $qual" },
+                        videoNameGen = { qual -> "$tag Megaplay - $qual" },
                         subtitleList = subTracks,
                     )
                 }
@@ -463,6 +466,7 @@ class Meguanime :
                         ?: return@parallelCatchingFlatMapBlocking emptyList()
 
                     val subTracks = data.tracks?.mapNotNull { it.toTrack() } ?: emptyList()
+                    val tag = if (lang == "dub") "[DUB]" else if (subTracks.isNotEmpty()) "[Soft Sub]" else "[Hard Sub]"
                     val videoList = mutableListOf<Video>()
 
                     if (data.qualities?.isNotEmpty() == true) {
@@ -473,7 +477,7 @@ class Meguanime :
                             videoList.add(
                                 Video(
                                     videoUrl = qSource,
-                                    videoTitle = "[$langTag] Kiwi - $qLabel",
+                                    videoTitle = "$tag Kiwi - $qLabel",
                                     headers = streamHeaders,
                                     resolution = res,
                                     subtitleTracks = subTracks,
@@ -485,7 +489,7 @@ class Meguanime :
                             playlistUtils.extractFromHls(
                                 playlistUrl = data.source,
                                 referer = "$baseUrl/",
-                                videoNameGen = { qual -> "[$langTag] Kiwi - $qual" },
+                                videoNameGen = { qual -> "$tag Kiwi - $qual" },
                                 subtitleList = subTracks,
                             ),
                         )
@@ -558,7 +562,8 @@ class Meguanime :
 
         val audioTag = when (prefAudio) {
             "DUB" -> "[DUB]"
-            else -> "[SUB]"
+            "HARD_SUB" -> "[Hard Sub]"
+            else -> "[Soft Sub]"
         }
 
         return sortedWith(
@@ -671,11 +676,11 @@ class Meguanime :
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addListPreference(
             key = PREF_AUDIO_KEY,
-            title = "Preferred Audio",
+            title = "Preferred Audio / Subtitle Format",
             default = PREF_AUDIO_DEFAULT,
             summary = "%s",
-            entries = listOf("Sub", "Dub", "Both / Any"),
-            entryValues = listOf("SUB", "DUB", "BOTH"),
+            entries = listOf("Soft Sub (Multi-Language Tracks)", "Hard Sub (Embedded)", "Dub (English Audio)", "Both / Any"),
+            entryValues = listOf("SOFT_SUB", "HARD_SUB", "DUB", "BOTH"),
         )
         screen.addListPreference(
             key = PREF_SERVER_KEY,
@@ -732,7 +737,7 @@ class Meguanime :
         private const val PREF_DOMAIN_DEFAULT = "https://meguanime.com"
 
         private const val PREF_AUDIO_KEY = "pref_audio_key"
-        private const val PREF_AUDIO_DEFAULT = "SUB"
+        private const val PREF_AUDIO_DEFAULT = "SOFT_SUB"
 
         private const val PREF_SERVER_KEY = "pref_server_key"
         private const val PREF_SERVER_DEFAULT = "Miruro"
