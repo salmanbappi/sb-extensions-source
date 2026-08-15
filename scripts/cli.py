@@ -808,8 +808,6 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                     file_warnings.append("Redundant 'json' property declaration in Source subclass — 'json' is already provided by extensions.utils.Source")
                 if re.search(r'(?:private|val)\s+preferences\s*(?::\s*SharedPreferences)?\s*by\s+', content):
                     file_warnings.append("Redundant 'preferences' property declaration in Source subclass — 'preferences' is already provided by extensions.utils.Source")
-                if re.search(r'fun\s+List<Video>\.sortVideos\(', content):
-                    file_warnings.append("Redundant 'sortVideos()' function — override 'List<Video>.sort(): List<Video>' in AnimeHttpSource instead")
 
             # 14. setUrlWithoutDomain inside helper DTO classes
             if "data class " in content and "setUrlWithoutDomain(" in content:
