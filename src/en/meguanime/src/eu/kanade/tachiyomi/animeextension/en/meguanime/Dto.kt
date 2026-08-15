@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class GraphQLRequest(
     val query: String? = null,
-    val variables: GraphQLVariables? = null
+    val variables: GraphQLVariables? = null,
 )
 
 @Serializable
@@ -21,7 +21,7 @@ data class GraphQLVariables(
     val format: List<String>? = null,
     val status: List<String>? = null,
     val season: String? = null,
-    val seasonYear: Int? = null
+    val seasonYear: Int? = null,
 )
 
 @Serializable
@@ -44,7 +44,7 @@ data class AnilistPage(
 @Serializable
 data class PageInfo(
     val hasNextPage: Boolean? = false = null,
-    val total: Int? = 0 = null
+    val total: Int? = 0 = null,
 )
 
 @Serializable
@@ -66,7 +66,7 @@ data class AnilistMedia(
     val trailer: Trailer? = null,
     val nextAiringEpisode: NextAiringEpisode? = null,
     val airingSchedule: AiringSchedule? = null,
-    val streamingEpisodes: List<StreamingEpisode>? = null
+    val streamingEpisodes: List<StreamingEpisode>? = null,
 )
 
 @Serializable
@@ -252,5 +252,5 @@ data class MeguTrack(
     val file: String? = null,
     val label: String? = null,
     val kind: String? = null,
-    val default: Boolean? = false = null
+    val default: Boolean? = false = null,
 )
