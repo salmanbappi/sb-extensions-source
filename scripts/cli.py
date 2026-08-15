@@ -830,6 +830,13 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                 if "companion object" not in content:
                     file_warnings.append("Preference key constants declared outside companion object — should be inside companion object")
 
+            # 18. Multi-Hoster / Folder Architecture Invariants
+            if "override suspend fun getHosterList" in content:
+                if "override suspend fun getVideoList(hoster: Hoster)" not in content and "override suspend fun getVideoList(" not in content:
+                    file_warnings.append("Custom 'getHosterList' implemented but missing 'override suspend fun getVideoList(hoster: Hoster)'")
+                if "hoster.hosterName" in content and re.search(r'videoNameGen\s*=\s*\{[^}]*\$\{hoster\.hosterName\}', content):
+                    file_warnings.append("Redundant hoster name in videoNameGen prefix — the hoster folder already displays the server name in Aniyomi UI")
+
             if file_warnings:
                 for w in file_warnings:
                     print(f"  ⚠️  {rel_path}: {w}")
@@ -839,6 +846,54 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
         print("  ✓ No lint warnings or code smells detected across codebase.")
     else:
         print(f"\nSummary: {warnings} lint warning(s) found.")
+    return True
+
+
+def inspect_hosters(repo_root: Path, target_lang: str, target_name: str) -> bool:
+    """Inspects and audits hoster folder architecture, server grouping, and stream quality sorting."""
+    target_src = repo_root / "src" / (target_lang or "all") / target_name
+    if not target_src.exists():
+        print(f"❌ Target extension directory not found: {target_src}")
+        return False
+
+    print(f"📁 Inspecting Hoster Folder Architecture for src/{target_lang}/{target_name}...\n" + "=" * 60)
+
+    kt_files = list(target_src.rglob("*.kt"))
+    has_hoster_list = False
+    has_video_list_hoster = False
+    has_server_pref = False
+    has_sort_videos = False
+    hoster_methods = []
+
+    for kt in kt_files:
+        content = kt.read_text(encoding="utf-8", errors="ignore")
+        if "override suspend fun getHosterList" in content:
+            has_hoster_list = True
+            hoster_methods.append(f"{kt.name}: getHosterList")
+        if "override suspend fun getVideoList(hoster: Hoster)" in content:
+            has_video_list_hoster = True
+            hoster_methods.append(f"{kt.name}: getVideoList(Hoster)")
+        if "PREF_SERVER_KEY" in content or "Preferred Server" in content:
+            has_server_pref = True
+        if "fun List<Video>.sortVideos" in content or "sortVideos()" in content:
+            has_sort_videos = True
+
+    print("📊 Static Hoster Architecture Analysis:")
+    print(f"  • Custom Server Folders (`getHosterList`): {'✅ Implemented' if has_hoster_list else '⚠️ Single Default Folder'}")
+    print(f"  • Hoster Resolver (`getVideoList(Hoster)`): {'✅ Implemented' if has_video_list_hoster else '⚠️ Missing'}")
+    print(f"  • Preferred Server Preference Setting:     {'✅ Configured' if has_server_pref else 'ℹ️ Not set'}")
+    print(f"  • 4-Tier Stream Quality Sorting:           {'✅ Implemented' if has_sort_videos else '⚠️ Missing'}")
+    if hoster_methods:
+        print("\n🔍 Detected Implementations:")
+        for m in hoster_methods:
+            print(f"  • {m}")
+
+    print("\n💡 Best Practice Recommendations for Hoster Folders:")
+    print("  1. Ensure each distinct server (Player 1, Player 2, VidStreaming, MegaCloud) has its own `Hoster` instance.")
+    print("  2. Do not duplicate the server name in the video quality title inside that folder.")
+    print("  3. Include audio track tags next to the resolution (e.g. `1080p [Hindi]`, `720p [English]`).")
+    print("  4. Provide a 'Preferred Server' ListPreference for custom user prioritization.")
+
     return True
 
 
@@ -1099,6 +1154,9 @@ def main():
             "sandbox": {
                 "script": "sandbox.py",
                 "desc": "Zero-APK fast in-memory Kotlin runtime simulator for popular, search, and detail workflows."
+            },
+            "inspect-hosters": {
+                "desc": "Inspect & audit hoster folder architecture, server grouping, and stream quality sorting."
             }
         }
 
@@ -1208,6 +1266,20 @@ def main():
             lint_args = lint_parser.parse_args(args.args)
             lang, name = resolve_extension_target(repo_root, lint_args.target, lint_args.lang, lint_args.name)
             success = lint_codebase(repo_root, lang, name)
+            sys.exit(0 if success else 1)
+
+        if args.command == "inspect-hosters":
+            hoster_parser = argparse.ArgumentParser(prog="cli.py inspect-hosters")
+            hoster_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
+            hoster_parser.add_argument("--lang", help="Target extension lang")
+            hoster_parser.add_argument("--name", help="Target extension directory name")
+            hoster_args = hoster_parser.parse_args(args.args)
+            if not hoster_args.target and not (hoster_args.lang and hoster_args.name):
+                hoster_parser.print_help()
+                print("\n❌ Error: Target extension module is required (e.g. `cli.py inspect-hosters <module>`).")
+                sys.exit(1)
+            lang, name = resolve_extension_target(repo_root, hoster_args.target, hoster_args.lang, hoster_args.name)
+            success = inspect_hosters(repo_root, lang, name)
             sys.exit(0 if success else 1)
 
         if args.command == "audit-all":
