@@ -792,10 +792,14 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                     param_block = match.group(2)
                     for line in param_block.splitlines():
                         clean_line = line.strip().rstrip(",")
-                        if (clean_line.startswith("val ") or clean_line.startswith("var ")) and "=" not in clean_line and not clean_line.endswith("?"):
+                        if clean_line.startswith("val ") or clean_line.startswith("var "):
                             prop = clean_line.split(":")[0].replace("val ", "").replace("var ", "").strip()
-                            file_warnings.append(f"DTO null-safety violation in {cls_name}.{prop} — missing default fallback (e.g. `? = null`)")
-                            break
+                            if "=" not in clean_line and not clean_line.endswith("?"):
+                                file_warnings.append(f"DTO null-safety violation in {cls_name}.{prop} — missing default fallback (e.g. `? = null`)")
+                            # Check if votes/rating/score are typed as Int/Long instead of Double/Float
+                            if re.search(r'\b(?:votes|rating|score|stars|rank)\b', prop, re.IGNORECASE):
+                                if re.search(r':\s*(?:Int|Long)\??', clean_line):
+                                    file_warnings.append(f"DTO field {cls_name}.{prop} is typed as Int/Long — consider Double? to prevent JsonDecodingException on decimal JSON payloads (e.g. 0.0)")
 
             # 12. Dynamic / Ephemeral tokens in SEpisode.url
             if "SEpisode" in content and "setUrlWithoutDomain" in content:

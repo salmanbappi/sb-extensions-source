@@ -135,7 +135,21 @@ class ExtensionAstFixer:
             content = new_content
             fixes_applied.append("Enforced null-safe default values (`? = null`) on `@Serializable` DTOs")
 
-        # 5. Fix string concatenation "$baseUrl" + attr("href") -> element.attr("abs:href")
+        # 5. Fix Int?/Long? for rating/votes/score in @Serializable DTOs
+        def fix_numeric_dto_types(match):
+            prop_name = match.group(1)
+            type_name = match.group(2)
+            if re.search(r'\b(?:votes|rating|score|stars|rank)\b', prop_name, re.IGNORECASE):
+                if type_name in ("Int", "Long"):
+                    return f"val {prop_name}: Double"
+            return match.group(0)
+
+        new_content = re.sub(r'val\s+([a-zA-Z0-9_]+)\s*:\s*(Int|Long)', fix_numeric_dto_types, content)
+        if new_content != content:
+            content = new_content
+            fixes_applied.append("Migrated integer rating/votes/score DTO fields to `Double` (prevents decimal JsonDecodingException)")
+
+        # 6. Fix string concatenation "$baseUrl" + attr("href") -> element.attr("abs:href")
         if re.search(r'(?:"\$baseUrl"|baseUrl)\s*\+\s*([a-zA-Z0-9_]+)\.attr\(["\']href["\']\)', content):
             content = re.sub(
                 r'(?:"\$baseUrl"|baseUrl)\s*\+\s*([a-zA-Z0-9_]+)\.attr\(["\']href["\']\)',
@@ -144,7 +158,7 @@ class ExtensionAstFixer:
             )
             fixes_applied.append('Replaced `"$baseUrl" + attr("href")` with `attr("abs:href")`')
 
-        # 6. Normalize line endings and whitespace
+        # 7. Normalize line endings and whitespace
         lines = [line.rstrip() for line in content.replace("\r\n", "\n").split("\n")]
         # Collapse 3+ blank lines to 2
         normalized_lines = []
