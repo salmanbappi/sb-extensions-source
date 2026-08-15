@@ -60,10 +60,14 @@ class MovieBox : Source() {
     }
 
     private val apiHosts = listOf(
+        "https://apig.inmoviebox.com",
+        "https://api.inmoviebox.com",
+        "https://api-in.inmoviebox.com",
         "https://api3.aoneroom.com",
         "https://api6.aoneroom.com",
         "https://api5.aoneroom.com",
         "https://api4.aoneroom.com",
+        "https://api7.aoneroom.com",
         "https://api4sg.aoneroom.com",
         "https://netfilm.world",
         "https://h5-api.aoneroom.com",
@@ -238,25 +242,27 @@ class MovieBox : Source() {
         return "$timestamp|2|$signatureB64"
     }
 
-    private fun getPreferredHost(): String = preferences.getString(PREF_HOST_KEY, apiHosts[0]) ?: apiHosts[0]
+    private fun isMobileApi(host: String): Boolean = host.contains("inmoviebox") || host.contains("aoneroom")
+
+    private fun getPreferredHost(): String = preferences.getString(PREF_HOST_KEY, PREF_HOST_DEFAULT) ?: PREF_HOST_DEFAULT
 
     private fun safeGetJsonWithHeaders(urlPath: String, isPost: Boolean = false, bodyData: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false): Pair<JsonElement, Headers>? {
         for (host in apiHosts) {
-            val adaptivePath = when {
-                host.contains("aoneroom") ->
-                    urlPath
-                        .replace("/wefeed-h5api-bff/detail", "/wefeed-mobile-bff/subject-api/get")
-                        .replace("/wefeed-h5api-bff/subject/play", "/wefeed-mobile-bff/subject-api/play-info")
-                        .replace("/wefeed-h5api-bff/subject/search", "/wefeed-mobile-bff/subject-api/search/v2")
-                        .replace("/wefeed-h5api-bff/subject/filter", "/wefeed-mobile-bff/subject-api/list")
-
-                else ->
-                    urlPath
-                        .replace("/wefeed-mobile-bff/subject-api/get", "/wefeed-h5api-bff/detail")
-                        .replace("/wefeed-mobile-bff/subject-api/season-info", "/wefeed-h5api-bff/detail")
-                        .replace("/wefeed-mobile-bff/subject-api/play-info", "/wefeed-h5api-bff/subject/play")
-                        .replace("/wefeed-mobile-bff/subject-api/search/v2", "/wefeed-h5api-bff/subject/search")
-                        .replace("/wefeed-mobile-bff/subject-api/list", "/wefeed-h5api-bff/subject/filter")
+            val adaptivePath = if (isMobileApi(host)) {
+                urlPath
+                    .replace("/wefeed-h5api-bff/detail", "/wefeed-mobile-bff/subject-api/get")
+                    .replace("/wefeed-h5api-bff/subject/play", "/wefeed-mobile-bff/subject-api/play-info")
+                    .replace("/wefeed-h5api-bff/subject/search", "/wefeed-mobile-bff/subject-api/search/v2")
+                    .replace("/wefeed-h5api-bff/subject/filter", "/wefeed-mobile-bff/subject-api/list")
+                    .replace("/wefeed-h5api-bff/ranking-list/content", "/wefeed-mobile-bff/tab/ranking-list")
+            } else {
+                urlPath
+                    .replace("/wefeed-mobile-bff/subject-api/get", "/wefeed-h5api-bff/detail")
+                    .replace("/wefeed-mobile-bff/subject-api/season-info", "/wefeed-h5api-bff/detail")
+                    .replace("/wefeed-mobile-bff/subject-api/play-info", "/wefeed-h5api-bff/subject/play")
+                    .replace("/wefeed-mobile-bff/subject-api/search/v2", "/wefeed-h5api-bff/subject/search")
+                    .replace("/wefeed-mobile-bff/subject-api/list", "/wefeed-h5api-bff/subject/filter")
+                    .replace("/wefeed-mobile-bff/tab/ranking-list", "/wefeed-h5api-bff/ranking-list/content")
             }
 
             val url = host + adaptivePath
@@ -283,7 +289,7 @@ class MovieBox : Source() {
     // Popular
     override fun popularAnimeRequest(page: Int): Request {
         val host = getPreferredHost()
-        val path = if (host.contains("api3")) "/wefeed-mobile-bff/tab/ranking-list" else "/wefeed-h5api-bff/ranking-list/content"
+        val path = if (isMobileApi(host)) "/wefeed-mobile-bff/tab/ranking-list" else "/wefeed-h5api-bff/ranking-list/content"
         val url = "$host$path?tabId=0&categoryType=4516404531735022304&page=$page&perPage=20"
         return GET(url, getApiHeaders(url))
     }
@@ -304,10 +310,11 @@ class MovieBox : Source() {
     // Search & Filters
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val host = getPreferredHost()
+        val isMobile = isMobileApi(host)
 
         // 1. Search with keyword
         if (query.isNotBlank()) {
-            val path = if (host.contains("api3")) "/wefeed-mobile-bff/subject-api/search/v2" else "/wefeed-h5api-bff/subject/search"
+            val path = if (isMobile) "/wefeed-mobile-bff/subject-api/search/v2" else "/wefeed-h5api-bff/subject/search"
             val url = "$host$path"
             val bodyData = """{"page":$page,"perPage":20,"keyword":"$query"}"""
             val body = bodyData.toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -318,7 +325,7 @@ class MovieBox : Source() {
         val rankingFilter = filters.find { it is RankingFilter } as? RankingFilter
         if (rankingFilter != null && rankingFilter.state > 0) {
             val rankingId = rankingFilter.toId()
-            val path = if (host.contains("api3")) "/wefeed-mobile-bff/tab/ranking-list" else "/wefeed-h5api-bff/ranking-list/content"
+            val path = if (isMobile) "/wefeed-mobile-bff/tab/ranking-list" else "/wefeed-h5api-bff/ranking-list/content"
             val url = "$host$path?tabId=0&categoryType=$rankingId&page=$page&perPage=20"
             return GET(url, getApiHeaders(url))
         }
@@ -344,7 +351,7 @@ class MovieBox : Source() {
             "country" to kotlinx.serialization.json.JsonPrimitive(countryFilter?.toId() ?: "All"),
         )
 
-        val path = if (host.contains("api3")) "/wefeed-mobile-bff/subject-api/list" else "/wefeed-h5api-bff/subject/filter"
+        val path = if (isMobile) "/wefeed-mobile-bff/subject-api/list" else "/wefeed-h5api-bff/subject/filter"
         val url = "$host$path"
         val bodyData = JsonObject(bodyMap).toString()
         val body = bodyData.toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -376,7 +383,7 @@ class MovieBox : Source() {
     override fun animeDetailsRequest(anime: SAnime): Request {
         val id = anime.url.substringAfterLast("/").substringBefore("|")
         val host = getPreferredHost()
-        val path = if (host.contains("api3")) "/wefeed-mobile-bff/subject-api/get" else "/wefeed-h5api-bff/detail"
+        val path = if (isMobileApi(host)) "/wefeed-mobile-bff/subject-api/get" else "/wefeed-h5api-bff/detail"
         val param = if (id.all { it.isDigit() }) "subjectId" else "detailPath"
         val url = "$host$path?$param=$id"
         return GET(url, getApiHeaders(url, isDetails = true))
@@ -409,6 +416,7 @@ class MovieBox : Source() {
             url = subject["subjectId"]?.str?.let { "/movies/$it" } ?: url
             if (!token.isNullOrBlank()) url += "|$token"
             status = SAnime.UNKNOWN
+            initialized = true
         }
     }
 
@@ -473,7 +481,7 @@ class MovieBox : Source() {
             Pair(null, emptyList())
         }
 
-        val showThumbnails = preferences.getBoolean("pref_show_thumbnails", true)
+        val showThumbnails = preferences.getBoolean(PREF_THUMBNAILS_KEY, PREF_THUMBNAILS_DEFAULT)
         val idsString = allIds.joinToString("~~") { "${it.first}:${it.second}" }
         seasonsMap.forEach { (seNum, epSet) ->
             epSet.sorted().forEach { epNum ->
@@ -620,8 +628,18 @@ class MovieBox : Source() {
                 val url = obj["url"]?.str ?: return@forEach
                 val res = obj["resolutions"]?.str ?: "Auto"
                 val signCookie = obj["signCookie"]?.str
+                val cleanCookie = signCookie?.trim()?.trimEnd(';')
                 val streamId = obj["id"]?.str ?: ""
-                val headers = Headers.Builder().add("Referer", "https://h5.aoneroom.com/").add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36").apply { if (!signCookie.isNullOrBlank()) add("Cookie", signCookie) }.build()
+                val referer = if (url.contains("hakunaymatata") || url.contains("inmoviebox")) {
+                    "https://apig.inmoviebox.com"
+                } else {
+                    "https://h5.aoneroom.com/"
+                }
+                val headers = Headers.Builder()
+                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .add("Referer", referer)
+                    .apply { if (!cleanCookie.isNullOrBlank()) add("Cookie", cleanCookie) }
+                    .build()
 
                 val subtitleTracks = mutableListOf<Track>()
                 if (streamId.isNotBlank()) {
@@ -689,8 +707,8 @@ class MovieBox : Source() {
     private val JsonElement?.bool get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
-        val audio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT)!!
+        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val audio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
         return this.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(audio, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) },
@@ -700,10 +718,10 @@ class MovieBox : Source() {
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
             key = PREF_HOST_KEY
-            title = "API Host"
-            entries = arrayOf("Official (api3)", "Official (api6)", "Official (api5)", "Official (api4)", "Official (api4sg)", "Mirror (Netfilm)", "H5 API")
-            entryValues = apiHosts.toTypedArray()
-            setDefaultValue(apiHosts[0])
+            title = PREF_HOST_TITLE
+            entries = PREF_HOST_ENTRIES
+            entryValues = PREF_HOST_VALUES
+            setDefaultValue(PREF_HOST_DEFAULT)
             summary = "%s"
         }.also { screen.addPreference(it) }
 
@@ -726,9 +744,9 @@ class MovieBox : Source() {
         }.also { screen.addPreference(it) }
 
         SwitchPreferenceCompat(screen.context).apply {
-            key = "pref_show_thumbnails"
-            title = "Show episode thumbnails"
-            setDefaultValue(true)
+            key = PREF_THUMBNAILS_KEY
+            title = PREF_THUMBNAILS_TITLE
+            setDefaultValue(PREF_THUMBNAILS_DEFAULT)
         }.also { screen.addPreference(it) }
     }
     override fun latestUpdatesRequest(page: Int): Request = throw Exception("Not used")
@@ -850,6 +868,34 @@ class MovieBox : Source() {
 
     companion object {
         private const val PREF_HOST_KEY = "api_host"
+        private const val PREF_HOST_TITLE = "API Host"
+        private const val PREF_HOST_DEFAULT = "https://apig.inmoviebox.com"
+        private val PREF_HOST_ENTRIES = arrayOf(
+            "Official Global Gateway (apig.inmoviebox.com)",
+            "Official Primary (api.inmoviebox.com)",
+            "Official India Node (api-in.inmoviebox.com)",
+            "Legacy Cluster 1 (api3.aoneroom.com)",
+            "Legacy Cluster 2 (api6.aoneroom.com)",
+            "Legacy Cluster 3 (api5.aoneroom.com)",
+            "Legacy Cluster 4 (api4.aoneroom.com)",
+            "Legacy Cluster 5 (api7.aoneroom.com)",
+            "Legacy Singapore (api4sg.aoneroom.com)",
+            "Mirror (Netfilm)",
+            "H5 API",
+        )
+        private val PREF_HOST_VALUES = arrayOf(
+            "https://apig.inmoviebox.com",
+            "https://api.inmoviebox.com",
+            "https://api-in.inmoviebox.com",
+            "https://api3.aoneroom.com",
+            "https://api6.aoneroom.com",
+            "https://api5.aoneroom.com",
+            "https://api4.aoneroom.com",
+            "https://api7.aoneroom.com",
+            "https://api4sg.aoneroom.com",
+            "https://netfilm.world",
+            "https://h5-api.aoneroom.com",
+        )
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_TITLE = "Preferred Quality"
@@ -862,6 +908,10 @@ class MovieBox : Source() {
         private const val PREF_AUDIO_DEFAULT = "English"
         private val PREF_AUDIO_ENTRIES = arrayOf("English", "Original", "Original Audio", "Japanese", "Hindi", "Telugu", "Tamil", "Portuguese (Brazil)", "Tagalog")
         private val PREF_AUDIO_VALUES = arrayOf("English", "Original", "Original Audio", "Japanese", "Hindi", "Telugu", "Tamil", "ptbr", "Tagalog")
+
+        private const val PREF_THUMBNAILS_KEY = "pref_show_thumbnails"
+        private const val PREF_THUMBNAILS_TITLE = "Show episode thumbnails"
+        private const val PREF_THUMBNAILS_DEFAULT = true
 
         private var bearerToken: String? = null
 
