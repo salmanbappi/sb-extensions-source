@@ -182,8 +182,8 @@ class Anilight : Source() {
             status = when (item.status?.uppercase()) {
                 "RELEASING", "ONGOING" -> SAnime.ONGOING
                 "FINISHED", "COMPLETED" -> SAnime.COMPLETED
-                "NOT_YET_RELEASED" -> SAnime.NOT_YET_RELEASED
                 "CANCELLED" -> SAnime.CANCELLED
+                "HIATUS", "ON_HIATUS" -> SAnime.ON_HIATUS
                 else -> SAnime.UNKNOWN
             }
             initialized = true
@@ -521,8 +521,8 @@ data class MediaItemDto(
         status = when (this@MediaItemDto.status?.uppercase()) {
             "RELEASING", "ONGOING" -> SAnime.ONGOING
             "FINISHED", "COMPLETED" -> SAnime.COMPLETED
-            "NOT_YET_RELEASED" -> SAnime.NOT_YET_RELEASED
             "CANCELLED" -> SAnime.CANCELLED
+            "HIATUS", "ON_HIATUS" -> SAnime.ON_HIATUS
             else -> SAnime.UNKNOWN
         }
         fetch_type = FetchType.Episodes
