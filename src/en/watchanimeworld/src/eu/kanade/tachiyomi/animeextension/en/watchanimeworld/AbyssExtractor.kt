@@ -285,88 +285,7 @@ class AbyssExtractor(
             .set("Referer", referer)
             .build()
 
-        // 1. Try MP4 sources
-        val mp4 = mediaPayload.optJSONObject("mp4")
-        if (mp4 != null) {
-            val sources = mp4.optJSONArray("sources")
-            val domains = mp4.optJSONArray("domains")
-            if (sources != null) {
-                val sourceList = mutableListOf<JSONObject>()
-                for (i in 0 until sources.length()) {
-                    val src = sources.optJSONObject(i) ?: continue
-                    sourceList.add(src)
-                }
-                sourceList.sortByDescending { it.optLong("size", 0L) }
-
-                for (src in sourceList) {
-                    val label = src.optString("label", "Video")
-                    val size = src.optString("size", "")
-                    val resId = src.optString("res_id", "")
-                    val sub = src.optString("sub", "")
-
-                    // Direct file
-                    val direct = src.optString("file", "")
-                    if (direct.isNotEmpty()) {
-                        videoList.add(
-                            Video(
-                                videoUrl = "${direct.replace("\\/", "/")}?ext=.mp4",
-                                videoTitle = "${prefix}Abyss - $label (MP4)",
-                                headers = streamHeaders,
-                                subtitleTracks = subtitles,
-                            ),
-                        )
-                        continue
-                    }
-
-                    // Direct URL/Path fallback (but not for watch pages where segments are used)
-                    val urlVal = src.optString("url")
-                    val pathVal = src.optString("path")
-                    if (urlVal.isNotEmpty() && pathVal.isNotEmpty() && !urlVal.contains("sssrr.org")) {
-                        val combined = "${urlVal.trimEnd('/')}/${pathVal.trimStart('/')}".replace("\\/", "/")
-                        videoList.add(
-                            Video(
-                                videoUrl = combined,
-                                videoTitle = "${prefix}Abyss - $label (MP4)",
-                                headers = streamHeaders,
-                                subtitleTracks = subtitles,
-                            ),
-                        )
-                        continue
-                    }
-
-                    // Sora token URL
-                    if (size.isNotEmpty() && resId.isNotEmpty() && sub.isNotEmpty() && domains != null) {
-                        var domain: String? = null
-                        for (j in 0 until domains.length()) {
-                            val d = domains.optString(j, "")
-                            if (d.isNotEmpty() && d.contains(sub)) {
-                                domain = d
-                                break
-                            }
-                        }
-
-                        if (domain != null) {
-                            val pathValue = "/mp4/$md5Id/$resId/$size?v=$slug"
-                            val token = buildSoraToken(pathValue, size)
-                            if (token != null) {
-                                val norm = if (domain.startsWith("http")) domain else "https://$domain"
-                                val finalUrl = "${norm.trimEnd('/')}/sora/$size/$token"
-                                videoList.add(
-                                    Video(
-                                        videoUrl = finalUrl,
-                                        videoTitle = "${prefix}Abyss - $label (Sora)",
-                                        headers = streamHeaders,
-                                        subtitleTracks = subtitles,
-                                    ),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Try HLS
+        // 1. Try HLS first (faster adaptive streaming)
         val hls = mediaPayload.optJSONObject("hls")
         if (hls != null) {
             var hlsUrl: String? = null
@@ -462,6 +381,88 @@ class AbyssExtractor(
                     }
                 }
             }
+        }
+
+        // 2. Try MP4 sources
+        val mp4 = mediaPayload.optJSONObject("mp4")
+        if (mp4 != null) {
+            val sources = mp4.optJSONArray("sources")
+            val domains = mp4.optJSONArray("domains")
+            if (sources != null) {
+                val sourceList = mutableListOf<JSONObject>()
+                for (i in 0 until sources.length()) {
+                    val src = sources.optJSONObject(i) ?: continue
+                    sourceList.add(src)
+                }
+                sourceList.sortByDescending { it.optLong("size", 0L) }
+
+                for (src in sourceList) {
+                    val label = src.optString("label", "Video")
+                    val size = src.optString("size", "")
+                    val resId = src.optString("res_id", "")
+                    val sub = src.optString("sub", "")
+
+                    // Direct file
+                    val direct = src.optString("file", "")
+                    if (direct.isNotEmpty()) {
+                        videoList.add(
+                            Video(
+                                videoUrl = "${direct.replace("\\/", "/")}?ext=.mp4",
+                                videoTitle = "${prefix}Abyss - $label (MP4)",
+                                headers = streamHeaders,
+                                subtitleTracks = subtitles,
+                            ),
+                        )
+                        continue
+                    }
+
+                    // Direct URL/Path fallback (but not for watch pages where segments are used)
+                    val urlVal = src.optString("url")
+                    val pathVal = src.optString("path")
+                    if (urlVal.isNotEmpty() && pathVal.isNotEmpty() && !urlVal.contains("sssrr.org")) {
+                        val combined = "${urlVal.trimEnd('/')}/${pathVal.trimStart('/')}".replace("\\/", "/")
+                        videoList.add(
+                            Video(
+                                videoUrl = combined,
+                                videoTitle = "${prefix}Abyss - $label (MP4)",
+                                headers = streamHeaders,
+                                subtitleTracks = subtitles,
+                            ),
+                        )
+                        continue
+                    }
+
+                    // Sora token URL
+                    if (size.isNotEmpty() && resId.isNotEmpty() && sub.isNotEmpty() && domains != null) {
+                        var domain: String? = null
+                        for (j in 0 until domains.length()) {
+                            val d = domains.optString(j, "")
+                            if (d.isNotEmpty() && d.contains(sub)) {
+                                domain = d
+                                break
+                            }
+                        }
+
+                        if (domain != null) {
+                            val pathValue = "/mp4/$md5Id/$resId/$size?v=$slug"
+                            val token = buildSoraToken(pathValue, size)
+                            if (token != null) {
+                                val norm = if (domain.startsWith("http")) domain else "https://$domain"
+                                val finalUrl = "${norm.trimEnd('/')}/sora/$size/$token"
+                                videoList.add(
+                                    Video(
+                                        videoUrl = finalUrl,
+                                        videoTitle = "${prefix}Abyss - $label (Sora)",
+                                        headers = streamHeaders,
+                                        subtitleTracks = subtitles,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
             // HLS fallback by ID
             val hlsId = hls.optString("id", "")
