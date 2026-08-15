@@ -33,7 +33,9 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import kotlin.time.Duration.Companion.seconds
 
-class NetMovie : Source(), ConfigurableAnimeSource {
+class NetMovie :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "NetMovie"
 
@@ -131,7 +133,7 @@ class NetMovie : Source(), ConfigurableAnimeSource {
                 if (item.duration != null && item.duration > 0) {
                     val h = item.duration / 60
                     val m = item.duration % 60
-                    append("⏱ Duration: ").append(if (h > 0) "${h}h ${m}m" else "${m} min").append("\n")
+                    append("⏱ Duration: ").append(if (h > 0) "${h}h ${m}m" else "$m min").append("\n")
                 }
                 if (!item.languages.isNullOrEmpty()) {
                     append("🌐 Audio: ").append(item.languages.mapNotNull { it.name }.joinToString()).append("\n")
@@ -393,9 +395,7 @@ class NetMovie : Source(), ConfigurableAnimeSource {
         return videos
     }
 
-    private fun extractMovieId(url: String): String {
-        return url.substringAfterLast("/").substringBefore("?").substringBefore("&")
-    }
+    private fun extractMovieId(url: String): String = url.substringAfterLast("/").substringBefore("?").substringBefore("&")
 
     private fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, DEFAULT_QUALITY) ?: DEFAULT_QUALITY
