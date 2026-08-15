@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.meguanime
 
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -53,7 +52,7 @@ class Meguanime :
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
-    private val m3u8Integration by lazy { M3u8Integration(client) }
+    private val localProxy by lazy { LocalProxy(client) }
 
     override val json: Json by lazy {
         Json {
@@ -388,7 +387,7 @@ class Meguanime :
             .set("Referer", "$baseUrl/")
             .build()
 
-        val videos = audioLangs.parallelCatchingFlatMapBlocking { lang ->
+        return audioLangs.parallelCatchingFlatMapBlocking { lang ->
             when (hosterType) {
                 "miruro" -> {
                     val url = "$baseUrl/api/miruro?al=$anilistId&ep=$epNum&lang=$lang&all=1"
@@ -411,9 +410,10 @@ class Meguanime :
                         } else {
                             "[Hard Sub]"
                         }
+                        val proxiedUrl = localProxy.getProxyUrl(data.source, streamHeaders)
                         videoList.addAll(
                             playlistUtils.extractFromHls(
-                                playlistUrl = data.source,
+                                playlistUrl = proxiedUrl,
                                 referer = "$baseUrl/",
                                 videoNameGen = { qual -> "$mainTag Miruro - $qual" },
                                 subtitleList = subTracks,
@@ -434,9 +434,10 @@ class Meguanime :
                             } else {
                                 "[Soft Sub]"
                             }
+                            val proxiedUrl = localProxy.getProxyUrl(pSource, streamHeaders)
                             videoList.addAll(
                                 playlistUtils.extractFromHls(
-                                    playlistUrl = pSource,
+                                    playlistUrl = proxiedUrl,
                                     referer = "$baseUrl/",
                                     videoNameGen = { qual -> "$pTag Miruro ($pLabel) - $qual" },
                                     subtitleList = pTracks,
@@ -468,8 +469,9 @@ class Meguanime :
                         "[Hard Sub]"
                     }
 
+                    val proxiedUrl = localProxy.getProxyUrl(masterUrl, streamHeaders)
                     playlistUtils.extractFromHls(
-                        playlistUrl = masterUrl,
+                        playlistUrl = proxiedUrl,
                         referer = "$baseUrl/",
                         videoNameGen = { qual -> "$tag Megaplay - $qual" },
                         subtitleList = subTracks,
@@ -501,9 +503,14 @@ class Meguanime :
                             val qSource = q.source ?: return@forEach
                             val qLabel = q.label ?: "Quality"
                             val res = qLabel.filter { it.isDigit() }.toIntOrNull() ?: 0
+                            val finalUrl = if (qSource.contains(".m3u8", ignoreCase = true)) {
+                                localProxy.getProxyUrl(qSource, streamHeaders)
+                            } else {
+                                qSource
+                            }
                             videoList.add(
                                 Video(
-                                    videoUrl = qSource,
+                                    videoUrl = finalUrl,
                                     videoTitle = "$tag Kiwi - $qLabel",
                                     headers = streamHeaders,
                                     resolution = res,
@@ -512,9 +519,10 @@ class Meguanime :
                             )
                         }
                     } else if (!data.source.isNullOrBlank()) {
+                        val proxiedUrl = localProxy.getProxyUrl(data.source, streamHeaders)
                         videoList.addAll(
                             playlistUtils.extractFromHls(
-                                playlistUrl = data.source,
+                                playlistUrl = proxiedUrl,
                                 referer = "$baseUrl/",
                                 videoNameGen = { qual -> "$tag Kiwi - $qual" },
                                 subtitleList = subTracks,
@@ -548,9 +556,10 @@ class Meguanime :
 
                     sources.forEach { src ->
                         if (src.contains(".m3u8", ignoreCase = true)) {
+                            val proxiedUrl = localProxy.getProxyUrl(src, streamHeaders)
                             videoList.addAll(
                                 playlistUtils.extractFromHls(
-                                    playlistUrl = src,
+                                    playlistUrl = proxiedUrl,
                                     referer = "$baseUrl/",
                                     videoNameGen = { qual -> "[DUB] AnimeGG - $qual" },
                                     subtitleList = subTracks,
@@ -574,8 +583,6 @@ class Meguanime :
                 else -> emptyList()
             }
         }
-
-        return m3u8Integration.processVideoList(videos)
     }
 
     private fun MeguTrack.toTrack(): Track? {
