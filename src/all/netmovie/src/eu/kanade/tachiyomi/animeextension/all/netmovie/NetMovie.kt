@@ -481,7 +481,7 @@ data class RatingsDto(
 @Serializable
 data class RatingValDto(
     val rating: Double? = null,
-    val votes: Long? = null,
+    val votes: Double? = null,
 )
 
 @Serializable
