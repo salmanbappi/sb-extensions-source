@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.anilight
 
+import aniyomi.lib.m3u8server.M3u8Integration
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -33,6 +34,8 @@ class Anilight : Source() {
     override val supportsLatest = true
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
@@ -267,7 +270,7 @@ class Anilight : Source() {
         return providerMap.map { (providerId, types) ->
             val displayName = providerId.replaceFirstChar { it.uppercase() }
             Hoster(
-                hosterName = "Server: $displayName",
+                hosterName = displayName,
                 hosterUrl = "$animeId|$epNum|$providerId|${types.distinct().joinToString(",")}",
             )
         }.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
@@ -360,7 +363,8 @@ class Anilight : Source() {
             typeVideos
         }
 
-        return videos.sortVideos()
+        val sorted = videos.sortVideos()
+        return m3u8Integration.processVideoList(sorted)
     }
 
     private fun resolveStreamUrl(rawUrl: String): String {
