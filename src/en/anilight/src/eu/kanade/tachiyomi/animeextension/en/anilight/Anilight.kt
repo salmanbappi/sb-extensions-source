@@ -347,7 +347,7 @@ class Anilight : Source() {
             }
         }
 
-        return sortVideos(videos)
+        return videos.sortVideos()
     }
 
     private fun resolveStreamUrl(rawUrl: String): String {
@@ -385,9 +385,9 @@ class Anilight : Source() {
         }
     }
 
-    private fun sortVideos(videos: List<Video>): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-        return videos.sortedWith(
+        return sortedWith(
             compareByDescending { it.videoTitle.contains(quality, ignoreCase = true) },
         )
     }
