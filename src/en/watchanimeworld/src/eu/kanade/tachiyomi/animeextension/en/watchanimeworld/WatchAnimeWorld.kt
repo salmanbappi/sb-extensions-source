@@ -179,9 +179,10 @@ class WatchAnimeWorld : Source() {
             title = document.selectFirst(".entry-title, h1.entry-title, h1")?.text()?.trim() ?: ""
             description = document.selectFirst(".description p, .wp-content p, #info p, .description")?.text()?.trim() ?: ""
             genre = document.select(".genres a, .sgeneros a").joinToString { it.text().trim() }
-            val rawThumb = document.selectFirst("article.post img, .poster img, img.wp-post-image, .thumb img, figure img")?.attr("abs:src")
-                ?: document.selectFirst("article.post img, .poster img, img.wp-post-image, .thumb img, figure img")?.attr("abs:data-src")
-                ?: document.selectFirst("article.post img, .poster img, img.wp-post-image, .thumb img, figure img")?.attr("src") ?: ""
+            val posterImg = document.selectFirst("article.post.single img, article.single img, .bd article.post img, .poster img, img[alt^='Image ']:not(.custom-logo)")
+            val rawThumb = posterImg?.attr("abs:src")?.takeIf { it.isNotBlank() && !it.contains("SiteTitle") && !it.contains("AWI-SiteTitle") }
+                ?: posterImg?.attr("abs:data-src")?.takeIf { it.isNotBlank() && !it.contains("SiteTitle") && !it.contains("AWI-SiteTitle") }
+                ?: posterImg?.attr("src")?.takeIf { it.isNotBlank() && !it.contains("SiteTitle") && !it.contains("AWI-SiteTitle") } ?: ""
             thumbnail_url = when {
                 rawThumb.startsWith("//") -> "https:$rawThumb"
                 rawThumb.startsWith("/") -> baseUrl + rawThumb
@@ -210,7 +211,7 @@ class WatchAnimeWorld : Source() {
                 val num = episode.episode_number.toInt()
                 val meta = metadataMap[num] ?: return@map episode
                 episode.apply {
-                    if (loadThumbnails && preview_url.isNullOrEmpty() && !meta.thumbnailUrl.isNullOrEmpty()) {
+                    if (loadThumbnails && (preview_url.isNullOrEmpty() || preview_url!!.contains("SiteTitle")) && !meta.thumbnailUrl.isNullOrEmpty()) {
                         preview_url = meta.thumbnailUrl
                     }
                     if (loadDescriptions && summary.isNullOrEmpty() && !meta.description.isNullOrEmpty()) {
