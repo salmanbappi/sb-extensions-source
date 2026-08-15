@@ -1,10 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.all.netmovie
 
-import android.app.Application
-import android.content.SharedPreferences
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -16,26 +13,18 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
-import extensions.utils.injectLazy
 import extensions.utils.parseAs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
-import org.json.JSONObject
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.net.URLDecoder
 import java.net.URLEncoder
 import kotlin.time.Duration.Companion.seconds
 
-class NetMovie :
-    Source(),
-    ConfigurableAnimeSource {
+class NetMovie : Source() {
 
     override val name = "NetMovie"
 
@@ -44,12 +33,6 @@ class NetMovie :
     override val lang = "all"
 
     override val supportsLatest = true
-
-    private val json: Json by injectLazy()
-
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", Application.MODE_PRIVATE)
-    }
 
     private val apiUrl: String
         get() = preferences.getString(PREF_API_URL_KEY, DEFAULT_API_URL) ?: DEFAULT_API_URL
@@ -117,7 +100,7 @@ class NetMovie :
         return SAnime.create().apply {
             title = item.titleEn?.ifBlank { item.titleRu } ?: item.titleRu ?: item.title ?: anime.title
             thumbnail_url = item.poster ?: anime.thumbnail_url
-            setUrlWithoutDomain("/movies/$id")
+            url = "/movies/$id"
             description = buildString {
                 if (!item.description.isNullOrBlank()) {
                     append(item.description)
@@ -133,7 +116,7 @@ class NetMovie :
                 if (item.duration != null && item.duration > 0) {
                     val h = item.duration / 60
                     val m = item.duration % 60
-                    append("⏱ Duration: ").append(if (h > 0) "${h}h ${m}m" else "$m min").append("\n")
+                    append("⏱ Duration: ").append(if (h > 0) "${h}h ${m}m" else "${m} min").append("\n")
                 }
                 if (!item.languages.isNullOrEmpty()) {
                     append("🌐 Audio: ").append(item.languages.mapNotNull { it.name }.joinToString()).append("\n")
@@ -182,7 +165,7 @@ class NetMovie :
     private fun createMovieEpisode(id: String): SEpisode = SEpisode.create().apply {
         name = "Full Movie"
         episode_number = 1f
-        setUrlWithoutDomain("/movies/$id")
+        url = "/movies/$id"
     }
 
     private fun extractSerialEpisodes(movieId: String, embedUrl: String): List<SEpisode> {
@@ -237,8 +220,8 @@ class NetMovie :
 
                 val episode = SEpisode.create().apply {
                     name = "$seasonTitle - $epTitle"
-                    episode_number = (s + 1) * 1000f + epNum
-                    setUrlWithoutDomain("/serial?id=$movieId&season=$encodedSeason&ep=$epNumStr&subfile=$encodedSubfile&embed=$encodedEmbed")
+                    episode_number = (s * 100 + epNum).toFloat()
+                    url = "/serial?id=$movieId&season=$encodedSeason&ep=$epNumStr&subfile=$encodedSubfile&embed=$encodedEmbed"
                 }
                 episodes.add(episode)
             }
@@ -258,7 +241,7 @@ class NetMovie :
             videoList.addAll(extractMovieVideos(id))
         }
 
-        return videoList.sortVideos()
+        return videoList.sort()
     }
 
     private fun extractSerialVideos(url: String): List<Video> {
@@ -395,9 +378,11 @@ class NetMovie :
         return videos
     }
 
-    private fun extractMovieId(url: String): String = url.substringAfterLast("/").substringBefore("?").substringBefore("&")
+    private fun extractMovieId(url: String): String {
+        return url.substringAfterLast("/").substringBefore("?").substringBefore("&")
+    }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, DEFAULT_QUALITY) ?: DEFAULT_QUALITY
         return this.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(quality) }
@@ -481,12 +466,12 @@ data class MovieItem(
         val effectiveTitle = titleEn?.ifBlank { titleRu } ?: titleRu ?: title ?: name ?: "Untitled"
         this.title = effectiveTitle
         val effectiveId = kinopoiskId ?: id ?: 0L
-        setUrlWithoutDomain("/movies/$effectiveId")
-        thumbnail_url = poster
+        this.url = "/movies/$effectiveId"
+        this.thumbnail_url = poster
         this.description = this@MovieItem.description
-        genre = genres?.mapNotNull { it.name }?.joinToString()
-        status = if (type.equals("movie", ignoreCase = true)) SAnime.COMPLETED else SAnime.UNKNOWN
-        fetch_type = FetchType.Episodes
+        this.genre = genres?.mapNotNull { it.name }?.joinToString()
+        this.status = if (type.equals("movie", ignoreCase = true)) SAnime.COMPLETED else SAnime.UNKNOWN
+        this.fetch_type = FetchType.Episodes
     }
 }
 

@@ -792,7 +792,7 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                     param_block = match.group(2)
                     for line in param_block.splitlines():
                         clean_line = line.strip().rstrip(",")
-                        if (clean_line.startswith("val ") or clean_line.startswith("var ")) and "=" not in clean_line:
+                        if (clean_line.startswith("val ") or clean_line.startswith("var ")) and "=" not in clean_line and not clean_line.endswith("?"):
                             prop = clean_line.split(":")[0].replace("val ", "").replace("var ", "").strip()
                             file_warnings.append(f"DTO null-safety violation in {cls_name}.{prop} — missing default fallback (e.g. `? = null`)")
                             break
@@ -802,15 +802,28 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                 if re.search(r'setUrlWithoutDomain\([^)]*(?:\?token=|\?session=|\?sig=|\?expires=)', content):
                     file_warnings.append("Ephemeral / dynamic token embedded in SEpisode.url — use stable permanent anchor URL (e.g. ${anime.url}#season=$s&ep=$e)")
 
-            # 13. Non-zero base episode numbering (* 1000 offset anti-pattern)
+            # 13. Subclassing extensions.utils.Source while redeclaring inherited json or preferences
+            if "class " in content and ": Source()" in content:
+                if re.search(r'(?:private|val)\s+json\s*(?::\s*Json)?\s*by\s+', content):
+                    file_warnings.append("Redundant 'json' property declaration in Source subclass — 'json' is already provided by extensions.utils.Source")
+                if re.search(r'(?:private|val)\s+preferences\s*(?::\s*SharedPreferences)?\s*by\s+', content):
+                    file_warnings.append("Redundant 'preferences' property declaration in Source subclass — 'preferences' is already provided by extensions.utils.Source")
+                if re.search(r'fun\s+List<Video>\.sortVideos\(', content):
+                    file_warnings.append("Redundant 'sortVideos()' function — override 'List<Video>.sort(): List<Video>' in AnimeHttpSource instead")
+
+            # 14. setUrlWithoutDomain inside helper DTO classes
+            if "data class " in content and "setUrlWithoutDomain(" in content:
+                file_warnings.append("setUrlWithoutDomain() called inside data class/DTO where AnimeHttpSource receiver is not in scope — use this.url = ... instead")
+
+            # 15. Non-zero base episode numbering (* 1000 offset anti-pattern)
             if re.search(r'\(\s*(?:globalSeason|seasonNum|seasonVal|season\.season_number|s)\s*\*\s*1000', content):
                 file_warnings.append("Episode numbering offset bug (season * 1000) — triggers false 'Missing 1000 items' badge in AniZen. Use epNum.toFloat() or ((season - 1) * 100 + ep).toFloat()")
 
-            # 14. Missing initialized = true in getAnimeDetails
+            # 16. Missing initialized = true in getAnimeDetails
             if "getAnimeDetails" in content and "initialized = true" not in content and "abstract class" not in content and "interface " not in content:
                 file_warnings.append("Missing 'initialized = true' inside getAnimeDetails — causes continuous detail re-fetch loops in Aniyomi v16")
 
-            # 15. Preference keys declared outside companion object
+            # 17. Preference keys declared outside companion object
             if re.search(r'private\s+const\s+val\s+PREF_', content):
                 if "companion object" not in content:
                     file_warnings.append("Preference key constants declared outside companion object — should be inside companion object")
