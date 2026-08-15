@@ -790,6 +790,7 @@ class EpisodeMetadataFetcher(
         val number: Int? = null,
         @SerialName("canonicalTitle") val canonicalTitle: String? = null,
         val description: String? = null,
+        val synopsis: String? = null,
         val thumbnail: KitsuImage? = null,
         val airdate: String? = null,
     )
