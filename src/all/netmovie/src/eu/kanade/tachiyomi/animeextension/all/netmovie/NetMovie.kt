@@ -241,7 +241,7 @@ class NetMovie : Source() {
             videoList.addAll(extractMovieVideos(id))
         }
 
-        return videoList.sort()
+        return videoList.sortVideos()
     }
 
     private fun extractSerialVideos(url: String): List<Video> {
@@ -380,7 +380,7 @@ class NetMovie : Source() {
 
     private fun extractMovieId(url: String): String = url.substringAfterLast("/").substringBefore("?").substringBefore("&")
 
-    override fun List<Video>.sort(): List<Video> {
+    private fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, DEFAULT_QUALITY) ?: DEFAULT_QUALITY
         return this.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(quality) }
