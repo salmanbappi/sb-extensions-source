@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import extensions.utils.EpisodeMetadataFetcher
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
@@ -64,6 +65,10 @@ class WatchAnimeWorld : Source() {
         PlaylistUtils(client, headers)
     }
 
+    private val metadataFetcher by lazy {
+        EpisodeMetadataFetcher(client, json)
+    }
+
     // ============================== Popular ===============================
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/series/page/$page/", headers)
@@ -100,6 +105,21 @@ class WatchAnimeWorld : Source() {
     override fun animeDetailsRequest(anime: SAnime): Request = GET(anime.fullUrl(), headers)
 
     override fun episodeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
+
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        val details = super.getAnimeDetails(anime)
+        val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, true)
+        if (loadDescriptions && details.description.isNullOrBlank()) {
+            try {
+                val metadataMap = metadataFetcher.fetch(malId = "", animeTitle = details.title, fallbackThumbnailUrl = details.thumbnail_url)
+                val firstDesc = metadataMap.values.firstOrNull { !it.description.isNullOrBlank() }?.description
+                if (!firstDesc.isNullOrBlank()) {
+                    details.description = firstDesc
+                }
+            } catch (_: Exception) {}
+        }
+        return details
+    }
 
     // =============================== Search ===============================
 
@@ -156,17 +176,61 @@ class WatchAnimeWorld : Source() {
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
         return SAnime.create().apply {
-            title = document.selectFirst(".entry-title, h1.entry-title")?.text()?.trim() ?: ""
-            description = document.selectFirst(".description p, .wp-content p, #info p")?.text()?.trim() ?: ""
+            title = document.selectFirst(".entry-title, h1.entry-title, h1")?.text()?.trim() ?: ""
+            description = document.selectFirst(".description p, .wp-content p, #info p, .description")?.text()?.trim() ?: ""
             genre = document.select(".genres a, .sgeneros a").joinToString { it.text().trim() }
-            thumbnail_url = document.selectFirst("article.post img, .poster img")?.attr("abs:src")
-                ?: document.selectFirst("article.post img, .poster img")?.attr("abs:data-src") ?: ""
+            val rawThumb = document.selectFirst("article.post img, .poster img, img.wp-post-image, .thumb img, figure img")?.attr("abs:src")
+                ?: document.selectFirst("article.post img, .poster img, img.wp-post-image, .thumb img, figure img")?.attr("abs:data-src")
+                ?: document.selectFirst("article.post img, .poster img, img.wp-post-image, .thumb img, figure img")?.attr("src") ?: ""
+            thumbnail_url = when {
+                rawThumb.startsWith("//") -> "https:$rawThumb"
+                rawThumb.startsWith("/") -> baseUrl + rawThumb
+                else -> rawThumb
+            }
             status = SAnime.UNKNOWN
             initialized = true
         }
     }
 
     // ============================== Episodes ==============================
+
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
+        val episodes = super.getEpisodeList(anime)
+        val loadThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
+        val loadTitles = preferences.getBoolean(PREF_LOAD_TITLES_KEY, true)
+        val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, true)
+
+        if (!loadThumbnails && !loadTitles && !loadDescriptions) return episodes
+
+        return try {
+            val metadataMap = metadataFetcher.fetch(malId = "", animeTitle = anime.title, fallbackThumbnailUrl = anime.thumbnail_url)
+            if (metadataMap.isEmpty()) return episodes
+
+            episodes.map { episode ->
+                val num = episode.episode_number.toInt()
+                val meta = metadataMap[num] ?: return@map episode
+                episode.apply {
+                    if (loadThumbnails && preview_url.isNullOrEmpty() && !meta.thumbnailUrl.isNullOrEmpty()) {
+                        preview_url = meta.thumbnailUrl
+                    }
+                    if (loadDescriptions && summary.isNullOrEmpty() && !meta.description.isNullOrEmpty()) {
+                        summary = meta.description
+                    }
+                    if (loadTitles && !meta.title.isNullOrBlank()) {
+                        val seasonPrefix = if (name.startsWith("S")) name.substringBefore(" - ") + " - " else ""
+                        val epPad = if (num > 0) num.toString().padStart(2, '0') else episode.episode_number.toString()
+                        if (name.matches(Regex("""^(?:S\d+\s*-\s*)?Ep\.\s*\d+$""", RegexOption.IGNORE_CASE)) ||
+                            name.equals("Movie", ignoreCase = true)
+                        ) {
+                            name = "${seasonPrefix}Ep. $epPad - ${meta.title}"
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            episodes
+        }
+    }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
@@ -264,10 +328,10 @@ class WatchAnimeWorld : Source() {
                     ?: img?.attr("abs:src")?.takeIf { it.isNotBlank() }
                     ?: img?.attr("data-src")?.takeIf { it.isNotBlank() }
                     ?: img?.attr("src") ?: ""
-                val finalImgUrl = if (imgUrl.isNotBlank()) {
-                    "https://images.weserv.nl/?url=" + imgUrl.substringAfter("https://").substringAfter("http://")
-                } else {
-                    ""
+                val finalImgUrl = when {
+                    imgUrl.startsWith("//") -> "https:$imgUrl"
+                    imgUrl.startsWith("/") -> baseUrl + imgUrl
+                    else -> imgUrl
                 }
                 preview_url = if (showThumbnails && finalImgUrl.isNotBlank()) finalImgUrl else null
             }
@@ -577,6 +641,18 @@ class WatchAnimeWorld : Source() {
             summary = PREF_SHOW_THUMBNAILS_SUMMARY,
             default = true,
         )
+        screen.addSwitchPreference(
+            key = PREF_LOAD_TITLES_KEY,
+            title = PREF_LOAD_TITLES_TITLE,
+            summary = PREF_LOAD_TITLES_SUMMARY,
+            default = true,
+        )
+        screen.addSwitchPreference(
+            key = PREF_LOAD_DESCRIPTIONS_KEY,
+            title = PREF_LOAD_DESCRIPTIONS_TITLE,
+            summary = PREF_LOAD_DESCRIPTIONS_SUMMARY,
+            default = true,
+        )
     }
 
     // ============================ Utilities ===============================
@@ -658,6 +734,14 @@ class WatchAnimeWorld : Source() {
 
         private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
         private const val PREF_SHOW_THUMBNAILS_TITLE = "Show episode thumbnails"
-        private const val PREF_SHOW_THUMBNAILS_SUMMARY = "Fetch and display images in the episode list."
+        private const val PREF_SHOW_THUMBNAILS_SUMMARY = "Fetch and display preview images in the episode list."
+
+        private const val PREF_LOAD_TITLES_KEY = "pref_load_titles"
+        private const val PREF_LOAD_TITLES_TITLE = "Enrich episode titles"
+        private const val PREF_LOAD_TITLES_SUMMARY = "Fetch episode titles from AniList/TMDB/Kitsu"
+
+        private const val PREF_LOAD_DESCRIPTIONS_KEY = "pref_load_descriptions"
+        private const val PREF_LOAD_DESCRIPTIONS_TITLE = "Enrich episode descriptions & summaries"
+        private const val PREF_LOAD_DESCRIPTIONS_SUMMARY = "Fetch per-episode synopses & descriptions from AniList/TMDB/Kitsu"
     }
 }
