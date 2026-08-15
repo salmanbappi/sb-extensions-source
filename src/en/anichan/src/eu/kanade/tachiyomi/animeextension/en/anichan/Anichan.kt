@@ -294,7 +294,7 @@ class Anichan : Source() {
                         playlistUrl = fullM3u8Url,
                         referer = "$baseUrl/",
                         videoNameGen = { quality -> "$quality [$audio]" },
-                        subtitleTracks = subTracks,
+                        subtitleList = subTracks,
                     )
                 }.getOrElse { emptyList() }
 
@@ -311,12 +311,24 @@ class Anichan : Source() {
                     )
                 }
             } else if (!src.embedUrl.isNullOrBlank()) {
-                universalExtractor.toVideoList(
-                    url = src.embedUrl,
-                    name = "${hoster.hosterName} [$audio]",
-                    headers = headers,
-                    subtitleTracks = subTracks,
-                )
+                val embedVideos = runCatching {
+                    universalExtractor.videosFromUrl(
+                        origRequestUrl = src.embedUrl,
+                        origRequestHeader = headers,
+                        prefix = "${hoster.hosterName} [$audio]",
+                    )
+                }.getOrElse { emptyList() }
+
+                embedVideos.map { vid ->
+                    Video(
+                        videoUrl = vid.videoUrl,
+                        videoTitle = vid.videoTitle,
+                        headers = vid.headers ?: headers,
+                        resolution = vid.resolution,
+                        subtitleTracks = vid.subtitleTracks ?: subTracks,
+                        audioTracks = vid.audioTracks,
+                    )
+                }
             } else {
                 emptyList()
             }
