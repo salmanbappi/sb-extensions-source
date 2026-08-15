@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.parseAs
+import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -98,42 +99,36 @@ class Anilight : Source() {
                         sortApplied = true
                     }
                 }
-
                 is Filters.FormatFilter -> {
                     val format = filter.toUriPart()
                     if (format.isNotBlank()) {
                         urlBuilder.addQueryParameter("format", format)
                     }
                 }
-
                 is Filters.StatusFilter -> {
                     val status = filter.toUriPart()
                     if (status.isNotBlank()) {
                         urlBuilder.addQueryParameter("status", status)
                     }
                 }
-
                 is Filters.SeasonFilter -> {
                     val season = filter.toUriPart()
                     if (season.isNotBlank()) {
                         urlBuilder.addQueryParameter("season", season)
                     }
                 }
-
                 is Filters.YearFilter -> {
                     val year = filter.state.trim()
                     if (year.isNotBlank() && year.toIntOrNull() != null) {
                         urlBuilder.addQueryParameter("seasonYear", year)
                     }
                 }
-
                 is Filters.GenreFilter -> {
                     val included = filter.getIncluded()
                     if (included.isNotEmpty()) {
                         urlBuilder.addQueryParameter("genres", included.joinToString(","))
                     }
                 }
-
                 else -> {}
             }
         }
@@ -240,44 +235,36 @@ class Anilight : Source() {
         val dto = response.parseAs<WatchResponseDto>(json)
         val servers = dto.servers
 
-        val hosters = mutableListOf<Hoster>()
+        val providerMap = mutableMapOf<String, MutableList<String>>()
 
-        val subList = servers?.subProviders?.mapNotNull { it.id }?.takeIf { it.isNotEmpty() }
-            ?: listOf("misa", "near", "rem", "misora", "light", "raye")
-
-        val dubList = servers?.dubProviders?.mapNotNull { it.id }?.takeIf { it.isNotEmpty() }
-            ?: listOf("misa", "near", "light", "raye")
-
-        for (providerId in subList) {
-            val displayName = providerId.replaceFirstChar { it.uppercase() }
-            hosters.add(
-                Hoster(
-                    hosterName = "Server: $displayName (Sub)",
-                    hosterUrl = "$animeId|$epNum|sub|$providerId",
-                ),
-            )
+        servers?.subProviders?.forEach { p ->
+            p.id?.let { pid ->
+                val typeLabel = if (p.tip?.contains("Soft Sub", ignoreCase = true) == true) "soft-sub" else "sub"
+                providerMap.getOrPut(pid) { mutableListOf() }.add(typeLabel)
+            }
         }
 
-        for (providerId in dubList) {
-            val displayName = providerId.replaceFirstChar { it.uppercase() }
-            hosters.add(
-                Hoster(
-                    hosterName = "Server: $displayName (Dub)",
-                    hosterUrl = "$animeId|$epNum|dub|$providerId",
-                ),
-            )
+        servers?.dubProviders?.forEach { p ->
+            p.id?.let { pid ->
+                providerMap.getOrPut(pid) { mutableListOf() }.add("dub")
+            }
+        }
+
+        if (providerMap.isEmpty()) {
+            listOf("misa", "near", "rem", "misora", "light", "raye").forEach { pid ->
+                providerMap[pid] = mutableListOf("sub", "dub")
+            }
         }
 
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
-        val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
 
-        return hosters.sortedWith(
-            compareByDescending<Hoster> {
-                it.hosterName.contains("($prefAudio)", ignoreCase = true)
-            }.thenByDescending {
-                it.hosterName.contains(prefServer, ignoreCase = true)
-            },
-        )
+        return providerMap.map { (providerId, types) ->
+            val displayName = providerId.replaceFirstChar { it.uppercase() }
+            Hoster(
+                hosterName = "Server: $displayName",
+                hosterUrl = "$animeId|$epNum|$providerId|${types.distinct().joinToString(",")}",
+            )
+        }.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -286,65 +273,85 @@ class Anilight : Source() {
 
         val animeId = parts[0]
         val epNum = parts[1]
-        val type = parts[2]
-        val providerId = parts[3]
+        val providerId = parts[2]
+        val types = parts[3].split(",").filter { it.isNotBlank() }
 
-        val url = "$API_BASE/sources?id=${URLEncoder.encode(animeId, "UTF-8")}&epNum=${URLEncoder.encode(epNum, "UTF-8")}&type=${URLEncoder.encode(type, "UTF-8")}&providerId=${URLEncoder.encode(providerId, "UTF-8")}"
+        val videos = types.parallelCatchingFlatMap { rawType ->
+            val apiType = if (rawType.equals("dub", ignoreCase = true)) "dub" else "sub"
+            val url = "$API_BASE/sources?id=${URLEncoder.encode(animeId, "UTF-8")}&epNum=${URLEncoder.encode(epNum, "UTF-8")}&type=${URLEncoder.encode(apiType, "UTF-8")}&providerId=${URLEncoder.encode(providerId, "UTF-8")}"
 
-        val response = client.newCall(GET(url, headers)).execute()
-        if (!response.isSuccessful) return emptyList()
-
-        val sourcesDto = response.parseAs<SourcesResponseDto>(json)
-
-        val subtitleTracks = (sourcesDto.tracks ?: emptyList()).mapNotNull { track ->
-            val subUrl = track.url ?: return@mapNotNull null
-            val resolvedSubUrl = if (subUrl.contains("1oe.lostproject.club")) {
-                "$API_BASE/proxy/captions?url=${URLEncoder.encode(subUrl, "UTF-8")}"
-            } else {
-                subUrl
+            val response = try {
+                client.newCall(GET(url, headers)).execute()
+            } catch (_: Exception) {
+                return@parallelCatchingFlatMap emptyList<Video>()
             }
-            Track(
-                url = resolvedSubUrl,
-                lang = track.label ?: track.lang ?: "English",
-            )
-        }
 
-        val videos = mutableListOf<Video>()
+            if (!response.isSuccessful) return@parallelCatchingFlatMap emptyList<Video>()
 
-        for (src in sourcesDto.sources ?: emptyList()) {
-            val rawUrl = src.url ?: continue
-            val streamUrl = resolveStreamUrl(rawUrl)
+            val sourcesDto = try {
+                response.parseAs<SourcesResponseDto>(json)
+            } catch (_: Exception) {
+                return@parallelCatchingFlatMap emptyList<Video>()
+            }
 
-            try {
-                if (streamUrl.contains(".m3u8", ignoreCase = true) || streamUrl.contains("/proxy", ignoreCase = true)) {
-                    val hlsVideos = playlistUtils.extractFromHls(
-                        playlistUrl = streamUrl,
-                        masterHeaders = headers,
-                        videoHeaders = headers,
-                        videoNameGen = { quality -> quality },
-                        subtitleList = subtitleTracks,
-                    )
-                    videos.addAll(hlsVideos)
+            val subtitleTracks = (sourcesDto.tracks ?: emptyList()).mapNotNull { track ->
+                val subUrl = track.url ?: return@mapNotNull null
+                val resolvedSubUrl = if (subUrl.contains("1oe.lostproject.club")) {
+                    "$API_BASE/proxy/captions?url=${URLEncoder.encode(subUrl, "UTF-8")}"
                 } else {
-                    videos.add(
+                    subUrl
+                }
+                Track(
+                    url = resolvedSubUrl,
+                    lang = track.label ?: track.lang ?: "English",
+                )
+            }
+
+            val audioBadge = when {
+                apiType == "dub" -> "[Dub]"
+                rawType.equals("soft-sub", ignoreCase = true) || subtitleTracks.isNotEmpty() -> "[Soft Sub]"
+                else -> "[Sub]"
+            }
+
+            val typeVideos = mutableListOf<Video>()
+
+            for (src in sourcesDto.sources ?: emptyList()) {
+                val rawUrl = src.url ?: continue
+                val streamUrl = resolveStreamUrl(rawUrl)
+
+                try {
+                    if (streamUrl.contains(".m3u8", ignoreCase = true) || streamUrl.contains("/proxy", ignoreCase = true)) {
+                        val hlsVideos = playlistUtils.extractFromHls(
+                            playlistUrl = streamUrl,
+                            masterHeaders = headers,
+                            videoHeaders = headers,
+                            videoNameGen = { quality -> "$quality $audioBadge" },
+                            subtitleList = subtitleTracks,
+                        )
+                        typeVideos.addAll(hlsVideos)
+                    } else {
+                        typeVideos.add(
+                            Video(
+                                videoUrl = streamUrl,
+                                videoTitle = "${src.quality ?: "HD"} $audioBadge",
+                                headers = headers,
+                                subtitleTracks = subtitleTracks,
+                            ),
+                        )
+                    }
+                } catch (_: Exception) {
+                    typeVideos.add(
                         Video(
                             videoUrl = streamUrl,
-                            videoTitle = src.quality ?: "Auto",
+                            videoTitle = "${src.quality ?: "HD"} $audioBadge",
                             headers = headers,
                             subtitleTracks = subtitleTracks,
                         ),
                     )
                 }
-            } catch (_: Exception) {
-                videos.add(
-                    Video(
-                        videoUrl = streamUrl,
-                        videoTitle = src.quality ?: "Auto",
-                        headers = headers,
-                        subtitleTracks = subtitleTracks,
-                    ),
-                )
             }
+
+            typeVideos
         }
 
         return videos.sortVideos()
@@ -372,27 +379,29 @@ class Anilight : Source() {
             workerDomains.any { rawUrl.contains(it) } -> {
                 "$API_BASE/lb/misa/proxy?url=${URLEncoder.encode(rawUrl, "UTF-8")}"
             }
-
             rawUrl.contains("hls.anidb.app") -> {
                 "$API_BASE/lb/near/proxy?url=${URLEncoder.encode(rawUrl, "UTF-8")}"
             }
-
             apiProxyDomains.any { rawUrl.contains(it) } -> {
                 "$API_BASE/proxy?url=${URLEncoder.encode(rawUrl, "UTF-8")}"
             }
-
             else -> rawUrl
         }
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
+
         return sortedWith(
-            compareByDescending { it.videoTitle.contains(quality, ignoreCase = true) },
+            compareByDescending<Video> { it.videoTitle.contains("[$prefAudio]", ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+                .thenByDescending { it.resolution ?: 0 },
         )
     }
 
-    private fun getTitleLangPref(): String = preferences.getString(PREF_TITLE_LANG_KEY, PREF_TITLE_LANG_DEFAULT) ?: PREF_TITLE_LANG_DEFAULT
+    private fun getTitleLangPref(): String =
+        preferences.getString(PREF_TITLE_LANG_KEY, PREF_TITLE_LANG_DEFAULT) ?: PREF_TITLE_LANG_DEFAULT
 
     // ============================== Settings ==============================
 
@@ -412,8 +421,8 @@ class Anilight : Source() {
         ListPreference(screen.context).apply {
             key = PREF_AUDIO_KEY
             title = "Preferred Audio"
-            entries = arrayOf("Sub", "Dub")
-            entryValues = arrayOf("Sub", "Dub")
+            entries = arrayOf("Soft Sub", "Sub", "Dub")
+            entryValues = arrayOf("Soft Sub", "Sub", "Dub")
             setDefaultValue(PREF_AUDIO_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
@@ -453,7 +462,7 @@ class Anilight : Source() {
         private const val PREF_TITLE_LANG_DEFAULT = "english"
 
         private const val PREF_AUDIO_KEY = "pref_audio"
-        private const val PREF_AUDIO_DEFAULT = "Sub"
+        private const val PREF_AUDIO_DEFAULT = "Soft Sub"
 
         private const val PREF_SERVER_KEY = "pref_server"
         private const val PREF_SERVER_DEFAULT = "misa"
