@@ -215,7 +215,7 @@ class Meguanime :
             }
             initialized = true
 
-            val score = media.averageScore?.toDouble()?.let { it / 10.0 }
+            val score = media.averageScore?.let { it / 10.0 }
             val synopsis = media.description?.replace(Regex("<[^>]+>"), "")?.trim() ?: ""
 
             description = buildString {
