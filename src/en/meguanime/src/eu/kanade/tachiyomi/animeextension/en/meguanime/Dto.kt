@@ -14,7 +14,7 @@ data class GraphQLRequest(
 data class GraphQLVariables(
     val id: Int? = null,
     val page: Int? = null,
-    val perPage: Int? = 24 = null,
+    val perPage: Int? = 24,
     val search: String? = null,
     val sort: List<String>? = null,
     val genres: List<String>? = null,
@@ -43,20 +43,20 @@ data class AnilistPage(
 
 @Serializable
 data class PageInfo(
-    val hasNextPage: Boolean? = false = null,
-    val total: Int? = 0 = null,
+    val hasNextPage: Boolean? = false,
+    val total: Int? = 0,
 )
 
 @Serializable
 data class AnilistMedia(
-    val id: Int? = null,
+    val id: Int = 0,
     val idMal: Int? = null,
     val title: MediaTitle? = null,
     val coverImage: CoverImage? = null,
     val bannerImage: String? = null,
     val description: String? = null,
     val genres: List<String>? = null,
-    val averageScore: Int? = null,
+    val averageScore: Double? = null,
     val episodes: Int? = null,
     val status: String? = null,
     val format: String? = null,
@@ -252,5 +252,5 @@ data class MeguTrack(
     val file: String? = null,
     val label: String? = null,
     val kind: String? = null,
-    val default: Boolean? = false = null,
+    val default: Boolean? = false,
 )
