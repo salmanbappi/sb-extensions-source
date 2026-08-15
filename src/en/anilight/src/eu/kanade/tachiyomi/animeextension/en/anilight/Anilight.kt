@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.en.anilight
 
+import aniyomi.lib.m3u8server.M3u8Integration
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -18,6 +18,7 @@ import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.Serializable
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import java.net.URLEncoder
@@ -260,7 +261,7 @@ class Anilight : Source() {
         }
 
         if (providerMap.isEmpty()) {
-            listOf("misa", "near", "rem", "misora", "light", "raye").forEach { pid ->
+            listOf("misa", "near", "rem", "misora", "light", "raye", "ryu").forEach { pid ->
                 providerMap[pid] = mutableListOf("sub", "dub")
             }
         }
@@ -327,13 +328,14 @@ class Anilight : Source() {
             for (src in sourcesDto.sources ?: emptyList()) {
                 val rawUrl = src.url ?: continue
                 val streamUrl = resolveStreamUrl(rawUrl)
+                val streamHeaders = resolveStreamHeaders(streamUrl)
 
                 try {
                     if (streamUrl.contains(".m3u8", ignoreCase = true) || streamUrl.contains("/proxy", ignoreCase = true)) {
                         val hlsVideos = playlistUtils.extractFromHls(
                             playlistUrl = streamUrl,
-                            masterHeaders = headers,
-                            videoHeaders = headers,
+                            masterHeaders = streamHeaders,
+                            videoHeaders = streamHeaders,
                             videoNameGen = { quality -> "$quality $audioBadge" },
                             subtitleList = subtitleTracks,
                         )
@@ -343,7 +345,7 @@ class Anilight : Source() {
                             Video(
                                 videoUrl = streamUrl,
                                 videoTitle = "${src.quality ?: "HD"} $audioBadge",
-                                headers = headers,
+                                headers = streamHeaders,
                                 subtitleTracks = subtitleTracks,
                             ),
                         )
@@ -353,7 +355,7 @@ class Anilight : Source() {
                         Video(
                             videoUrl = streamUrl,
                             videoTitle = "${src.quality ?: "HD"} $audioBadge",
-                            headers = headers,
+                            headers = streamHeaders,
                             subtitleTracks = subtitleTracks,
                         ),
                     )
@@ -410,6 +412,15 @@ class Anilight : Source() {
         }
     }
 
+    private fun resolveStreamHeaders(streamUrl: String): Headers {
+        return when {
+            streamUrl.contains("animegg.org") -> headers.newBuilder()
+                .set("Referer", "https://www.animegg.org/")
+                .build()
+            else -> headers
+        }
+    }
+
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
@@ -453,8 +464,8 @@ class Anilight : Source() {
         ListPreference(screen.context).apply {
             key = PREF_SERVER_KEY
             title = "Preferred Server"
-            entries = arrayOf("Misa", "Near", "Rem", "Misora", "Light", "Raye")
-            entryValues = arrayOf("misa", "near", "rem", "misora", "light", "raye")
+            entries = arrayOf("Misa", "Near", "Rem", "Misora", "Light", "Raye", "Ryu")
+            entryValues = arrayOf("misa", "near", "rem", "misora", "light", "raye", "ryu")
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
