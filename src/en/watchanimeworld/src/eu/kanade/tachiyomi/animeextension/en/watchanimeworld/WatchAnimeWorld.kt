@@ -109,12 +109,11 @@ class WatchAnimeWorld : Source() {
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val details = super.getAnimeDetails(anime)
         val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, true)
-        if (loadDescriptions && details.description.isNullOrBlank()) {
+        if (loadDescriptions && (details.description.isNullOrBlank() || details.description!!.length < 30)) {
             try {
-                val metadataMap = metadataFetcher.fetch(malId = "", animeTitle = details.title, fallbackThumbnailUrl = details.thumbnail_url)
-                val firstDesc = metadataMap.values.firstOrNull { !it.description.isNullOrBlank() }?.description
-                if (!firstDesc.isNullOrBlank()) {
-                    details.description = firstDesc
+                val synopsis = metadataFetcher.fetchAnimeSynopsis(details.title)
+                if (!synopsis.isNullOrBlank()) {
+                    details.description = synopsis
                 }
             } catch (_: Exception) {}
         }
@@ -211,20 +210,16 @@ class WatchAnimeWorld : Source() {
                 val num = episode.episode_number.toInt()
                 val meta = metadataMap[num] ?: return@map episode
                 episode.apply {
-                    if (loadThumbnails && (preview_url.isNullOrEmpty() || preview_url!!.contains("SiteTitle")) && !meta.thumbnailUrl.isNullOrEmpty()) {
+                    if (loadThumbnails && !meta.thumbnailUrl.isNullOrEmpty() && (preview_url.isNullOrEmpty() || preview_url!!.contains("SiteTitle"))) {
                         preview_url = meta.thumbnailUrl
                     }
-                    if (loadDescriptions && summary.isNullOrEmpty() && !meta.description.isNullOrEmpty()) {
+                    if (loadDescriptions && !meta.description.isNullOrEmpty()) {
                         summary = meta.description
                     }
                     if (loadTitles && !meta.title.isNullOrBlank()) {
                         val seasonPrefix = if (name.startsWith("S")) name.substringBefore(" - ") + " - " else ""
                         val epPad = if (num > 0) num.toString().padStart(2, '0') else episode.episode_number.toString()
-                        if (name.matches(Regex("""^(?:S\d+\s*-\s*)?Ep\.\s*\d+$""", RegexOption.IGNORE_CASE)) ||
-                            name.equals("Movie", ignoreCase = true)
-                        ) {
-                            name = "${seasonPrefix}Ep. $epPad - ${meta.title}"
-                        }
+                        name = "${seasonPrefix}Ep. $epPad - ${meta.title}"
                     }
                 }
             }
