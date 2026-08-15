@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.meguanime
 
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -51,6 +52,8 @@ class Meguanime :
     }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override val json: Json by lazy {
         Json {
@@ -385,7 +388,7 @@ class Meguanime :
             .set("Referer", "$baseUrl/")
             .build()
 
-        return audioLangs.parallelCatchingFlatMapBlocking { lang ->
+        val videos = audioLangs.parallelCatchingFlatMapBlocking { lang ->
             when (hosterType) {
                 "miruro" -> {
                     val url = "$baseUrl/api/miruro?al=$anilistId&ep=$epNum&lang=$lang&all=1"
@@ -571,6 +574,8 @@ class Meguanime :
                 else -> emptyList()
             }
         }
+
+        return m3u8Integration.processVideoList(videos)
     }
 
     private fun MeguTrack.toTrack(): Track? {
