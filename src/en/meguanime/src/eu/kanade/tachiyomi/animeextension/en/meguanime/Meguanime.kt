@@ -401,7 +401,13 @@ class Meguanime :
                     val videoList = mutableListOf<Video>()
 
                     if (!data.source.isNullOrBlank()) {
-                        val mainTag = if (lang == "dub") "[DUB]" else if (subTracks.isNotEmpty()) "[Soft Sub]" else "[Hard Sub]"
+                        val mainTag = if (lang == "dub") {
+                            "[DUB]"
+                        } else if (subTracks.isNotEmpty()) {
+                            "[Soft Sub]"
+                        } else {
+                            "[Hard Sub]"
+                        }
                         videoList.addAll(
                             playlistUtils.extractFromHls(
                                 playlistUrl = data.source,
@@ -418,7 +424,13 @@ class Meguanime :
                         if (!pSource.isNullOrBlank()) {
                             val pTracks = provider.tracks?.mapNotNull { it.toTrack() } ?: subTracks
                             val isHard = provider.hard == true || (pTracks.isEmpty() && lang != "dub")
-                            val pTag = if (lang == "dub") "[DUB]" else if (isHard) "[Hard Sub]" else "[Soft Sub]"
+                            val pTag = if (lang == "dub") {
+                                "[DUB]"
+                            } else if (isHard) {
+                                "[Hard Sub]"
+                            } else {
+                                "[Soft Sub]"
+                            }
                             videoList.addAll(
                                 playlistUtils.extractFromHls(
                                     playlistUrl = pSource,
@@ -445,7 +457,13 @@ class Meguanime :
 
                     val masterUrl = data.source ?: return@parallelCatchingFlatMapBlocking emptyList()
                     val subTracks = data.tracks?.mapNotNull { it.toTrack() } ?: emptyList()
-                    val tag = if (lang == "dub") "[DUB]" else if (subTracks.isNotEmpty()) "[Soft Sub]" else "[Hard Sub]"
+                    val tag = if (lang == "dub") {
+                        "[DUB]"
+                    } else if (subTracks.isNotEmpty()) {
+                        "[Soft Sub]"
+                    } else {
+                        "[Hard Sub]"
+                    }
 
                     playlistUtils.extractFromHls(
                         playlistUrl = masterUrl,
@@ -466,7 +484,13 @@ class Meguanime :
                         ?: return@parallelCatchingFlatMapBlocking emptyList()
 
                     val subTracks = data.tracks?.mapNotNull { it.toTrack() } ?: emptyList()
-                    val tag = if (lang == "dub") "[DUB]" else if (subTracks.isNotEmpty()) "[Soft Sub]" else "[Hard Sub]"
+                    val tag = if (lang == "dub") {
+                        "[DUB]"
+                    } else if (subTracks.isNotEmpty()) {
+                        "[Soft Sub]"
+                    } else {
+                        "[Hard Sub]"
+                    }
                     val videoList = mutableListOf<Video>()
 
                     if (data.qualities?.isNotEmpty() == true) {
