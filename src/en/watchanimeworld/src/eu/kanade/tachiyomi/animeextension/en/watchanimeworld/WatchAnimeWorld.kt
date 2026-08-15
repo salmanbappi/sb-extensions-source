@@ -20,8 +20,8 @@ import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.Serializable
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
