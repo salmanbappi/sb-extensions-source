@@ -1,12 +1,13 @@
 ext {
     extName = 'Moviebox'
     extClass = '.MovieBox'
-    extVersionCode = 1131
+    extVersionCode = 1132
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
+    implementation(project(":lib:playlist-utils"))
     implementation(project(":lib:m3u8server"))
 }
