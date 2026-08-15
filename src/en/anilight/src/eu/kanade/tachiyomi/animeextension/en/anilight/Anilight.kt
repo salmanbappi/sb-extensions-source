@@ -174,7 +174,7 @@ class Anilight : Source() {
                 item.format?.let { append("Format: $it\n") }
                 item.episodes?.let { append("Episodes: $it\n") }
                 item.averageScore?.let { append("Score: $it%\n") }
-                item.studios?.takeIf { it.isNotEmpty() }?.let {
+                item.studios?.nodes?.mapNotNull { it.name }?.distinct()?.takeIf { it.isNotEmpty() }?.let {
                     append("Studios: ${it.joinToString()}\n")
                 }
             }.trim()
@@ -501,7 +501,7 @@ data class MediaItemDto(
     val season: String? = null,
     val seasonYear: Int? = null,
     val format: String? = null,
-    val studios: List<String>? = null,
+    val studios: StudiosDto? = null,
 ) {
     fun getTitle(pref: String = "english"): String = when (pref.lowercase()) {
         "romaji" -> title?.romaji?.takeIf { it.isNotBlank() }
@@ -606,4 +606,15 @@ data class TrackDto(
 data class SourcesResponseDto(
     val sources: List<SourceStreamDto>? = null,
     val tracks: List<TrackDto>? = null,
+)
+
+@Serializable
+data class StudioNodeDto(
+    val id: Long? = null,
+    val name: String? = null,
+)
+
+@Serializable
+data class StudiosDto(
+    val nodes: List<StudioNodeDto>? = null,
 )
