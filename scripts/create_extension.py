@@ -533,7 +533,7 @@ class {class_name} : Source() {{
     }}
 
     // ============================== Episodes ==============================
-    // Note: SEpisode.url MUST be permanent and deterministic (e.g., "${anime.url}#season=$s&ep=$e" or "${anime.url}#movie").
+    // Note: SEpisode.url MUST be permanent and deterministic (e.g., "\${{anime.url}}#season=\$s&ep=\$e" or "\${{anime.url}}#movie").
     // Never embed dynamic tokens in SEpisode.url to avoid Tachiyomi/AniZen database invalidation cycles.
     // Episode numbering: For Season 1, episode_number MUST start at 1.0f (never with a +1000 base offset).
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {{

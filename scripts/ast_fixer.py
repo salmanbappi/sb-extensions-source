@@ -162,9 +162,6 @@ class ExtensionAstFixer:
                         type_part += "?"
                     fixed_params.append(f"\n    {val_var}: {type_part} = null")
                     modified = True
-                elif ":" in p_clean and "= null" not in p_clean and "?" in p_clean:
-                    fixed_params.append(f"\n    {p_clean} = null")
-                    modified = True
                 else:
                     fixed_params.append(f"\n    {p_clean}")
 
