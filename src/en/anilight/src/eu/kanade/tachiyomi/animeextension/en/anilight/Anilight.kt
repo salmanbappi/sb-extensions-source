@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.en.anilight
 
-import aniyomi.lib.m3u8server.M3u8Integration
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -412,13 +412,12 @@ class Anilight : Source() {
         }
     }
 
-    private fun resolveStreamHeaders(streamUrl: String): Headers {
-        return when {
-            streamUrl.contains("animegg.org") -> headers.newBuilder()
-                .set("Referer", "https://www.animegg.org/")
-                .build()
-            else -> headers
-        }
+    private fun resolveStreamHeaders(streamUrl: String): Headers = when {
+        streamUrl.contains("animegg.org") -> headers.newBuilder()
+            .set("Referer", "https://www.animegg.org/")
+            .build()
+
+        else -> headers
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
