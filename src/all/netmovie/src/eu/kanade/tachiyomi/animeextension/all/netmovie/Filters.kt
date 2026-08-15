@@ -13,14 +13,15 @@ object Filters {
         fun toUriPart() = vals[state].second
     }
 
-    class CategoryFilter : UriPartFilter(
-        "Category",
-        arrayOf(
-            Pair("Bollywood", "bollywood"),
-            Pair("Hollywood", "hollywood"),
-            Pair("TV Series", "serials"),
-        ),
-    )
+    class CategoryFilter :
+        UriPartFilter(
+            "Category",
+            arrayOf(
+                Pair("Bollywood", "bollywood"),
+                Pair("Hollywood", "hollywood"),
+                Pair("TV Series", "serials"),
+            ),
+        )
 
     fun getFilterList(): AnimeFilterList = AnimeFilterList(
         CategoryFilter(),
