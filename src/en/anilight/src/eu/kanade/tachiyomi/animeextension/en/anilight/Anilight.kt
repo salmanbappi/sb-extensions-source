@@ -102,36 +102,42 @@ class Anilight : Source() {
                         sortApplied = true
                     }
                 }
+
                 is Filters.FormatFilter -> {
                     val format = filter.toUriPart()
                     if (format.isNotBlank()) {
                         urlBuilder.addQueryParameter("format", format)
                     }
                 }
+
                 is Filters.StatusFilter -> {
                     val status = filter.toUriPart()
                     if (status.isNotBlank()) {
                         urlBuilder.addQueryParameter("status", status)
                     }
                 }
+
                 is Filters.SeasonFilter -> {
                     val season = filter.toUriPart()
                     if (season.isNotBlank()) {
                         urlBuilder.addQueryParameter("season", season)
                     }
                 }
+
                 is Filters.YearFilter -> {
                     val year = filter.state.trim()
                     if (year.isNotBlank() && year.toIntOrNull() != null) {
                         urlBuilder.addQueryParameter("seasonYear", year)
                     }
                 }
+
                 is Filters.GenreFilter -> {
                     val included = filter.getIncluded()
                     if (included.isNotEmpty()) {
                         urlBuilder.addQueryParameter("genres", included.joinToString(","))
                     }
                 }
+
                 else -> {}
             }
         }
@@ -391,12 +397,15 @@ class Anilight : Source() {
             workerDomains.any { url.contains(it) } -> {
                 "$API_BASE/lb/misa/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
             }
+
             url.contains("hls.anidb.app") -> {
                 "$API_BASE/lb/near/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
             }
+
             apiProxyDomains.any { url.contains(it) } -> {
                 "$API_BASE/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
             }
+
             else -> url
         }
     }
@@ -412,8 +421,7 @@ class Anilight : Source() {
         )
     }
 
-    private fun getTitleLangPref(): String =
-        preferences.getString(PREF_TITLE_LANG_KEY, PREF_TITLE_LANG_DEFAULT) ?: PREF_TITLE_LANG_DEFAULT
+    private fun getTitleLangPref(): String = preferences.getString(PREF_TITLE_LANG_KEY, PREF_TITLE_LANG_DEFAULT) ?: PREF_TITLE_LANG_DEFAULT
 
     // ============================== Settings ==============================
 
