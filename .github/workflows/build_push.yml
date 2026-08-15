@@ -222,10 +222,12 @@ jobs:
           git add -A
           git commit --amend -m "$COMMIT_MESSAGE" --no-sign --allow-empty || echo "No changes to commit"
           git push origin HEAD:main --force
+          git push origin HEAD:repo --force
 
       - name: Purge cached index on jsDelivr
         run: |
           curl https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.min.json
+          curl https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.min.json
 
       - name: Create GitHub Release
         working-directory: ${{ github.ref_name }}
