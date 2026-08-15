@@ -226,7 +226,15 @@ class ExtensionAstFixer:
             content = re.sub(r'\bsortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*\)', r'\1.sortVideos()', content)
             fixes_applied.append("Migrated `sortVideos(videos)` function to `override fun List<Video>.sortVideos(): List<Video>` (v16)")
 
-        # 9. Normalize line endings and whitespace
+        # 9. Fix PlaylistUtils.extractFromHls parameter names (subtitleTracks -> subtitleList, audioTracks -> audioList)
+        if re.search(r'extractFromHls\s*\([^)]*\bsubtitleTracks\s*=', content):
+            content = re.sub(r'(\bextractFromHls\s*\([^)]*)\bsubtitleTracks\s*=', r'\1subtitleList =', content)
+            fixes_applied.append("Fixed `PlaylistUtils.extractFromHls` parameter `subtitleTracks` -> `subtitleList`")
+        if re.search(r'extractFromHls\s*\([^)]*\baudioTracks\s*=', content):
+            content = re.sub(r'(\bextractFromHls\s*\([^)]*)\baudioTracks\s*=', r'\1audioList =', content)
+            fixes_applied.append("Fixed `PlaylistUtils.extractFromHls` parameter `audioTracks` -> `audioList`")
+
+        # 10. Normalize line endings and whitespace
         lines = [line.rstrip() for line in content.replace("\r\n", "\n").split("\n")]
         # Collapse 3+ blank lines to 2
         normalized_lines = []

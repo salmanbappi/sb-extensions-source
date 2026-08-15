@@ -929,12 +929,22 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                 if "hoster.hosterName" in content and re.search(r'videoNameGen\s*=\s*\{[^}]*\$\{hoster\.hosterName\}', content):
                     file_warnings.append("Redundant hoster name in videoNameGen prefix — the hoster folder already displays the server name in Aniyomi UI")
 
-            # 19. runBlocking { } inside suspend functions — use joined so split
-            #     declarations are caught.
+            # 19. runBlocking { } inside coroutine
             _warn_on_joined(
                 r'\brunBlocking\s*\{',
                 "runBlocking { } inside coroutine — use withContext(Dispatchers.IO) { } instead",
             )
+
+            # 24. PlaylistUtils.extractFromHls parameter mismatch (subtitleTracks / audioTracks vs subtitleList / audioList)
+            if re.search(r'extractFromHls\s*\([^)]*subtitleTracks\s*=', joined_content):
+                file_warnings.append("PlaylistUtils.extractFromHls() parameter name mismatch: 'subtitleTracks' is invalid — use 'subtitleList = ...'")
+            if re.search(r'extractFromHls\s*\([^)]*audioTracks\s*=', joined_content):
+                file_warnings.append("PlaylistUtils.extractFromHls() parameter name mismatch: 'audioTracks' is invalid — use 'audioList = ...'")
+
+            # 25. UniversalExtractor method name mismatch
+            if re.search(r'universalExtractor\s*\.\s*toVideoList\s*\(', joined_content) or re.search(r'UniversalExtractor\s*\([^)]*\)\s*\.\s*toVideoList\s*\(', joined_content):
+                file_warnings.append("UniversalExtractor method mismatch: '.toVideoList()' does not exist — use '.videosFromUrl(origRequestUrl, origRequestHeader, ...)'")
+
 
             if file_warnings:
                 for w in file_warnings:
