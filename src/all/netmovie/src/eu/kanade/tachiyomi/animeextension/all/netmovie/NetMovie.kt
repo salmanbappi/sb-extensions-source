@@ -5,6 +5,7 @@ import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -230,18 +231,83 @@ class NetMovie : Source() {
         return episodes.reversed()
     }
 
-    // ============================ Video Links =============================
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val videoList = mutableListOf<Video>()
+    // ============================ Hoster Folders ==========================
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val hosters = mutableListOf<Hoster>()
 
         if (episode.url.startsWith("/serial?")) {
-            videoList.addAll(extractSerialVideos(episode.url))
+            hosters.add(Hoster(hosterName = "Player 1", hosterUrl = episode.url))
         } else {
             val id = extractMovieId(episode.url)
+            val requestUrl = "${apiUrl}movies/$id"
+            val response = runCatching { client.newCall(GET(requestUrl, headers)).execute() }.getOrNull()
+            val wrapper = response?.parseAs<MovieDetailWrapper>(json)
+            val item = wrapper?.result
+
+            val players = item?.player ?: emptyList()
+            for ((index, player) in players.withIndex()) {
+                val playerUrl = player.url ?: continue
+                val hosterName = player.translator?.ifBlank { "Player ${player.server ?: (index + 1)}" }
+                    ?: "Player ${player.server ?: (index + 1)}"
+                val encodedUrl = URLEncoder.encode(playerUrl, "UTF-8")
+                val encodedName = URLEncoder.encode(hosterName, "UTF-8")
+                val source = player.source ?: ""
+                val hosterUrl = "/hoster?id=$id&source=$source&url=$encodedUrl&name=$encodedName"
+                hosters.add(Hoster(hosterName = hosterName, hosterUrl = hosterUrl))
+            }
+        }
+
+        if (hosters.isEmpty()) {
+            hosters.add(Hoster(hosterName = "Default", hosterUrl = episode.url))
+        }
+
+        val prefServer = preferences.getString(PREF_SERVER_KEY, DEFAULT_SERVER) ?: DEFAULT_SERVER
+        return hosters.sortedWith(
+            compareByDescending { it.hosterName.contains(prefServer, ignoreCase = true) },
+        )
+    }
+
+    // ============================ Video Links =============================
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val videoList = mutableListOf<Video>()
+
+        if (hoster.hosterUrl.startsWith("/hoster?")) {
+            val queryParams = hoster.hosterUrl.substringAfter("?").split("&").associate {
+                val parts = it.split("=", limit = 2)
+                parts[0] to (if (parts.size > 1) URLDecoder.decode(parts[1], "UTF-8") else "")
+            }
+            val playerUrl = queryParams["url"] ?: ""
+            val source = queryParams["source"] ?: ""
+            val hosterName = queryParams["name"] ?: hoster.hosterName
+
+            if (source.equals("m3u8", ignoreCase = true) || playerUrl.contains(".m3u8")) {
+                runCatching {
+                    videoList.addAll(
+                        playlistUtils.extractFromHls(
+                            playlistUrl = playerUrl,
+                            referer = baseUrl,
+                            videoNameGen = { quality -> quality },
+                        ),
+                    )
+                }
+            } else if (source.equals("iframe", ignoreCase = true) || playerUrl.contains("rasta428jem.com")) {
+                runCatching {
+                    videoList.addAll(extractHdvbVideos(playerUrl, hosterName))
+                }
+            }
+        } else if (hoster.hosterUrl.startsWith("/serial?")) {
+            videoList.addAll(extractSerialVideos(hoster.hosterUrl))
+        } else {
+            val id = extractMovieId(hoster.hosterUrl)
             videoList.addAll(extractMovieVideos(id))
         }
 
         return videoList.sortVideos()
+    }
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val hosterList = getHosterList(episode)
+        return hosterList.flatMap { getVideoList(it) }.sortVideos()
     }
 
     private fun extractSerialVideos(url: String): List<Video> {
@@ -281,7 +347,7 @@ class NetMovie : Source() {
                         playlistUtils.extractFromHls(
                             playlistUrl = streamUrl,
                             referer = embedUrl,
-                            videoNameGen = { quality -> "HDVB - $quality" },
+                            videoNameGen = { quality -> quality },
                         ),
                     )
                 }
@@ -312,7 +378,7 @@ class NetMovie : Source() {
                         playlistUtils.extractFromHls(
                             playlistUrl = playerUrl,
                             referer = baseUrl,
-                            videoNameGen = { quality -> "$translator - $quality" },
+                            videoNameGen = { quality -> quality },
                         ),
                     )
                 }
@@ -369,7 +435,7 @@ class NetMovie : Source() {
                     playlistUtils.extractFromHls(
                         playlistUrl = streamUrl,
                         referer = embedUrl,
-                        videoNameGen = { quality -> "$itemTitle - $quality" },
+                        videoNameGen = { quality -> if (itemTitle.isNotBlank()) "$itemTitle - $quality" else quality },
                     ),
                 )
             }
@@ -394,6 +460,18 @@ class NetMovie : Source() {
     // ============================== Preferences ===========================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
+            key = PREF_SERVER_KEY
+            title = "Preferred Server"
+            entries = arrayOf("Player 1", "Player 2")
+            entryValues = arrayOf("Player 1", "Player 2")
+            setDefaultValue(DEFAULT_SERVER)
+            summary = "%s"
+            setOnPreferenceChangeListener { _, newValue ->
+                preferences.edit().putString(key, newValue as String).commit()
+            }
+        }.also(screen::addPreference)
+
+        ListPreference(screen.context).apply {
             key = PREF_QUALITY_KEY
             title = "Preferred Quality"
             entries = arrayOf("1080p", "720p", "480p", "360p")
@@ -409,6 +487,8 @@ class NetMovie : Source() {
     companion object {
         private const val DEFAULT_API_URL = "https://mapi.elochkaigolochla.com/api/v1/"
         private const val PREF_API_URL_KEY = "pref_api_url"
+        private const val PREF_SERVER_KEY = "pref_server"
+        private const val DEFAULT_SERVER = "Player 1"
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val DEFAULT_QUALITY = "1080"
         private const val PAGE_SIZE = 20
