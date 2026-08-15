@@ -12,44 +12,59 @@ object Filters {
         fun isDefault() = state == 0
     }
 
-    class SortFilter : UriPartFilter("Sort By", arrayOf(
-        Pair("Most Popular", "POPULARITY_DESC"),
-        Pair("Highest Rated", "SCORE_DESC"),
-        Pair("Newest", "START_DATE_DESC"),
-        Pair("Title A-Z", "TITLE"),
-    ))
+    class SortFilter :
+        UriPartFilter(
+            "Sort By",
+            arrayOf(
+                Pair("Most Popular", "POPULARITY_DESC"),
+                Pair("Highest Rated", "SCORE_DESC"),
+                Pair("Newest", "START_DATE_DESC"),
+                Pair("Title A-Z", "TITLE"),
+            ),
+        )
 
-    class FormatFilter : UriPartFilter("Format", arrayOf(
-        Pair("Any Format", ""),
-        Pair("TV", "TV"),
-        Pair("TV Short", "TV_SHORT"),
-        Pair("Movie", "MOVIE"),
-        Pair("OVA", "OVA"),
-        Pair("ONA", "ONA"),
-        Pair("Special", "SPECIAL"),
-    ))
+    class FormatFilter :
+        UriPartFilter(
+            "Format",
+            arrayOf(
+                Pair("Any Format", ""),
+                Pair("TV", "TV"),
+                Pair("TV Short", "TV_SHORT"),
+                Pair("Movie", "MOVIE"),
+                Pair("OVA", "OVA"),
+                Pair("ONA", "ONA"),
+                Pair("Special", "SPECIAL"),
+            ),
+        )
 
-    class SeasonFilter : UriPartFilter("Season", arrayOf(
-        Pair("Any Season", ""),
-        Pair("Winter", "WINTER"),
-        Pair("Spring", "SPRING"),
-        Pair("Summer", "SUMMER"),
-        Pair("Fall", "FALL"),
-    ))
+    class SeasonFilter :
+        UriPartFilter(
+            "Season",
+            arrayOf(
+                Pair("Any Season", ""),
+                Pair("Winter", "WINTER"),
+                Pair("Spring", "SPRING"),
+                Pair("Summer", "SUMMER"),
+                Pair("Fall", "FALL"),
+            ),
+        )
 
-    class StatusFilter : UriPartFilter("Status", arrayOf(
-        Pair("Any Status", ""),
-        Pair("Releasing", "RELEASING"),
-        Pair("Finished", "FINISHED"),
-        Pair("Upcoming", "NOT_YET_RELEASED"),
-        Pair("Cancelled", "CANCELLED"),
-    ))
+    class StatusFilter :
+        UriPartFilter(
+            "Status",
+            arrayOf(
+                Pair("Any Status", ""),
+                Pair("Releasing", "RELEASING"),
+                Pair("Finished", "FINISHED"),
+                Pair("Upcoming", "NOT_YET_RELEASED"),
+                Pair("Cancelled", "CANCELLED"),
+            ),
+        )
 
     class YearFilter : AnimeFilter.Text("Year", "")
 
     class GenreCheckBox(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
-    class GenreFilter(genres: List<Pair<String, String>>) :
-        AnimeFilter.Group<AnimeFilter.CheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) }) {
+    class GenreFilter(genres: List<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) }) {
         fun getIncluded(): List<String> = state.filter { it.state }.map { (it as GenreCheckBox).id }
     }
 
