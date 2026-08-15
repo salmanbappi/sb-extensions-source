@@ -381,6 +381,43 @@ class AbyssExtractor(
                     }
                 }
             }
+
+            // HLS fallback by ID
+            val hlsId = hls.optString("id", "")
+            if (videoList.isEmpty() && hlsId.isNotEmpty()) {
+                val fallbackUrl = "https://abyssplayer.com/#hls/$hlsId/master.m3u8"
+                try {
+                    val hlsVideos = playlistUtils.extractFromHls(
+                        playlistUrl = fallbackUrl,
+                        referer = referer,
+                        masterHeaders = streamHeaders,
+                        videoHeaders = streamHeaders,
+                        videoNameGen = { quality -> "${prefix}Abyss ($quality)" },
+                        subtitleList = subtitles,
+                    )
+                    if (hlsVideos.isNotEmpty()) {
+                        videoList.addAll(hlsVideos)
+                    } else {
+                        videoList.add(
+                            Video(
+                                videoUrl = fallbackUrl,
+                                videoTitle = "${prefix}Abyss - Auto",
+                                headers = streamHeaders,
+                                subtitleTracks = subtitles,
+                            ),
+                        )
+                    }
+                } catch (_: Exception) {
+                    videoList.add(
+                        Video(
+                            videoUrl = fallbackUrl,
+                            videoTitle = "${prefix}Abyss - Auto",
+                            headers = streamHeaders,
+                            subtitleTracks = subtitles,
+                        ),
+                    )
+                }
+            }
         }
 
         // 2. Try MP4 sources
@@ -460,44 +497,6 @@ class AbyssExtractor(
                             }
                         }
                     }
-                }
-            }
-        }
-
-            // HLS fallback by ID
-            val hlsId = hls.optString("id", "")
-            if (videoList.isEmpty() && hlsId.isNotEmpty()) {
-                val fallbackUrl = "https://abyssplayer.com/#hls/$hlsId/master.m3u8"
-                try {
-                    val hlsVideos = playlistUtils.extractFromHls(
-                        playlistUrl = fallbackUrl,
-                        referer = referer,
-                        masterHeaders = streamHeaders,
-                        videoHeaders = streamHeaders,
-                        videoNameGen = { quality -> "${prefix}Abyss ($quality)" },
-                        subtitleList = subtitles,
-                    )
-                    if (hlsVideos.isNotEmpty()) {
-                        videoList.addAll(hlsVideos)
-                    } else {
-                        videoList.add(
-                            Video(
-                                videoUrl = fallbackUrl,
-                                videoTitle = "${prefix}Abyss - Auto",
-                                headers = streamHeaders,
-                                subtitleTracks = subtitles,
-                            ),
-                        )
-                    }
-                } catch (_: Exception) {
-                    videoList.add(
-                        Video(
-                            videoUrl = fallbackUrl,
-                            videoTitle = "${prefix}Abyss - Auto",
-                            headers = streamHeaders,
-                            subtitleTracks = subtitles,
-                        ),
-                    )
                 }
             }
         }
