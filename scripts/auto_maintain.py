@@ -13,10 +13,12 @@ import sys
 from pathlib import Path
 
 
-def run_command(cmd: list) -> tuple[int, str]:
+def run_command(cmd: list, timeout: int = 120) -> tuple[int, str]:
     try:
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
         return res.returncode, res.stdout
+    except subprocess.TimeoutExpired:
+        return 1, f"Command timed out after {timeout}s: {' '.join(cmd)}"
     except Exception as e:
         return 1, str(e)
 
@@ -47,26 +49,27 @@ def main():
     src_dir = repo_root / "src"
     detect_script = str(repo_root / "scripts" / "detect_extractors.py")
     step2_failed = False
-    for lang_dir in sorted(src_dir.iterdir()):
-        if not lang_dir.is_dir():
-            continue
-        for ext_dir in sorted(lang_dir.iterdir()):
-            if not ext_dir.is_dir():
+    if src_dir.exists():
+        for lang_dir in sorted(src_dir.iterdir()):
+            if not lang_dir.is_dir():
                 continue
-            detect_cmd = [
-                sys.executable, detect_script,
-                "--lang", lang_dir.name,
-                "--name", ext_dir.name,
-                "--fix",
-            ]
-            if args.dry_run:
-                detect_cmd.append("--dry-run")
-            code2, output2 = run_command(detect_cmd)
-            if output2.strip():
-                print(output2.strip())
-            if code2 != 0:
-                print(f"  [!] detect-extractors failed for src/{lang_dir.name}/{ext_dir.name}")
-                step2_failed = True
+            for ext_dir in sorted(lang_dir.iterdir()):
+                if not ext_dir.is_dir():
+                    continue
+                detect_cmd = [
+                    sys.executable, detect_script,
+                    "--lang", lang_dir.name,
+                    "--name", ext_dir.name,
+                    "--fix",
+                ]
+                if args.dry_run:
+                    detect_cmd.append("--dry-run")
+                code2, output2 = run_command(detect_cmd)
+                if output2.strip():
+                    print(output2.strip())
+                if code2 != 0:
+                    print(f"  [!] detect-extractors failed for src/{lang_dir.name}/{ext_dir.name}")
+                    step2_failed = True
     if step2_failed:
         failed_steps.append("2. Extractor Dependency Auto-Fix")
 

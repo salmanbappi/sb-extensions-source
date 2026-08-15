@@ -69,9 +69,39 @@ def export_health_markdown(results: List[Dict], output_file: Path):
     print(f"📊 Successfully updated health matrix -> {output_file.name}")
 
 
+def export_issue_template(results: List[Dict], output_file: Path):
+    """Generates structured GitHub Issue templates for any incomplete/broken extractors."""
+    issues = [r for r in results if r["status"] != "Operational"]
+    if not issues:
+        print("✨ All extractors are 100% operational! No issues to report.")
+        return
+
+    lines = [
+        "## 🚨 Extractor Health Canary Alert",
+        "",
+        f"Automated scan detected **{len(issues)}** non-operational extractor module(s) in `lib/`:",
+        "",
+    ]
+    for r in issues:
+        lines.extend([
+            f"### Module: `:lib:{r['module']}`",
+            f"- **Status**: {r['badge']}",
+            f"- **Source Files**: {r['source_files']} `.kt` file(s)",
+            f"- **Build Script**: {'Present' if r['has_gradle'] else 'Missing'}",
+            "- **Action Required**: Verify hoster endpoint reachability and ensure `build.gradle.kts` is properly configured.",
+            ""
+        ])
+
+    lines.append("---")
+    lines.append("*Reported automatically by Extension Engine Canary Monitor*")
+    output_file.write_text("\n".join(lines), encoding="utf-8")
+    print(f"🚨 Issue template generated -> {output_file.name}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Continuous Extractor Health & Canary Monitor")
     parser.add_argument("--export", action="store_true", help="Export status table to EXTRACTOR_HEALTH.md")
+    parser.add_argument("--export-issues", action="store_true", help="Export GitHub Issue markdown templates for broken extractors")
     parser.add_argument("--module", help="Test a specific extractor module")
 
     args = parser.parse_args()
@@ -89,6 +119,10 @@ def main():
     if args.export:
         out_path = REPO_ROOT / "EXTRACTOR_HEALTH.md"
         export_health_markdown(results, out_path)
+
+    if args.export_issues:
+        out_path = REPO_ROOT / "EXTRACTOR_ISSUES.md"
+        export_issue_template(results, out_path)
 
 
 if __name__ == "__main__":

@@ -50,7 +50,8 @@ class PipelineTester:
         self.ctx.verify_mode = ssl.CERT_NONE
 
     def fetch(self, url: str) -> str:
-        target = url if url.startswith("http") else f"{self.base_url}{url}"
+        base = self.base_url if self.base_url.endswith("/") else f"{self.base_url}/"
+        target = url if (url.startswith("http://") or url.startswith("https://")) else urllib.parse.urljoin(base, url.lstrip("/"))
         req = urllib.request.Request(target, headers=self.headers)
         with urllib.request.urlopen(req, context=self.ctx, timeout=10) as resp:
             return resp.read().decode("utf-8", errors="ignore")

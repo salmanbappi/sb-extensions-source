@@ -53,7 +53,7 @@ def fetch_raw_file(url: str) -> Optional[str]:
 
 def fetch_upstream_file(upstream_key: str, module_name: str, rel_path: Path) -> Optional[str]:
     candidate_bases = UPSTREAM_REPOS.get(upstream_key, UPSTREAM_REPOS["keiyoushi"])
-    rel_str = str(rel_path)
+    rel_str = rel_path.as_posix()
     rel_kt = rel_str.replace("src/main/java/", "src/main/kotlin/")
     rel_java = rel_str.replace("src/main/kotlin/", "src/main/java/")
 

@@ -29,25 +29,34 @@ class StreamProber:
             self.headers.update(headers)
         self.timeout = timeout
 
-    def fetch_url(self, url: str, range_bytes: Optional[str] = None) -> Tuple[int, Dict[str, str], bytes]:
-        """Performs HTTP GET request with optional Range header."""
+    def fetch_url(self, url: str, range_bytes: Optional[str] = None, method: str = "GET", max_bytes: Optional[int] = None) -> Tuple[int, Dict[str, str], bytes]:
+        """Performs HTTP GET/HEAD request with optional Range header and maximum read buffer."""
         req_headers = dict(self.headers)
         if range_bytes:
             req_headers["Range"] = f"bytes={range_bytes}"
+            if max_bytes is None:
+                max_bytes = 65536  # Default 64KB cap for range probes
 
         parsed = urllib.parse.urlparse(url)
         if "Referer" not in req_headers:
             req_headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
 
-        req = urllib.request.Request(url, headers=req_headers)
+        req = urllib.request.Request(url, headers=req_headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 status = resp.getcode()
                 resp_headers = dict(resp.headers)
-                body = resp.read()
+                if method.upper() == "HEAD":
+                    body = b""
+                elif max_bytes:
+                    body = resp.read(max_bytes)
+                else:
+                    # Default safety ceiling of 10MB to prevent OOM on unbounded stream downloads
+                    body = resp.read(10 * 1024 * 1024)
                 return status, resp_headers, body
         except urllib.error.HTTPError as e:
-            return e.code, dict(e.headers), e.read()
+            err_body = e.read(65536) if hasattr(e, "read") else b""
+            return e.code, dict(e.headers), err_body
         except Exception as e:
             return 0, {}, str(e).encode()
 
@@ -64,6 +73,26 @@ class StreamProber:
 
         if "#EXT-X-STREAM-INF" in m3u8_text:
             result["is_master"] = True
+            result["media"] = []
+            
+            for m in re.findall(r'#EXT-X-MEDIA:(.+)', m3u8_text):
+                attrs = {}
+                for match in re.finditer(r'([A-Z0-9\-]+)=(?:"([^"]*)"|([^,]*))', m):
+                    k = match.group(1)
+                    v = match.group(2) if match.group(2) is not None else match.group(3)
+                    attrs[k] = v
+                
+                uri = attrs.get("URI")
+                result["media"].append({
+                    "type": attrs.get("TYPE", "UNKNOWN"),
+                    "group_id": attrs.get("GROUP-ID", "unknown"),
+                    "name": attrs.get("NAME", "Unknown"),
+                    "language": attrs.get("LANGUAGE", "und"),
+                    "default": attrs.get("DEFAULT", "NO") == "YES",
+                    "autoselect": attrs.get("AUTOSELECT", "NO") == "YES",
+                    "url": urllib.parse.urljoin(base_url, uri) if uri else None
+                })
+
             i = 0
             while i < len(lines):
                 line = lines[i]
@@ -87,16 +116,6 @@ class StreamProber:
                         "name": name_m.group(1) if name_m else None,
                         "url": variant_url
                     })
-                elif line.startswith("#EXT-X-MEDIA:TYPE=SUBTITLES"):
-                    uri_m = re.search(r'URI="([^"]+)"', line)
-                    name_m = re.search(r'NAME="([^"]+)"', line)
-                    lang_m = re.search(r'LANGUAGE="([^"]+)"', line)
-                    if uri_m:
-                        result["subtitles"].append({
-                            "name": name_m.group(1) if name_m else "Subtitle",
-                            "language": lang_m.group(1) if lang_m else "und",
-                            "url": urllib.parse.urljoin(base_url, uri_m.group(1))
-                        })
                 i += 1
         else:
             # Media playlist with segment URLs
@@ -146,15 +165,41 @@ class StreamProber:
 
             if parsed["is_master"]:
                 print(f"  📋 Master Playlist detected with {len(parsed['variants'])} variant quality track(s):")
-                for i, v in enumerate(parsed["variants"], 1):
-                    bw_mbps = f"({v['bandwidth'] / 1_000_000:.2f} Mbps)" if v['bandwidth'] else ""
-                    print(f"     {i}. Resolution: {v['resolution']:<10} Codecs: {v['codecs']:<20} {bw_mbps}")
-                    print(f"        URL: {v['url']}")
+                if parsed["variants"]:
+                    for i, v in enumerate(parsed["variants"], 1):
+                        bw_mbps = f"({v['bandwidth'] / 1_000_000:.2f} Mbps)" if v['bandwidth'] else ""
+                        print(f"     {i}. Resolution: {v['resolution']:<10} Codecs: {v['codecs']:<20} {bw_mbps}")
+                        print(f"        URL: {v['url']}")
 
-                if parsed["subtitles"]:
-                    print(f"\n  💬 Subtitles ({len(parsed['subtitles'])} tracks):")
-                    for s in parsed["subtitles"]:
-                        print(f"     • [{s['language']}] {s['name']}: {s['url']}")
+                audio_tracks = [m for m in parsed.get("media", []) if m["type"] == "AUDIO"]
+                subtitle_tracks = [m for m in parsed.get("media", []) if m["type"] in ("SUBTITLES", "CLOSED-CAPTIONS")]
+
+                if audio_tracks:
+                    print(f"\n  🎵 Audio Tracks ({len(audio_tracks)}):")
+                    for a in audio_tracks:
+                        default_flag = "[DEFAULT]" if a["default"] else "[ ]"
+                        uri_info = ""
+                        if a["url"]:
+                            h_status, _, _ = self.fetch_url(a["url"], method="HEAD")
+                            check = "✅" if h_status in (200, 206) else "❌"
+                            uri_path = urllib.parse.urlparse(a["url"]).path
+                            uri_info = f"  URI: {uri_path} {check}"
+                        print(f"     {default_flag} {a['language']}  — {a['name']} (GROUP: {a['group_id']}){uri_info}")
+                    
+                    track_names = ", ".join([f'"{a["name"]}"' for a in audio_tracks])
+                    print(f"\n  💡 Verify: extension's Video(audioTracks=...) should include [{track_names}]")
+
+                if subtitle_tracks:
+                    print(f"\n  📝 Subtitle Tracks ({len(subtitle_tracks)}):")
+                    for s in subtitle_tracks:
+                        default_flag = "[DEFAULT]" if s["default"] else "[ ]"
+                        uri_info = ""
+                        if s["url"]:
+                            h_status, _, _ = self.fetch_url(s["url"], method="HEAD")
+                            check = "✅" if h_status in (200, 206) else "❌"
+                            uri_path = urllib.parse.urlparse(s["url"]).path
+                            uri_info = f"  URI: {uri_path} {check}"
+                        print(f"     {default_flag} {s['language']}  — {s['name']} (GROUP: {s['group_id']}){uri_info}")
 
                 if deep and parsed["variants"]:
                     top_variant = parsed["variants"][0]
@@ -193,16 +238,42 @@ class StreamProber:
         def probe_single(idx_and_seg):
             idx, seg = idx_and_seg
             s_status, s_headers, s_body = self.fetch_url(seg, range_bytes="0-2048")
-            return idx, seg, s_status, len(s_body)
+            fmt = "Unknown"
+            if s_body:
+                if s_body.startswith(b"\x47"):
+                    fmt = "MPEG-TS (Sync 0x47)"
+                elif b"ftyp" in s_body[:64] or b"styp" in s_body[:64] or b"moof" in s_body[:64]:
+                    fmt = "fMP4/CMAF"
+                elif s_body.startswith(b"WEBVTT"):
+                    fmt = "WebVTT Subtitle"
+                elif len(s_body) >= 2 and s_body[0] == 0xFF and (s_body[1] & 0xF0) == 0xF0:
+                    fmt = "AAC ADTS Audio"
+                elif s_body.startswith(b"\x1a\x45\xdf\xa3"):
+                    fmt = "WebM/Matroska"
+            return idx, seg, s_status, len(s_body), fmt
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(count, 5)) as executor:
+        if not sample_segments:
+            print("     ℹ️ No segments found to probe.")
+            return
+
+        obfuscation_detected = False
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(len(sample_segments), 5))) as executor:
             futures = [executor.submit(probe_single, (idx, seg)) for idx, seg in enumerate(sample_segments, 1)]
             for future in concurrent.futures.as_completed(futures):
-                idx, seg, s_status, s_len = future.result()
+                idx, seg, s_status, s_len, s_fmt = future.result()
+                seg_path = urllib.parse.urlparse(seg).path.lower()
+                is_fake_ext = any(seg_path.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".gif", ".html", ".js", ".css", ".txt"])
+                if is_fake_ext:
+                    obfuscation_detected = True
                 if s_status in (200, 206) and s_len > 0:
-                    print(f"       [{idx}/{len(sample_segments)}] Chunk 200 OK ({s_len} bytes) -> {seg[:60]}...")
+                    badge = f" [⚠️ Fake Extension: {seg_path.split('.')[-1]}]" if is_fake_ext else ""
+                    print(f"       [{idx}/{len(sample_segments)}] Chunk 200 OK ({s_len} bytes) [{s_fmt}]{badge} -> {seg[:60]}...")
                 else:
                     print(f"       [{idx}/{len(sample_segments)}] ⚠️ Chunk HTTP {s_status} Failed -> {seg}")
+
+        if obfuscation_detected:
+            print("\n  💡 Warning: Segments use fake image/script extensions (.jpg/.png/.html/etc.).")
+            print("     Implement `:lib:m3u8server` and wrap video output with `m3u8Integration.processVideoList(videos)`.")
 
     def _run_ffprobe(self, url: str):
         """Runs ffprobe for deep codec extraction if installed."""

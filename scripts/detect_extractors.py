@@ -19,6 +19,45 @@ if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 
+EXTRACTOR_TRANSITIVE_DEPS: dict[str, list[str]] = {
+    "amazon-extractor": ["playlist-utils"],
+    "chillx-extractor": ["cryptoaes", "playlist-utils"],
+    "dailymotion-extractor": ["playlist-utils"],
+    "dood-extractor": ["unpacker"],
+    "dopeflix-extractor": ["playlist-utils"],
+    "fastream-extractor": ["unpacker", "playlist-utils"],
+    "filemoon-extractor": ["unpacker", "playlist-utils"],
+    "fireplayer-extractor": ["unpacker", "playlist-utils"],
+    "fusevideo-extractor": ["playlist-utils"],
+    "gdriveplayer-extractor": ["cryptoaes", "unpacker"],
+    "gogostream-extractor": ["playlist-utils"],
+    "govid-extractor": ["playlist-utils"],
+    "megacloud-extractor": ["playlist-utils"],
+    "minochinos-extractor": ["playlist-utils", "unpacker"],
+    "mixdrop-extractor": ["unpacker"],
+    "mp4upload-extractor": ["playlist-utils", "unpacker"],
+    "okru-extractor": ["playlist-utils"],
+    "rapidcloud-extractor": ["cryptoaes", "playlist-utils"],
+    "savefile-extractor": ["playlist-utils"],
+    "sendvid-extractor": ["playlist-utils"],
+    "streamhidevid-extractor": ["playlist-utils", "unpacker"],
+    "streamhub-extractor": ["playlist-utils"],
+    "streamsilk-extractor": ["playlist-utils"],
+    "streamvid-extractor": ["playlist-utils", "unpacker"],
+    "streamwish-extractor": ["unpacker", "playlist-utils", "synchrony"],
+    "universal-extractor": ["playlist-utils"],
+    "upstream-extractor": ["playlist-utils", "unpacker"],
+    "uqload-extractor": ["playlist-utils"],
+    "vidara-extractor": ["playlist-utils"],
+    "vidguard-extractor": ["playlist-utils", "unpacker"],
+    "vidhide-extractor": ["playlist-utils", "unpacker"],
+    "vidland-extractor": ["unpacker", "playlist-utils"],
+    "vidmoly-extractor": ["playlist-utils"],
+    "vido-extractor": ["playlist-utils"],
+    "vidsrc-extractor": ["playlist-utils"],
+    "voe-extractor": ["playlist-utils"],
+}
+
 # Supplementary domain & regex patterns for known video hosters and utilities
 KNOWN_EXTRACTOR_PATTERNS = {
     "dood-extractor": {
@@ -321,6 +360,7 @@ def main():
     parser.add_argument("--url", help="Sample video embed URL or web page URL")
     parser.add_argument("--html", help="HTML content snippet to analyze")
     parser.add_argument("--fix", action="store_true", help="Automatically insert missing dependencies into build.gradle")
+    parser.add_argument("--prune", action="store_true", help="Automatically remove unreferenced extractor dependencies from build.gradle")
     parser.add_argument("--inject", action="store_true", help="Automatically insert missing imports and lazy declarations into Kotlin source")
     parser.add_argument("--dry-run", action="store_true", help="Perform trial run without modifying files")
 
@@ -385,31 +425,71 @@ def main():
 
         matches = scan_text_for_extractors(combined_kt, registry)
         gradle_content = gradle_file.read_text(encoding="utf-8") if gradle_file.exists() else ""
-        missing_deps = []
+        deps_to_inject = []
+        already_injected = set()
 
         for m in matches:
-            mod_pattern = f":lib:{m['module']}"
-            if mod_pattern not in gradle_content:
-                missing_deps.append(m)
+            mod_name = m['module']
+            mod_pattern = f":lib:{mod_name}"
+            
+            if mod_pattern not in gradle_content and mod_name not in already_injected:
+                deps_to_inject.append((m['dependency'], True, mod_name))
+                already_injected.add(mod_name)
+                
+            transitive_deps = EXTRACTOR_TRANSITIVE_DEPS.get(mod_name, [])
+            for t_dep in transitive_deps:
+                t_pattern = f":lib:{t_dep}"
+                if t_pattern not in gradle_content and t_dep not in already_injected:
+                    t_dependency = f'implementation(project(":lib:{t_dep}"))'
+                    deps_to_inject.append((t_dependency, False, f"transitive dependency of {mod_name}"))
+                    already_injected.add(t_dep)
 
-        if missing_deps:
-            print(f"⚠️ Found {len(missing_deps)} extractor(s) referenced in code but missing from build.gradle:")
-            for m in missing_deps:
-                print(f"  - Missing: {m['dependency']}")
+        if deps_to_inject:
+            print(f"⚠️ Found {len(deps_to_inject)} extractor(s) referenced in code but missing from build.gradle:")
+            for dep_str, is_primary, reason in deps_to_inject:
+                if is_primary:
+                    print(f"  ✅ Injected: :lib:{reason} (primary)")
+                else:
+                    t_name = dep_str.split(':lib:')[1].split('\"')[0]
+                    print(f"  ✅ Injected: :lib:{t_name} ({reason})")
 
             if (args.fix or args.inject) and gradle_file.exists():
                 if args.dry_run:
                     print("\n[DRY RUN] Would add missing dependencies to build.gradle.")
                 else:
-                    dep_lines = "\n".join(f"    {m['dependency']}" for m in missing_deps)
+                    dep_lines = "\n".join(f"    {dep_str}" for dep_str, _, _ in deps_to_inject)
                     if "dependencies {" in gradle_content:
                         new_gradle = gradle_content.replace("dependencies {", f"dependencies {{\n{dep_lines}")
                     else:
                         new_gradle = gradle_content.rstrip() + f"\n\ndependencies {{\n{dep_lines}\n}}\n"
                     gradle_file.write_text(new_gradle, encoding="utf-8")
+                    gradle_content = new_gradle
                     print("\n🚀 Successfully added missing dependencies to build.gradle!")
         else:
             print(f"✓ All referenced extractor dependencies ({len(matches)} matched) are present in build.gradle.")
+
+        # Extractor Dependency Pruning
+        if args.prune and gradle_file.exists():
+            all_active_libs = set(m['module'] for m in matches)
+            for m in matches:
+                all_active_libs.update(EXTRACTOR_TRANSITIVE_DEPS.get(m['module'], []))
+
+            declared_libs = re.findall(r'implementation\(project\(["\']:lib:([^"\']+)["\']\)\)', gradle_content)
+            unreferenced = [lib for lib in declared_libs if lib not in all_active_libs]
+            if unreferenced:
+                print(f"\n✂️ Found {len(unreferenced)} unreferenced extractor dependency(ies) in build.gradle:")
+                new_gradle = gradle_content
+                for u_lib in unreferenced:
+                    verb = "Would prune" if args.dry_run else "Pruned"
+                    print(f"  ❌ {verb}: :lib:{u_lib}")
+                    new_gradle = re.sub(rf'\s*implementation\(project\(["\']:lib:{re.escape(u_lib)}["\']\)\)\s*\n?', '\n', new_gradle)
+                if not args.dry_run:
+                    gradle_file.write_text(new_gradle, encoding="utf-8")
+                    print("🚀 Cleaned up unreferenced dependencies from build.gradle!")
+                else:
+                    print("[DRY RUN] Would remove unreferenced dependencies from build.gradle.")
+            else:
+                print("\n✨ No unreferenced extractor dependencies found to prune.")
 
         if args.inject and matches and kt_files:
             main_kt = kt_files[0]

@@ -32,6 +32,11 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
+try:
+    import readline
+except ImportError:
+    pass
+
 
 # ==============================================================================
 # HTTP Client & Session Handler
@@ -107,41 +112,73 @@ class ScraperSession:
                     raw_bytes = gzip.decompress(raw_bytes)
                 elif "deflate" in encoding:
                     import zlib
-                    raw_bytes = zlib.decompress(raw_bytes)
+                    try:
+                        raw_bytes = zlib.decompress(raw_bytes)
+                    except Exception:
+                        try:
+                            raw_bytes = zlib.decompress(raw_bytes, -zlib.MAX_WBITS)
+                        except Exception:
+                            pass
 
                 charset = response.info().get_content_charset() or "utf-8"
                 body = raw_bytes.decode(charset, errors="replace")
                 resp_headers = {k: v for k, v in response.info().items()}
+
+                if "<title>Just a moment..." in body or "cf-chl-" in body or "challenges.cloudflare.com" in body:
+                    print("\n⚠️ [Notice] Cloudflare Bot Protection Challenge Detected!")
+                    print("  💡 Tip: Pass session cookies with `-c 'cf_clearance=...'` or headers with `-H 'User-Agent: ...'`")
+                    print("  💡 Or add `:lib:cloudflare-interceptor` in your extension build.gradle.\n")
+
                 return status, body, resp_headers, duration
         except urllib.error.HTTPError as e:
             duration = time.time() - start_time
-            raw_bytes = e.read()
+            raw_bytes = e.read() if e.fp else b""
             body = raw_bytes.decode("utf-8", errors="replace")
-            resp_headers = {k: v for k, v in e.headers.items()}
+            resp_headers = {k: v for k, v in e.headers.items()} if e.headers else {}
             return e.code, body, resp_headers, duration
+        except (urllib.error.URLError, TimeoutError, ConnectionResetError, ssl.SSLError, OSError) as e:
+            duration = time.time() - start_time
+            return 0, f"Network Error: {e}", {}, duration
 
 
 # ==============================================================================
 # HTML Parser (Tag, Class, ID selector simulator without external deps)
 # ==============================================================================
 
-class SimpleSelectorParser(HTMLParser):
-    """Lightweight HTML element extractor matching basic tag/class/id selectors."""
+# ---------------------------------------------------------------------------
+# BS4 optional fast-path for CSS selector evaluation
+# ---------------------------------------------------------------------------
+try:
+    from bs4 import BeautifulSoup as _BeautifulSoup  # type: ignore
+    _HAS_BS4 = True
+except ImportError:
+    _HAS_BS4 = False
 
-    def __init__(self, tag_name: Optional[str] = None, class_name: Optional[str] = None, id_name: Optional[str] = None):
+
+class SimpleSelectorParser(HTMLParser):
+    """Lightweight HTML element extractor matching basic tag/class/id selectors.
+
+    Supports a single simple token: ``tag``, ``.class``, ``#id``, and
+    combinations thereof (e.g. ``div.container``, ``a#link``).  For compound
+    selectors use :func:`select_elements` which delegates here or to BS4.
+    """
+
+    def __init__(self, tag_name: Optional[str] = None, class_name: Optional[str] = None,
+                 id_name: Optional[str] = None):
         super().__init__()
         self.target_tag = tag_name.lower() if tag_name else None
         self.target_class = class_name.lower() if class_name else None
         self.target_id = id_name.lower() if id_name else None
-        self.matches = []
-        self._current_match = None
+        self.matches: List[Dict[str, Any]] = []
+        self._current_match: Optional[Dict[str, Any]] = None
         self._depth = 0
 
     def handle_starttag(self, tag, attrs):
         attr_dict = dict(attrs)
         tag_matched = not self.target_tag or tag.lower() == self.target_tag
         id_matched = not self.target_id or attr_dict.get("id", "").lower() == self.target_id
-        class_matched = not self.target_class or self.target_class in attr_dict.get("class", "").lower().split()
+        class_matched = (not self.target_class
+                         or self.target_class in attr_dict.get("class", "").lower().split())
 
         if tag_matched and id_matched and class_matched:
             self._current_match = {"tag": tag, "attrs": attr_dict, "text": ""}
@@ -159,6 +196,287 @@ class SimpleSelectorParser(HTMLParser):
     def handle_data(self, data):
         if self._current_match:
             self._current_match["text"] += data
+
+
+# ---------------------------------------------------------------------------
+# Stdlib node model (used when BS4 is absent)
+# ---------------------------------------------------------------------------
+
+class _Node:
+    """Minimal DOM node used by the stdlib CSS selector engine."""
+    __slots__ = ("tag", "attrs", "children", "parent", "text")
+
+    def __init__(self, tag: str, attrs: Dict[str, str],
+                 parent: Optional["_Node"] = None):
+        self.tag = tag.lower()
+        self.attrs = {k.lower(): v for k, v in attrs.items()}
+        self.children: List["_Node"] = []
+        self.parent = parent
+        self.text = ""
+
+    def get_text(self) -> str:
+        return self.text
+
+
+class _DOMBuilder(HTMLParser):
+    """Builds a minimal DOM tree from HTML for the stdlib CSS engine."""
+
+    # Tags that never have a closing tag in HTML5
+    _VOID = frozenset([
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    ])
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = _Node("__root__", {})
+        self._stack: List[_Node] = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        node = _Node(tag, dict(attrs), parent=self._stack[-1])
+        self._stack[-1].children.append(node)
+        if tag.lower() not in self._VOID:
+            self._stack.append(node)
+
+    def handle_endtag(self, tag):
+        for i in range(len(self._stack) - 1, 0, -1):
+            if self._stack[i].tag == tag.lower():
+                self._stack = self._stack[:i]
+                break
+
+    def handle_data(self, data):
+        if len(self._stack) > 1:
+            self._stack[-1].text += data
+
+
+# ---------------------------------------------------------------------------
+# Token-level simple selector matcher
+# ---------------------------------------------------------------------------
+
+_ATTR_RE = re.compile(
+    r'\[([^\[\]=~|^$*]+)'
+    r'(?:([*^$~|]?=)["\']?([^"\]]*)["\']?)?'
+    r'\]'
+)
+_PSEUDO_NTH_RE = re.compile(r':nth-child\((\d+)\)', re.IGNORECASE)
+
+
+def _token_matches(node: "_Node", token: str) -> bool:
+    """Return True if *node* matches a single simple CSS token.
+
+    A token may contain a tag, ``.class``, ``#id``, ``[attr...]``, and
+    ``:first-child`` / ``:last-child`` / ``:nth-child(n)`` pseudo-classes,
+    in any combination.
+    """
+    remaining = token
+
+    # --- Extract attribute selectors first (may contain dots/hashes) --------
+    attr_tests: List[tuple] = []
+    def _collect_attr(m):
+        attr_tests.append((m.group(1).strip(), m.group(2) or "", m.group(3) or ""))
+        return ""
+    remaining = _ATTR_RE.sub(_collect_attr, remaining)
+
+    # --- Extract pseudo-classes ----------------------------------------------
+    pseudo_first = ":first-child" in remaining
+    pseudo_last  = ":last-child"  in remaining
+    nth_match    = _PSEUDO_NTH_RE.search(remaining)
+    nth_n        = int(nth_match.group(1)) if nth_match else None
+    remaining    = re.sub(r':(?:first|last)-child', '', remaining, flags=re.IGNORECASE)
+    remaining    = _PSEUDO_NTH_RE.sub('', remaining)
+
+    # --- Split tag / .class / #id --------------------------------------------
+    tag_part = id_part = class_part = ""
+    work = remaining
+    if '#' in work:
+        idx = work.index('#')
+        tag_part = work[:idx]
+        rest = work[idx + 1:]
+        if '.' in rest:
+            dot = rest.index('.')
+            id_part, class_part = rest[:dot], rest[dot + 1:]
+        else:
+            id_part = rest
+    elif '.' in work:
+        dot = work.index('.')
+        tag_part, class_part = work[:dot], work[dot + 1:]
+    else:
+        tag_part = work
+
+    # --- Tag check -----------------------------------------------------------
+    if tag_part and tag_part != "*" and node.tag != tag_part.lower():
+        return False
+
+    # --- ID check ------------------------------------------------------------
+    if id_part and node.attrs.get("id", "") != id_part:
+        return False
+
+    # --- Class check ---------------------------------------------------------
+    if class_part:
+        node_classes = node.attrs.get("class", "").split()
+        if class_part not in node_classes:
+            return False
+
+    # --- Attribute checks ----------------------------------------------------
+    for attr_name, op, expected in attr_tests:
+        actual = node.attrs.get(attr_name, None)
+        if actual is None:
+            return False
+        if op == "":
+            pass  # attribute presence only
+        elif op == "=":
+            if actual != expected:
+                return False
+        elif op == "*=":
+            if expected not in actual:
+                return False
+        elif op == "^=":
+            if not actual.startswith(expected):
+                return False
+        elif op == "$=":
+            if not actual.endswith(expected):
+                return False
+        elif op == "~=":
+            if expected not in actual.split():
+                return False
+
+    # --- Pseudo-class checks (require parent context) ------------------------
+    if (pseudo_first or pseudo_last or nth_n is not None) and node.parent:
+        siblings = [c for c in node.parent.children
+                    if isinstance(c, _Node) and c.tag == node.tag]
+        try:
+            pos = siblings.index(node)  # 0-indexed
+        except ValueError:
+            return False
+        if pseudo_first and pos != 0:
+            return False
+        if pseudo_last and pos != len(siblings) - 1:
+            return False
+        if nth_n is not None and pos + 1 != nth_n:
+            return False
+
+    return True
+
+
+def _collect_text(node: "_Node") -> str:
+    """Recursively collect all text from a node and its descendants."""
+    parts = [node.text]
+    for child in node.children:
+        parts.append(_collect_text(child))
+    return "".join(parts)
+
+
+def _stdlib_select(root: "_Node", selector: str) -> List[Dict[str, Any]]:
+    """Evaluate a CSS selector against a DOM tree built by _DOMBuilder.
+
+    Supports:
+    * Descendant combinator (whitespace): ``div.container a``
+    * Child combinator (``>``):            ``ul > li``
+    * Simple tokens: tag, ``.class``, ``#id``
+    * Attribute selectors: ``[attr]``, ``[attr=v]``, ``[attr*=v]``,
+      ``[attr^=v]``, ``[attr$=v]``
+    * Pseudo-classes: ``:first-child``, ``:last-child``, ``:nth-child(n)``
+    """
+    # Split the selector into segments separated by the child combinator.
+    # Each segment is then whitespace-split into descendant tokens.
+    # We represent the full chain as a list of (token, is_direct_child) pairs
+    # where *is_direct_child* applies to the relationship **before** this token.
+
+    # Normalise: collapse runs of spaces around >
+    selector = re.sub(r'\s*>\s*', ' > ', selector.strip())
+    raw_parts = selector.split()
+
+    chain: List[tuple] = []   # list of (token_str, require_direct_parent)
+    direct_next = False
+    for part in raw_parts:
+        if part == ">":
+            direct_next = True
+        else:
+            chain.append((part, direct_next))
+            direct_next = False
+
+    if not chain:
+        return []
+
+    def _walk(node: "_Node", depth: int) -> List["_Node"]:
+        """Recursively find nodes matching chain[depth:]."""
+        token, require_direct = chain[depth]
+        results: List["_Node"] = []
+        for child in node.children:
+            if not isinstance(child, _Node):
+                continue
+            if _token_matches(child, token):
+                if depth == len(chain) - 1:
+                    results.append(child)
+                else:
+                    results.extend(_walk(child, depth + 1))
+            elif not require_direct:
+                # Descendant: recurse without advancing chain
+                results.extend(_walk(child, depth))
+            if require_direct:
+                # For child combinator we still need to recurse into
+                # non-matching children to advance the chain at next level
+                if not _token_matches(child, token):
+                    # already handled above in elif branch; skip duplicates
+                    pass
+        return results
+
+    matched_nodes = _walk(root, 0)
+    results: List[Dict[str, Any]] = []
+    for n in matched_nodes:
+        results.append({"tag": n.tag, "attrs": n.attrs, "text": _collect_text(n)})
+    return results
+
+
+def select_elements(html: str, selector: str) -> List[Dict[str, Any]]:
+    """Evaluate *selector* against *html* and return a list of element dicts.
+
+    Each dict has keys: ``tag`` (str), ``attrs`` (dict), ``text`` (str).
+
+    Uses ``bs4.BeautifulSoup.select()`` when BeautifulSoup is available for
+    maximum Jsoup parity; falls back to the stdlib DOM engine otherwise.
+    """
+    if _HAS_BS4:
+        soup = _BeautifulSoup(html, "html.parser")
+        return [
+            {
+                "tag": el.name,
+                "attrs": {k: (" ".join(v) if isinstance(v, list) else v)
+                          for k, v in (el.attrs or {}).items()},
+                "text": el.get_text(),
+            }
+            for el in soup.select(selector)
+        ]
+
+    # ---------- stdlib fallback ----------------------------------------------
+    sel = selector.strip()
+
+    # Fast-path: single simple token (no spaces, no >, no [)
+    _simple_re = re.compile(r'^[a-zA-Z0-9.*#.-]*$')
+    is_compound = (' ' in sel or '>' in sel or '[' in sel or ':' in sel
+                   or sel.count('.') > 1 or sel.count('#') > 1)
+
+    if not is_compound:
+        # Original SimpleSelectorParser is sufficient
+        tag_part = id_part = class_part = None
+        if '#' in sel:
+            p = sel.split('#', 1)
+            tag_part = p[0] or None
+            id_part = p[1] or None
+        elif '.' in sel:
+            p = sel.split('.', 1)
+            tag_part = p[0] or None
+            class_part = p[1] or None
+        else:
+            tag_part = sel or None
+        p_obj = SimpleSelectorParser(tag_name=tag_part, class_name=class_part, id_name=id_part)
+        p_obj.feed(html)
+        return p_obj.matches
+
+    # Full compound selector — build DOM and evaluate
+    builder = _DOMBuilder()
+    builder.feed(html)
+    return _stdlib_select(builder.root, sel)
 
 
 # ==============================================================================
@@ -259,25 +577,20 @@ def run_interactive_repl(session: ScraperSession, url: str, headers: Dict[str, s
             if not arg:
                 print("Usage: select <css_selector>")
                 continue
-            sel = arg
-            tag, class_name, id_name = None, None, None
-            if '#' in sel:
-                parts = sel.split('#', 1)
-                tag = parts[0] if parts[0] else None
-                id_name = parts[1]
-            elif '.' in sel:
-                parts = sel.split('.', 1)
-                tag = parts[0] if parts[0] else None
-                class_name = parts[1]
-            else:
-                tag = sel
-
-            parser_obj = SimpleSelectorParser(tag_name=tag, class_name=class_name, id_name=id_name)
-            parser_obj.feed(current_body)
-            print(f"🎯 Selector '{sel}' found {len(parser_obj.matches)} element(s):")
-            for i, m in enumerate(parser_obj.matches[:10], 1):
+            matches = select_elements(current_body, arg)
+            print(f"🎯 Selector '{arg}' found {len(matches)} element(s):")
+            for i, m in enumerate(matches[:10], 1):
                 text = m['text'].strip().replace('\n', ' ')[:90]
                 print(f"  [{i:2d}] <{m['tag']}> Text: '{text}' | Attrs: {m['attrs']}")
+        elif cmd in ["help", "?"]:
+            print("\n📖 Available REPL Commands:")
+            print("  select <css_selector>  - Test CSS selector (e.g. 'select div.title' or 'select #player')")
+            print("  regex <pattern>        - Test regex against body (e.g. 'regex /stream/(\\w+)')")
+            print("  media                  - Sniff .m3u8, .mp4, and video iframe hosters")
+            print("  json                   - View body formatted as JSON")
+            print("  refetch                - Re-fetch the current target URL")
+            print("  url <new_url>          - Switch target URL and fetch")
+            print("  exit / quit / q        - Exit REPL session\n")
         else:
             print(f"Unknown command: '{cmd}'. Type 'help' for command list.")
 
@@ -528,23 +841,9 @@ def main():
         return
 
     if args.selector:
-        sel = args.selector.strip()
-        tag, class_name, id_name = None, None, None
-        if '#' in sel:
-            parts = sel.split('#', 1)
-            tag = parts[0] if parts[0] else None
-            id_name = parts[1]
-        elif '.' in sel:
-            parts = sel.split('.', 1)
-            tag = parts[0] if parts[0] else None
-            class_name = parts[1]
-        else:
-            tag = sel
-
-        parser_obj = SimpleSelectorParser(tag_name=tag, class_name=class_name, id_name=id_name)
-        parser_obj.feed(body)
-        print(f"Found {len(parser_obj.matches)} matching element(s):")
-        for i, m in enumerate(parser_obj.matches[:10], 1):
+        matches = select_elements(body, args.selector.strip())
+        print(f"Found {len(matches)} matching element(s):")
+        for i, m in enumerate(matches[:10], 1):
             text = m['text'].strip().replace('\n', ' ')[:90]
             print(f"  [{i:2d}] <{m['tag']}> | Text: '{text}' | Attrs: {m['attrs']}")
         return

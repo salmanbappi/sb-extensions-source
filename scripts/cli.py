@@ -76,7 +76,8 @@ def fetch_icon(url: str, output_path: Path):
 
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8', errors='ignore')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
         matches = re.finditer(r'<link\b(?=[^>]*?\brel=[\"\'](?:shortcut )?icon[\"\'])[^>]*?\bhref=(?:\"([^\"]+)\"|\'([^\']+)\')', html, re.IGNORECASE)
         for m in matches:
             icon = m.group(1) or m.group(2)
@@ -269,7 +270,7 @@ def bump_lib_dependents(repo_root: Path, lib_name: str) -> bool:
     return True
 
 
-def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachability: bool = True) -> bool:
+def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachability: bool = True, dry_run: bool = False) -> bool:
     """Automates base URL domain migrations, updates preference defaults, bumps version, and checks live connectivity."""
     lang, name = resolve_extension_target(repo_root, target=target)
     if not lang or not name:
@@ -282,7 +283,8 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
         return False
 
     new_domain_clean = new_domain.rstrip("/")
-    print(f"🌐 Migrating domain for src/{lang}/{name} to: {new_domain_clean}\n" + "=" * 60)
+    mode_label = "[DRY RUN] " if dry_run else ""
+    print(f"🌐 {mode_label}Migrating domain for src/{lang}/{name} to: {new_domain_clean}\n" + "=" * 60)
 
     # 1. Test live HTTP reachability
     if test_reachability:
@@ -298,7 +300,8 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
             print(f"  ⚠️ Warning: Live HTTP check encountered: {e}")
 
     # 2. Update Kotlin & Gradle files
-    print("\n2️⃣ Updating baseUrl in Kotlin source files & build.gradle...")
+    action_verb = "Would update" if dry_run else "Updating"
+    print(f"\n2️⃣ {action_verb} baseUrl in Kotlin source files & build.gradle...")
     kt_dir = ext_path / "src"
     updated_files = 0
     if kt_dir.exists():
@@ -306,28 +309,36 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
             txt = kt_file.read_text(encoding="utf-8")
 
             # Replace baseUrl default constants or hardcoded override
-            new_txt = re.sub(r'PREF_BASE_URL_DEFAULT\s*=\s*["\'][^"\']+["\']', f'PREF_BASE_URL_DEFAULT = "{new_domain_clean}"', txt)
-            new_txt = re.sub(r'override\s+val\s+baseUrl\s*=\s*["\'][^"\']+["\']', f'override val baseUrl = "{new_domain_clean}"', new_txt)
+            new_txt = re.sub(r'PREF_BASE_URL_DEFAULT\s*=\s*["\'][^"\']+["\']', lambda _: f'PREF_BASE_URL_DEFAULT = "{new_domain_clean}"', txt)
+            new_txt = re.sub(r'override\s+val\s+baseUrl\s*=\s*["\'][^"\']+["\']', lambda _: f'override val baseUrl = "{new_domain_clean}"', new_txt)
 
             if txt != new_txt:
-                kt_file.write_text(new_txt, encoding="utf-8")
+                if not dry_run:
+                    kt_file.write_text(new_txt, encoding="utf-8")
                 updated_files += 1
-                print(f"  ✓ Updated {kt_file.name}")
+                verb = "Would update" if dry_run else "Updated"
+                print(f"  ✓ {verb} {kt_file.name}")
 
     gradle_file = ext_path / "build.gradle"
     if gradle_file.exists():
         g_txt = gradle_file.read_text(encoding="utf-8")
-        new_g_txt = re.sub(r'baseUrl\s*=\s*["\'][^"\']+["\']', f"baseUrl = '{new_domain_clean}'", g_txt)
+        new_g_txt = re.sub(r'baseUrl\s*=\s*["\'][^"\']+["\']', lambda _: f"baseUrl = '{new_domain_clean}'", g_txt)
         if g_txt != new_g_txt:
-            gradle_file.write_text(new_g_txt, encoding="utf-8")
+            if not dry_run:
+                gradle_file.write_text(new_g_txt, encoding="utf-8")
             updated_files += 1
-            print(f"  ✓ Updated build.gradle")
+            verb = "Would update" if dry_run else "Updated"
+            print(f"  ✓ {verb} build.gradle")
 
     # 3. Bump version code
-    print("\n3️⃣ Incrementing extension version code...")
-    bump_version(repo_root, lang, name)
+    if not dry_run:
+        print("\n3️⃣ Incrementing extension version code...")
+        bump_version(repo_root, lang, name)
+    else:
+        print("\n3️⃣ [DRY RUN] Would increment extVersionCode in build.gradle")
 
-    print(f"\n🎉 Domain migration complete for src/{lang}/{name} ({updated_files} file(s) updated).")
+    finish_verb = "simulation complete" if dry_run else "complete"
+    print(f"\n🎉 Domain migration {finish_verb} for src/{lang}/{name} ({updated_files} file(s) affected).")
     return True
 
 
@@ -407,8 +418,18 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
 
     print(f"🚀 Publishing extension: src/{lang}/{name}...\n" + "=" * 60)
 
-    # 1. Run static validation & formatting
-    print("1️⃣ Running static code validation & linting...")
+    # 1. Run auto-fix, dependency detection, formatting & static validation
+    print("1️⃣ Running pre-flight auto-remediation, formatting & static validation...")
+    try:
+        from scripts.ast_fixer import fix_codebase
+        fix_codebase(repo_root, lang, name)
+    except Exception as e:
+        print(f"  [!] Notice: AST auto-remediation skipped ({e})")
+
+    detect_script = repo_root / "scripts" / "detect_extractors.py"
+    if detect_script.exists():
+        subprocess.run([sys.executable, str(detect_script), "--lang", lang, "--name", name, "--fix"], cwd=repo_root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+
     format_codebase(repo_root, lang, name)
     if not validate_extensions(repo_root, lang, name):
         print("❌ Validation failed. Fix errors before publishing.")
@@ -426,13 +447,16 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
     # 3. Stage changes
     print("\n3️⃣ Staging git changes...")
     cmd_add = ["git", "add", str(ext_path)]
-    subprocess.run(cmd_add, cwd=repo_root, check=True)
+    subprocess.run(cmd_add, cwd=repo_root, check=True, timeout=30)
+
+    git_env = os.environ.copy()
+    git_env["GIT_TERMINAL_PROMPT"] = "0"
 
     # 4. Commit
     msg = commit_msg or f"{name}: bump version and maintenance update"
     print(f"\n4️⃣ Committing: '{msg}'...")
     cmd_commit = ["git", "commit", "-m", msg]
-    commit_res = subprocess.run(cmd_commit, cwd=repo_root, capture_output=True, text=True)
+    commit_res = subprocess.run(cmd_commit, cwd=repo_root, capture_output=True, text=True, env=git_env, timeout=30)
     if commit_res.returncode != 0:
         if "nothing to commit" in commit_res.stdout:
             print("ℹ️ Nothing to commit, working tree clean.")
@@ -445,7 +469,7 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
     # 5. Push
     print("\n5️⃣ Pushing to remote GitHub repository...")
     cmd_push = ["git", "push"]
-    push_res = subprocess.run(cmd_push, cwd=repo_root, capture_output=True, text=True)
+    push_res = subprocess.run(cmd_push, cwd=repo_root, capture_output=True, text=True, env=git_env, timeout=60)
     if push_res.returncode != 0:
         if "set-upstream" in push_res.stderr or "no upstream branch" in push_res.stderr:
             branch_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root, capture_output=True, text=True)
@@ -617,7 +641,7 @@ def clean_workspace(repo_root: Path) -> bool:
             count += 1
         except Exception:
             pass
-    for p in repo_root.rglob("temp_favicon_raw"):
+    for p in repo_root.rglob("temp_favicon*"):
         try:
             p.unlink(missing_ok=True)
             count += 1
@@ -726,6 +750,33 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
     print(f"🔍 Running Linter & Code Quality Inspection across {target_desc}...\n" + "=" * 60)
     warnings = 0
 
+    # Kotlin continuation-line suffixes: if a line ends with any of these,
+    # it is joined with the following line(s) until a closing )/}/; is found.
+    _CONTINUATION_SUFFIX_RE = re.compile(
+        r'(?:[\(\,\+]|&&|\|\||->|\.)[ \t]*$'
+    )
+    _CLOSED_RE = re.compile(r'[)\};][ \t]*(?://.*)?$')
+
+    def _join_continuation_lines(raw_lines: list) -> list:
+        """Collapse Kotlin continuation lines into logical lines.
+
+        Returns a list of (first_lineno, joined_text) tuples where
+        *first_lineno* is 1-indexed and maps back to the original file.
+        """
+        joined: list = []
+        i = 0
+        while i < len(raw_lines):
+            lineno = i + 1
+            buf = raw_lines[i].rstrip('\n')
+            while _CONTINUATION_SUFFIX_RE.search(buf) and not _CLOSED_RE.search(buf):
+                i += 1
+                if i >= len(raw_lines):
+                    break
+                buf = buf.rstrip() + ' ' + raw_lines[i].strip().rstrip('\n')
+            joined.append((lineno, buf))
+            i += 1
+        return joined
+
     if target_lang and target_name:
         scan_roots = [repo_root / "src" / target_lang / target_name]
     else:
@@ -739,50 +790,89 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
             rel_path = kt_file.relative_to(repo_root)
             file_warnings = []
 
+            # Build joined logical lines for multi-line pattern detection.
+            raw_lines = content.splitlines(keepends=True)
+            logical_lines = _join_continuation_lines(raw_lines)
+            # joined_content reassembles the logical lines for full-file patterns.
+            joined_content = '\n'.join(text for _, text in logical_lines)
+
+            def _warn_on_joined(pattern, message, flags=0):
+                """Emit a warning if *pattern* matches any logical line, reporting
+                the first physical line number of the matched group."""
+                for lineno, text in logical_lines:
+                    if re.search(pattern, text, flags):
+                        file_warnings.append(f"[L{lineno}] {message}")
+                        return  # report once per file
+
             # 1. Blocking Thread.sleep call
             if "Thread.sleep" in content:
                 file_warnings.append("Blocking Thread.sleep call found (use rateLimit() or delay() in coroutines)")
 
             # 2. Raw baseUrl string concatenation instead of absUrl()
-            if re.search(r'"\$baseUrl"\s*\+\s*\w+\.attr\(', content):
+            if re.search(r'"\$baseUrl"\s*\+\s*\w+\.attr\(', joined_content):
                 file_warnings.append('Manual "$baseUrl" + attr() prepend — use element.attr("abs:src") or absUrl() instead')
 
             # 3. Date parsing without runCatching
-            for match in re.findall(r'SimpleDateFormat\([^)]+\)\.parse\(', content):
-                idx = content.find(match)
-                ctx = content[max(0, idx - 200):idx + 50]
+            for match in re.findall(r'SimpleDateFormat\([^)]+\)\.parse\(', joined_content):
+                idx = joined_content.find(match)
+                ctx = joined_content[max(0, idx - 200):idx + 50]
                 if "runCatching" not in ctx:
                     file_warnings.append("Date parsing without runCatching wrapping — can throw ParseException")
                     break
 
             # 4. Sequential for-loop over embed URLs instead of parallelCatchingFlatMap
-            if re.search(r'for\s*\(\w+\s+in\s+(?:hosters|embedUrls|servers|links)\)', content):
+            if re.search(r'for\s*\(\w+\s+in\s+(?:hosters|embedUrls|servers|links)\)', joined_content):
                 if "parallelCatchingFlatMap" not in content:
                     file_warnings.append("Sequential for-loop over hosters/servers — consider parallelCatchingFlatMap for parallel extraction")
 
             # 5. Raw json.decodeFromString without parseAs<> wrapper
-            if re.search(r'json\.decodeFromString<', content) and "parseAs<" not in content:
+            if re.search(r'json\.decodeFromString<', joined_content) and "parseAs<" not in content:
                 file_warnings.append("Raw json.decodeFromString<> — prefer response.parseAs<T>() wrapper pattern")
 
             # 6. Force-unwrap null!! on preference getString
-            if re.search(r'preferences\.getString\([^)]+\)!!', content):
-                file_warnings.append("Force-unwrap preferences.getString()!! — use ?: \"default\" fallback instead")
+            if re.search(r'preferences\.getString\([^)]+\)!!', joined_content):
+                file_warnings.append('Force-unwrap preferences.getString()!! — use ?: "default" fallback instead')
 
             # 7. Hardcoded session/CF cookies in headers
-            if re.search(r'(?:cf_clearance|PHPSESSID|__cfduid)["\']', content):
+            if re.search(r'(?:cf_clearance|PHPSESSID|__cfduid)["\']', joined_content):
                 file_warnings.append("Hardcoded session/CF cookie literal found — cookies should be fetched dynamically")
 
             # 8. Deprecated it.quality Video property
             if "it.quality" in content:
                 file_warnings.append("Deprecated Video property 'it.quality' — use it.videoTitle (v16 API)")
 
-            # 9. Deprecated positional Video constructor
-            if re.search(r'\bVideo\s*\([^)]*,[^)]*,[^)]*,[^)]*\)', content):
-                if not re.search(r'\bVideo\s*\(\s*videoUrl\s*=', content):
-                    file_warnings.append("Deprecated 4-arg positional Video(...) constructor — use Video(videoUrl=, videoTitle=, headers=)")
+            # 20. Double.toString() decimal suffix on whole-number episode strings
+            _warn_on_joined(
+                r'episode_number\s*\.\s*toString\s*\(\s*\)',
+                "Direct Double.toString() on episode_number produces trailing '.0' (e.g. '1.0') — use episodeNumber.toInt().toString() or if (num % 1.0 == 0.0) num.toInt().toString() else num.toString()",
+            )
+
+            # 21. Invalid SAnime status constants
+            invalid_sanime = re.findall(r'\bSAnime\.(NOT_YET_RELEASED|AIRING|RELEASING|FINISHED|HIATUS)\b', content)
+            if invalid_sanime:
+                file_warnings.append(f"Invalid SAnime status constant(s) '{', '.join(set(invalid_sanime))}' — use ONGOING, COMPLETED, LICENSED, PUBLISHING_FINISHED, CANCELLED, ON_HIATUS, or UNKNOWN")
+
+            # 22. sortVideos non-extension declaration signature clash
+            if re.search(r'(?:private\s+)?fun\s+sortVideos\s*\(\s*\w+\s*:\s*List<Video>\s*\)', content):
+                file_warnings.append("Declared 'fun sortVideos(videos: List<Video>)' clashing with AnimeHttpSource — use 'override fun List<Video>.sortVideos(): List<Video>'")
+
+            # 23. Redundant "Server:" prefix in hosterName
+            if re.search(r'Hoster\s*\(\s*(?:hosterName\s*=\s*)?["\']Server:\s+', content):
+                file_warnings.append('Redundant "Server:" prefix in hosterName — use clean provider name (e.g. "Misa", "MegaCloud")')
+
+            # 9. Deprecated positional Video constructor — use joined_content so
+            #    multi-line Video( calls are caught.
+            _warn_on_joined(
+                r'\bVideo\s*\([^)]*,[^)]*,[^)]*,[^)]*\)',
+                "Deprecated 4-arg positional Video(...) constructor — use Video(videoUrl=, videoTitle=, headers=)",
+            )
+            # Suppress if named form is already used
+            if any("[L" in w and "4-arg positional Video" in w for w in file_warnings):
+                if re.search(r'\bVideo\s*\(\s*videoUrl\s*=', joined_content):
+                    file_warnings = [w for w in file_warnings if "4-arg positional Video" not in w]
 
             # 10. Companion object syntax mistake
-            if re.search(r'\bcompanion\s*\{', content):
+            if re.search(r'\bcompanion\s*\{', joined_content):
                 file_warnings.append("Syntax error 'companion {' — must be 'companion object {'")
 
             # 11. DTO Null-Safety
@@ -792,6 +882,8 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                     param_block = match.group(2)
                     for line in param_block.splitlines():
                         clean_line = line.strip().rstrip(",")
+                        # Strip annotations like @SerialName("...") or @Transient
+                        clean_line = re.sub(r'@[A-Za-z0-9_]+(?:\([^)]*\))?\s*', '', clean_line).strip()
                         if clean_line.startswith("val ") or clean_line.startswith("var "):
                             prop = clean_line.split(":")[0].replace("val ", "").replace("var ", "").strip()
                             if "=" not in clean_line and not clean_line.endswith("?"):
@@ -803,7 +895,7 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
 
             # 12. Dynamic / Ephemeral tokens in SEpisode.url
             if "SEpisode" in content and "setUrlWithoutDomain" in content:
-                if re.search(r'setUrlWithoutDomain\([^)]*(?:\?token=|\?session=|\?sig=|\?expires=)', content):
+                if re.search(r'setUrlWithoutDomain\([^)]*(?:\?token=|\?session=|\?sig=|\?expires=)', joined_content):
                     file_warnings.append("Ephemeral / dynamic token embedded in SEpisode.url — use stable permanent anchor URL (e.g. ${anime.url}#season=$s&ep=$e)")
 
             # 13. Subclassing extensions.utils.Source while redeclaring inherited json or preferences
@@ -818,7 +910,7 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                 file_warnings.append("setUrlWithoutDomain() called inside data class/DTO where AnimeHttpSource receiver is not in scope — use this.url = ... instead")
 
             # 15. Non-zero base episode numbering (* 1000 offset anti-pattern)
-            if re.search(r'\(\s*(?:globalSeason|seasonNum|seasonVal|season\.season_number|s)\s*\*\s*1000', content):
+            if re.search(r'\(\s*(?:globalSeason|seasonNum|seasonVal|season\.season_number|s)\s*\*\s*1000', joined_content):
                 file_warnings.append("Episode numbering offset bug (season * 1000) — triggers false 'Missing 1000 items' badge in AniZen. Use epNum.toFloat() or ((season - 1) * 100 + ep).toFloat()")
 
             # 16. Missing initialized = true in getAnimeDetails
@@ -836,6 +928,13 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                     file_warnings.append("Custom 'getHosterList' implemented but missing 'override suspend fun getVideoList(hoster: Hoster)'")
                 if "hoster.hosterName" in content and re.search(r'videoNameGen\s*=\s*\{[^}]*\$\{hoster\.hosterName\}', content):
                     file_warnings.append("Redundant hoster name in videoNameGen prefix — the hoster folder already displays the server name in Aniyomi UI")
+
+            # 19. runBlocking { } inside suspend functions — use joined so split
+            #     declarations are caught.
+            _warn_on_joined(
+                r'\brunBlocking\s*\{',
+                "runBlocking { } inside coroutine — use withContext(Dispatchers.IO) { } instead",
+            )
 
             if file_warnings:
                 for w in file_warnings:
@@ -894,7 +993,50 @@ def inspect_hosters(repo_root: Path, target_lang: str, target_name: str) -> bool
     print("  3. Include audio track tags next to the resolution (e.g. `1080p [Hindi]`, `720p [English]`).")
     print("  4. Provide a 'Preferred Server' ListPreference for custom user prioritization.")
 
-    return True
+def preflight_extension(repo_root: Path, target_lang: str, target_name: str) -> bool:
+    """Chains the entire quality gate pipeline for a single extension before PR or release."""
+    target_lang, target_name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
+    mod_path = f"src/{target_lang}/{target_name}"
+    print(f"🚀 Running Master Pre-Flight Quality Gate on {mod_path}...\n" + "=" * 70)
+
+    # 1. Format
+    print("Step 1/5: Formatting Codebase...")
+    format_codebase(repo_root, target_lang, target_name)
+    print("\n" + "-" * 70)
+
+    # 2. AST Auto-Remediation
+    print("Step 2/5: AST Model & Invariant Remediation...")
+    from scripts.ast_fixer import auto_fix_target
+    auto_fix_target(repo_root, target_lang, target_name)
+    print("\n" + "-" * 70)
+
+    # 3. Detect & Patch Missing Extractor Dependencies
+    print("Step 3/5: Extractor & Transitive Dependency Resolution...")
+    detect_script = repo_root / "scripts" / "detect_extractors.py"
+    if detect_script.exists():
+        subprocess.run(
+            [sys.executable, str(detect_script), "--lang", target_lang, "--name", target_name, "--fix"],
+            cwd=repo_root,
+            timeout=20
+        )
+    print("\n" + "-" * 70)
+
+    # 4. Lint Code Quality
+    print("Step 4/5: Static AST & Rule Quality Linting...")
+    l_ok = lint_codebase(repo_root, target_lang, target_name)
+    print("\n" + "-" * 70)
+
+    # 5. Static Manifest & Gradle Validation
+    print("Step 5/5: Static Manifest, Gradle, and Asset Validation...")
+    v_ok = validate_extensions(repo_root, target_lang, target_name)
+    print("\n" + "=" * 70)
+
+    success = l_ok and v_ok
+    if success:
+        print(f"🎉 Pre-Flight Check PASSED for {mod_path}! Module is 100% ready for PR and release.")
+    else:
+        print(f"❌ Pre-Flight Check FAILED for {mod_path}. Resolve the issues reported above.")
+    return success
 
 
 def audit_all(repo_root: Path) -> bool:
@@ -1155,28 +1297,83 @@ def main():
                 "script": "sandbox.py",
                 "desc": "Zero-APK fast in-memory Kotlin runtime simulator for popular, search, and detail workflows."
             },
+            "preflight": {
+                "script": None,
+                "desc": "One-shot master quality gate chaining format, fix, detect-extractors, lint, and validate."
+            },
             "inspect-hosters": {
+                "script": None,
                 "desc": "Inspect & audit hoster folder architecture, server grouping, and stream quality sorting."
+            },
+            "test-extractors": {
+                "script": "test_extractors.py",
+                "desc": "Alias for test-extractor: Unit test and verify regexes, unpackers, and decoders for extractors."
             }
         }
 
-        epilog_lines = [f"Available Commands ({len(commands_info)} Total):", "-" * 40]
-        for i, (cmd_name, cmd_data) in enumerate(commands_info.items(), 1):
-            epilog_lines.append(f"  {i:2d}. {cmd_name:18s} {cmd_data['desc']}")
+        grouped_categories = [
+            ("🏗️  Scaffolding & DTOs", [
+                ("create", "Scaffold full extension boilerplate (HTML, API, Theme, Movie-Locker)."),
+                ("create-theme", "Scaffold a new multi-source theme in lib-multisrc/."),
+                ("json-to-dto", "Ingest JSON API responses or HAR files and generate v16 null-safe DTOs."),
+            ]),
+            ("🔬 Testing & Scraper Sandbox", [
+                ("test-scraper", "Test live HTTP requests, CSS selectors, regex, DevTools headers, and REPL."),
+                ("test-pipeline", "Run full 5-stage automated scraper verification (Popular -> Stream)."),
+                ("test-extractor", "Unit test video embed resolvers and unpackers (alias: test-extractors)."),
+                ("test-filters", "Combinatorial search filter matrix fuzzer."),
+                ("sandbox", "Zero-APK fast in-memory Kotlin runtime simulator."),
+            ]),
+            ("🛡️  Code Quality, Auto-Fix & Validation", [
+                ("preflight", "One-shot master quality gate chaining format, fix, deps, lint, and validate."),
+                ("validate", "Perform static analysis validation without Gradle APK build (supports --fix)."),
+                ("lint", "Scan for code smells, anti-patterns, and API invariants (supports --fix)."),
+                ("fix", "Auto-remediate Kotlin AST code smells and API v16 invariants."),
+                ("format", "Format Kotlin, Gradle, and XML files (strip whitespace, CRLF normalization)."),
+                ("inspect-hosters", "Inspect & audit hoster folder architecture and stream quality sorting."),
+            ]),
+            ("📡 Media & Stream Diagnostics", [
+                ("probe-stream", "Deep media inspector for HLS (.m3u8), DASH, direct streams, and codecs."),
+                ("deobfuscate", "Decode Dean Edwards, PlayerJS, CryptoJS AES, and Stego media payloads."),
+                ("fetch-metadata", "Fetch episode metadata from Jikan, AniList, Kitsu, and TMDB."),
+                ("fetch-icon", "Fetch website favicon and convert to 192x192 PNG launcher icon."),
+            ]),
+            ("🚀 Release & Versioning", [
+                ("publish", "Pre-flight auto-fix, format, validate, bump version, commit, and push."),
+                ("bump-version", "Increment extVersionCode in build.gradle."),
+                ("bump-theme", "Increment baseVersionCode in lib-multisrc."),
+                ("bump-lib", "Cascade version bumps to all modules depending on a lib."),
+                ("migrate-domain", "Automate base URL domain migration across sources."),
+            ]),
+            ("🩺 Maintenance & Diagnostics", [
+                ("doctor", "Diagnose developer environment (Python, Git, Java, Android SDK)."),
+                ("audit-all", "Run master repository health audit across all modules."),
+                ("canary-monitor", "Monitor health across all 65+ video extractors in lib/."),
+                ("sync-lib", "Synchronize shared extractors with upstream repositories."),
+                ("verify-extractors", "Empirically test video extractors against live HTTP streams."),
+                ("auto-maintain", "Run automated maintenance (sync, fix dependencies, validate)."),
+                ("list", "List installed extension modules and version codes."),
+                ("list-extractors", "List all 65 pre-built video extractor libraries."),
+                ("doc", "Generate markdown extension catalog table."),
+                ("clean", "Purge temporary build caches, pyc files, and temporary artifacts."),
+            ]),
+        ]
+
+        epilog_lines = [f"Available Commands ({len(commands_info)} Total):", "=" * 60]
+        for cat_title, cmds in grouped_categories:
+            epilog_lines.append(f"\n{cat_title}:")
+            for c_name, c_desc in cmds:
+                epilog_lines.append(f"  {c_name:18s} {c_desc}")
+
         epilog_lines.extend([
-            "",
-            "Examples:",
+            "\n" + "=" * 60,
+            "Common Workflow Examples:",
             "  python3 scripts/cli.py doctor",
-            "  python3 scripts/cli.py create -i",
-            "  python3 scripts/cli.py fix <module>",
+            "  python3 scripts/cli.py create --name AnimeFlix --lang en --baseUrl https://animeflix.live",
+            "  python3 scripts/cli.py test-scraper animestream --popular",
             "  python3 scripts/cli.py probe-stream 'https://example.com/master.m3u8' --deep",
             "  python3 scripts/cli.py json-to-dto https://api.site.com/anime/1",
-            "  python3 scripts/cli.py deobfuscate 'eval(function(p,a,c,k,e,r)...)'",
-            "  python3 scripts/cli.py canary-monitor --export",
-            "  python3 scripts/cli.py test-filters <module>",
-            "  python3 scripts/cli.py sandbox <module> --action popular",
-            "  python3 scripts/cli.py format <module>",
-            "  python3 scripts/cli.py bump-version <module>",
+            "  python3 scripts/cli.py validate <module> --fix",
             "  python3 scripts/cli.py publish <module> -m 'fix episode parsing'",
             "  python3 scripts/cli.py audit-all"
         ])
@@ -1195,6 +1392,8 @@ def main():
             sys.exit(0)
 
         args = parser.parse_args()
+        if args.command == "test-extractors":
+            args.command = "test-extractor"
 
         if args.command == "doctor":
             success = doctor(repo_root)
@@ -1213,8 +1412,9 @@ def main():
             mig_parser.add_argument("target", help="Target extension module (e.g. 'vegamovies' or 'en/vegamovies')")
             mig_parser.add_argument("--new-domain", required=True, help="New base URL domain (e.g. 'https://newdomain.com')")
             mig_parser.add_argument("--no-test", action="store_true", help="Skip live HTTP reachability check")
+            mig_parser.add_argument("--dry-run", action="store_true", help="Preview modifications without writing to disk")
             mig_args = mig_parser.parse_args(args.args)
-            success = migrate_domain(repo_root, mig_args.target, mig_args.new_domain, test_reachability=not mig_args.no_test)
+            success = migrate_domain(repo_root, mig_args.target, mig_args.new_domain, test_reachability=not mig_args.no_test, dry_run=mig_args.dry_run)
             sys.exit(0 if success else 1)
 
         if args.command == "bump-theme":
@@ -1263,9 +1463,27 @@ def main():
             lint_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
             lint_parser.add_argument("--lang", help="Target extension lang")
             lint_parser.add_argument("--name", help="Target extension directory name")
+            lint_parser.add_argument("--fix", action="store_true", help="Auto-fix AST smells and v16 invariants before linting")
             lint_args = lint_parser.parse_args(args.args)
             lang, name = resolve_extension_target(repo_root, lint_args.target, lint_args.lang, lint_args.name)
+            if lint_args.fix:
+                from scripts.ast_fixer import fix_codebase
+                fix_codebase(repo_root, lang, name)
             success = lint_codebase(repo_root, lang, name)
+            sys.exit(0 if success else 1)
+
+        if args.command == "preflight":
+            pf_parser = argparse.ArgumentParser(prog="cli.py preflight")
+            pf_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
+            pf_parser.add_argument("--lang", help="Target extension lang")
+            pf_parser.add_argument("--name", help="Target extension directory name")
+            pf_args = pf_parser.parse_args(args.args)
+            if not pf_args.target and not (pf_args.lang and pf_args.name):
+                pf_parser.print_help()
+                print("\n❌ Error: Target extension module is required (e.g. `cli.py preflight <module>`).")
+                sys.exit(1)
+            lang, name = resolve_extension_target(repo_root, pf_args.target, pf_args.lang, pf_args.name)
+            success = preflight_extension(repo_root, lang, name)
             sys.exit(0 if success else 1)
 
         if args.command == "inspect-hosters":
@@ -1320,11 +1538,21 @@ def main():
             val_parser.add_argument("--lang", help="Target extension lang")
             val_parser.add_argument("--name", help="Target extension directory name")
             val_parser.add_argument("--all", action="store_true", help="Validate all extensions")
+            val_parser.add_argument("--fix", action="store_true", help="Auto-fix AST smells and missing dependencies before validating")
             val_args = val_parser.parse_args(args.args)
             if val_args.all:
                 lang, name = None, None
             else:
                 lang, name = resolve_extension_target(repo_root, val_args.target, val_args.lang, val_args.name)
+            if val_args.fix:
+                from scripts.ast_fixer import fix_codebase
+                fix_codebase(repo_root, lang, name)
+                detect_script = repo_root / "scripts" / "detect_extractors.py"
+                if detect_script.exists():
+                    d_cmd = [sys.executable, str(detect_script), "--fix"]
+                    if lang and name:
+                        d_cmd.extend(["--lang", lang, "--name", name])
+                    subprocess.run(d_cmd, cwd=repo_root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
             success = validate_extensions(repo_root, lang, name)
             sys.exit(0 if success else 1)
 

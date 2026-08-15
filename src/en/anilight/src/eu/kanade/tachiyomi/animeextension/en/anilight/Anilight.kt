@@ -235,7 +235,8 @@ class Anilight : Source() {
         }
 
         val animeId = params["id"]?.takeIf { it.isNotBlank() }
-        val epNum = params["ep"]?.takeIf { it.isNotBlank() } ?: episode.episode_number.toString()
+        val epNum = params["ep"]?.takeIf { it.isNotBlank() }
+            ?: if (episode.episode_number % 1f == 0f) episode.episode_number.toInt().toString() else "${episode.episode_number}"
 
         if (animeId == null) {
             return emptyList()

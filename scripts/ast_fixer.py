@@ -64,25 +64,69 @@ class ExtensionAstFixer:
             fixes_applied.append("Renamed `.quality` property to `.videoTitle` (v16)")
 
         # 2. Fix legacy positional Video(url, quality, ...) to named Video(videoUrl=, videoTitle=, ...)
-        def fix_legacy_video_constructor(match):
-            args_str = match.group(1).strip()
-            # If already using named args, skip
-            if "videoUrl" in args_str or "videoTitle" in args_str:
-                return match.group(0)
+        def migrate_video_constructors(text: str) -> Tuple[str, bool]:
+            idx = 0
+            changed = False
+            result = []
+            while idx < len(text):
+                m = re.search(r'\bVideo\s*\(', text[idx:])
+                if not m:
+                    result.append(text[idx:])
+                    break
 
-            args = split_params_depth_aware(args_str)
-            if len(args) == 2:
-                return f"Video(videoUrl = {args[0]}, videoTitle = {args[1]})"
-            elif len(args) == 3:
-                return f"Video(videoUrl = {args[0]}, videoTitle = {args[1]}, headers = {args[2]})"
-            elif len(args) >= 4:
-                # In v15: Video(url, quality, videoUrl?, headers?)
-                direct_url = args[2] if args[2] != "null" else args[0]
-                return f"Video(videoUrl = {direct_url}, videoTitle = {args[1]}, headers = {args[3]})"
-            return match.group(0)
+                start_call = idx + m.start()
+                open_paren = idx + m.end() - 1
+                result.append(text[idx:start_call])
 
-        new_content = re.sub(r'\bVideo\(([^()]+)\)', fix_legacy_video_constructor, content)
-        if new_content != content:
+                # Find matching closing parenthesis
+                depth = 1
+                curr = open_paren + 1
+                in_str = False
+                str_char = None
+                while curr < len(text) and depth > 0:
+                    ch = text[curr]
+                    if ch in ('"', "'") and (curr == 0 or text[curr - 1] != '\\'):
+                        if not in_str:
+                            in_str = True
+                            str_char = ch
+                        elif str_char == ch:
+                            in_str = False
+                    elif not in_str:
+                        if ch in ('(', '[', '{', '<'):
+                            depth += 1
+                        elif ch in (')', ']', '}', '>'):
+                            depth -= 1
+                    curr += 1
+
+                if depth == 0:
+                    args_str = text[open_paren + 1:curr - 1].strip()
+                    # Check if already using named arguments
+                    if "videoUrl" in args_str or "videoTitle" in args_str:
+                        result.append(text[start_call:curr])
+                    else:
+                        args = split_params_depth_aware(args_str)
+                        if len(args) == 2:
+                            result.append(f"Video(videoUrl = {args[0]}, videoTitle = {args[1]})")
+                            changed = True
+                        elif len(args) == 3:
+                            result.append(f"Video(videoUrl = {args[0]}, videoTitle = {args[1]}, headers = {args[2]})")
+                            changed = True
+                        elif len(args) >= 4:
+                            direct_url = args[2] if args[2] != "null" else args[0]
+                            result.append(f"Video(videoUrl = {direct_url}, videoTitle = {args[1]}, headers = {args[3]})")
+                            changed = True
+                        else:
+                            result.append(text[start_call:curr])
+                    idx = curr
+                else:
+                    # Unbalanced paren fallback
+                    result.append(text[start_call:open_paren + 1])
+                    idx = open_paren + 1
+
+            return "".join(result), changed
+
+        new_content, video_migrated = migrate_video_constructors(content)
+        if video_migrated:
             content = new_content
             fixes_applied.append("Migrated positional `Video(...)` constructors to named arguments (v16)")
 
@@ -158,7 +202,31 @@ class ExtensionAstFixer:
             )
             fixes_applied.append('Replaced `"$baseUrl" + attr("href")` with `attr("abs:href")`')
 
-        # 7. Normalize line endings and whitespace
+        # 7. Fix invalid SAnime status enum references
+        status_replacements = {
+            r'\bSAnime\.NOT_YET_RELEASED\b': 'SAnime.UNKNOWN',
+            r'\bSAnime\.AIRING\b': 'SAnime.ONGOING',
+            r'\bSAnime\.RELEASING\b': 'SAnime.ONGOING',
+            r'\bSAnime\.FINISHED\b': 'SAnime.COMPLETED',
+            r'\bSAnime\.HIATUS\b': 'SAnime.ON_HIATUS',
+        }
+        for pattern, replacement in status_replacements.items():
+            if re.search(pattern, content):
+                content = re.sub(pattern, replacement, content)
+                fixes_applied.append(f"Corrected invalid SAnime status constant to `{replacement}` (v16)")
+
+        # 8. Fix sortVideos method declaration to extension method
+        if re.search(r'(?:private\s+)?fun\s+sortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*:\s*List<Video>\s*\)\s*:\s*List<Video>', content):
+            content = re.sub(
+                r'(?:private\s+)?fun\s+sortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*:\s*List<Video>\s*\)\s*:\s*List<Video>',
+                r'override fun List<Video>.sortVideos(): List<Video>',
+                content
+            )
+            # Also replace calls like sortVideos(videos) -> videos.sortVideos()
+            content = re.sub(r'\bsortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*\)', r'\1.sortVideos()', content)
+            fixes_applied.append("Migrated `sortVideos(videos)` function to `override fun List<Video>.sortVideos(): List<Video>` (v16)")
+
+        # 9. Normalize line endings and whitespace
         lines = [line.rstrip() for line in content.replace("\r\n", "\n").split("\n")]
         # Collapse 3+ blank lines to 2
         normalized_lines = []
@@ -242,6 +310,9 @@ def auto_fix_target(repo_root: Path, target_lang: str = None, target_name: str =
         print("✨ Codebase is already clean! No auto-remediable AST smells detected.")
 
     return True
+
+
+fix_codebase = auto_fix_target
 
 
 def main():

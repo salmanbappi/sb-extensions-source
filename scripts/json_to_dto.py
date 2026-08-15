@@ -17,12 +17,14 @@ KOTLIN_RESERVED_KEYWORDS = {
     "as", "break", "class", "continue", "do", "else", "false", "for", "fun",
     "if", "in", "interface", "is", "null", "object", "package", "return",
     "super", "this", "throw", "true", "try", "typealias", "typeof", "val",
-    "var", "when", "while"
+    "var", "when", "while", "by", "companion", "constructor", "delegate",
+    "dynamic", "file", "get", "init", "param", "property", "receiver",
+    "set", "setparam", "where"
 }
 
 
 def to_camel_case(name: str) -> str:
-    """Converts snake_case or kebab-case into camelCase."""
+    """Converts snake_case or kebab-case into camelCase and sanitizes Kotlin keywords."""
     clean = re.sub(r'[^a-zA-Z0-9_]', '_', name)
     words = [w for w in clean.split('_') if w]
     if not words:
@@ -34,7 +36,7 @@ def to_camel_case(name: str) -> str:
     if result and result[0].isdigit():
         result = "prop" + result
     if result in KOTLIN_RESERVED_KEYWORDS:
-        result = f"`{result}`"
+        result = f"{result}Value"
     return result
 
 
@@ -221,7 +223,11 @@ def main():
                 print(f"    [{idx}] {entry['method']} {entry['url']}")
             payload = har_entries[0]["json"]
         else:
-            payload = json.loads(content)
+            try:
+                payload = json.loads(content)
+            except Exception as e:
+                print(f"❌ Failed to parse JSON from file '{src_path.name}': {e}")
+                sys.exit(1)
 
     converter = JsonToDtoConverter(root_class_name=args.root)
     kotlin_code = converter.generate_kotlin(payload)

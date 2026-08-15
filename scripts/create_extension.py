@@ -19,6 +19,11 @@ import sys
 import zlib
 from pathlib import Path
 
+try:
+    import readline
+except ImportError:
+    pass
+
 # Ensure repo root and scripts directory are in sys.path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -1370,6 +1375,25 @@ def interactive_wizard() -> dict:
     with_metadata = input("Include episode metadata & Sub/Dub scanlator parser? [Y/n]: ").strip().lower() != "n"
     with_filters = input("Generate modular Filters.kt file? [Y/n]: ").strip().lower() != "n"
     nsfw = input("Is this extension NSFW / 18+? [y/N]: ").strip().lower() == "y"
+
+    print("\n" + "═" * 55)
+    print("📋 Extension Scaffolding Review Summary")
+    print("═" * 55)
+    print(f"  • Name:              {name}")
+    print(f"  • Language:          {lang}")
+    print(f"  • Target Directory:  src/{lang}/{to_package_name(name)}")
+    print(f"  • Architecture:      {site_type.upper()}")
+    print(f"  • Base URL:          {base_url}")
+    print(f"  • Preferences:       {'Yes' if with_prefs else 'No'}")
+    print(f"  • Extractors:        {'Yes (Dood, StreamTape, FileMoon, Universal)' if with_extractors else 'No'}")
+    print(f"  • Episode Metadata:  {'Yes' if with_metadata else 'No'}")
+    print(f"  • Modular Filters:   {'Yes' if with_filters else 'No'}")
+    print(f"  • NSFW / 18+:        {'Yes' if nsfw else 'No'}")
+    print("═" * 55)
+    confirm = input("\nGenerate extension module with these settings? [Y/n]: ").strip().lower()
+    if confirm == "n":
+        print("🛑 Scaffolding cancelled by user.")
+        sys.exit(0)
 
     return {
         "name": name,
