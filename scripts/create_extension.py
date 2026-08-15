@@ -295,7 +295,7 @@ def generate_html_kotlin_source(
             }
 
             extractedVideos.map { video ->
-                val baseTitle = video.videoTitle.replace(Regex("""\s*\[(?:SUB|DUB|Soft-Sub)\]""", RegexOption.IGNORE_CASE), "").trim()
+                val baseTitle = video.videoTitle.replace(Regex("\\\\s*\\\\[(?:SUB|DUB|Soft-Sub)\\\\]", RegexOption.IGNORE_CASE), "").trim()
                 val finalTitle = if (baseTitle.isNotBlank()) "$baseTitle [$audioType]" else "HD [$audioType]"
                 Video(
                     videoUrl = video.videoUrl,

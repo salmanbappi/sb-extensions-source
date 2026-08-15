@@ -61,14 +61,89 @@ class ExtensionSandbox:
         except Exception as e:
             return 0, str(e)
 
+    def _extract_endpoint(self, method_name: str, default_path: str, query: Optional[str] = None) -> str:
+        """Extracts endpoint URL from Kotlin source method body, resolving variables."""
+        m_block = re.search(rf'override\s+suspend\s+fun\s+{method_name}[^{{]*\{{([\s\S]*?)(?:override\s+suspend\s+fun|\z)', self.source_code)
+        block = m_block.group(1) if m_block else ""
+
+        api_url_match = re.search(r'(?:DEFAULT_API_URL|apiUrl|PREF_API_URL_DEFAULT)\s*=\s*["\']([^"\']+)["\']', self.source_code)
+        api_url = api_url_match.group(1) if api_url_match else ""
+
+        # Find all string templates/literals in block
+        strings = re.findall(r'["\']([^"\']*(?:\$|/|http|\?)[^"\']*)["\']', block)
+        target_template = None
+        for s in strings:
+            if query and ("search" in s or "title=" in s or "q=" in s or "query=" in s):
+                target_template = s
+                break
+            elif not query and ("catalog" in s or "popular" in s or "latest" in s or "page=" in s):
+                target_template = s
+                break
+
+        if not target_template and strings:
+            target_template = strings[0]
+
+        if target_template:
+            raw_url = target_template
+            raw_url = raw_url.replace("${apiUrl}", api_url).replace("$apiUrl", api_url)
+            raw_url = raw_url.replace("${baseUrl}", self.base_url).replace("$baseUrl", self.base_url)
+            raw_url = raw_url.replace("${page}", "1").replace("$page", "1")
+            raw_url = raw_url.replace("${PAGE_SIZE}", "20").replace("$PAGE_SIZE", "20")
+            if query:
+                encoded_q = urllib.parse.quote(query)
+                raw_url = re.sub(r'\$\{(?:encodedQuery|query|q)\}', encoded_q, raw_url)
+                raw_url = re.sub(r'\$(?:encodedQuery|query|q)\b', encoded_q, raw_url)
+            return raw_url
+
+        return default_path
+
+    def _extract_titles(self, payload: str) -> List[str]:
+        """Extracts anime/movie titles from either JSON or HTML responses."""
+        titles = []
+        payload_trimmed = payload.strip()
+
+        # Try JSON parsing
+        if payload_trimmed.startswith("{") or payload_trimmed.startswith("["):
+            try:
+                data = json.loads(payload_trimmed)
+                items = []
+                if isinstance(data, list):
+                    items = data
+                elif isinstance(data, dict):
+                    for k in ["results", "data", "movies", "result", "items"]:
+                        val = data.get(k)
+                        if isinstance(val, list):
+                            items = val
+                            break
+                        elif isinstance(val, dict):
+                            if "results" in val and isinstance(val["results"], list):
+                                items = val["results"]
+                                break
+                            elif "full" in val and isinstance(val["full"], list):
+                                for f in val["full"]:
+                                    if "movies" in f and isinstance(f["movies"], list):
+                                        items.extend(f["movies"])
+
+                for item in items:
+                    if isinstance(item, dict):
+                        t = item.get("title_en") or item.get("titleEn") or item.get("title") or item.get("title_ru") or item.get("name")
+                        if t and isinstance(t, str):
+                            titles.append(t.strip())
+            except Exception:
+                pass
+
+        if not titles:
+            titles = re.findall(r'<a[^>]+title=["\']([^"\']+)["\']', payload) or re.findall(r'<h\d[^>]*>([^<]+)</h\d>', payload)
+
+        return titles
+
     def run_action(self, action: str, query: Optional[str] = None, url: Optional[str] = None):
         """Runs a simulated Aniyomi extension lifecycle action."""
         start_time = time.time()
         print(f"🚀 [SANDBOX] Running `{action}` on {self.target_dir.name} ({self.base_url})...\n" + "=" * 65)
 
         if action == "popular":
-            m = re.search(r'getPopularAnime[^{]*\{[^"]*GET\(\s*["\']([^"\']+)["\']', self.source_code)
-            endpoint = m.group(1).replace("$baseUrl", "").replace("$page", "1") if m else "/popular"
+            endpoint = self._extract_endpoint("getPopularAnime", "/popular")
             status, html = self.execute_http(endpoint)
             elapsed_ms = (time.time() - start_time) * 1000
 
@@ -77,14 +152,13 @@ class ExtensionSandbox:
             print(f"  • Endpoint:       {endpoint}")
             print(f"  • Payload Size:   {len(html)} bytes")
 
-            titles = re.findall(r'<a[^>]+title=["\']([^"\']+)["\']', html) or re.findall(r'<h\d[^>]*>([^<]+)</h\d>', html)
+            titles = self._extract_titles(html)
             print(f"\n📦 Extracted {len(titles)} candidate anime items:")
             for idx, t in enumerate(titles[:8], 1):
-                print(f"    {idx}. {t.strip()}")
+                print(f"    {idx}. {t}")
 
         elif action == "latest":
-            m = re.search(r'getLatestUpdates[^{]*\{[^"]*GET\(\s*["\']([^"\']+)["\']', self.source_code)
-            endpoint = m.group(1).replace("$baseUrl", "").replace("$page", "1") if m else "/latest"
+            endpoint = self._extract_endpoint("getLatestUpdates", "/latest")
             status, html = self.execute_http(endpoint)
             elapsed_ms = (time.time() - start_time) * 1000
 
@@ -93,15 +167,14 @@ class ExtensionSandbox:
             print(f"  • Endpoint:       {endpoint}")
             print(f"  • Payload Size:   {len(html)} bytes")
 
-            titles = re.findall(r'<a[^>]+title=["\']([^"\']+)["\']', html) or re.findall(r'<h\d[^>]*>([^<]+)</h\d>', html)
+            titles = self._extract_titles(html)
             print(f"\n📦 Extracted {len(titles)} candidate anime items:")
             for idx, t in enumerate(titles[:8], 1):
-                print(f"    {idx}. {t.strip()}")
+                print(f"    {idx}. {t}")
 
         elif action == "search":
-            search_query = query or "one piece"
-            m = re.search(r'getSearchAnime[^{]*\{[^"]*GET\(\s*["\']([^"\']+)["\']', self.source_code)
-            endpoint = m.group(1).replace("$baseUrl", "").replace("$page", "1").replace("$query", urllib.parse.quote(search_query)) if m else f"/search?q={urllib.parse.quote(search_query)}"
+            search_query = query or "batman"
+            endpoint = self._extract_endpoint("getSearchAnime", f"/search?q={urllib.parse.quote(search_query)}", query=search_query)
             status, html = self.execute_http(endpoint)
             elapsed_ms = (time.time() - start_time) * 1000
 
@@ -110,6 +183,11 @@ class ExtensionSandbox:
             print(f"  • Search Query:   '{search_query}'")
             print(f"  • Endpoint:       {endpoint}")
             print(f"  • Payload Size:   {len(html)} bytes")
+
+            titles = self._extract_titles(html)
+            print(f"\n📦 Extracted {len(titles)} search result items:")
+            for idx, t in enumerate(titles[:8], 1):
+                print(f"    {idx}. {t}")
 
         elif action == "details":
             target_url = url or f"{self.base_url}/anime/sample"

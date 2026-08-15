@@ -1,0 +1,13 @@
+ext {
+    extName = 'NetMovie'
+    extClass = '.NetMovie'
+    author = '@salmanbappi'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+}

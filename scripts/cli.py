@@ -6,11 +6,13 @@ lint, migrate domains, bump version, and manage individual and multi-source exte
 """
 
 import argparse
+import base64
 import os
 import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -45,9 +47,16 @@ def resolve_extension_target(repo_root: Path, target: str = None, lang: str = No
     if resolved_name:
         if resolved_lang and (src_dir / resolved_lang / resolved_name).exists():
             return resolved_lang, resolved_name
-        for lang_dir in sorted(src_dir.iterdir()):
-            if lang_dir.is_dir() and (lang_dir / resolved_name).exists():
-                return lang_dir.name, resolved_name
+        matches = []
+        if src_dir.exists():
+            for lang_dir in sorted(src_dir.iterdir()):
+                if lang_dir.is_dir() and (lang_dir / resolved_name).exists():
+                    matches.append(lang_dir.name)
+        if len(matches) == 1:
+            return matches[0], resolved_name
+        elif len(matches) > 1:
+            print(f"⚠️ Ambiguous target '{resolved_name}' found in multiple languages: {matches}. Defaulting to '{matches[0]}'. (Specify as '{matches[0]}/{resolved_name}' to avoid ambiguity)")
+            return matches[0], resolved_name
 
     return resolved_lang, resolved_name
 
@@ -68,9 +77,14 @@ def fetch_icon(url: str, output_path: Path):
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
         html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8', errors='ignore')
-        icons = re.findall(r'<link[^>]+rel=["\'](?:shortcut )?icon["\'][^>]+href=["\']([^"\']+)["\']', html, re.IGNORECASE)
-        for icon in icons:
-            if icon.startswith("//"):
+        matches = re.finditer(r'<link\b(?=[^>]*?\brel=[\"\'](?:shortcut )?icon[\"\'])[^>]*?\bhref=(?:\"([^\"]+)\"|\'([^\']+)\')', html, re.IGNORECASE)
+        for m in matches:
+            icon = m.group(1) or m.group(2)
+            if not icon:
+                continue
+            if icon.startswith("data:"):
+                fav_candidates.insert(0, icon)
+            elif icon.startswith("//"):
                 fav_candidates.insert(0, f"https:{icon}")
             elif icon.startswith("/"):
                 fav_candidates.insert(0, f"{base_url}{icon}")
@@ -81,34 +95,66 @@ def fetch_icon(url: str, output_path: Path):
     except Exception as e:
         print(f"  [!] Notice: HTML favicon extraction skipped ({e})")
 
-    temp_raw = output_path.parent / "temp_favicon_raw"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_raw = output_path.parent / "temp_favicon.raw"
+    temp_file = None
     success = False
+
     for fav_url in fav_candidates:
         try:
-            print(f"  -> Trying: {fav_url}")
-            req = urllib.request.Request(fav_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-            with urllib.request.urlopen(req, timeout=4) as response:
-                content = response.read()
-                if len(content) > 100:
-                    with open(temp_raw, "wb") as f:
-                        f.write(content)
-                    success = True
-                    break
+            print(f"  -> Trying: {fav_url[:80]}{'...' if len(fav_url) > 80 else ''}")
+            if fav_url.startswith("data:"):
+                if "base64," in fav_url:
+                    b64_data = fav_url.split("base64,", 1)[1]
+                    raw_bytes = base64.b64decode(b64_data)
+                else:
+                    data_part = fav_url.split(",", 1)[1] if "," in fav_url else ""
+                    raw_bytes = urllib.parse.unquote(data_part).encode("utf-8")
+                ext = ".svg" if "svg" in fav_url else ".png"
+                temp_file = output_path.parent / f"temp_favicon{ext}"
+                with open(temp_file, "wb") as f:
+                    f.write(raw_bytes)
+                success = True
+                break
+            else:
+                req = urllib.request.Request(fav_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+                with urllib.request.urlopen(req, timeout=4) as response:
+                    content = response.read()
+                    if len(content) > 50:
+                        if b"<svg" in content[:200] or ".svg" in fav_url:
+                            ext = ".svg"
+                        elif ".ico" in fav_url:
+                            ext = ".ico"
+                        else:
+                            ext = ".png"
+                        temp_file = output_path.parent / f"temp_favicon{ext}"
+                        with open(temp_file, "wb") as f:
+                            f.write(content)
+                        success = True
+                        break
         except Exception:
             continue
 
-    if not success:
+    if not success or not temp_file or not temp_file.exists():
         print("❌ Could not download favicon from target site.")
         return False
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     conv = shutil.which("convert") or shutil.which("magick")
+    destinations = [output_path]
+    xxhdpi_path = output_path.parent.parent / "drawable-xxhdpi" / "icon.png"
+    if xxhdpi_path.parent.exists() or (output_path.parent.parent / "drawable-xxhdpi").exists():
+        xxhdpi_path.parent.mkdir(parents=True, exist_ok=True)
+        destinations.append(xxhdpi_path)
+
     if conv:
         try:
-            cmd = [conv, f"{temp_raw}[0]", "-resize", "192x192", str(output_path)]
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if temp_raw.exists():
-                temp_raw.unlink()
+            input_spec = str(temp_file) if temp_file.suffix != ".ico" else f"{temp_file}[0]"
+            for dest in destinations:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                cmd = [conv, "-background", "none", "-density", "300", input_spec, "-resize", "192x192", str(dest)]
+                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if temp_file.exists():
+                temp_file.unlink()
             print(f"✅ Successfully created 192x192 launcher icon: {output_path}")
             return True
         except Exception as e:
@@ -116,9 +162,11 @@ def fetch_icon(url: str, output_path: Path):
 
     # Fallback to pure Python minimal PNG generator if convert fails
     from scripts.create_extension import create_minimal_png
-    create_minimal_png(output_path, 192, 192)
-    if temp_raw.exists():
-        temp_raw.unlink()
+    for dest in destinations:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        create_minimal_png(dest, 192, 192)
+    if temp_file and temp_file.exists():
+        temp_file.unlink()
     print(f"✅ Generated standard fallback 192x192 PNG icon: {output_path}")
     return True
 
@@ -1251,18 +1299,35 @@ def main():
 
         if args.command == "fetch-icon":
             fetch_parser = argparse.ArgumentParser(prog="cli.py fetch-icon")
-            fetch_parser.add_argument("--url", required=True, help="Target website URL")
-            fetch_parser.add_argument("target", nargs="?", help="Target extension name")
+            fetch_parser.add_argument("--url", help="Target website URL")
+            fetch_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
             fetch_parser.add_argument("--lang", help="Target extension lang")
             fetch_parser.add_argument("--name", help="Target extension directory name")
 
             icon_args = fetch_parser.parse_args(args.args)
             lang, name = resolve_extension_target(repo_root, icon_args.target, icon_args.lang, icon_args.name)
             if not name:
-                print("❌ Error: Target extension name is required (e.g. `cli.py fetch-icon --url <url> <target>`).")
+                print("❌ Error: Target extension name is required (e.g. `cli.py fetch-icon <target>` or `cli.py fetch-icon --url <url> <target>`).")
                 sys.exit(1)
+
+            target_url = icon_args.url
+            if not target_url:
+                target_src = repo_root / "src" / (lang or "en") / name
+                for kt in target_src.rglob("*.kt"):
+                    src_text = kt.read_text(encoding="utf-8", errors="ignore")
+                    m = re.search(r'(?:PREF_BASE_URL_DEFAULT|PREF_DOMAIN_DEFAULT|DOMAIN(?:_DEFAULT)?)\s*=\s*["\']([^"\']+)["\']', src_text)
+                    if not m:
+                        m = re.search(r'override\s+val\s+baseUrl\s*=\s*["\']([^"\']+)["\']', src_text)
+                    if m:
+                        target_url = m.group(1)
+                        break
+
+            if not target_url:
+                print("❌ Error: Target website URL is required (specify --url <url> or define baseUrl in extension source).")
+                sys.exit(1)
+
             out_path = repo_root / "src" / (lang or "en") / name / "res" / "drawable" / "ic_launcher.png"
-            success = fetch_icon(icon_args.url, out_path)
+            success = fetch_icon(target_url, out_path)
             sys.exit(0 if success else 1)
 
         script_name = commands_info[args.command]["script"]
