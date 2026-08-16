@@ -190,7 +190,7 @@ KNOWN_EXTRACTOR_PATTERNS = {
         "name": "UniversalExtractor",
         "class": "UniversalExtractor",
         "regex": r"UniversalExtractor",
-        "snippet": 'val videoList = UniversalExtractor(client).toVideoList(url, headers)'
+        "snippet": 'val videoList = UniversalExtractor(client).videosFromUrl(url, headers)'
     },
     "m3u8server": {
         "name": "M3U8Server",
@@ -441,23 +441,24 @@ def main():
                 t_pattern = f":lib:{t_dep}"
                 if t_pattern not in gradle_content and t_dep not in already_injected:
                     t_dependency = f'implementation(project(":lib:{t_dep}"))'
-                    deps_to_inject.append((t_dependency, False, f"transitive dependency of {mod_name}"))
+                    deps_to_inject.append((t_dependency, False, t_dep, f"transitive dependency of {mod_name}"))
                     already_injected.add(t_dep)
 
         if deps_to_inject:
             print(f"⚠️ Found {len(deps_to_inject)} extractor(s) referenced in code but missing from build.gradle:")
-            for dep_str, is_primary, reason in deps_to_inject:
-                if is_primary:
-                    print(f"  ✅ Injected: :lib:{reason} (primary)")
+            for item in deps_to_inject:
+                if len(item) == 4:
+                    dep_str, is_primary, mod, reason = item
+                    print(f"  ✅ Injected: :lib:{mod} ({reason})")
                 else:
-                    t_name = dep_str.split(':lib:')[1].split('\"')[0]
-                    print(f"  ✅ Injected: :lib:{t_name} ({reason})")
+                    dep_str, is_primary, reason = item
+                    print(f"  ✅ Injected: :lib:{reason} (primary)")
 
             if (args.fix or args.inject) and gradle_file.exists():
                 if args.dry_run:
                     print("\n[DRY RUN] Would add missing dependencies to build.gradle.")
                 else:
-                    dep_lines = "\n".join(f"    {dep_str}" for dep_str, _, _ in deps_to_inject)
+                    dep_lines = "\n".join(f"    {item[0]}" for item in deps_to_inject)
                     if "dependencies {" in gradle_content:
                         new_gradle = gradle_content.replace("dependencies {", f"dependencies {{\n{dep_lines}")
                     else:

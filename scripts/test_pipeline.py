@@ -203,26 +203,67 @@ class PipelineTester:
             print("  ✅ Zero-Base Numbering Validated (no false 1000-offset)")
 
         # ----------------------------------------------------------------------
-        # Stage 4: Hoster List (2-Tier Folders)
+        # Stage 4: Hoster List & Embed Discovery
         # ----------------------------------------------------------------------
-        print_stage(4, f"Hoster List (S{s_num} E{e_num})")
-        print(f"  -> Sample Episode URL: {sample_url}")
+        print_stage(4, f"Hoster List & Embed Discovery (S{s_num} E{e_num})")
+        print(f"  -> Fetching Episode URL: {sample_url}")
 
-        discovered_hosters = ["Fast Cloud", "HubCloud", "GDFlix", "FilePress"]
-        print(f"  ✓ 2-Tier Hoster Folders simulated ({len(discovered_hosters)}):")
-        for h in discovered_hosters:
-            print(f"     📁 {h} (Server Folder)")
+        ep_html = self.fetch(sample_url)
+        discovered_embeds = []
+        if ep_html:
+            embed_patterns = [
+                r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']',
+                r'<a[^>]+href=["\'](https?://[^\s"\']+(?:embed|player|stream|watch|file|download|drive|hubcloud|gdflix|fastcloud)[^\s"\']*)["\']',
+                r'(https?://[^\s"\'<>]+\.(?:m3u8|mp4)[^\s"\'<>]*)'
+            ]
+            for pat in embed_patterns:
+                for match in re.findall(pat, ep_html, re.IGNORECASE):
+                    if match not in discovered_embeds and not match.endswith(('.jpg', '.png', '.css', '.js')):
+                        discovered_embeds.append(match)
+
+        # Match with extractor registry if available
+        matched_hosters = []
+        try:
+            from detect_extractors import EXTRACTOR_REGISTRY
+            for emb in discovered_embeds:
+                for ext_id, meta in EXTRACTOR_REGISTRY.items():
+                    if re.search(meta.get("regex", ""), emb, re.IGNORECASE):
+                        matched_hosters.append((meta["name"], emb))
+                        break
+        except Exception:
+            pass
+
+        if matched_hosters:
+            print(f"  ✓ Discovered {len(matched_hosters)} matching video hoster(s):")
+            for h_name, h_url in matched_hosters[:8]:
+                print(f"     📁 {h_name} -> {h_url[:80]}")
+        elif discovered_embeds:
+            print(f"  ✓ Discovered {len(discovered_embeds)} candidate stream/embed URL(s):")
+            for emb in discovered_embeds[:8]:
+                print(f"     🔗 {emb[:80]}")
+        else:
+            print("  ℹ️ No direct iframe embeds found in HTML (may use API/dynamic extraction).")
 
         # ----------------------------------------------------------------------
-        # Stage 5: Video Streams Probe
+        # Stage 5: Video Quality Stream Resolution & Health Probe
         # ----------------------------------------------------------------------
-        print_stage(5, "Video Quality Stream Resolution")
-        sample_qualities = ["1080p", "720p", "480p"]
-        for q in sample_qualities:
-            print(f"     🎬 {q} - Fast Cloud [Resolution: {q.replace('p', '')}]")
+        print_stage(5, "Video Quality Stream Probe")
+        direct_streams = [u for u in discovered_embeds if ".m3u8" in u or ".mp4" in u]
+        if direct_streams:
+            print(f"  ✓ Probing {len(direct_streams)} direct media stream(s):")
+            for s_url in direct_streams[:3]:
+                try:
+                    probe_req = urllib.request.Request(s_url, method="HEAD", headers=self.headers)
+                    with urllib.request.urlopen(probe_req, timeout=6) as resp:
+                        ct = resp.headers.get("Content-Type", "unknown")
+                        print(f"     🎬 Stream: {s_url[:65]}... | Status: {resp.status} ({ct})")
+                except Exception as e:
+                    print(f"     ⚠️ Stream probe notice: {s_url[:60]}... ({e})")
+        else:
+            print("  ℹ️ Direct media URLs are resolved at runtime via extractors from embed pages.")
 
         print(f"\n{'='*60}")
-        print("🎉 5-Stage Verification Pipeline PASSED Successfully!")
+        print("🎉 5-Stage Verification Pipeline Complete!")
         print(f"{'='*60}")
         return True
 

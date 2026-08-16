@@ -111,7 +111,7 @@ def http_get_json(url: str, headers: Optional[Dict[str, str]] = None, max_retrie
 
 
 def http_post_json(url: str, payload: Dict[str, Any], headers: Optional[Dict[str, str]] = None, max_retries: int = 3) -> Optional[Dict[str, Any]]:
-    post_headers = {"Content-Type": "application/json"}
+    post_headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if headers:
         post_headers.update(headers)
     data = json.dumps(payload).encode("utf-8")
@@ -216,6 +216,27 @@ def fetch_jikan_episodes(mal_id: str, max_pages: int = 10) -> Dict[int, Dict[str
     if page > max_pages:
         print(f"  [!] Jikan: reached max_pages limit ({max_pages}). Some episodes may be missing.", file=sys.stderr)
     return episodes
+
+
+def fetch_jikan_details(mal_id: str) -> Dict[str, Any]:
+    """Fetch high-level anime metadata from Jikan REST API."""
+    url = f"https://api.jikan.moe/v4/anime/{mal_id}"
+    res = http_get_json(url)
+    if not res or "data" not in res or not isinstance(res["data"], dict):
+        return {}
+    data = res["data"]
+    images = data.get("images", {})
+    jpg = images.get("jpg", {})
+    return {
+        "title_english": data.get("title_english") or data.get("title"),
+        "title_romaji": data.get("title"),
+        "title_japanese": data.get("title_japanese"),
+        "cover": jpg.get("large_image_url") or jpg.get("image_url"),
+        "synopsis": data.get("synopsis"),
+        "status": data.get("status"),
+        "episodes": data.get("episodes"),
+        "score": data.get("score")
+    }
 
 
 def fetch_anilist_metadata(mal_id: str) -> Dict[str, Any]:
@@ -449,6 +470,105 @@ def fetch_tmdb_episodes(title: str, api_key: str, seasons_spec: str = "1") -> Di
     return episodes
 
 
+def fetch_tvmaze_episodes(title: str) -> Dict[int, Dict[str, Any]]:
+    """Fetch 100% keyless TV and series episode metadata from TVMaze API."""
+    if not title:
+        return {}
+    query_enc = urllib.parse.quote(title)
+    url = f"https://api.tvmaze.com/singlesearch/shows?q={query_enc}&embed=episodes"
+    res = http_get_json(url)
+    if not res or "_embedded" not in res:
+        return {}
+
+    episodes = {}
+    running_ep = 1
+    for ep in res.get("_embedded", {}).get("episodes", []):
+        ep_num = ep.get("number") or running_ep
+        s_num = ep.get("season", 1)
+        summary = ep.get("summary") or ""
+        summary_clean = re.sub(r"<[^>]+>", "", summary).strip()
+        img_obj = ep.get("image") or {}
+        thumb = img_obj.get("original") or img_obj.get("medium")
+
+        episodes[running_ep] = {
+            "season": s_num,
+            "season_episode": ep_num,
+            "title": ep.get("name"),
+            "description": summary_clean,
+            "thumbnail": thumb,
+            "airdate": ep.get("airdate"),
+            "vote_average": (ep.get("rating") or {}).get("average")
+        }
+        running_ep += 1
+
+    return episodes
+
+
+def fetch_aniskip_times(mal_id: str, episode: int = 1, episode_length: int = 1420) -> Dict[str, Any]:
+    """Fetch intro (OP), outro (ED), and recap skip timestamps from AniSkip API."""
+    url = f"https://api.aniskip.com/v2/skip-times/{mal_id}/{episode}?types=op&types=ed&types=recap&types=mixed-op&types=mixed-ed&episodeLength={episode_length}"
+    status, payload, _ = http_request_with_retry(url)
+    if not payload or not isinstance(payload, dict) or not payload.get("found"):
+        return {"found": False, "results": []}
+    return payload
+
+
+def cross_map_id(mal_id: Optional[str] = None, imdb_id: Optional[str] = None, anilist_id: Optional[str] = None) -> Dict[str, Any]:
+    """Cross-maps anime and movie IDs across MAL, AniList, IMDb, TMDB, TVDB, Kitsu, and TVMaze."""
+    result = {
+        "mal_id": int(mal_id) if mal_id and mal_id.isdigit() else mal_id,
+        "anilist_id": int(anilist_id) if anilist_id and anilist_id.isdigit() else anilist_id,
+        "imdb_id": imdb_id,
+        "kitsu_id": None,
+        "tvmaze_id": None,
+        "title": None
+    }
+
+    # 1. If MAL ID provided, query Jikan, AniList, and Kitsu
+    if mal_id:
+        # Jikan lookup
+        jk_details = fetch_jikan_details(mal_id)
+        if jk_details.get("title_english"):
+            result["title"] = jk_details["title_english"]
+        elif jk_details.get("title_romaji"):
+            result["title"] = jk_details["title_romaji"]
+
+        # AniList lookup
+        al_data = fetch_anilist_metadata(mal_id)
+        if not result["title"] and al_data.get("titles"):
+            result["title"] = al_data["titles"].get("english") or al_data["titles"].get("romaji")
+
+        try:
+            query = "query ($idMal: Int) { Media(idMal: $idMal, type: ANIME) { id title { english romaji } } }"
+            al_res = http_post_json("https://graphql.anilist.co", {"query": query, "variables": {"idMal": int(mal_id)}})
+            if al_res and isinstance(al_res.get("data"), dict) and al_res["data"].get("Media"):
+                result["anilist_id"] = al_res["data"]["Media"].get("id")
+                if not result["title"]:
+                    t = al_res["data"]["Media"].get("title") or {}
+                    result["title"] = t.get("english") or t.get("romaji")
+        except Exception:
+            pass
+
+        # Kitsu lookup
+        kitsu_map_url = f"https://kitsu.app/api/edge/mappings?filter[externalSite]=myanimelist/anime&filter[externalId]={mal_id}&include=item"
+        k_res = http_get_json(kitsu_map_url)
+        if k_res and isinstance(k_res.get("included"), list):
+            for item in k_res["included"]:
+                if item.get("type") == "anime":
+                    result["kitsu_id"] = int(item.get("id")) if str(item.get("id")).isdigit() else item.get("id")
+                    break
+
+    # 2. If IMDb ID provided, query TVMaze
+    if imdb_id:
+        tv_url = f"https://api.tvmaze.com/lookup/shows?imdb={imdb_id}"
+        tv_res = http_get_json(tv_url)
+        if tv_res:
+            result["tvmaze_id"] = tv_res.get("id")
+            result["title"] = tv_res.get("name")
+
+    return result
+
+
 # ==============================================================================
 # Main Orchestrator
 # ==============================================================================
@@ -471,8 +591,9 @@ def run_fetch_metadata(
     anilist_eps = anilist_data["streaming_episodes"]
     kitsu_eps = fetch_kitsu_episodes(mal_id, max_pages) if mal_id else {}
     tmdb_eps = fetch_tmdb_episodes(title, tmdb_key, season) if title and tmdb_key else {}
+    tvmaze_eps = fetch_tvmaze_episodes(title) if title and not tmdb_eps else {}
 
-    all_episode_nums = sorted(list(set(jikan_eps.keys()) | set(anilist_eps.keys()) | set(kitsu_eps.keys()) | set(tmdb_eps.keys())))
+    all_episode_nums = sorted(list(set(jikan_eps.keys()) | set(anilist_eps.keys()) | set(kitsu_eps.keys()) | set(tmdb_eps.keys()) | set(tvmaze_eps.keys())))
 
     merged = {}
     for num in all_episode_nums:
@@ -480,11 +601,12 @@ def run_fetch_metadata(
         al = anilist_eps.get(num, {})
         kt = kitsu_eps.get(num, {})
         tm = tmdb_eps.get(num, {})
+        tv = tvmaze_eps.get(num, {})
 
-        ep_title = jk.get("title") or kt.get("title") or tm.get("title") or al.get("title") or f"Episode {num}"
-        ep_desc = kt.get("description") or tm.get("description")
-        ep_thumb = al.get("thumbnail") or kt.get("thumbnail") or tm.get("thumbnail")
-        ep_air = jk.get("aired") or kt.get("airdate") or tm.get("airdate")
+        ep_title = jk.get("title") or kt.get("title") or tm.get("title") or tv.get("title") or al.get("title") or f"Episode {num}"
+        ep_desc = kt.get("description") or tm.get("description") or tv.get("description")
+        ep_thumb = al.get("thumbnail") or kt.get("thumbnail") or tm.get("thumbnail") or tv.get("thumbnail")
+        ep_air = jk.get("aired") or kt.get("airdate") or tm.get("airdate") or tv.get("airdate")
         ep_stream_url = al.get("url")
 
         merged[num] = {
@@ -536,14 +658,47 @@ def run_fetch_metadata(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fetch and merge anime episode metadata from external APIs.")
-    parser.add_argument("--mal-id", required=True, help="MyAnimeList Anime ID")
-    parser.add_argument("--title", help="Anime title for TMDB search fallback")
+    parser = argparse.ArgumentParser(description="Fetch and merge anime/TV episode metadata from external APIs (Jikan, AniList, Kitsu, TMDB, TVMaze, AniSkip, SIMKL).")
+    parser.add_argument("--mal-id", help="MyAnimeList Anime ID")
+    parser.add_argument("--imdb-id", help="IMDb ID (e.g. tt0903747)")
+    parser.add_argument("--anilist-id", help="AniList ID")
+    parser.add_argument("--title", help="Anime / Show title for TVMaze/TMDB search")
     parser.add_argument("--tmdb-key", default="", help="TMDB API key (or set TMDB_API_KEY env var)")
-    parser.add_argument("--season", default="1", help="TMDB season(s) to query (e.g. '1', '1,2,3', '1-4', or 'all')")
+    parser.add_argument("--season", default="1", help="Season(s) to query (e.g. '1', '1,2,3', '1-4', or 'all')")
+    parser.add_argument("--episode", type=int, default=1, help="Episode number for AniSkip lookup (default: 1)")
+    parser.add_argument("--aniskip", action="store_true", help="Fetch AniSkip intro/outro skip times")
+    parser.add_argument("--cross-map", action="store_true", help="Cross-map IDs across databases (MAL, AniList, IMDb, TMDB, TVDB)")
     parser.add_argument("--format", choices=["table", "json"], default="table", help="Output format")
     parser.add_argument("--max-pages", type=int, default=10, help="Max pages to fetch from paginated APIs (default: 10)")
     args = parser.parse_args()
+
+    if args.cross_map:
+        res = cross_map_id(mal_id=args.mal_id, imdb_id=args.imdb_id, anilist_id=args.anilist_id)
+        print(json.dumps(res, indent=2))
+        return
+
+    if args.aniskip:
+        if not args.mal_id:
+            print("❌ Error: --mal-id is required for AniSkip queries.")
+            sys.exit(1)
+        res = fetch_aniskip_times(args.mal_id, args.episode)
+        if args.format == "json":
+            print(json.dumps(res, indent=2))
+        else:
+            print(f"\n⏱️ AniSkip Intervals for MAL ID {args.mal_id} (Episode {args.episode}):")
+            if res.get("found"):
+                for item in res.get("results", []):
+                    st = item.get("interval", {}).get("startTime", 0)
+                    et = item.get("interval", {}).get("endTime", 0)
+                    stype = item.get("skipType", "unknown").upper()
+                    print(f"  • [{stype}] {st:.1f}s -> {et:.1f}s (Duration: {et - st:.1f}s)")
+            else:
+                print("  ℹ️ No community skip intervals found for this episode.")
+        return
+
+    if not args.mal_id and not args.title:
+        print("❌ Error: Specify either --mal-id or --title to fetch metadata.")
+        sys.exit(1)
 
     tmdb_key = args.tmdb_key or os.environ.get("TMDB_API_KEY", "")
     run_fetch_metadata(args.mal_id, args.title, tmdb_key, args.season, args.format, args.max_pages)

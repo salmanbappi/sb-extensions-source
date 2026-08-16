@@ -140,53 +140,91 @@ class ExtensionAstFixer:
                 )
                 fixes_applied.append("Injected `initialized = true` inside `getAnimeDetails`")
 
-        # 4. Ensure @Serializable data class constructor fields have default = null fallbacks
-        def fix_dto_nullability(match):
-            header = match.group(1)
-            params_block = match.group(2)
-            footer = match.group(3)
+        # 4 & 5. Ensure @Serializable data class constructor fields have default = null fallbacks
+        # and numeric score/rating/vote fields use Double? to prevent JsonDecodingException
+        def process_dto_classes(text: str) -> Tuple[str, bool, bool]:
+            nullability_modified = False
+            type_modified = False
 
-            params = split_params_depth_aware(params_block)
-            fixed_params = []
-            modified = False
-            for p in params:
-                p_clean = p.strip()
-                if not p_clean:
-                    continue
-                # If param has a type and no default value: e.g. val name: String? or val name: String
-                if ":" in p_clean and "=" not in p_clean:
-                    parts = p_clean.split(":", 1)
-                    val_var = parts[0].strip()
-                    type_part = parts[1].strip()
-                    if not type_part.endswith("?"):
-                        type_part += "?"
-                    fixed_params.append(f"\n    {val_var}: {type_part} = null")
-                    modified = True
+            pattern = re.compile(r'(@(?:kotlinx\.serialization\.)?Serializable(?:\([^)]*\))?\s+(?:data\s+)?class\s+[A-Za-z0-9_]+(?:\s*<[^>]+>)?\s*\()')
+            pos = 0
+            result = []
+
+            while True:
+                m = pattern.search(text, pos)
+                if not m:
+                    result.append(text[pos:])
+                    break
+
+                result.append(text[pos:m.start()])
+                header = text[m.start():m.end()]
+                result.append(header)
+
+                idx = m.end()
+                depth = 1
+                in_quote = False
+                quote_char = None
+
+                while idx < len(text) and depth > 0:
+                    ch = text[idx]
+                    if ch in ('"', "'"):
+                        if not in_quote:
+                            in_quote = True
+                            quote_char = ch
+                        elif quote_char == ch:
+                            in_quote = False
+                    elif not in_quote:
+                        if ch in ('(', '<', '{', '['):
+                            depth += 1
+                        elif ch in (')', '>', '}', ']'):
+                            depth -= 1
+                    idx += 1
+
+                if depth == 0:
+                    params_block = text[m.end():idx-1]
+                    params = split_params_depth_aware(params_block)
+                    fixed_params = []
+
+                    for p in params:
+                        p_clean = p.strip()
+                        if not p_clean:
+                            continue
+
+                        # Check rating/score/vote type migration strictly inside DTO
+                        val_match = re.search(r'\bval\s+([a-zA-Z0-9_]+)\s*:\s*(Int|Long)(\??)(.*)', p_clean)
+                        if val_match:
+                            prop_name = val_match.group(1)
+                            if re.search(r'\b(?:votes|rating|score|stars|rank)\b', prop_name, re.IGNORECASE):
+                                p_type_fixed = re.sub(r'(\bval\s+[a-zA-Z0-9_]+\s*:\s*)(Int|Long)', r'\1Double', p_clean)
+                                if p_type_fixed != p_clean:
+                                    type_modified = True
+                                    p_clean = p_type_fixed
+
+                        # Enforce nullability and default = null
+                        if ":" in p_clean and "=" not in p_clean:
+                            parts = p_clean.split(":", 1)
+                            val_var = parts[0].strip()
+                            type_part = parts[1].strip()
+                            if not type_part.endswith("?"):
+                                type_part += "?"
+                            fixed_params.append(f"\n    {val_var}: {type_part} = null")
+                            nullability_modified = True
+                        else:
+                            fixed_params.append(f"\n    {p_clean}")
+
+                    result.append(','.join(fixed_params) + "\n)")
+                    pos = idx
                 else:
-                    fixed_params.append(f"\n    {p_clean}")
+                    result.append(text[m.end():])
+                    break
 
-            if modified:
-                return f"{header}{','.join(fixed_params)}\n{footer}"
-            return match.group(0)
+            return "".join(result), nullability_modified, type_modified
 
-        # Match data classes under @Serializable
-        dto_pattern = r'(@Serializable\s+(?:data\s+)?class\s+[A-Za-z0-9_]+(?:\s*<[^>]+>)?\s*\()([^()]+)(\))'
-        new_content = re.sub(dto_pattern, fix_dto_nullability, content)
-        if new_content != content:
+        new_content, null_mod, type_mod = process_dto_classes(content)
+        if null_mod:
             content = new_content
             fixes_applied.append("Enforced null-safe default values (`? = null`) on `@Serializable` DTOs")
-
-        # 5. Fix Int?/Long? for rating/votes/score in @Serializable DTOs
-        def fix_numeric_dto_types(match):
-            prop_name = match.group(1)
-            type_name = match.group(2)
-            if re.search(r'\b(?:votes|rating|score|stars|rank)\b', prop_name, re.IGNORECASE):
-                if type_name in ("Int", "Long"):
-                    return f"val {prop_name}: Double"
-            return match.group(0)
-
-        new_content = re.sub(r'val\s+([a-zA-Z0-9_]+)\s*:\s*(Int|Long)', fix_numeric_dto_types, content)
-        if new_content != content:
+        if type_mod:
             content = new_content
             fixes_applied.append("Migrated integer rating/votes/score DTO fields to `Double` (prevents decimal JsonDecodingException)")
 
@@ -220,7 +258,7 @@ class ExtensionAstFixer:
                 content
             )
             # Also replace calls like sortVideos(videos) -> videos.sortVideos()
-            content = re.sub(r'\bsortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*\)', r'\1.sortVideos()', content)
+            content = re.sub(r'(?<!fun\s)\bsortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*\)', r'\1.sortVideos()', content)
             fixes_applied.append("Migrated `sortVideos(videos)` function to `override fun List<Video>.sortVideos(): List<Video>` (v16)")
 
         # 9. Fix PlaylistUtils.extractFromHls parameter names (subtitleTracks -> subtitleList, audioTracks -> audioList)

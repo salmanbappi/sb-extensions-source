@@ -533,7 +533,7 @@ class {class_name} : Source() {{
     }}
 
     // ============================== Episodes ==============================
-    // Note: SEpisode.url MUST be permanent and deterministic (e.g., "\${{anime.url}}#season=\$s&ep=\$e" or "\${{anime.url}}#movie").
+    // Note: SEpisode.url MUST be permanent and deterministic (e.g., "${{anime.url}}#season=$s&ep=$e" or "${{anime.url}}#movie").
     // Never embed dynamic tokens in SEpisode.url to avoid Tachiyomi/AniZen database invalidation cycles.
     // Episode numbering: For Season 1, episode_number MUST start at 1.0f (never with a +1000 base offset).
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {{
@@ -1410,6 +1410,125 @@ def interactive_wizard() -> dict:
     }
 
 
+def generate_extension(
+    ext_name: str,
+    lang: str = "en",
+    base_url: str = "https://example.com",
+    site_type: str = "html",
+    theme_name: Optional[str] = None,
+    repo_root: Optional[Path] = None,
+    has_preferences: bool = True,
+    has_extractors: bool = True,
+    has_metadata: bool = True,
+    has_filters: bool = True,
+    nsfw: bool = False,
+    version_code: int = 1,
+    custom_selectors: Optional[Dict[str, str]] = None
+) -> bool:
+    if repo_root is None:
+        repo_root = Path(__file__).resolve().parent.parent
+
+    class_name = to_pascal_case(ext_name)
+    pkg_name = to_package_name(ext_name)
+
+    ext_dir = repo_root / "src" / lang / pkg_name
+    src_dir = ext_dir / "src" / "eu" / "kanade" / "tachiyomi" / "animeextension" / lang / pkg_name
+    res_dir = ext_dir / "res" / "drawable-xxhdpi"
+
+    print(f"🚀 Creating production-grade extension module for '{class_name}' ({lang}) at: {ext_dir}")
+
+    src_dir.mkdir(parents=True, exist_ok=True)
+    res_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Write build.gradle
+    build_gradle_path = ext_dir / "build.gradle"
+    build_gradle_content = generate_build_gradle(
+        ext_name=class_name,
+        ext_class=class_name,
+        theme_pkg=theme_name if site_type == "theme" else None,
+        nsfw=nsfw,
+        version_code=version_code,
+        with_extractors=has_extractors
+    )
+    build_gradle_path.write_text(build_gradle_content, encoding="utf-8")
+    print(f"  [+] Created {build_gradle_path.relative_to(repo_root)}")
+
+    # 2. Write Filters.kt if enabled
+    if has_filters and site_type != "theme":
+        filters_path = src_dir / "Filters.kt"
+        filters_content = generate_filters_kotlin_source(lang, pkg_name)
+        filters_path.write_text(filters_content, encoding="utf-8")
+        print(f"  [+] Created {filters_path.relative_to(repo_root)}")
+
+    # 3. Write Main Kotlin Source
+    kt_file_path = src_dir / f"{class_name}.kt"
+    if site_type == "api":
+        kt_content = generate_api_kotlin_source(
+            lang=lang,
+            pkg_name=pkg_name,
+            class_name=class_name,
+            base_url=base_url,
+            with_prefs=has_preferences,
+            with_extractors=has_extractors
+        )
+    elif site_type == "movie-locker":
+        kt_content = generate_movie_locker_kotlin_source(
+            lang=lang,
+            pkg_name=pkg_name,
+            class_name=class_name,
+            base_url=base_url,
+            with_prefs=has_preferences,
+            with_extractors=has_extractors
+        )
+    elif site_type == "theme" and theme_name:
+        package_path = f"eu.kanade.tachiyomi.animeextension.{lang}.{pkg_name}"
+        theme_class = to_pascal_case(theme_name) + ("Theme" if not theme_name.endswith("theme") else "")
+        kt_content = f"""package {package_path}
+
+import eu.kanade.tachiyomi.multisrc.{theme_name.lower()}.{theme_class}
+
+class {class_name} : {theme_class}() {{
+    override val name = "{class_name}"
+    override val baseUrl = "{base_url}"
+    override val lang = "{lang}"
+}}
+"""
+    else:
+        kt_content = generate_html_kotlin_source(
+            lang=lang,
+            pkg_name=pkg_name,
+            class_name=class_name,
+            base_url=base_url,
+            with_prefs=has_preferences,
+            with_extractors=has_extractors,
+            with_metadata=has_metadata,
+            with_filters=has_filters
+        )
+
+    kt_file_path.write_text(kt_content, encoding="utf-8")
+    print(f"  [+] Created {kt_file_path.relative_to(repo_root)}")
+
+    # 4. Write AndroidManifest.xml
+    manifest_path = ext_dir / "AndroidManifest.xml"
+    manifest_content = generate_android_manifest()
+    manifest_path.write_text(manifest_content, encoding="utf-8")
+    print(f"  [+] Created {manifest_path.relative_to(repo_root)}")
+
+    # 5. Create default launcher icon
+    drawable_dir = ext_dir / "res" / "drawable"
+    drawable_dir.mkdir(parents=True, exist_ok=True)
+    ic_launcher_path = drawable_dir / "ic_launcher.png"
+    create_minimal_png(ic_launcher_path, 192, 192)
+    print(f"  [+] Created {ic_launcher_path.relative_to(repo_root)}")
+
+    icon_path = res_dir / "icon.png"
+    create_minimal_png(icon_path)
+    print(f"  [+] Created {icon_path.relative_to(repo_root)}")
+
+    print("\n✨ Extension created with 85-95% automated boilerplate!")
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="Aniyomi Extension Generator CLI (Production Grade)")
     parser.add_argument("--name", help="Extension display name (e.g., 'AnimeFlix')")
@@ -1466,112 +1585,21 @@ def main():
         print("❌ Error: --theme <theme_name> is required when --siteType theme is selected.")
         sys.exit(1)
 
-    class_name = to_pascal_case(ext_name)
-    pkg_name = to_package_name(ext_name)
-
-    ext_dir = repo_root / "src" / lang / pkg_name
-    src_dir = ext_dir / "src" / "eu" / "kanade" / "tachiyomi" / "animeextension" / lang / pkg_name
-    res_dir = ext_dir / "res" / "drawable-xxhdpi"
-
-    print(f"🚀 Creating production-grade extension module for '{class_name}' ({lang}) at: {ext_dir}")
-
-    src_dir.mkdir(parents=True, exist_ok=True)
-    res_dir.mkdir(parents=True, exist_ok=True)
-
-    # 1. Write build.gradle
-    build_gradle_path = ext_dir / "build.gradle"
-    build_gradle_content = generate_build_gradle(
-        ext_name=class_name,
-        ext_class=class_name,
-        theme_pkg=theme if site_type == "theme" else None,
+    success = generate_extension(
+        ext_name=ext_name,
+        lang=lang,
+        base_url=base_url,
+        site_type=site_type,
+        theme_name=theme,
+        repo_root=repo_root,
+        has_preferences=with_prefs,
+        has_extractors=with_extractors,
+        has_metadata=with_metadata,
+        has_filters=with_filters,
         nsfw=nsfw,
-        version_code=version_code,
-        with_extractors=with_extractors
+        version_code=version_code
     )
-    build_gradle_path.write_text(build_gradle_content, encoding="utf-8")
-    print(f"  [+] Created {build_gradle_path.relative_to(repo_root)}")
-
-    # 2. Write Filters.kt if enabled
-    if with_filters and site_type != "theme":
-        filters_path = src_dir / "Filters.kt"
-        filters_content = generate_filters_kotlin_source(lang, pkg_name)
-        filters_path.write_text(filters_content, encoding="utf-8")
-        print(f"  [+] Created {filters_path.relative_to(repo_root)}")
-
-    # 3. Write Main Kotlin Source
-    kt_file_path = src_dir / f"{class_name}.kt"
-    if site_type == "api":
-        kt_content = generate_api_kotlin_source(
-            lang=lang,
-            pkg_name=pkg_name,
-            class_name=class_name,
-            base_url=base_url,
-            with_prefs=with_prefs,
-            with_extractors=with_extractors
-        )
-    elif site_type == "movie-locker":
-        kt_content = generate_movie_locker_kotlin_source(
-            lang=lang,
-            pkg_name=pkg_name,
-            class_name=class_name,
-            base_url=base_url,
-            with_prefs=with_prefs,
-            with_extractors=with_extractors
-        )
-    elif site_type == "theme" and theme:
-        package_path = f"eu.kanade.tachiyomi.animeextension.{lang}.{pkg_name}"
-        theme_class = to_pascal_case(theme) + ("Theme" if not theme.endswith("theme") else "")
-        kt_content = f"""package {package_path}
-
-import eu.kanade.tachiyomi.multisrc.{theme.lower()}.{theme_class}
-
-class {class_name} : {theme_class}() {{
-    override val name = "{class_name}"
-    override val baseUrl = "{base_url}"
-    override val lang = "{lang}"
-}}
-"""
-    else:
-        kt_content = generate_html_kotlin_source(
-            lang=lang,
-            pkg_name=pkg_name,
-            class_name=class_name,
-            base_url=base_url,
-            with_prefs=with_prefs,
-            with_extractors=with_extractors,
-            with_metadata=with_metadata,
-            with_filters=with_filters
-        )
-
-    kt_file_path.write_text(kt_content, encoding="utf-8")
-    print(f"  [+] Created {kt_file_path.relative_to(repo_root)}")
-
-    # 4. Write AndroidManifest.xml
-    manifest_path = ext_dir / "AndroidManifest.xml"
-    manifest_content = generate_android_manifest()
-    manifest_path.write_text(manifest_content, encoding="utf-8")
-    print(f"  [+] Created {manifest_path.relative_to(repo_root)}")
-
-    # 5. Create default launcher icon
-    drawable_dir = ext_dir / "res" / "drawable"
-    drawable_dir.mkdir(parents=True, exist_ok=True)
-    ic_launcher_path = drawable_dir / "ic_launcher.png"
-    create_minimal_png(ic_launcher_path, 192, 192)
-    print(f"  [+] Created {ic_launcher_path.relative_to(repo_root)}")
-
-    icon_path = res_dir / "icon.png"
-    create_minimal_png(icon_path)
-    print(f"  [+] Created {icon_path.relative_to(repo_root)}")
-
-    print("\n✨ Extension created with 85-95% automated boilerplate!")
-    print("Pre-scaffolded features:")
-    print("  • AndroidManifest.xml and valid PNG launcher icons")
-    print("  • Modular Filters.kt (Type, Status, Sort, Year, Genres)")
-    print("  • OkHttp rateLimit(4, 1.seconds) interceptor protection")
-    print("  • SharedPreferences & PreferenceScreen (Base URL, Audio, Server, Exclusions)")
-    print("  • Automatic List<Video>.sortVideos() quality & server sorting")
-    print("  • Episode metadata (Sub/Dub scanlator badges, release date parsing)")
-    print("  • Video extractors integration (DoodStream, StreamTape, FileMoon, Universal, PlaylistUtils)")
+    sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":

@@ -299,6 +299,80 @@ class StreamProber:
             pass
 
 
+    def detect_stego_offset(self, url: str) -> bool:
+        """Probes stream header and scans for container sync markers to calculate stego payload offset."""
+        print(f"\n🔍 Detecting Stego / Fake-Image Byte Offset: {url}")
+        status, headers, body = self.fetch_url(url, range_bytes="0-65535", max_bytes=65536)
+        if status not in (200, 206) or not body:
+            print(f"❌ Failed to fetch stream range: HTTP {status}")
+            return False
+
+        print(f"  ✓ Fetched initial {len(body):,} bytes (HTTP {status})")
+        wrapper = "None (Pure binary)"
+        if body.startswith(b"\x89PNG\r\n\x1a\n"):
+            wrapper = "PNG Image (\x89PNG)"
+        elif body.startswith(b"\xff\xd8\xff"):
+            wrapper = "JPEG Image (\xff\xd8\xff)"
+        elif body.startswith(b"GIF87a") or body.startswith(b"GIF89a"):
+            wrapper = "GIF Image"
+        elif body.startswith(b"ID3"):
+            wrapper = "ID3 Metadata Header"
+
+        print(f"  🖼️  Detected Outer Header: {wrapper}")
+
+        # Scan for media container sync markers
+        detected_offset = None
+        container_type = None
+
+        # 1. M3U8 Playlist
+        m3u8_idx = body.find(b"#EXTM3U")
+        if m3u8_idx != -1:
+            detected_offset = m3u8_idx
+            container_type = "HLS Playlist (#EXTM3U)"
+
+        # 2. MPEG-TS (Check for 0x47 spaced 188 bytes apart)
+        if detected_offset is None:
+            for i in range(len(body) - 564):
+                if body[i] == 0x47 and body[i + 188] == 0x47 and body[i + 376] == 0x47:
+                    detected_offset = i
+                    container_type = "MPEG-TS Video (Sync Byte 0x47 @ 188-byte stride)"
+                    break
+
+        # 3. MP4 (Check for ftyp, moov, mdat)
+        if detected_offset is None:
+            for box in (b"ftyp", b"moov", b"mdat", b"styp"):
+                box_idx = body.find(box)
+                if box_idx >= 4:
+                    detected_offset = box_idx - 4
+                    container_type = f"ISO-MP4/CMAF ({box.decode('ascii', errors='ignore')} box)"
+                    break
+
+        # 4. WebM / Matroska
+        if detected_offset is None:
+            ebml_idx = body.find(b"\x1a\x45\xdf\xa3")
+            if ebml_idx != -1:
+                detected_offset = ebml_idx
+                container_type = "WebM/Matroska Container"
+
+        if detected_offset is not None:
+            print(f"  🎯 Found Media Stream: {container_type}")
+            print(f"  📏 Exact Stego Byte Offset: {detected_offset} bytes (0x{detected_offset:X})")
+            if detected_offset > 0:
+                print("\n  💡 Kotlin Integration Snippet (LocalProxy / M3U8Server):")
+                print("     ----------------------------------------------------------------------")
+                print(f"     val proxyUrl = LocalProxy.create(videoUrl, headers, offset = {detected_offset})")
+                print("     // or with M3u8Server:")
+                print(f"     val proxyUrl = M3u8Integration(client).createProxyUrl(videoUrl, headers, offset = {detected_offset})")
+                print("     ----------------------------------------------------------------------")
+            else:
+                print("  ✅ Stream is direct/unwrapped (Offset: 0). No LocalProxy offset needed.")
+            return True
+        else:
+            print("  ⚠️ No standard media sync marker (MPEG-TS, MP4, M3U8, WebM) found in the first 64KB.")
+            print(f"     First 64 bytes hex: {body[:64].hex()}")
+            return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Deep Media Stream & ExoPlayer Compatibility Inspector")
     parser.add_argument("url", help="Target video stream URL (HLS .m3u8, DASH .mpd, or direct video)")
@@ -307,6 +381,7 @@ def main():
     parser.add_argument("--headers", help="JSON string of additional HTTP request headers")
     parser.add_argument("--deep", action="store_true", help="Probe nested variant playlists and video segment chunks")
     parser.add_argument("--probe-segments", type=int, default=3, help="Number of segments to probe in deep mode (default: 3)")
+    parser.add_argument("--detect-offset", action="store_true", help="Scan stream for fake image wrappers (PNG/JPEG/GIF) and calculate LocalProxy byte offset")
 
     args = parser.parse_args()
 
@@ -323,7 +398,10 @@ def main():
             sys.exit(1)
 
     prober = StreamProber(headers=custom_headers)
-    success = prober.probe_stream(args.url, deep=args.deep, probe_segments=args.probe_segments)
+    if args.detect_offset:
+        success = prober.detect_stego_offset(args.url)
+    else:
+        success = prober.probe_stream(args.url, deep=args.deep, probe_segments=args.probe_segments)
     sys.exit(0 if success else 1)
 
 

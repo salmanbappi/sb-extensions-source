@@ -286,22 +286,25 @@ def _token_matches(node: "_Node", token: str) -> bool:
     remaining    = _PSEUDO_NTH_RE.sub('', remaining)
 
     # --- Split tag / .class / #id --------------------------------------------
-    tag_part = id_part = class_part = ""
-    work = remaining
-    if '#' in work:
-        idx = work.index('#')
-        tag_part = work[:idx]
-        rest = work[idx + 1:]
-        if '.' in rest:
-            dot = rest.index('.')
-            id_part, class_part = rest[:dot], rest[dot + 1:]
-        else:
-            id_part = rest
-    elif '.' in work:
-        dot = work.index('.')
-        tag_part, class_part = work[:dot], work[dot + 1:]
+    tag_part = ""
+    id_part = ""
+    classes = []
+
+    # Tag is leading alphanumeric or *
+    tag_match = re.match(r'^[a-zA-Z0-9*_-]+', remaining)
+    if tag_match:
+        tag_part = tag_match.group(0)
+        remaining_parts = remaining[len(tag_part):]
     else:
-        tag_part = work
+        remaining_parts = remaining
+
+    # Extract all #id and .class tokens
+    for match in re.finditer(r'([#.][a-zA-Z0-9_-]+)', remaining_parts):
+        tok = match.group(1)
+        if tok.startswith('#'):
+            id_part = tok[1:]
+        elif tok.startswith('.'):
+            classes.append(tok[1:])
 
     # --- Tag check -----------------------------------------------------------
     if tag_part and tag_part != "*" and node.tag != tag_part.lower():
@@ -312,10 +315,11 @@ def _token_matches(node: "_Node", token: str) -> bool:
         return False
 
     # --- Class check ---------------------------------------------------------
-    if class_part:
+    if classes:
         node_classes = node.attrs.get("class", "").split()
-        if class_part not in node_classes:
-            return False
+        for c in classes:
+            if c not in node_classes:
+                return False
 
     # --- Attribute checks ----------------------------------------------------
     for attr_name, op, expected in attr_tests:
@@ -662,24 +666,29 @@ def inspect_extension_module(repo_root: Path, lang: str, name: str) -> Tuple[Opt
         if m_origin:
             extracted_headers["Origin"] = m_origin.group(1)
 
-        # Extract popularAnimeRequest
-        m_pop = re.search(r'fun\s+popularAnimeRequest\s*\([^)]*\)\s*:\s*Request\s*=\s*GET\s*\(\s*["\']([^"\']+)["\']', content)
+        # Extract popularAnimeRequest / getPopularAnime
+        m_pop = re.search(r'(?:fun\s+popularAnimeRequest|override\s+suspend\s+fun\s+getPopularAnime)[^{=]*[={][^}]*?GET\s*\(\s*["\']([^"\']+)["\']', content)
         if not m_pop:
-            m_pop = re.search(r'fun\s+popularAnimeRequest[^{]*\{[^}]*GET\s*\(\s*["\']([^"\']+)["\']', content)
+            m_pop = re.search(r'GET\s*\(\s*["\']([^"\']*(?:popular|trending|movies)[^"\']*)["\']', content, re.IGNORECASE)
         if m_pop:
-            endpoints["popular"] = m_pop.group(1)
+            ep = m_pop.group(1)
+            endpoints["popular"] = ep if ep.startswith("http") or "$baseUrl" in ep else f"$baseUrl{ep if ep.startswith('/') else '/' + ep}"
 
-        # Extract latestUpdatesRequest
-        m_latest = re.search(r'fun\s+latestUpdatesRequest\s*\([^)]*\)\s*:\s*Request\s*=\s*GET\s*\(\s*["\']([^"\']+)["\']', content)
+        # Extract latestUpdatesRequest / getLatestUpdates
+        m_latest = re.search(r'(?:fun\s+latestUpdatesRequest|override\s+suspend\s+fun\s+getLatestUpdates)[^{=]*[={][^}]*?GET\s*\(\s*["\']([^"\']+)["\']', content)
         if not m_latest:
-            m_latest = re.search(r'fun\s+latestUpdatesRequest[^{]*\{[^}]*GET\s*\(\s*["\']([^"\']+)["\']', content)
+            m_latest = re.search(r'GET\s*\(\s*["\']([^"\']*(?:latest|recent|updates)[^"\']*)["\']', content, re.IGNORECASE)
         if m_latest:
-            endpoints["latest"] = m_latest.group(1)
+            ep = m_latest.group(1)
+            endpoints["latest"] = ep if ep.startswith("http") or "$baseUrl" in ep else f"$baseUrl{ep if ep.startswith('/') else '/' + ep}"
 
-        # Extract searchAnimeRequest base url
-        m_search = re.search(r'fun\s+searchAnimeRequest[^{]*\{[^}]*["\']([^"\']*search[^"\']*)["\']', content)
+        # Extract searchAnimeRequest / getSearchAnime base url
+        m_search = re.search(r'(?:fun\s+searchAnimeRequest|override\s+suspend\s+fun\s+getSearchAnime)[^{=]*[={][^}]*?GET\s*\(\s*["\']([^"\']+)["\']', content)
+        if not m_search:
+            m_search = re.search(r'GET\s*\(\s*["\']([^"\']*(?:search|\?s=|\?q=)[^"\']*)["\']', content, re.IGNORECASE)
         if m_search:
-            endpoints["search"] = m_search.group(1)
+            ep = m_search.group(1)
+            endpoints["search"] = ep if ep.startswith("http") or "$baseUrl" in ep else f"$baseUrl{ep if ep.startswith('/') else '/' + ep}"
 
     if base_url:
         if "Referer" not in extracted_headers:
@@ -800,6 +809,28 @@ def main():
         sys.exit(1)
 
     print(f"📊 Response Status: {status} | Size: {len(body):,} bytes | Latency: {elapsed*1000:.1f}ms\n" + "=" * 60)
+
+    if args.benchmark > 0:
+        print(f"⏱️ Running benchmark across {args.benchmark} requests...")
+        latencies = [elapsed]
+        for idx in range(2, args.benchmark + 1):
+            try:
+                _, _, el = session.fetch(
+                    url=target_url,
+                    method=args.method,
+                    headers=req_headers,
+                    insecure=args.insecure,
+                    data=args.data
+                )
+                latencies.append(el)
+            except Exception as e:
+                print(f"  [Req {idx}] Failed: {e}")
+        if latencies:
+            avg_ms = (sum(latencies) / len(latencies)) * 1000
+            min_ms = min(latencies) * 1000
+            max_ms = max(latencies) * 1000
+            print(f"📊 Benchmark Results ({len(latencies)} requests):")
+            print(f"  • Min: {min_ms:.1f}ms | Max: {max_ms:.1f}ms | Avg: {avg_ms:.1f}ms\n" + "=" * 60)
 
     if status == 422:
         print("⚠️  HTTP 422 (Unprocessable Entity) detected:")

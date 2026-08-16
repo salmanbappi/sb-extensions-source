@@ -54,15 +54,26 @@ def to_pascal_case(name: str) -> str:
     return result
 
 
+INVARIANT_NOUNS = {
+    "series", "species", "news", "status", "release", "releases",
+    "canvas", "address", "actress", "bonus", "virus", "bus", "corpus"
+}
+
+
 def singularize(name: str) -> str:
     """Safely singularizes a property name for list inner types."""
+    if not name:
+        return "Item"
+    lower = name.lower()
+    if lower in INVARIANT_NOUNS:
+        return name
     if name.endswith("ies") and len(name) > 3:
         return name[:-3] + "y"
-    if name.endswith("es") and len(name) > 3 and not name.endswith(("ses", "xes", "zes")):
+    if name.endswith("es") and len(name) > 3 and not name.endswith(("ses", "xes", "zes", "ches", "shes")):
         return name[:-2]
-    if name.endswith("s") and len(name) > 3 and not name.endswith(("ss", "us", "is", "as")):
+    if name.endswith("s") and len(name) > 3 and not name.endswith(("ss", "us", "is", "as", "os")):
         return name[:-1]
-    return name or "Item"
+    return name
 
 
 class JsonToDtoConverter:
@@ -116,8 +127,16 @@ class JsonToDtoConverter:
     def generate_kotlin(self, json_data: Any) -> str:
         """Generates complete Kotlin source file content."""
         if isinstance(json_data, list):
-            sample = json_data[0] if json_data else {}
-            self._process_object(sample, self.root_class_name)
+            if not json_data:
+                sample = {}
+                self._process_object(sample, self.root_class_name)
+            else:
+                sample = json_data[0]
+                if isinstance(sample, dict):
+                    self._process_object(sample, self.root_class_name)
+                else:
+                    inner_type = self.infer_type(sample, "item").rstrip('?')
+                    return f"// Root JSON is a primitive Array\ntypealias {self.root_class_name} = List<{inner_type}>\n"
         elif isinstance(json_data, dict):
             self._process_object(json_data, self.root_class_name)
         else:

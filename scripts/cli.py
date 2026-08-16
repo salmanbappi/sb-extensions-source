@@ -447,6 +447,10 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
     # 3. Stage changes
     print("\n3️⃣ Staging git changes...")
     cmd_add = ["git", "add", str(ext_path)]
+    for shared_dir in ["core", "lib", "lib-multisrc"]:
+        shared_path = repo_root / shared_dir
+        if shared_path.exists():
+            cmd_add.append(str(shared_path))
     subprocess.run(cmd_add, cwd=repo_root, check=True, timeout=30)
 
     git_env = os.environ.copy()
@@ -475,7 +479,7 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
             branch_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root, capture_output=True, text=True)
             current_branch = branch_res.stdout.strip() or "main"
             print(f"  -> Setting upstream tracking for branch: {current_branch}...")
-            push_res = subprocess.run(["git", "push", "-u", "origin", current_branch], cwd=repo_root, capture_output=True, text=True)
+            push_res = subprocess.run(["git", "push", "-u", "origin", current_branch], cwd=repo_root, capture_output=True, text=True, env=git_env, timeout=60)
         if push_res.returncode != 0:
             print(f"❌ Git push failed: {push_res.stderr}")
             return False
@@ -589,7 +593,7 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
 
             # 4. Check Kotlin source files & Package declaration
             kt_dir = ext_path / "src" / "eu" / "kanade" / "tachiyomi" / "animeextension" / lang / ext_name
-            kt_files = list(kt_dir.glob("*.kt")) if kt_dir.exists() else []
+            kt_files = list(kt_dir.rglob("*.kt")) if kt_dir.exists() else []
             if not kt_files:
                 issues.append(f"Missing main Kotlin source in: src/eu/kanade/tachiyomi/animeextension/{lang}/{ext_name}/")
 
@@ -597,7 +601,7 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
             for kt in kt_files:
                 content = kt.read_text(encoding="utf-8", errors="ignore")
                 pkg_match = re.search(r"^\s*package\s+([^\s;]+)", content, re.MULTILINE)
-                if not pkg_match or pkg_match.group(1) != expected_pkg:
+                if not pkg_match or not (pkg_match.group(1) == expected_pkg or pkg_match.group(1).startswith(f"{expected_pkg}.")):
                     issues.append(f"Mismatched package declaration in {kt.name} (Expected: package {expected_pkg})")
                 if "companion {" in content and "companion object {" not in content:
                     issues.append(f"Syntax error in {kt.name}: 'companion {{' missing 'object' keyword (must be 'companion object {{')")
@@ -1318,11 +1322,34 @@ def main():
             "test-extractors": {
                 "script": "test_extractors.py",
                 "desc": "Alias for test-extractor: Unit test and verify regexes, unpackers, and decoders for extractors."
+            },
+            "fetch-skip-times": {
+                "script": "fetch_metadata.py",
+                "desc": "Fetch intro (OP), outro (ED), and recap skip timestamps from AniSkip API."
+            },
+            "cross-map-id": {
+                "script": "fetch_metadata.py",
+                "desc": "Cross-map anime and movie IDs across MAL, AniList, IMDb, TMDB, TVDB, and SIMKL."
+            },
+            "site-recon": {
+                "script": "site_recon.py",
+                "desc": "Parallel full-site reconnaissance, CMS/theme fingerprinting, and auto-scaffold generator."
+            },
+            "ai-selectors": {
+                "script": "ai_scraper.py",
+                "desc": "AI-powered HTML reverse engineering, Jsoup CSS selector, and Kotlin parser generator."
+            },
+            "auto-create": {
+                "script": "auto_create.py",
+                "desc": "Autonomous 1-click extension synthesizer: Recon -> AI Selectors -> Kotlin -> Icon -> Validate."
             }
         }
 
         grouped_categories = [
             ("🏗️  Scaffolding & DTOs", [
+                ("auto-create", "Autonomous 1-click synthesizer (Recon -> AI Selectors -> Kotlin -> Icon -> Validate)."),
+                ("site-recon", "Parallel full-site reconnaissance, CMS/theme fingerprinting, and scaffold advisor."),
+                ("ai-selectors", "AI-powered HTML reverse engineering, Jsoup CSS selector, and Kotlin parser generator."),
                 ("create", "Scaffold full extension boilerplate (HTML, API, Theme, Movie-Locker)."),
                 ("create-theme", "Scaffold a new multi-source theme in lib-multisrc/."),
                 ("json-to-dto", "Ingest JSON API responses or HAR files and generate v16 null-safe DTOs."),
@@ -1345,7 +1372,9 @@ def main():
             ("📡 Media & Stream Diagnostics", [
                 ("probe-stream", "Deep media inspector for HLS (.m3u8), DASH, direct streams, and codecs."),
                 ("deobfuscate", "Decode Dean Edwards, PlayerJS, CryptoJS AES, and Stego media payloads."),
-                ("fetch-metadata", "Fetch episode metadata from Jikan, AniList, Kitsu, and TMDB."),
+                ("fetch-metadata", "Fetch episode metadata from Jikan, AniList, Kitsu, TMDB, and TVMaze."),
+                ("fetch-skip-times", "Fetch AniSkip intro/outro/recap skip timestamps."),
+                ("cross-map-id", "Cross-map IDs across MAL, AniList, IMDb, TMDB, and SIMKL."),
                 ("fetch-icon", "Fetch website favicon and convert to 192x192 PNG launcher icon."),
             ]),
             ("🚀 Release & Versioning", [
@@ -1654,6 +1683,24 @@ def main():
             out_path = repo_root / "src" / (lang or "en") / name / "res" / "drawable" / "ic_launcher.png"
             success = fetch_icon(target_url, out_path)
             sys.exit(0 if success else 1)
+
+        if args.command == "fetch-skip-times":
+            script_path = scripts_dir / "fetch_metadata.py"
+            # Support positional MAL ID: cli.py fetch-skip-times <id>
+            extra = []
+            if args.args and not args.args[0].startswith("-"):
+                extra = ["--mal-id", args.args[0]] + args.args[1:]
+            else:
+                extra = args.args
+            cmd = [sys.executable, str(script_path), "--aniskip"] + extra
+            result = subprocess.run(cmd)
+            sys.exit(result.returncode)
+
+        if args.command == "cross-map-id":
+            script_path = scripts_dir / "fetch_metadata.py"
+            cmd = [sys.executable, str(script_path), "--cross-map"] + args.args
+            result = subprocess.run(cmd)
+            sys.exit(result.returncode)
 
         script_name = commands_info[args.command]["script"]
         script_path = scripts_dir / script_name
