@@ -182,14 +182,22 @@ class Animesalt : Source() {
         val genres = doc.select("a[href*='/category/genre/']").map { it.text().trim() }.filter { it.isNotBlank() }.distinct().joinToString(", ")
         val statusRaw = doc.select(".status, .Qlty, a[href*='/category/status/']").text()
 
-        val img = doc.selectFirst(".post-thumbnail img, figure img, img.lazyload")
-        val thumb = img?.let {
+        val posterImg = doc.selectFirst("img[alt^='Image ']:not(.TPostBg), .bd img:not(.custom-logo):not(.cn-icon)")
+            ?: doc.selectFirst("img[data-src*='tmdb.org']:not(.TPostBg)")
+            ?: doc.selectFirst(".post-thumbnail:not(.custom-logo) img")
+
+        val thumb = posterImg?.let {
             it.attr("abs:data-src").ifBlank {
                 it.attr("abs:data-lazy-src").ifBlank {
                     it.attr("abs:src")
                 }
             }
-        }?.takeIf { !it.startsWith("data:") }
+        }?.takeIf {
+            !it.startsWith("data:") &&
+                !it.contains("AnimeSaltLong", ignoreCase = true) &&
+                !it.contains("custom-logo", ignoreCase = true) &&
+                !it.contains("crunchyroll", ignoreCase = true)
+        }
 
         return SAnime.create().apply {
             title = titleText
@@ -220,6 +228,7 @@ class Animesalt : Source() {
         val doc = client.newCall(GET("$baseUrl${anime.url}", headers)).execute().asJsoup()
         val seasonButtons = doc.select(".season-buttons .season-btn[data-post][data-season]")
         val episodes = mutableListOf<SEpisode>()
+        val hasMultipleSeasons = seasonButtons.size > 1
 
         if (seasonButtons.isNotEmpty()) {
             for (btn in seasonButtons) {
@@ -233,17 +242,17 @@ class Animesalt : Source() {
                     client.newCall(GET(ajaxUrl, headers)).execute().asJsoup()
                 }
 
-                val seasonEps = parseEpisodesFromDoc(seasonDoc, seasonNum)
+                val seasonEps = parseEpisodesFromDoc(seasonDoc, seasonNum, anime.title, hasMultipleSeasons)
                 episodes.addAll(seasonEps)
             }
         } else {
-            episodes.addAll(parseEpisodesFromDoc(doc, 1))
+            episodes.addAll(parseEpisodesFromDoc(doc, 1, anime.title, false))
         }
 
         return episodes.reversed()
     }
 
-    private fun parseEpisodesFromDoc(doc: Document, seasonNum: Int): List<SEpisode> {
+    private fun parseEpisodesFromDoc(doc: Document, seasonNum: Int, animeTitle: String, hasMultipleSeasons: Boolean): List<SEpisode> {
         return doc.select("li:has(article.episodes), article.episodes, .episodes-list li").mapIndexedNotNull { idx, element ->
             val link = element.selectFirst("a.lnk-blk, a") ?: return@mapIndexedNotNull null
             val href = link.attr("abs:href").ifBlank { link.attr("href") }
@@ -252,7 +261,7 @@ class Animesalt : Source() {
             val rawNum = element.selectFirst(".num-epi")?.text()?.trim()
             val epNum = rawNum?.filter { it.isDigit() || it == '.' }?.toFloatOrNull() ?: (idx + 1).toFloat()
             val rawTitle = element.selectFirst(".entry-title, h2")?.text()?.trim() ?: "Episode ${epNum.toInt()}"
-            val cleanTitle = rawTitle.replace(Regex("^Private:\\s*", RegexOption.IGNORE_CASE), "").trim()
+            val cleanTitle = cleanEpisodeTitle(rawTitle, animeTitle)
 
             val epNumber = if (seasonNum > 1) {
                 ((seasonNum - 1) * 100 + epNum.toInt()).toFloat()
@@ -260,10 +269,10 @@ class Animesalt : Source() {
                 epNum
             }
 
-            val displayName = if (seasonNum > 1) {
-                "Season $seasonNum Episode ${epNum.toInt()}: $cleanTitle"
+            val displayName = if (hasMultipleSeasons) {
+                if (cleanTitle.isNotBlank()) "S$seasonNum Ep. ${epNum.toInt()} - $cleanTitle" else "S$seasonNum Ep. ${epNum.toInt()}"
             } else {
-                "Episode ${epNum.toInt()}: $cleanTitle"
+                if (cleanTitle.isNotBlank()) "Episode ${epNum.toInt()} - $cleanTitle" else "Episode ${epNum.toInt()}"
             }
 
             SEpisode.create().apply {
@@ -272,6 +281,28 @@ class Animesalt : Source() {
                 setUrlWithoutDomain(href)
             }
         }
+    }
+
+    private fun cleanEpisodeTitle(rawTitle: String, animeTitle: String): String {
+        var title = rawTitle
+            .replace(Regex("^(?:Private|Protected):\\s*", RegexOption.IGNORE_CASE), "")
+            .trim()
+
+        if (animeTitle.isNotBlank() && title.startsWith(animeTitle, ignoreCase = true)) {
+            title = title.substring(animeTitle.length).trim(' ', '-', ':', '_')
+        }
+
+        return title
+            .replace(Regex("""\[[A-Fa-f0-9]{8}\]"""), "")
+            .replace(Regex("""\[?(?:1080p|720p|480p|360p|240p|4k|hd|fhd|uhd)\]?""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\[?(?:x264|x265|h264|h265|hevc|avc|10bit|8bit|aac|ac3|dts|web-?dl|bluray|bdrip|dvdrip)\]?""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\[?(?:dual audio|multi audio|multi-sub|sub|dub|softsub)\]?""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""S\d+\s*E\d+""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\b\d+x\d+\b""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""Season\s*\d+\s*Episode\s*\d+""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""Episode\s*\d+""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\[\s*\]|\(\s*\)"""), "")
+            .trim(' ', '-', ':', '_', '|')
     }
 
     // ============================ Video Links =============================
