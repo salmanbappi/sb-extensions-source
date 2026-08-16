@@ -1373,6 +1373,9 @@ def main():
         }
 
         grouped_categories = [
+            ("🤖 Multi-Agent Swarms & Autonomous Workflows", [
+                ("agent", "Autonomous multi-agent swarms (pipeline, recon, deobfuscate, critique, heal)."),
+            ]),
             ("🏗️  Scaffolding & DTOs", [
                 ("auto-create", "Autonomous 1-click synthesizer (Recon -> AI Selectors -> Kotlin -> Icon -> Validate)."),
                 ("site-recon", "Parallel full-site reconnaissance, CMS/theme fingerprinting, and scaffold advisor."),
