@@ -182,3 +182,39 @@ class OrchestratorAgent:
             state.transition_to(PipelineStage.FAILED)
 
         return result
+
+    def run_pipeline(
+        self,
+        url: str,
+        name: Optional[str] = None,
+        lang: str = "en",
+    ) -> Dict[str, Any]:
+        """Convenience method for CLI pipeline execution from a website URL."""
+        import re
+        from urllib.parse import urlparse
+
+        clean_url = url if "://" in url else f"https://{url}"
+        parsed = urlparse(clean_url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        ext_name = name or parsed.netloc.split(".")[0].capitalize()
+        pkg_name = f"eu.kanade.tachiyomi.animeextension.{lang}.{ext_name.lower().replace(' ', '').replace('-', '')}"
+        class_name = "".join(w.capitalize() for w in re.sub(r'[^a-zA-Z0-9]', ' ', ext_name).split())
+
+        synth_config = SynthesizerConfig(
+            pkg_name=pkg_name,
+            class_name=class_name,
+            source_name=ext_name,
+            base_url=base_url,
+            lang=lang,
+        )
+
+        result = self.run_full_pipeline(synth_config=synth_config)
+        return {
+            "status": "SUCCESS" if result.state.is_success else "FAILED",
+            "stage": result.state.current_stage.value,
+            "debate_rounds": result.debate_rounds,
+            "critic_score": result.critic_report.score if result.critic_report else 0,
+            "critic_summary": result.critic_report.summary if result.critic_report else "",
+            "errors": result.state.errors,
+            "source_code_preview": (result.synthesized_extension.full_combined_code[:400] + "...") if result.synthesized_extension else None,
+        }

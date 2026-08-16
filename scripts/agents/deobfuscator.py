@@ -26,7 +26,7 @@ class DeanEdwardsSolver:
 
     @staticmethod
     def unpack(packed_js: str) -> str:
-        pattern = r"\}\s*\(\s*'(.*?)'\s*,\s*(\d+|0x[0-9a-fA-F]+)\s*,\s*(\d+|0x[0-9a-fA-F]+)\s*,\s*'(.*?)'\.split\('\|'\)"
+        pattern = r"\}\s*\(\s*(['\"].*?['\"])\s*,\s*(\d+|0x[0-9a-fA-F]+)\s*,\s*(\d+|0x[0-9a-fA-F]+)\s*,\s*(['\"].*?['\"])\.split\(['\"]\|['\"]\)"
         match = re.search(pattern, packed_js, re.DOTALL)
         if not match:
             pattern_alt = r"\}\s*\(\s*(['\"].*?['\"])\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(['\"].*?['\"])\.split\('\|'\)"
@@ -35,10 +35,10 @@ class DeanEdwardsSolver:
                 return packed_js
 
         payload, radix_str, count_str, symtab_str = match.groups()
-        if payload.startswith("'") and payload.endswith("'"):
+        if payload.startswith(("'", '"')) and payload.endswith(("'", '"')):
             payload = payload[1:-1]
-        elif payload.startswith('"') and payload.endswith('"'):
-            payload = payload[1:-1]
+        if symtab_str.startswith(("'", '"')) and symtab_str.endswith(("'", '"')):
+            symtab_str = symtab_str[1:-1]
 
         radix = int(radix_str, 16) if str(radix_str).startswith("0x") else int(radix_str)
         count = int(count_str, 16) if str(count_str).startswith("0x") else int(count_str)
@@ -64,7 +64,7 @@ class DeanEdwardsSolver:
             return lookup.get(token, token)
 
         unpacked = re.sub(r"\b[0-9a-zA-Z]+\b", replace_token, payload)
-        if "eval(function(p,a,c,k,e,r" in unpacked:
+        if re.search(r"function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e", unpacked):
             return DeanEdwardsSolver.unpack(unpacked)
         return unpacked
 
@@ -311,7 +311,7 @@ class DeobfuscatorAgent:
         clean = content.strip()
 
         # 1. Dean Edwards
-        if "eval(function(p,a,c,k,e,r" in clean:
+        if re.search(r"function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e", clean):
             unpacked = self.packer.unpack(clean)
             return DeobfuscationResult(
                 engine="DeanEdwards",

@@ -1754,7 +1754,7 @@ def main():
                 sys.exit(1)
 
             if agent_args.subcommand == "pipeline":
-                orchestrator = OrchestratorAgent(repo_root)
+                orchestrator = OrchestratorAgent()
                 res = orchestrator.run_pipeline(agent_args.url, name=agent_args.name, lang=agent_args.lang)
                 print(json.dumps(res, indent=2))
                 sys.exit(0 if res.get("status") == "SUCCESS" else 1)

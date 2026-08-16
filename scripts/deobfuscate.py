@@ -19,7 +19,7 @@ class DeanEdwardsUnpacker:
 
     @staticmethod
     def unpack(packed_js: str) -> str:
-        pattern = r"\}\s*\(\s*'(.*?)'\s*,\s*(\d+|0x[0-9a-fA-F]+)\s*,\s*(\d+|0x[0-9a-fA-F]+)\s*,\s*'(.*?)'\.split\('\|'\)"
+        pattern = r"\}\s*\(\s*(['\"].*?['\"])\s*,\s*(\d+|0x[0-9a-fA-F]+)\s*,\s*(\d+|0x[0-9a-fA-F]+)\s*,\s*(['\"].*?['\"])\.split\(['\"]\|['\"]\)"
         match = re.search(pattern, packed_js, re.DOTALL)
         if not match:
             # Alternate format without quotes
@@ -29,10 +29,10 @@ class DeanEdwardsUnpacker:
                 return packed_js
 
         payload, radix_str, count_str, symtab_str = match.groups()
-        if payload.startswith("'") and payload.endswith("'"):
+        if payload.startswith(("'", '"')) and payload.endswith(("'", '"')):
             payload = payload[1:-1]
-        elif payload.startswith('"') and payload.endswith('"'):
-            payload = payload[1:-1]
+        if symtab_str.startswith(("'", '"')) and symtab_str.endswith(("'", '"')):
+            symtab_str = symtab_str[1:-1]
 
         radix = int(radix_str, 16) if str(radix_str).startswith("0x") else int(radix_str)
         count = int(count_str, 16) if str(count_str).startswith("0x") else int(count_str)
@@ -59,7 +59,7 @@ class DeanEdwardsUnpacker:
 
         unpacked = re.sub(r"\b[0-9a-zA-Z]+\b", replace_token, payload)
         # Recursively unpack if nested
-        if "eval(function(p,a,c,k,e,r" in unpacked:
+        if re.search(r"function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e", unpacked):
             return DeanEdwardsUnpacker.unpack(unpacked)
         return unpacked
 
@@ -144,7 +144,7 @@ def deobfuscate_auto(content: str) -> list[tuple[str, str]]:
     results = []
 
     # 1. Dean Edwards
-    if "eval(function(p,a,c,k,e,r" in content:
+    if re.search(r"function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e", content):
         unpacked = DeanEdwardsUnpacker.unpack(content)
         results.append(("Dean Edwards JS Unpacker", unpacked))
 
@@ -182,7 +182,7 @@ def main():
 
     print("🔓 Running Deobfuscation Workbench...\n" + "=" * 60)
 
-    if args.engine == "packer" or (args.engine == "auto" and "eval(function(p,a,c,k,e,r" in content):
+    if args.engine == "packer" or (args.engine == "auto" and re.search(r"function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e", content)):
         print("⚙️ Engine: Dean Edwards JS Unpacker")
         unpacked = DeanEdwardsUnpacker.unpack(content)
         print(unpacked)

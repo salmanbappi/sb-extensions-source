@@ -375,3 +375,36 @@ class ReconSwarmAgent:
                 site_map.detected_schemas.update(inferred)
 
         return site_map
+
+    def explore_site(self, url: str) -> Dict[str, Any]:
+        """Performs live reconnaissance of a URL, extracting sitemap, routes, and schemas."""
+        import ssl
+        import urllib.request
+        from urllib.parse import urlparse
+        import dataclasses
+
+        clean_url = url if "://" in url else f"https://{url}"
+        parsed = urlparse(clean_url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        name = parsed.netloc.split(".")[0].capitalize()
+
+        html_samples = []
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            req = urllib.request.Request(
+                clean_url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
+            )
+            with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
+                html_samples.append(resp.read().decode("utf-8", errors="replace"))
+        except Exception:
+            pass
+
+        site_map = self.run_recon(
+            base_url=base_url,
+            name=name,
+            html_samples=html_samples if html_samples else None,
+        )
+        return dataclasses.asdict(site_map)
