@@ -2,7 +2,9 @@ package eu.kanade.tachiyomi.animeextension.en.animesalt
 
 import android.util.Base64
 import androidx.preference.PreferenceScreen
-import com.google.gson.JsonParser
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -349,8 +351,8 @@ class Animesalt : Source() {
 
                 val res = client.newCall(POST(postUrl, playerHeaders, formBody)).execute()
                 val resBody = res.bodyString()
-                val json = runCatching { JsonParser.parseString(resBody).asJsonObject }.getOrNull()
-                val masterUrl = json?.get("videoSource")?.asString ?: json?.get("securedLink")?.asString
+                val jsonObj = runCatching { json.parseToJsonElement(resBody).jsonObject }.getOrNull()
+                val masterUrl = jsonObj?.get("videoSource")?.jsonPrimitive?.content ?: jsonObj?.get("securedLink")?.jsonPrimitive?.content
 
                 if (!masterUrl.isNullOrBlank()) {
                     val hlsVideos = playlistUtils.extractFromHls(
@@ -371,11 +373,11 @@ class Animesalt : Source() {
                 }.getOrNull()
 
                 if (!decodedJson.isNullOrBlank()) {
-                    val array = runCatching { JsonParser.parseString(decodedJson).asJsonArray }.getOrNull()
+                    val array = runCatching { json.parseToJsonElement(decodedJson).jsonArray }.getOrNull()
                     array?.forEach { item ->
-                        val obj = item.asJsonObject
-                        val lang = obj.get("language")?.asString ?: "Unknown"
-                        val link = obj.get("link")?.asString ?: return@forEach
+                        val obj = item.jsonObject
+                        val lang = obj["language"]?.jsonPrimitive?.content ?: "Unknown"
+                        val link = obj["link"]?.jsonPrimitive?.content ?: return@forEach
 
                         val extracted = when {
                             link.contains("dood") || link.contains("ds2play") ->
