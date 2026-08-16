@@ -182,14 +182,18 @@ class Animesalt : Source() {
         val genres = doc.select("a[href*='/category/genre/']").map { it.text().trim() }.filter { it.isNotBlank() }.distinct().joinToString(", ")
         val statusRaw = doc.select(".status, .Qlty, a[href*='/category/status/']").text()
 
-        val posterImg = doc.selectFirst("img[alt^='Image ']:not(.TPostBg), .bd img:not(.custom-logo):not(.cn-icon)")
-            ?: doc.selectFirst("img[data-src*='tmdb.org']:not(.TPostBg)")
-            ?: doc.selectFirst(".post-thumbnail:not(.custom-logo) img")
+        val posterImg = doc.selectFirst(
+            "article.post .poster img, .single-series .poster img, .s-top .poster img, .poster img, " +
+                ".bd img:not(.custom-logo):not(.cn-icon), img[alt^='Image ']:not(.TPostBg), " +
+                "img[data-src*='tmdb.org']:not(.TPostBg), .thumb img.wp-post-image",
+        )
 
         val thumb = posterImg?.let {
             it.attr("abs:data-src").ifBlank {
                 it.attr("abs:data-lazy-src").ifBlank {
-                    it.attr("abs:src")
+                    it.attr("abs:data-original").ifBlank {
+                        it.attr("abs:src")
+                    }
                 }
             }
         }?.takeIf {
@@ -197,7 +201,7 @@ class Animesalt : Source() {
                 !it.contains("AnimeSaltLong", ignoreCase = true) &&
                 !it.contains("custom-logo", ignoreCase = true) &&
                 !it.contains("crunchyroll", ignoreCase = true)
-        }
+        } ?: doc.selectFirst("meta[property=og:image], meta[name=twitter:image]")?.attr("abs:content")
 
         return SAnime.create().apply {
             title = titleText
@@ -259,7 +263,8 @@ class Animesalt : Source() {
             if (href.isBlank()) return@mapIndexedNotNull null
 
             val rawNum = element.selectFirst(".num-epi")?.text()?.trim()
-            val epNum = rawNum?.filter { it.isDigit() || it == '.' }?.toFloatOrNull() ?: (idx + 1).toFloat()
+            val match = Regex("""(?:(\d+)x)?(\d+(?:\.\d+)?)""").find(rawNum.orEmpty())
+            val epNum = match?.groupValues?.get(2)?.toFloatOrNull() ?: (idx + 1).toFloat()
             val rawTitle = element.selectFirst(".entry-title, h2")?.text()?.trim() ?: "Episode ${epNum.toInt()}"
             val cleanTitle = cleanEpisodeTitle(rawTitle, animeTitle)
 
