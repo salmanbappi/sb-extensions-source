@@ -200,19 +200,11 @@ class Lunar : Source() {
 
             when {
                 hoster == "vidmoly" || uri.contains("vidmoly") -> {
-                    vidmolyExtractor.videosFromUrl(uri).map { v ->
-                        Video(
-                            videoUrl = v.videoUrl,
-                            videoTitle = prefix + v.videoTitle,
-                            headers = v.headers,
-                            subtitleTracks = v.subtitleTracks,
-                            audioTracks = v.audioTracks,
-                        )
-                    }
+                    vidmolyExtractor.videosFromUrl(uri, prefix = prefix)
                 }
 
                 hoster == "voe" || uri.contains("voe.") -> {
-                    voeExtractor.videoFromUrl(uri, prefix)?.let { listOf(it) } ?: emptyList()
+                    voeExtractor.videosFromUrl(uri, prefix = prefix)
                 }
 
                 hoster == "filemoon" || uri.contains("filemoon") -> {
@@ -224,23 +216,15 @@ class Lunar : Source() {
                 }
 
                 hoster == "streamtape" || uri.contains("streamtape") -> {
-                    streamTapeExtractor.videoFromUrl(uri, quality = "${prefix}StreamTape")?.let { listOf(it) } ?: emptyList()
+                    streamTapeExtractor.videosFromUrl(uri, quality = "${prefix}StreamTape")
                 }
 
                 hoster == "luluvdo" || hoster == "lulu" || uri.contains("luluvdo") -> {
-                    luluExtractor.videosFromUrl(uri).map { v ->
-                        Video(
-                            videoUrl = v.videoUrl,
-                            videoTitle = prefix + v.videoTitle,
-                            headers = v.headers,
-                            subtitleTracks = v.subtitleTracks,
-                            audioTracks = v.audioTracks,
-                        )
-                    }
+                    luluExtractor.videosFromUrl(uri, prefix = prefix)
                 }
 
                 hoster == "streamwish" || uri.contains("streamwish") || uri.contains("wishembed") || uri.contains("swish") -> {
-                    streamWishExtractor.videosFromUrl(uri, videoNameGen = { q -> prefix + q })
+                    streamWishExtractor.videosFromUrl(uri, prefix = prefix)
                 }
 
                 hoster == "vidguard" || uri.contains("vidguard") || uri.contains("vgfplay") || uri.contains("vembed") -> {
@@ -252,15 +236,7 @@ class Lunar : Source() {
                 }
 
                 else -> {
-                    universalExtractor.extract(uri).map { v ->
-                        Video(
-                            videoUrl = v.videoUrl,
-                            videoTitle = prefix + v.videoTitle,
-                            headers = v.headers,
-                            subtitleTracks = v.subtitleTracks,
-                            audioTracks = v.audioTracks,
-                        )
-                    }
+                    universalExtractor.videosFromUrl(uri, headers, prefix = prefix)
                 }
             }
         }.sortVideos()
