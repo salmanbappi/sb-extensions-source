@@ -167,6 +167,13 @@ class TestOrchestrator(unittest.TestCase):
         self.assertNotIn("list[0].quality", result.synthesized_extension.source_code)
         self.assertIn("list[0].videoTitle", result.synthesized_extension.source_code)
 
+    def test_orchestrator_cli_run_pipeline(self):
+        result = self.orchestrator.run_pipeline("https://animetest.example.com", name="AnimeTest", lang="en")
+        self.assertEqual(result["status"], "SUCCESS")
+        self.assertEqual(result["stage"], "COMPLETED")
+        self.assertGreaterEqual(result["critic_score"], 80)
+        self.assertIsNotNone(result["source_code_preview"])
+
 
 class TestReconSwarm(unittest.TestCase):
     """Verifies Recon Swarm HAR analysis, route exploration, and schema inference."""
@@ -264,6 +271,12 @@ class TestReconSwarm(unittest.TestCase):
         self.assertEqual(fields_map["title"].kotlin_type, "String?")
         self.assertEqual(fields_map["is_completed"].kotlin_type, "Boolean?")
 
+    def test_recon_swarm_explore_site(self):
+        res = self.agent.explore_site("https://nonexistent-site-test.example.com")
+        self.assertEqual(res["base_url"], "https://nonexistent-site-test.example.com")
+        self.assertEqual(res["name"], "Nonexistent-site-test")
+        self.assertIsInstance(res["discovered_routes"], list)
+
 
 class TestDeobfuscator(unittest.TestCase):
     """Verifies Dean Edwards unpacking, PlayerJS decoding, RC4, and AES cipher solvers."""
@@ -280,6 +293,16 @@ class TestDeobfuscator(unittest.TestCase):
         )
         unpacked = DeanEdwardsSolver.unpack(packed)
         self.assertIn('var hello="world"', unpacked)
+
+        # Test standard (p,a,c,k,e,d) format with double quotes and trailing params
+        packed_alt = (
+            "eval(function(p,a,c,k,e,d){e=function(c){return c};if(!''.replace(/^/,String)){while(c--){"
+            "d[c]=k[c]||c}k=[function(e){return d[e]}];e=function(){return'\\\\w+'};c=1};while(c--){"
+            "if(k[c]){p=p.replace(new RegExp('\\\\b'+e(c)+'\\\\b','g'),k[c])}}return p}('0 1=\"2\";',"
+            "3,3,'var|hello|world'.split('|'),0,{}))"
+        )
+        unpacked_alt = DeanEdwardsSolver.unpack(packed_alt)
+        self.assertIn('var hello="world"', unpacked_alt)
 
     def test_playerjs_decoder(self):
         # Base64 of 'https://cdn.stream.com/master.m3u8' = 'aHR0cHM6Ly9jZG4uc3RyZWFtLmNvbS9tYXN0ZXIubTN1OA=='
