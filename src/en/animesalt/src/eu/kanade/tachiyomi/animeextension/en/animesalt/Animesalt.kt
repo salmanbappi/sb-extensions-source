@@ -22,16 +22,16 @@ import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.UrlUtils
 import extensions.utils.asJsoup
-import java.net.URLEncoder
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.bodyString
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import org.jsoup.nodes.Document
+import java.net.URLEncoder
+import kotlin.time.Duration.Companion.seconds
 
 class Animesalt : Source() {
 
@@ -89,12 +89,14 @@ class Animesalt : Source() {
                             break
                         }
                     }
+
                     is Filters.LanguageFilter -> {
                         if (!filter.isDefault()) {
                             targetPath = "category/${filter.toUriPart()}"
                             break
                         }
                     }
+
                     is Filters.TypeFilter -> {
                         if (!filter.isDefault()) {
                             val part = filter.toUriPart()
@@ -102,6 +104,7 @@ class Animesalt : Source() {
                             break
                         }
                     }
+
                     else -> {}
                 }
             }
@@ -377,12 +380,16 @@ class Animesalt : Source() {
                         val extracted = when {
                             link.contains("dood") || link.contains("ds2play") ->
                                 doodExtractor.videosFromUrl(link)
+
                             link.contains("streamtape") ->
                                 streamtapeExtractor.videoFromUrl(link)?.let { listOf(it) } ?: emptyList()
+
                             link.contains("filemoon") || link.contains("moonplayer") ->
                                 filemoonExtractor.videosFromUrl(link, prefix = "$lang - ")
+
                             link.endsWith(".m3u8") || link.contains(".m3u8?") ->
                                 playlistUtils.extractFromHls(link, referer = "$baseUrl/", videoNameGen = { q -> "$q [$lang]" })
+
                             else ->
                                 universalExtractor.videosFromUrl(link, headers, prefix = "$lang - ")
                         }
