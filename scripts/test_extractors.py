@@ -278,14 +278,82 @@ def extract_vidsrc(html, url):
     return None
 
 
+def extract_voe(html, url):
+    print("[INFO] Running VOE extraction logic...")
+    m = re.search(r"['\"](?:hls|file)['\"]\s*:\s*['\"](https?://[^'\"]+\.m3u8[^'\"]*)['\"]", html)
+    if m:
+        return {"hls_url": m.group(1)}
+    m_b64 = re.search(r"prompt\(.*?['\"]([A-Za-z0-9+/=]{20,})['\"]", html)
+    if m_b64:
+        try:
+            decoded = base64.b64decode(m_b64.group(1)).decode('utf-8')
+            return {"hls_url": decoded}
+        except Exception:
+            pass
+    urls = StreamObfuscationSolver.extract_stream_urls(html)
+    return {"hls_url": urls[0]} if urls else None
+
+
+def extract_vidmoly(html, url):
+    print("[INFO] Running Vidmoly extraction logic...")
+    m = re.search(r'file\s*:\s*["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', html)
+    if m:
+        return {"hls_url": m.group(1)}
+    urls = StreamObfuscationSolver.extract_stream_urls(html)
+    return {"hls_url": urls[0]} if urls else None
+
+
+def extract_streamwish(html, url):
+    print("[INFO] Running StreamWish extraction logic...")
+    if JsUnpacker.detect(html):
+        html = JsUnpacker.unpack(html)
+    m = re.search(r'file\s*:\s*["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', html)
+    if m:
+        return {"hls_url": m.group(1)}
+    urls = StreamObfuscationSolver.extract_stream_urls(html)
+    return {"hls_url": urls[0]} if urls else None
+
+
+def extract_vidguard(html, url):
+    print("[INFO] Running VidGuard extraction logic...")
+    if "svg" in html or "stream" in html:
+        urls = StreamObfuscationSolver.extract_stream_urls(html)
+        if urls:
+            return {"hls_url": urls[0]}
+    return {"status": "requires svg unpacker / resolver"}
+
+
+def extract_lulu(html, url):
+    print("[INFO] Running LuluStream extraction logic...")
+    if JsUnpacker.detect(html):
+        html = JsUnpacker.unpack(html)
+    urls = StreamObfuscationSolver.extract_stream_urls(html)
+    return {"hls_url": urls[0]} if urls else None
+
+
+def extract_megacloud_flixcloud(html, url):
+    print("[INFO] Running MegaCloud / FlixCloud extraction logic...")
+    urls = StreamObfuscationSolver.extract_stream_urls(html)
+    if urls:
+        return {"hls_url": urls[0]}
+    embed_match = re.search(r'["\'](https?://[^"\']+(?:embed|player)[^"\']*)["\']', html)
+    return {"embed_url": embed_match.group(1)} if embed_match else {"status": "requires webview / source key decryption"}
+
+
 def auto_detect_provider(url):
     url_lower = url.lower()
-    if "dood" in url_lower: return "doodstream"
+    if "dood" in url_lower or "ds2play" in url_lower: return "doodstream"
     if "streamtape" in url_lower or "strcloud" in url_lower: return "streamtape"
     if "filemoon" in url_lower: return "filemoon"
     if "mixdrop" in url_lower or "mixeno" in url_lower: return "mixdrop"
     if "vidsrc" in url_lower: return "vidsrc"
     if "playerjs" in url_lower: return "playerjs"
+    if "voe." in url_lower or "/e/" in url_lower and "voe" in url_lower: return "voe"
+    if "vidmoly" in url_lower: return "vidmoly"
+    if "streamwish" in url_lower or "wishembed" in url_lower or "swish" in url_lower: return "streamwish"
+    if "vidguard" in url_lower or "vgfplay" in url_lower or "vembed" in url_lower: return "vidguard"
+    if "lulu" in url_lower or "luluvdo" in url_lower: return "luluvdo"
+    if "flixcloud" in url_lower or "megacloud" in url_lower or "rapid-cloud" in url_lower: return "megacloud"
     return None
 
 
@@ -296,6 +364,12 @@ def extract(html, url, provider):
     if provider == "mixdrop": return extract_mixdrop(html, url)
     if provider == "vidsrc": return extract_vidsrc(html, url)
     if provider == "playerjs": return extract_playerjs(html, url)
+    if provider == "voe": return extract_voe(html, url)
+    if provider == "vidmoly": return extract_vidmoly(html, url)
+    if provider == "streamwish": return extract_streamwish(html, url)
+    if provider == "vidguard": return extract_vidguard(html, url)
+    if provider == "luluvdo": return extract_lulu(html, url)
+    if provider == "megacloud": return extract_megacloud_flixcloud(html, url)
     print(f"[ERROR] Unsupported provider: {provider}")
     return None
 

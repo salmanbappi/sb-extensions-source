@@ -475,11 +475,20 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
     cmd_push = ["git", "push"]
     push_res = subprocess.run(cmd_push, cwd=repo_root, capture_output=True, text=True, env=git_env, timeout=60)
     if push_res.returncode != 0:
+        branch_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root, capture_output=True, text=True)
+        current_branch = branch_res.stdout.strip() or "master"
         if "set-upstream" in push_res.stderr or "no upstream branch" in push_res.stderr:
-            branch_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root, capture_output=True, text=True)
-            current_branch = branch_res.stdout.strip() or "main"
             print(f"  -> Setting upstream tracking for branch: {current_branch}...")
             push_res = subprocess.run(["git", "push", "-u", "origin", current_branch], cwd=repo_root, capture_output=True, text=True, env=git_env, timeout=60)
+        elif "rejected" in push_res.stderr or "fetch first" in push_res.stderr or "non-fast-forward" in push_res.stderr:
+            print(f"  -> Remote has newer commits. Syncing branch '{current_branch}' via git pull --rebase...")
+            pull_res = subprocess.run(["git", "pull", "--rebase", "origin", current_branch], cwd=repo_root, capture_output=True, text=True, env=git_env, timeout=60)
+            if pull_res.returncode == 0:
+                print("  -> Rebase succeeded. Retrying push...")
+                push_res = subprocess.run(["git", "push", "origin", current_branch], cwd=repo_root, capture_output=True, text=True, env=git_env, timeout=60)
+            else:
+                print(f"❌ Git pull --rebase failed: {pull_res.stderr}")
+                return False
         if push_res.returncode != 0:
             print(f"❌ Git push failed: {push_res.stderr}")
             return False
@@ -863,6 +872,19 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
             # 23. Redundant "Server:" prefix in hosterName
             if re.search(r'Hoster\s*\(\s*(?:hosterName\s*=\s*)?["\']Server:\s+', content):
                 file_warnings.append('Redundant "Server:" prefix in hosterName — use clean provider name (e.g. "Misa", "MegaCloud")')
+
+            # 24. Suspend extractor called from non-suspend private helper function
+            suspend_extractors = ["vidMolyExtractor", "voeExtractor", "filemoonExtractor", "luluExtractor", "streamWishExtractor", "vidGuardExtractor"]
+            for m in re.finditer(r'(?:private|protected|internal)?\s+fun\s+(\w+)\s*\([^)]*\)\s*(?::\s*List<Video>|\s*\{)', content):
+                fn_name = m.group(1)
+                full_match = m.group(0)
+                if "suspend" not in full_match and fn_name not in ["videoListParse", "popularAnimeParse", "latestUpdatesParse", "searchAnimeParse", "animeDetailsParse", "episodeListParse", "setupPreferenceScreen", "sortVideos"]:
+                    start_pos = m.end()
+                    fn_chunk = content[start_pos:start_pos + 1200]
+                    for ext in suspend_extractors:
+                        if f"{ext}.videosFromUrl" in fn_chunk:
+                            file_warnings.append(f"Function '{fn_name}' calls suspend extractor '{ext}.videosFromUrl' but is not marked 'suspend' — use 'private suspend fun {fn_name}(...)'")
+                            break
 
             # 9. Deprecated positional Video constructor — use joined_content so
             #    multi-line Video( calls are caught.
