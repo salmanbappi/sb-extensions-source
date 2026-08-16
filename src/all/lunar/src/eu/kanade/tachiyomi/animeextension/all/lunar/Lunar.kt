@@ -670,7 +670,7 @@ class Lunar : Source() {
         return videos.sortVideos()
     }
 
-    private fun extractVideoFromHoster(hosterItem: HosterItem): List<Video> {
+    private suspend fun extractVideoFromHoster(hosterItem: HosterItem): List<Video> {
         val rawHoster = hosterItem.hoster.orEmpty().trim().lowercase()
         val lang = hosterItem.language.orEmpty().lowercase()
         val uri = hosterItem.redirect_uri.orEmpty()
