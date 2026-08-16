@@ -125,13 +125,16 @@ class Lunar : Source() {
 
     override fun animeDetailsParse(response: Response): SAnime {
         val anime = SAnime.create()
+        val rawSlug = extractSlug(response.request.url.encodedPath)
+        val cleanSlug = extractCleanSlug(rawSlug)
+
         runCatching {
             val res = response.parseAs<AnimeDetailResponse>(json)
             val item = res.data.firstOrNull()
             if (item != null) {
                 anime.title = item.title.orEmpty()
                 anime.thumbnail_url = item.poster_url
-                anime.description = item.description
+                anime.description = cleanHtml(item.description)
                 anime.genre = item.genres.joinToString(", ")
                 anime.status = when {
                     item.end_year != null -> SAnime.COMPLETED
@@ -140,17 +143,38 @@ class Lunar : Source() {
             }
         }
 
-        // Fallback for description if empty
+        // Fallback for description and details if empty
+        if (anime.description.isNullOrBlank() && cleanSlug != rawSlug) {
+            runCatching {
+                val fallbackReq = GET("$API_BASE/api/anime/$cleanSlug", headers)
+                val fallbackResp = client.newCall(fallbackReq).execute()
+                val res = fallbackResp.parseAs<AnimeDetailResponse>(json)
+                val item = res.data.firstOrNull()
+                if (item != null) {
+                    if (anime.title.isBlank()) anime.title = item.title.orEmpty()
+                    if (anime.thumbnail_url.isNullOrBlank()) anime.thumbnail_url = item.poster_url
+                    if (anime.description.isNullOrBlank()) anime.description = cleanHtml(item.description)
+                    if (anime.genre.isNullOrBlank()) anime.genre = item.genres.joinToString(", ")
+                    if (anime.status == SAnime.UNKNOWN) {
+                        anime.status = when {
+                            item.end_year != null -> SAnime.COMPLETED
+                            else -> SAnime.ONGOING
+                        }
+                    }
+                }
+            }
+        }
+
         if (anime.description.isNullOrBlank()) {
             runCatching {
-                val searchReq = GET("$API_BASE/api/animes/search?query=${URLEncoder.encode(anime.title.ifBlank { extractSlug(response.request.url.encodedPath) }, "UTF-8")}", headers)
+                val searchReq = GET("$API_BASE/api/animes/search?query=${URLEncoder.encode(anime.title.ifBlank { cleanSlug.replace("-", " ") }, "UTF-8")}", headers)
                 val searchResp = client.newCall(searchReq).execute()
                 val searchData = searchResp.parseAs<SearchResponse>(json)
                 val match = searchData.animes.firstOrNull()
                 if (match != null) {
                     if (anime.title.isBlank()) anime.title = match.title.orEmpty()
                     if (anime.thumbnail_url.isNullOrBlank()) anime.thumbnail_url = match.poster_url
-                    if (anime.description.isNullOrBlank()) anime.description = match.description
+                    if (anime.description.isNullOrBlank()) anime.description = cleanHtml(match.description)
                     if (anime.genre.isNullOrBlank()) anime.genre = match.genres.joinToString(", ")
                     if (anime.status == SAnime.UNKNOWN) {
                         anime.status = when {
@@ -165,6 +189,115 @@ class Lunar : Source() {
         anime.initialized = true
         return anime
     }
+
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        val details = super.getAnimeDetails(anime)
+
+        // Enrich with AniList English metadata if description or genres are missing or in German
+        if (details.description.isNullOrBlank() || details.genre.isNullOrBlank() || details.status == SAnime.UNKNOWN) {
+            val cleanTitle = details.title.ifBlank {
+                extractCleanSlug(anime.url).replace("-", " ")
+            }
+            val meta = fetchAniListMetadata(cleanTitle)
+            if (meta != null) {
+                if (details.title.isBlank()) details.title = meta.title
+                if (details.thumbnail_url.isNullOrBlank() && !meta.cover.isNullOrBlank()) details.thumbnail_url = meta.cover
+                if (details.description.isNullOrBlank() && !meta.description.isNullOrBlank()) details.description = meta.description
+                if (details.genre.isNullOrBlank() && meta.genres.isNotBlank()) details.genre = meta.genres
+                if (details.status == SAnime.UNKNOWN) details.status = meta.status
+            }
+        }
+
+        details.description = cleanHtml(details.description)
+        details.initialized = true
+        return details
+    }
+
+    private fun fetchAniListMetadata(queryTitle: String): AniListMeta? {
+        val query = """
+            query (${'$'}search: String) {
+                Media(search: ${'$'}search, type: ANIME) {
+                    id
+                    title { english romaji userPreferred }
+                    description(asHtml: false)
+                    genres
+                    status
+                    bannerImage
+                    coverImage { extraLarge large medium }
+                }
+            }
+        """.trimIndent()
+
+        val jsonBody = JSONObject().apply {
+            put("query", query)
+            put("variables", JSONObject().put("search", queryTitle))
+        }
+
+        val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+        val body = jsonBody.toString().toRequestBody(mediaType)
+        val req = POST("https://graphql.anilist.co", headers, body)
+
+        return runCatching {
+            val resp = client.newCall(req).execute()
+            val text = resp.body.string()
+            val jsonObj = JSONObject(text)
+            val media = jsonObj.optJSONObject("data")?.optJSONObject("Media") ?: return null
+
+            val titleObj = media.optJSONObject("title")
+            val englishTitle = titleObj?.optString("english")?.takeIf { it.isNotBlank() }
+                ?: titleObj?.optString("userPreferred")?.takeIf { it.isNotBlank() }
+                ?: titleObj?.optString("romaji")?.takeIf { it.isNotBlank() }
+
+            val rawDesc = media.optString("description")
+            val cleanDesc = cleanHtml(rawDesc)
+
+            val genresList = mutableListOf<String>()
+            val genresArr = media.optJSONArray("genres")
+            if (genresArr != null) {
+                for (i in 0 until genresArr.length()) {
+                    genresList.add(genresArr.getString(i))
+                }
+            }
+
+            val coverObj = media.optJSONObject("coverImage")
+            val cover = coverObj?.optString("extraLarge")?.takeIf { it.isNotBlank() }
+                ?: coverObj?.optString("large")?.takeIf { it.isNotBlank() }
+                ?: coverObj?.optString("medium")
+
+            val statusStr = media.optString("status")
+            val statusVal = when (statusStr) {
+                "FINISHED" -> SAnime.COMPLETED
+                "RELEASING" -> SAnime.ONGOING
+                else -> SAnime.UNKNOWN
+            }
+
+            AniListMeta(
+                title = englishTitle.orEmpty(),
+                description = cleanDesc,
+                genres = genresList.joinToString(", "),
+                cover = cover,
+                status = statusVal,
+            )
+        }.getOrNull()
+    }
+
+    private fun cleanHtml(html: String?): String? {
+        if (html.isNullOrBlank()) return null
+        return html
+            .replace("<br>", "\n")
+            .replace("<br/>", "\n")
+            .replace("<br />", "\n")
+            .replace(Regex("<.*?>"), "")
+            .trim()
+    }
+
+    private data class AniListMeta(
+        val title: String,
+        val description: String?,
+        val genres: String,
+        val cover: String?,
+        val status: Int,
+    )
 
     // ============================ RECOMMENDATIONS ============================
 
@@ -269,22 +402,39 @@ class Lunar : Source() {
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val slug = response.request.url.queryParameter("slug") ?: return emptyList()
-        val seasonsCount = runCatching {
+        val rawSlug = response.request.url.queryParameter("slug") ?: return emptyList()
+        val cleanSlug = extractCleanSlug(rawSlug)
+
+        var seasonsCount = runCatching {
             val seasonsData = response.parseAs<SeasonsResponse>(json)
             maxOf(1, seasonsData.seasons)
         }.getOrDefault(1)
+
+        val slug = if (seasonsCount <= 0 && cleanSlug != rawSlug) {
+            cleanSlug
+        } else {
+            rawSlug
+        }
 
         val episodes = mutableListOf<SEpisode>()
         var globalEpisodeNum = 1F
 
         for (season in 1..seasonsCount) {
-            val seasonReq = GET("$API_BASE/api/animes/episodes?slug=$slug&season=$season", headers)
-            val epCount = runCatching {
+            var seasonReq = GET("$API_BASE/api/animes/episodes?slug=$slug&season=$season", headers)
+            var epCount = runCatching {
                 val seasonResp = client.newCall(seasonReq).execute()
                 val countData = seasonResp.parseAs<EpisodesCountResponse>(json)
                 countData.episodes
             }.getOrDefault(0)
+
+            if (epCount == 0 && slug != cleanSlug) {
+                seasonReq = GET("$API_BASE/api/animes/episodes?slug=$cleanSlug&season=$season", headers)
+                epCount = runCatching {
+                    val seasonResp = client.newCall(seasonReq).execute()
+                    val countData = seasonResp.parseAs<EpisodesCountResponse>(json)
+                    countData.episodes
+                }.getOrDefault(0)
+            }
 
             for (ep in 1..epCount) {
                 val epData = EpisodeData(slug = slug, season = season, episode = ep)
@@ -293,7 +443,7 @@ class Lunar : Source() {
                         url = epData.toJsonString(json)
                         name = if (seasonsCount > 1) "Season $season Episode $ep" else "Episode $ep"
                         episode_number = globalEpisodeNum++
-                        scanlator = "GER-DUB | GER-SUB | ENG-SUB"
+                        scanlator = "ENG-DUB | ENG-SUB | GER-DUB | GER-SUB"
                     },
                 )
             }
@@ -309,23 +459,41 @@ class Lunar : Source() {
             episode.url.parseAs<EpisodeData>(json)
         }.getOrDefault(EpisodeData(slug = extractSlug(episode.url), season = 1, episode = 1))
 
-        val streamReq = GET("$API_BASE/api/stream?slug=${data.slug}&season=${data.season}&episode=${data.episode}", headers)
-        val streamData = runCatching {
+        val cleanSlug = extractCleanSlug(data.slug.orEmpty())
+
+        var streamReq = GET("$API_BASE/api/stream?slug=${data.slug}&season=${data.season}&episode=${data.episode}", headers)
+        var streamData = runCatching {
             val resp = client.newCall(streamReq).execute()
             resp.parseAs<StreamResponse>(json)
         }.getOrNull()
+
+        if ((streamData == null || streamData.episodes.isEmpty()) && cleanSlug != data.slug) {
+            streamReq = GET("$API_BASE/api/stream?slug=$cleanSlug&season=${data.season}&episode=${data.episode}", headers)
+            streamData = runCatching {
+                val resp = client.newCall(streamReq).execute()
+                resp.parseAs<StreamResponse>(json)
+            }.getOrNull()
+        }
 
         val hosters = streamData?.episodes?.flatMap { it.hosters }.orEmpty()
         val availableLangs = hosters.mapNotNull { it.language?.lowercase()?.trim() }.filter { it.isNotBlank() }.distinct()
 
         val hosterList = mutableListOf<Hoster>()
 
+        // Always provide English Dub / Dual Audio folder
+        hosterList.add(
+            Hoster(
+                hosterName = "English Dub / Dual Audio (ENG-DUB / Fast Cloud)",
+                hosterUrl = "${data.slug}|${data.season}|${data.episode}|eng-dub",
+            ),
+        )
+
         for (lang in availableLangs) {
+            if (lang == "eng-dub") continue // Handled above
             val displayName = when (lang) {
                 "ger-dub" -> "German Dub (GER-DUB)"
                 "ger-sub" -> "German Sub (GER-SUB)"
                 "eng-sub" -> "English Sub (ENG-SUB)"
-                "eng-dub" -> "English Dub (ENG-DUB)"
                 "jap-sub" -> "Japanese Sub (JAP-SUB)"
                 else -> "${lang.uppercase()} Sub/Dub"
             }
@@ -333,7 +501,7 @@ class Lunar : Source() {
             hosterList.add(Hoster(hosterName = displayName, hosterUrl = hosterUrl))
         }
 
-        // Always provide 3rd Provider (English Streams) folder as fallback / extra option
+        // Always provide 3rd Provider (English Streams) folder
         hosterList.add(
             Hoster(
                 hosterName = "English Streams (3rd Provider)",
@@ -353,84 +521,61 @@ class Lunar : Source() {
         val season = parts[1].toIntOrNull() ?: 1
         val episode = parts[2].toIntOrNull() ?: 1
         val targetLang = parts[3].lowercase()
+        val cleanSlug = extractCleanSlug(slug)
 
         if (targetLang == "3rdprovider") {
             return fetch3rdProviderVideos(slug, episode)
         }
 
-        val streamReq = GET("$API_BASE/api/stream?slug=$slug&season=$season&episode=$episode", headers)
-        val streamData = runCatching {
+        var streamReq = GET("$API_BASE/api/stream?slug=$slug&season=$season&episode=$episode", headers)
+        var streamData = runCatching {
             val resp = client.newCall(streamReq).execute()
             resp.parseAs<StreamResponse>(json)
-        }.getOrNull() ?: return emptyList()
+        }.getOrNull()
 
-        val matchingHosters = streamData.episodes.flatMap { it.hosters }
-            .filter { it.language.orEmpty().equals(targetLang, ignoreCase = true) }
+        if ((streamData == null || streamData.episodes.isEmpty()) && cleanSlug != slug) {
+            streamReq = GET("$API_BASE/api/stream?slug=$cleanSlug&season=$season&episode=$episode", headers)
+            streamData = runCatching {
+                val resp = client.newCall(streamReq).execute()
+                resp.parseAs<StreamResponse>(json)
+            }.getOrNull()
+        }
 
-        return matchingHosters.parallelCatchingFlatMap { hosterItem ->
-            val hosterName = hosterItem.hoster.orEmpty().lowercase()
-            val uri = hosterItem.redirect_uri.orEmpty()
-            if (uri.isBlank()) return@parallelCatchingFlatMap emptyList()
+        val matchingHosters = streamData?.episodes?.flatMap { it.hosters }
+            ?.filter { it.language.orEmpty().equals(targetLang, ignoreCase = true) }
+            .orEmpty()
 
-            val prefix = "[${hosterName.uppercase()}] "
+        val videos = matchingHosters.parallelCatchingFlatMap { hosterItem ->
+            extractVideoFromHoster(hosterItem)
+        }.toMutableList()
 
-            when {
-                hosterName == "vidmoly" || uri.contains("vidmoly") -> {
-                    vidMolyExtractor.videosFromUrl(uri, prefix = prefix)
-                }
+        if (targetLang == "eng-dub" || targetLang == "dual") {
+            videos.addAll(fetch3rdProviderVideos(slug, episode))
+        }
 
-                hosterName == "voe" || uri.contains("voe.") -> {
-                    voeExtractor.videosFromUrl(uri, prefix = prefix)
-                }
-
-                hosterName == "filemoon" || uri.contains("filemoon") -> {
-                    filemoonExtractor.videosFromUrl(uri, prefix = prefix)
-                }
-
-                hosterName == "doodstream" || hosterName == "dood" || uri.contains("dood") || uri.contains("ds2play") || uri.contains("bysezejataos") -> {
-                    doodExtractor.videosFromUrl(uri, quality = "${prefix}DoodStream")
-                }
-
-                hosterName == "streamtape" || uri.contains("streamtape") -> {
-                    streamTapeExtractor.videosFromUrl(uri, quality = "${prefix}StreamTape")
-                }
-
-                hosterName == "luluvdo" || hosterName == "lulu" || uri.contains("luluvdo") -> {
-                    luluExtractor.videosFromUrl(uri, prefix = prefix)
-                }
-
-                hosterName == "streamwish" || uri.contains("streamwish") || uri.contains("wishembed") || uri.contains("swish") -> {
-                    streamWishExtractor.videosFromUrl(uri, prefix = prefix)
-                }
-
-                hosterName == "vidguard" || uri.contains("vidguard") || uri.contains("vgfplay") || uri.contains("vembed") -> {
-                    vidGuardExtractor.videosFromUrl(uri, prefix = prefix)
-                }
-
-                uri.contains(".m3u8") -> {
-                    playlistUtils.extractFromHls(uri, videoNameGen = { q -> prefix + q })
-                }
-
-                else -> {
-                    universalExtractor.videosFromUrl(uri, headers, prefix = prefix)
-                }
-            }
-        }.sortVideos()
+        return videos.sortVideos()
     }
 
     // ============================== 3RD PROVIDER RESOLVER ==============================
 
     private fun fetch3rdProviderVideos(slug: String, episode: Int): List<Video> {
         val videos = mutableListOf<Video>()
-        runCatching {
-            val req = GET("$API_BASE/api/3rdprovider?slug=$slug&episode=$episode&autoplay=true", headers)
+        val cleanSlug = extractCleanSlug(slug)
+
+        fun tryFetch(s: String) {
+            val req = GET("$API_BASE/api/3rdprovider?slug=$s&episode=$episode&autoplay=true", headers)
             val resp = client.newCall(req).execute()
             val thirdData = resp.parseAs<ThirdPartyResponse>(json)
             for (item in thirdData.data) {
                 val playerUrl = item.player_url.orEmpty()
                 if (playerUrl.isBlank()) continue
                 val serverName = item.server ?: "Fast Cloud"
-                val audio = item.audio?.uppercase() ?: "SUB"
+                val audio = when (item.audio?.lowercase()) {
+                    "dual" -> "ENG-DUB (Dual)"
+                    "dub" -> "ENG-DUB"
+                    "sub" -> "ENG-SUB"
+                    else -> item.audio?.uppercase() ?: "ENG-DUB"
+                }
                 val prefix = "[$serverName - $audio] "
                 when {
                     playerUrl.contains(".m3u8") -> {
@@ -443,6 +588,12 @@ class Lunar : Source() {
                 }
             }
         }
+
+        runCatching { tryFetch(slug) }
+        if (videos.isEmpty() && cleanSlug != slug) {
+            runCatching { tryFetch(cleanSlug) }
+        }
+
         return videos.sortVideos()
     }
 
@@ -457,62 +608,73 @@ class Lunar : Source() {
     }
 
     override fun videoListParse(response: Response): List<Video> {
+        val slug = response.request.url.queryParameter("slug") ?: extractSlug(response.request.url.encodedPath)
+        val episode = response.request.url.queryParameter("episode")?.toIntOrNull() ?: 1
+
         val streamData = runCatching {
             response.parseAs<StreamResponse>(json)
-        }.getOrNull() ?: return emptyList()
+        }.getOrNull()
 
-        val hosters = streamData.episodes.flatMap { it.hosters }
+        val hosters = streamData?.episodes?.flatMap { it.hosters }.orEmpty()
 
-        return hosters.parallelCatchingFlatMapBlocking { hosterItem ->
-            val hoster = hosterItem.hoster.orEmpty().lowercase()
-            val lang = hosterItem.language.orEmpty()
-            val uri = hosterItem.redirect_uri.orEmpty()
-            if (uri.isBlank()) return@parallelCatchingFlatMapBlocking emptyList()
+        val videos = hosters.parallelCatchingFlatMapBlocking { hosterItem ->
+            extractVideoFromHoster(hosterItem)
+        }.toMutableList()
 
-            val prefix = "[${hoster.uppercase()}${if (lang.isNotBlank()) " - ${lang.uppercase()}" else ""}] "
+        videos.addAll(fetch3rdProviderVideos(slug, episode))
 
-            when {
-                hoster == "vidmoly" || uri.contains("vidmoly") -> {
-                    vidMolyExtractor.videosFromUrl(uri, prefix = prefix)
-                }
+        return videos.sortVideos()
+    }
 
-                hoster == "voe" || uri.contains("voe.") -> {
-                    voeExtractor.videosFromUrl(uri, prefix = prefix)
-                }
+    private fun extractVideoFromHoster(hosterItem: HosterItem): List<Video> {
+        val hoster = hosterItem.hoster.orEmpty().lowercase()
+        val lang = hosterItem.language.orEmpty()
+        val uri = hosterItem.redirect_uri.orEmpty()
+        if (uri.isBlank()) return emptyList()
 
-                hoster == "filemoon" || uri.contains("filemoon") -> {
-                    filemoonExtractor.videosFromUrl(uri, prefix = prefix)
-                }
+        val prefix = "[${hoster.uppercase()}${if (lang.isNotBlank()) " - ${lang.uppercase()}" else ""}] "
 
-                hoster == "doodstream" || hoster == "dood" || uri.contains("dood") || uri.contains("ds2play") || uri.contains("bysezejataos") -> {
-                    doodExtractor.videosFromUrl(uri, quality = "${prefix}DoodStream")
-                }
-
-                hoster == "streamtape" || uri.contains("streamtape") -> {
-                    streamTapeExtractor.videosFromUrl(uri, quality = "${prefix}StreamTape")
-                }
-
-                hoster == "luluvdo" || hoster == "lulu" || uri.contains("luluvdo") -> {
-                    luluExtractor.videosFromUrl(uri, prefix = prefix)
-                }
-
-                hoster == "streamwish" || uri.contains("streamwish") || uri.contains("wishembed") || uri.contains("swish") -> {
-                    streamWishExtractor.videosFromUrl(uri, prefix = prefix)
-                }
-
-                hoster == "vidguard" || uri.contains("vidguard") || uri.contains("vgfplay") || uri.contains("vembed") -> {
-                    vidGuardExtractor.videosFromUrl(uri, prefix = prefix)
-                }
-
-                uri.contains(".m3u8") -> {
-                    playlistUtils.extractFromHls(uri, videoNameGen = { q -> prefix + q })
-                }
-
-                else -> {
-                    universalExtractor.videosFromUrl(uri, headers, prefix = prefix)
-                }
+        return when {
+            hoster == "vidmoly" || uri.contains("vidmoly") -> {
+                vidMolyExtractor.videosFromUrl(uri, prefix = prefix)
             }
-        }.sortVideos()
+
+            hoster == "voe" || uri.contains("voe.") -> {
+                voeExtractor.videosFromUrl(uri, prefix = prefix)
+            }
+
+            hoster == "filemoon" || uri.contains("filemoon") -> {
+                filemoonExtractor.videosFromUrl(uri, prefix = prefix)
+            }
+
+            hoster == "doodstream" || hoster == "dood" || uri.contains("dood") || uri.contains("ds2play") || uri.contains("bysezejataos") -> {
+                doodExtractor.videosFromUrl(uri, quality = "${prefix}DoodStream")
+            }
+
+            hoster == "streamtape" || uri.contains("streamtape") -> {
+                streamTapeExtractor.videosFromUrl(uri, quality = "${prefix}StreamTape")
+            }
+
+            hoster == "luluvdo" || hoster == "lulu" || uri.contains("luluvdo") -> {
+                luluExtractor.videosFromUrl(uri, prefix = prefix)
+            }
+
+            hoster == "streamwish" || uri.contains("streamwish") || uri.contains("wishembed") || uri.contains("swish") -> {
+                streamWishExtractor.videosFromUrl(uri, prefix = prefix)
+            }
+
+            hoster == "vidguard" || uri.contains("vidguard") || uri.contains("vgfplay") || uri.contains("vembed") -> {
+                vidGuardExtractor.videosFromUrl(uri, prefix = prefix)
+            }
+
+            uri.contains(".m3u8") -> {
+                playlistUtils.extractFromHls(uri, videoNameGen = { q -> prefix + q })
+            }
+
+            else -> {
+                universalExtractor.videosFromUrl(uri, headers, prefix = prefix)
+            }
+        }
     }
 
     // ============================== PREFERENCES & SORTING ==============================
@@ -526,13 +688,14 @@ class Lunar : Source() {
             compareByDescending<Video> { video ->
                 val q = video.videoTitle.lowercase()
                 when {
-                    preferredHoster.isNotBlank() && q.contains(preferredHoster) -> 1
+                    preferredLang == "eng-dub" && (q.contains("eng-dub") || q.contains("dual") || q.contains("fast cloud")) -> 2
+                    preferredLang.isNotBlank() && preferredLang != "all" && q.contains(preferredLang) -> 1
                     else -> 0
                 }
             }.thenByDescending { video ->
                 val q = video.videoTitle.lowercase()
                 when {
-                    preferredLang.isNotBlank() && preferredLang != "all" && q.contains(preferredLang) -> 1
+                    preferredHoster.isNotBlank() && q.contains(preferredHoster) -> 1
                     else -> 0
                 }
             }.thenByDescending { video ->
@@ -548,8 +711,8 @@ class Lunar : Source() {
         ListPreference(screen.context).apply {
             key = PREF_LANG_KEY
             title = "Preferred Audio / Language Folder"
-            entries = arrayOf("English Sub (ENG-SUB)", "English Streams (3rd Provider)", "German Dub (GER-DUB)", "German Sub (GER-SUB)", "All Languages")
-            entryValues = arrayOf("eng-sub", "3rdprovider", "ger-dub", "ger-sub", "all")
+            entries = arrayOf("English Dub / Dual Audio (ENG-DUB)", "English Sub (ENG-SUB)", "German Dub (GER-DUB)", "German Sub (GER-SUB)", "All Languages")
+            entryValues = arrayOf("eng-dub", "eng-sub", "ger-dub", "ger-sub", "all")
             setDefaultValue(PREF_LANG_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
@@ -628,6 +791,11 @@ class Lunar : Source() {
         .substringBefore("?")
         .substringBefore("#")
 
+    private fun extractCleanSlug(urlOrSlug: String): String {
+        val slug = extractSlug(urlOrSlug)
+        return slug.replace(Regex("-[a-z0-9]{6}$"), "")
+    }
+
     private fun paginateList(list: List<SAnime>, page: Int, perPage: Int = 25): AnimesPage {
         val startIdx = (page - 1) * perPage
         val endIdx = minOf(startIdx + perPage, list.size)
@@ -640,7 +808,7 @@ class Lunar : Source() {
         private const val API_BASE = "https://api.lunarx.to"
 
         private const val PREF_LANG_KEY = "preferred_language"
-        private const val PREF_LANG_DEFAULT = "eng-sub"
+        private const val PREF_LANG_DEFAULT = "eng-dub"
 
         private const val PREF_HOSTER_KEY = "preferred_hoster"
         private const val PREF_HOSTER_DEFAULT = "voe"
