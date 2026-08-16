@@ -12,15 +12,16 @@ object Filters {
         fun isDefault() = state == 0
     }
 
-    class LanguageFilter : UriPartFilter(
-        "Language",
-        arrayOf(
-            Pair("All", ""),
-            Pair("German Dub (Ger)", "Ger"),
-            Pair("German Sub (GerSub)", "GerSub"),
-            Pair("English Sub (EngSub)", "EngSub"),
-        ),
-    )
+    class LanguageFilter :
+        UriPartFilter(
+            "Language",
+            arrayOf(
+                Pair("All", ""),
+                Pair("German Dub (Ger)", "Ger"),
+                Pair("German Sub (GerSub)", "GerSub"),
+                Pair("English Sub (EngSub)", "EngSub"),
+            ),
+        )
 
     class YearFilter : AnimeFilter.Text("Year (e.g. 2024)", "")
 
