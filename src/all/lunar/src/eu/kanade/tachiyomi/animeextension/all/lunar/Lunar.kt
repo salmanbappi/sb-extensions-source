@@ -2,8 +2,10 @@ package eu.kanade.tachiyomi.animeextension.all.lunar
 
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -18,15 +20,17 @@ import eu.kanade.tachiyomi.lib.vidguardextractor.VidGuardExtractor
 import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
 import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.network.GET
+import extensions.utils.EpisodeMetadataFetcher
 import extensions.utils.Source
 import extensions.utils.parseAs
 import extensions.utils.toJsonString
+import java.net.URLEncoder
+import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.Serializable
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import java.net.URLEncoder
 
 class Lunar : Source() {
 
@@ -36,6 +40,8 @@ class Lunar : Source() {
     override val supportsLatest = true
 
     override val client: OkHttpClient = network.cloudflareClient
+
+    private val metadataFetcher by lazy { EpisodeMetadataFetcher(client, json) }
 
     private val doodExtractor by lazy { DoodExtractor(client) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
@@ -55,7 +61,9 @@ class Lunar : Source() {
 
     // ============================== POPULAR ANIME ==============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$API_BASE/api/animes/search?query=", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        return GET("$API_BASE/api/animes/search?query=", headers)
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val searchData = response.parseAs<SearchResponse>(json)
@@ -71,7 +79,9 @@ class Lunar : Source() {
 
     // ============================== LATEST UPDATES ==============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/anime/latest-aired?limit=25", headers)
+    override fun latestUpdatesRequest(page: Int): Request {
+        return GET("$baseUrl/api/anime/latest-aired?limit=25", headers)
+    }
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val latestData = response.parseAs<LatestResponse>(json)
@@ -110,7 +120,7 @@ class Lunar : Source() {
 
     override fun animeDetailsRequest(anime: SAnime): Request {
         val slug = extractSlug(anime.url)
-        return GET("$API3_BASE/api/anime/$slug", headers)
+        return GET("$API_BASE/api/anime/$slug", headers)
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
@@ -129,6 +139,29 @@ class Lunar : Source() {
                 }
             }
         }
+
+        // Fallback for description if empty
+        if (anime.description.isNullOrBlank()) {
+            runCatching {
+                val searchReq = GET("$API_BASE/api/animes/search?query=${URLEncoder.encode(anime.title.ifBlank { extractSlug(response.request.url.encodedPath) }, "UTF-8")}", headers)
+                val searchResp = client.newCall(searchReq).execute()
+                val searchData = searchResp.parseAs<SearchResponse>(json)
+                val match = searchData.animes.firstOrNull()
+                if (match != null) {
+                    if (anime.title.isBlank()) anime.title = match.title.orEmpty()
+                    if (anime.thumbnail_url.isNullOrBlank()) anime.thumbnail_url = match.poster_url
+                    if (anime.description.isNullOrBlank()) anime.description = match.description
+                    if (anime.genre.isNullOrBlank()) anime.genre = match.genres.joinToString(", ")
+                    if (anime.status == SAnime.UNKNOWN) {
+                        anime.status = when {
+                            match.end_year != null -> SAnime.COMPLETED
+                            else -> SAnime.ONGOING
+                        }
+                    }
+                }
+            }
+        }
+
         anime.initialized = true
         return anime
     }
@@ -138,6 +171,38 @@ class Lunar : Source() {
     override fun episodeListRequest(anime: SAnime): Request {
         val slug = extractSlug(anime.url)
         return GET("$API_BASE/api/animes/seasons?slug=$slug", headers)
+    }
+
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
+        val episodes = super.getEpisodeList(anime)
+        val loadThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
+        val loadTitles = preferences.getBoolean(PREF_LOAD_TITLES_KEY, true)
+        val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, true)
+
+        if (!loadThumbnails && !loadTitles && !loadDescriptions) return episodes
+
+        return runCatching {
+            val metadataMap = metadataFetcher.fetch(malId = "", animeTitle = anime.title, fallbackThumbnailUrl = anime.thumbnail_url)
+            if (metadataMap.isEmpty()) return episodes
+
+            episodes.map { episode ->
+                val num = episode.episode_number.toInt()
+                val meta = metadataMap[num] ?: return@map episode
+                episode.apply {
+                    if (loadThumbnails && !meta.thumbnailUrl.isNullOrEmpty() && (preview_url.isNullOrEmpty() || preview_url!!.contains("SiteTitle"))) {
+                        preview_url = meta.thumbnailUrl
+                    }
+                    if (loadDescriptions && !meta.description.isNullOrEmpty()) {
+                        summary = meta.description
+                    }
+                    if (loadTitles && !meta.title.isNullOrBlank()) {
+                        val seasonPrefix = if (name.startsWith("Season")) name.substringBefore("Episode").trim() + " - " else ""
+                        val epPad = num.toString().padStart(2, '0')
+                        name = "${seasonPrefix}Ep. $epPad - ${meta.title}"
+                    }
+                }
+            }
+        }.getOrDefault(episodes)
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
@@ -165,6 +230,7 @@ class Lunar : Source() {
                         url = epData.toJsonString(json)
                         name = if (seasonsCount > 1) "Season $season Episode $ep" else "Episode $ep"
                         episode_number = globalEpisodeNum++
+                        scanlator = "GER-DUB | GER-SUB | ENG-SUB"
                     },
                 )
             }
@@ -173,7 +239,150 @@ class Lunar : Source() {
         return episodes.reversed()
     }
 
-    // ============================== VIDEO LIST ==============================
+    // ============================== HOSTER LIST (BY LANGUAGE) ==============================
+
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val data = runCatching {
+            episode.url.parseAs<EpisodeData>(json)
+        }.getOrDefault(EpisodeData(slug = extractSlug(episode.url), season = 1, episode = 1))
+
+        val streamReq = GET("$API_BASE/api/stream?slug=${data.slug}&season=${data.season}&episode=${data.episode}", headers)
+        val streamData = runCatching {
+            val resp = client.newCall(streamReq).execute()
+            resp.parseAs<StreamResponse>(json)
+        }.getOrNull()
+
+        val hosters = streamData?.episodes?.flatMap { it.hosters }.orEmpty()
+        val availableLangs = hosters.mapNotNull { it.language?.lowercase()?.trim() }.filter { it.isNotBlank() }.distinct()
+
+        val hosterList = mutableListOf<Hoster>()
+
+        for (lang in availableLangs) {
+            val displayName = when (lang) {
+                "ger-dub" -> "German Dub (GER-DUB)"
+                "ger-sub" -> "German Sub (GER-SUB)"
+                "eng-sub" -> "English Sub (ENG-SUB)"
+                "eng-dub" -> "English Dub (ENG-DUB)"
+                "jap-sub" -> "Japanese Sub (JAP-SUB)"
+                else -> "${lang.uppercase()} Sub/Dub"
+            }
+            val hosterUrl = "${data.slug}|${data.season}|${data.episode}|$lang"
+            hosterList.add(Hoster(hosterName = displayName, hosterUrl = hosterUrl))
+        }
+
+        // Always provide 3rd Provider (English Streams) folder as fallback / extra option
+        hosterList.add(
+            Hoster(
+                hosterName = "English Streams (3rd Provider)",
+                hosterUrl = "${data.slug}|${data.season}|${data.episode}|3rdprovider",
+            ),
+        )
+
+        // Prioritize folders based on user's preferred language setting
+        val preferredLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT) ?: PREF_LANG_DEFAULT
+        return hosterList.sortedByDescending { it.hosterUrl.contains(preferredLang, ignoreCase = true) }
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val parts = hoster.hosterUrl.split("|")
+        if (parts.size < 4) return emptyList()
+        val slug = parts[0]
+        val season = parts[1].toIntOrNull() ?: 1
+        val episode = parts[2].toIntOrNull() ?: 1
+        val targetLang = parts[3].lowercase()
+
+        if (targetLang == "3rdprovider") {
+            return fetch3rdProviderVideos(slug, episode)
+        }
+
+        val streamReq = GET("$API_BASE/api/stream?slug=$slug&season=$season&episode=$episode", headers)
+        val streamData = runCatching {
+            val resp = client.newCall(streamReq).execute()
+            resp.parseAs<StreamResponse>(json)
+        }.getOrNull() ?: return emptyList()
+
+        val matchingHosters = streamData.episodes.flatMap { it.hosters }
+            .filter { it.language.orEmpty().equals(targetLang, ignoreCase = true) }
+
+        return matchingHosters.parallelCatchingFlatMap { hosterItem ->
+            val hosterName = hosterItem.hoster.orEmpty().lowercase()
+            val uri = hosterItem.redirect_uri.orEmpty()
+            if (uri.isBlank()) return@parallelCatchingFlatMap emptyList()
+
+            val prefix = "[${hosterName.uppercase()}] "
+
+            when {
+                hosterName == "vidmoly" || uri.contains("vidmoly") -> {
+                    vidMolyExtractor.videosFromUrl(uri, prefix = prefix)
+                }
+
+                hosterName == "voe" || uri.contains("voe.") -> {
+                    voeExtractor.videosFromUrl(uri, prefix = prefix)
+                }
+
+                hosterName == "filemoon" || uri.contains("filemoon") -> {
+                    filemoonExtractor.videosFromUrl(uri, prefix = prefix)
+                }
+
+                hosterName == "doodstream" || hosterName == "dood" || uri.contains("dood") || uri.contains("ds2play") || uri.contains("bysezejataos") -> {
+                    doodExtractor.videosFromUrl(uri, quality = "${prefix}DoodStream")
+                }
+
+                hosterName == "streamtape" || uri.contains("streamtape") -> {
+                    streamTapeExtractor.videosFromUrl(uri, quality = "${prefix}StreamTape")
+                }
+
+                hosterName == "luluvdo" || hosterName == "lulu" || uri.contains("luluvdo") -> {
+                    luluExtractor.videosFromUrl(uri, prefix = prefix)
+                }
+
+                hosterName == "streamwish" || uri.contains("streamwish") || uri.contains("wishembed") || uri.contains("swish") -> {
+                    streamWishExtractor.videosFromUrl(uri, prefix = prefix)
+                }
+
+                hosterName == "vidguard" || uri.contains("vidguard") || uri.contains("vgfplay") || uri.contains("vembed") -> {
+                    vidGuardExtractor.videosFromUrl(uri, prefix = prefix)
+                }
+
+                uri.contains(".m3u8") -> {
+                    playlistUtils.extractFromHls(uri, videoNameGen = { q -> prefix + q })
+                }
+
+                else -> {
+                    universalExtractor.videosFromUrl(uri, headers, prefix = prefix)
+                }
+            }
+        }.sortVideos()
+    }
+
+    // ============================== 3RD PROVIDER RESOLVER ==============================
+
+    private fun fetch3rdProviderVideos(slug: String, episode: Int): List<Video> {
+        val videos = mutableListOf<Video>()
+        runCatching {
+            val req = GET("$API_BASE/api/3rdprovider?slug=$slug&episode=$episode&autoplay=true", headers)
+            val resp = client.newCall(req).execute()
+            val thirdData = resp.parseAs<ThirdPartyResponse>(json)
+            for (item in thirdData.data) {
+                val playerUrl = item.player_url.orEmpty()
+                if (playerUrl.isBlank()) continue
+                val serverName = item.server ?: "Fast Cloud"
+                val audio = item.audio?.uppercase() ?: "SUB"
+                val prefix = "[$serverName - $audio] "
+                when {
+                    playerUrl.contains(".m3u8") -> {
+                        videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> prefix + q }))
+                    }
+                    else -> {
+                        videos.addAll(universalExtractor.videosFromUrl(playerUrl, headers, prefix = prefix))
+                    }
+                }
+            }
+        }
+        return videos.sortVideos()
+    }
+
+    // ============================== VIDEO LIST (FALLBACK) ==============================
 
     override fun videoListRequest(episode: SEpisode): Request {
         val data = runCatching {
@@ -273,11 +482,11 @@ class Lunar : Source() {
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
-            key = PREF_HOSTER_KEY
-            title = "Preferred Server / Hoster"
-            entries = arrayOf("Vidmoly", "VOE", "Filemoon", "DoodStream", "StreamTape", "LuluStream", "StreamWish", "Vidguard")
-            entryValues = arrayOf("vidmoly", "voe", "filemoon", "dood", "streamtape", "lulu", "streamwish", "vidguard")
-            setDefaultValue(PREF_HOSTER_DEFAULT)
+            key = PREF_LANG_KEY
+            title = "Preferred Audio / Language Folder"
+            entries = arrayOf("English Sub (ENG-SUB)", "English Streams (3rd Provider)", "German Dub (GER-DUB)", "German Sub (GER-SUB)", "All Languages")
+            entryValues = arrayOf("eng-sub", "3rdprovider", "ger-dub", "ger-sub", "all")
+            setDefaultValue(PREF_LANG_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
                 val selected = newValue as String
@@ -288,11 +497,11 @@ class Lunar : Source() {
         }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
-            key = PREF_LANG_KEY
-            title = "Preferred Language"
-            entries = arrayOf("All", "German Dub (GER-DUB)", "German Sub (GER-SUB)", "English Sub (ENG-SUB)")
-            entryValues = arrayOf("all", "ger-dub", "ger-sub", "eng-sub")
-            setDefaultValue(PREF_LANG_DEFAULT)
+            key = PREF_HOSTER_KEY
+            title = "Preferred Server / Hoster"
+            entries = arrayOf("VOE", "Vidmoly", "Filemoon", "DoodStream", "StreamTape", "LuluStream", "StreamWish", "Vidguard")
+            entryValues = arrayOf("voe", "vidmoly", "filemoon", "dood", "streamtape", "lulu", "streamwish", "vidguard")
+            setDefaultValue(PREF_HOSTER_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
                 val selected = newValue as String
@@ -316,14 +525,46 @@ class Lunar : Source() {
                 preferences.edit().putString(key, entry).commit()
             }
         }.also(screen::addPreference)
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_SHOW_THUMBNAILS_KEY
+            title = "Show episode thumbnails"
+            summary = "Display high quality episode thumbnail images in episode list"
+            setDefaultValue(true)
+            setOnPreferenceChangeListener { _, newValue ->
+                preferences.edit().putBoolean(key, newValue as Boolean).commit()
+            }
+        }.also(screen::addPreference)
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_LOAD_DESCRIPTIONS_KEY
+            title = "Load episode summaries (spoilers)"
+            summary = "Fetch and show episode descriptions in the episode info"
+            setDefaultValue(true)
+            setOnPreferenceChangeListener { _, newValue ->
+                preferences.edit().putBoolean(key, newValue as Boolean).commit()
+            }
+        }.also(screen::addPreference)
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_LOAD_TITLES_KEY
+            title = "Load episode titles"
+            summary = "Fetch canonical episode titles from metadata service"
+            setDefaultValue(true)
+            setOnPreferenceChangeListener { _, newValue ->
+                preferences.edit().putBoolean(key, newValue as Boolean).commit()
+            }
+        }.also(screen::addPreference)
     }
 
     // ============================== UTILITIES & DTOS ==============================
 
-    private fun extractSlug(url: String): String = url.removePrefix("/anime/")
-        .removePrefix("/")
-        .substringBefore("?")
-        .substringBefore("#")
+    private fun extractSlug(url: String): String {
+        return url.removePrefix("/anime/")
+            .removePrefix("/")
+            .substringBefore("?")
+            .substringBefore("#")
+    }
 
     private fun paginateList(list: List<SAnime>, page: Int, perPage: Int = 25): AnimesPage {
         val startIdx = (page - 1) * perPage
@@ -335,111 +576,127 @@ class Lunar : Source() {
 
     companion object {
         private const val API_BASE = "https://api.lunarx.to"
-        private const val API3_BASE = "https://api3.lunarx.to"
+
+        private const val PREF_LANG_KEY = "preferred_language"
+        private const val PREF_LANG_DEFAULT = "eng-sub"
 
         private const val PREF_HOSTER_KEY = "preferred_hoster"
         private const val PREF_HOSTER_DEFAULT = "voe"
 
-        private const val PREF_LANG_KEY = "preferred_language"
-        private const val PREF_LANG_DEFAULT = "all"
-
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
+
+        private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
+        private const val PREF_LOAD_DESCRIPTIONS_KEY = "pref_load_descriptions"
+        private const val PREF_LOAD_TITLES_KEY = "pref_load_titles"
     }
 
     @Serializable
     data class LatestResponse(
-        val data: List<LatestAnimeItem> = emptyList(),
-        val has_more: Boolean = false,
-        val next_cursor: String? = null,
-    )
+    val data: List<LatestAnimeItem> = emptyList(),
+    val has_more: Boolean = false,
+    val next_cursor: String? = null
+)
 
     @Serializable
     data class LatestAnimeItem(
-        val anime_id: String? = null,
-        val title: String? = null,
-        val cover: String? = null,
-        val format: String? = null,
-        val subbed: Int = 0,
-        val dubbed: Int = 0,
-        val episode_number: Int = 0,
-        val episode_title: String? = null,
-        val aired: String? = null,
-    )
+    val anime_id: String? = null,
+    val title: String? = null,
+    val cover: String? = null,
+    val format: String? = null,
+    val subbed: Int = 0,
+    val dubbed: Int = 0,
+    val episode_number: Int = 0,
+    val episode_title: String? = null,
+    val aired: String? = null
+)
 
     @Serializable
     data class SearchResponse(
-        val animes: List<AnimeItem> = emptyList(),
-        val message: String? = null,
-    )
+    val animes: List<AnimeItem> = emptyList(),
+    val message: String? = null
+)
 
     @Serializable
     data class AnimeItem(
-        val slug: String? = null,
-        val title: String? = null,
-        val poster_url: String? = null,
-        val description: String? = null,
-        val genres: List<String> = emptyList(),
-        val alt_titles: List<String> = emptyList(),
-        val start_year: Int? = null,
-        val end_year: Int? = null,
-        val tmdb_id: String? = null,
-    )
+    val slug: String? = null,
+    val title: String? = null,
+    val poster_url: String? = null,
+    val description: String? = null,
+    val genres: List<String> = emptyList(),
+    val alt_titles: List<String> = emptyList(),
+    val start_year: Int? = null,
+    val end_year: Int? = null,
+    val tmdb_id: String? = null
+)
 
     @Serializable
     data class AnimeDetailResponse(
-        val data: List<AnimeDetailItem> = emptyList(),
-    )
+    val data: List<AnimeDetailItem> = emptyList()
+)
 
     @Serializable
     data class AnimeDetailItem(
-        val slug: String? = null,
-        val title: String? = null,
-        val poster_url: String? = null,
-        val description: String? = null,
-        val genres: List<String> = emptyList(),
-        val alt_titles: List<String> = emptyList(),
-        val start_year: Int? = null,
-        val end_year: Int? = null,
-        val movie: Boolean = false,
-    )
+    val slug: String? = null,
+    val title: String? = null,
+    val poster_url: String? = null,
+    val description: String? = null,
+    val genres: List<String> = emptyList(),
+    val alt_titles: List<String> = emptyList(),
+    val start_year: Int? = null,
+    val end_year: Int? = null,
+    val movie: Boolean = false
+)
 
     @Serializable
     data class SeasonsResponse(
-        val seasons: Int = 1,
-    )
+    val seasons: Int = 1
+)
 
     @Serializable
     data class EpisodesCountResponse(
-        val episodes: Int = 0,
-    )
+    val episodes: Int = 0
+)
 
     @Serializable
     data class StreamResponse(
-        val episodes: List<StreamEpisodeItem> = emptyList(),
-        val message: String? = null,
-    )
+    val episodes: List<StreamEpisodeItem> = emptyList(),
+    val message: String? = null
+)
 
     @Serializable
     data class StreamEpisodeItem(
-        val episode: Int = 1,
-        val season: Int = 1,
-        val title: String? = null,
-        val hosters: List<HosterItem> = emptyList(),
-    )
+    val episode: Int = 1,
+    val season: Int = 1,
+    val title: String? = null,
+    val hosters: List<HosterItem> = emptyList()
+)
 
     @Serializable
     data class HosterItem(
-        val hoster: String? = null,
-        val language: String? = null,
-        val redirect_uri: String? = null,
-        val owned: Boolean = false,
-    )
+    val hoster: String? = null,
+    val language: String? = null,
+    val redirect_uri: String? = null,
+    val owned: Boolean = false
+)
 
     @Serializable
     data class EpisodeData(
-        val slug: String? = null,
-        val season: Int? = null,
-        val episode: Int? = null,
-    )
+    val slug: String? = null,
+    val season: Int? = null,
+    val episode: Int? = null
+)
+
+    @Serializable
+    data class ThirdPartyResponse(
+    val data: List<ThirdPartyItem> = emptyList(),
+    val success: Boolean = false
+)
+
+    @Serializable
+    data class ThirdPartyItem(
+    val server: String? = null,
+    val audio: String? = null,
+    val player_url: String? = null
+)
 }
