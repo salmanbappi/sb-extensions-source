@@ -14,19 +14,19 @@ import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
 import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
 import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
-import eu.kanade.tachiyomi.lib.vidguardextractor.VidguardExtractor
-import eu.kanade.tachiyomi.lib.vidmolyextractor.VidmolyExtractor
+import eu.kanade.tachiyomi.lib.vidguardextractor.VidGuardExtractor
+import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
 import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.parseAs
 import extensions.utils.toJsonString
+import java.net.URLEncoder
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.Serializable
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import java.net.URLEncoder
 
 class Lunar : Source() {
 
@@ -39,12 +39,12 @@ class Lunar : Source() {
 
     private val doodExtractor by lazy { DoodExtractor(client) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
-    private val luluExtractor by lazy { LuluExtractor(client) }
+    private val luluExtractor by lazy { LuluExtractor(client, headers) }
     private val streamTapeExtractor by lazy { StreamTapeExtractor(client) }
-    private val streamWishExtractor by lazy { StreamWishExtractor(client) }
-    private val vidguardExtractor by lazy { VidguardExtractor(client) }
-    private val vidmolyExtractor by lazy { VidmolyExtractor(client) }
-    private val voeExtractor by lazy { VoeExtractor(client) }
+    private val streamWishExtractor by lazy { StreamWishExtractor(client, headers) }
+    private val vidGuardExtractor by lazy { VidGuardExtractor(client) }
+    private val vidMolyExtractor by lazy { VidMolyExtractor(client, headers) }
+    private val voeExtractor by lazy { VoeExtractor(client, headers) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
@@ -55,14 +55,16 @@ class Lunar : Source() {
 
     // ============================== POPULAR ANIME ==============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$API_BASE/api/animes/search?query=", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        return GET("$API_BASE/api/animes/search?query=", headers)
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val searchData = response.parseAs<SearchResponse>(json)
         val allAnime = searchData.animes.map { item ->
             SAnime.create().apply {
                 url = "/anime/${item.slug}"
-                title = item.title
+                title = item.title.orEmpty()
                 thumbnail_url = item.poster_url
             }
         }
@@ -71,14 +73,16 @@ class Lunar : Source() {
 
     // ============================== LATEST UPDATES ==============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/anime/latest-aired?limit=25", headers)
+    override fun latestUpdatesRequest(page: Int): Request {
+        return GET("$baseUrl/api/anime/latest-aired?limit=25", headers)
+    }
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val latestData = response.parseAs<LatestResponse>(json)
         val animeList = latestData.data.map { item ->
             SAnime.create().apply {
                 url = "/anime/${item.anime_id}"
-                title = item.title
+                title = item.title.orEmpty()
                 thumbnail_url = item.cover
             }
         }
@@ -97,7 +101,7 @@ class Lunar : Source() {
         val animes = searchData.animes.map { item ->
             SAnime.create().apply {
                 url = "/anime/${item.slug}"
-                title = item.title
+                title = item.title.orEmpty()
                 thumbnail_url = item.poster_url
             }
         }
@@ -119,7 +123,7 @@ class Lunar : Source() {
             val res = response.parseAs<AnimeDetailResponse>(json)
             val item = res.data.firstOrNull()
             if (item != null) {
-                anime.title = item.title
+                anime.title = item.title.orEmpty()
                 anime.thumbnail_url = item.poster_url
                 anime.description = item.description
                 anime.genre = item.genres.joinToString(", ")
@@ -200,7 +204,7 @@ class Lunar : Source() {
 
             when {
                 hoster == "vidmoly" || uri.contains("vidmoly") -> {
-                    vidmolyExtractor.videosFromUrl(uri, prefix = prefix)
+                    vidMolyExtractor.videosFromUrl(uri, prefix = prefix)
                 }
 
                 hoster == "voe" || uri.contains("voe.") -> {
@@ -228,7 +232,7 @@ class Lunar : Source() {
                 }
 
                 hoster == "vidguard" || uri.contains("vidguard") || uri.contains("vgfplay") || uri.contains("vembed") -> {
-                    vidguardExtractor.videosFromUrl(uri, prefix = prefix)
+                    vidGuardExtractor.videosFromUrl(uri, prefix = prefix)
                 }
 
                 uri.contains(".m3u8") -> {
@@ -320,10 +324,12 @@ class Lunar : Source() {
 
     // ============================== UTILITIES & DTOS ==============================
 
-    private fun extractSlug(url: String): String = url.removePrefix("/anime/")
-        .removePrefix("/")
-        .substringBefore("?")
-        .substringBefore("#")
+    private fun extractSlug(url: String): String {
+        return url.removePrefix("/anime/")
+            .removePrefix("/")
+            .substringBefore("?")
+            .substringBefore("#")
+    }
 
     private fun paginateList(list: List<SAnime>, page: Int, perPage: Int = 25): AnimesPage {
         val startIdx = (page - 1) * perPage
@@ -349,97 +355,97 @@ class Lunar : Source() {
 
     @Serializable
     data class LatestResponse(
-        val data: List<LatestAnimeItem> = emptyList(),
-        val has_more: Boolean = false,
-        val next_cursor: String? = null,
-    )
+    val data: List<LatestAnimeItem> = emptyList(),
+    val has_more: Boolean = false,
+    val next_cursor: String? = null
+)
 
     @Serializable
     data class LatestAnimeItem(
-        val anime_id: String? = null,
-        val title: String? = null,
-        val cover: String? = null,
-        val format: String? = null,
-        val subbed: Int = 0,
-        val dubbed: Int = 0,
-        val episode_number: Int = 0,
-        val episode_title: String? = null,
-        val aired: String? = null,
-    )
+    val anime_id: String? = null,
+    val title: String? = null,
+    val cover: String? = null,
+    val format: String? = null,
+    val subbed: Int = 0,
+    val dubbed: Int = 0,
+    val episode_number: Int = 0,
+    val episode_title: String? = null,
+    val aired: String? = null
+)
 
     @Serializable
     data class SearchResponse(
-        val animes: List<AnimeItem> = emptyList(),
-        val message: String? = null,
-    )
+    val animes: List<AnimeItem> = emptyList(),
+    val message: String? = null
+)
 
     @Serializable
     data class AnimeItem(
-        val slug: String? = null,
-        val title: String? = null,
-        val poster_url: String? = null,
-        val description: String? = null,
-        val genres: List<String> = emptyList(),
-        val alt_titles: List<String> = emptyList(),
-        val start_year: Int? = null,
-        val end_year: Int? = null,
-        val tmdb_id: String? = null,
-    )
+    val slug: String? = null,
+    val title: String? = null,
+    val poster_url: String? = null,
+    val description: String? = null,
+    val genres: List<String> = emptyList(),
+    val alt_titles: List<String> = emptyList(),
+    val start_year: Int? = null,
+    val end_year: Int? = null,
+    val tmdb_id: String? = null
+)
 
     @Serializable
     data class AnimeDetailResponse(
-        val data: List<AnimeDetailItem> = emptyList(),
-    )
+    val data: List<AnimeDetailItem> = emptyList()
+)
 
     @Serializable
     data class AnimeDetailItem(
-        val slug: String? = null,
-        val title: String? = null,
-        val poster_url: String? = null,
-        val description: String? = null,
-        val genres: List<String> = emptyList(),
-        val alt_titles: List<String> = emptyList(),
-        val start_year: Int? = null,
-        val end_year: Int? = null,
-        val movie: Boolean = false,
-    )
+    val slug: String? = null,
+    val title: String? = null,
+    val poster_url: String? = null,
+    val description: String? = null,
+    val genres: List<String> = emptyList(),
+    val alt_titles: List<String> = emptyList(),
+    val start_year: Int? = null,
+    val end_year: Int? = null,
+    val movie: Boolean = false
+)
 
     @Serializable
     data class SeasonsResponse(
-        val seasons: Int = 1,
-    )
+    val seasons: Int = 1
+)
 
     @Serializable
     data class EpisodesCountResponse(
-        val episodes: Int = 0,
-    )
+    val episodes: Int = 0
+)
 
     @Serializable
     data class StreamResponse(
-        val episodes: List<StreamEpisodeItem> = emptyList(),
-        val message: String? = null,
-    )
+    val episodes: List<StreamEpisodeItem> = emptyList(),
+    val message: String? = null
+)
 
     @Serializable
     data class StreamEpisodeItem(
-        val episode: Int = 1,
-        val season: Int = 1,
-        val title: String? = null,
-        val hosters: List<HosterItem> = emptyList(),
-    )
+    val episode: Int = 1,
+    val season: Int = 1,
+    val title: String? = null,
+    val hosters: List<HosterItem> = emptyList()
+)
 
     @Serializable
     data class HosterItem(
-        val hoster: String? = null,
-        val language: String? = null,
-        val redirect_uri: String? = null,
-        val owned: Boolean = false,
-    )
+    val hoster: String? = null,
+    val language: String? = null,
+    val redirect_uri: String? = null,
+    val owned: Boolean = false
+)
 
     @Serializable
     data class EpisodeData(
-        val slug: String? = null,
-        val season: Int? = null,
-        val episode: Int? = null,
-    )
+    val slug: String? = null,
+    val season: Int? = null,
+    val episode: Int? = null
+)
 }
