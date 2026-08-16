@@ -154,7 +154,7 @@ def fetch_icon(url: str, output_path: Path):
             for dest in destinations:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 cmd = [conv, "-background", "none", "-density", "300", input_spec, "-resize", "192x192", str(dest)]
-                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
             if temp_file.exists():
                 temp_file.unlink()
             print(f"✅ Successfully created 192x192 launcher icon: {output_path}")
@@ -169,7 +169,8 @@ def fetch_icon(url: str, output_path: Path):
         create_minimal_png(dest, 192, 192)
     if temp_file and temp_file.exists():
         temp_file.unlink()
-    print(f"✅ Generated standard fallback 192x192 PNG icon: {output_path}")
+    print(f"⚠️  ImageMagick unavailable — generated a blank placeholder 192x192 PNG at {output_path}.")
+    print("   Replace it with the real favicon manually for production use.")
     return True
 
 
@@ -187,22 +188,22 @@ def bump_version(repo_root: Path, target_lang: str = None, target_name: str = No
 
     content = gradle_file.read_text(encoding="utf-8")
 
-    # Check extVersionCode
-    m_ext = re.search(r"extVersionCode\s*=\s*(\d+)", content)
+    # Check extVersionCode — use multiline regex to exclude comment lines (// or #)
+    m_ext = re.search(r"(?m)^(?![ \t]*//).*?extVersionCode\s*=\s*(\d+)", content)
     if m_ext:
         old_ver = int(m_ext.group(1))
         new_ver = old_ver + 1
-        new_content = re.sub(r"extVersionCode\s*=\s*\d+", f"extVersionCode = {new_ver}", content)
+        new_content = re.sub(r"(?m)^((?![ \t]*//).*?)extVersionCode\s*=\s*\d+", lambda mo: mo.group(1) + f"extVersionCode = {new_ver}", content, count=1)
         gradle_file.write_text(new_content, encoding="utf-8")
         print(f"🚀 Bumped {name} (src/{lang}/{name}) extVersionCode: {old_ver} -> {new_ver}")
         return True
 
-    # Check overrideVersionCode
-    m_over = re.search(r"overrideVersionCode\s*=\s*(\d+)", content)
+    # Check overrideVersionCode — exclude comment lines
+    m_over = re.search(r"(?m)^(?![ \t]*//).*?overrideVersionCode\s*=\s*(\d+)", content)
     if m_over:
         old_ver = int(m_over.group(1))
         new_ver = old_ver + 1
-        new_content = re.sub(r"overrideVersionCode\s*=\s*\d+", f"overrideVersionCode = {new_ver}", content)
+        new_content = re.sub(r"(?m)^((?![ \t]*//).*?)overrideVersionCode\s*=\s*\d+", lambda mo: mo.group(1) + f"overrideVersionCode = {new_ver}", content, count=1)
         gradle_file.write_text(new_content, encoding="utf-8")
         print(f"🚀 Bumped {name} (src/{lang}/{name}) overrideVersionCode: {old_ver} -> {new_ver}")
         return True
@@ -323,7 +324,11 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
     gradle_file = ext_path / "build.gradle"
     if gradle_file.exists():
         g_txt = gradle_file.read_text(encoding="utf-8")
-        new_g_txt = re.sub(r'baseUrl\s*=\s*["\'][^"\']+["\']', lambda _: f"baseUrl = '{new_domain_clean}'", g_txt)
+        new_g_txt = re.sub(
+            r'baseUrl\s*=\s*(["\'])([^"\']+)\1',
+            lambda m: f"baseUrl = {m.group(1)}{new_domain_clean}{m.group(1)}",
+            g_txt
+        )
         if g_txt != new_g_txt:
             if not dry_run:
                 gradle_file.write_text(new_g_txt, encoding="utf-8")
@@ -445,13 +450,10 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
             print("❌ Failed to bump version code.")
             return False
 
-    # 3. Stage changes
+    # 3. Stage changes — only the extension directory to avoid committing unrelated
+    #    in-progress changes in lib/, lib-multisrc/, or core/.
     print("\n3️⃣ Staging git changes...")
     cmd_add = ["git", "add", str(ext_path)]
-    for shared_dir in ["core", "lib", "lib-multisrc"]:
-        shared_path = repo_root / shared_dir
-        if shared_path.exists():
-            cmd_add.append(str(shared_path))
     subprocess.run(cmd_add, cwd=repo_root, check=True, timeout=30)
 
     git_env = os.environ.copy()
@@ -463,7 +465,7 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
     cmd_commit = ["git", "commit", "-m", msg]
     commit_res = subprocess.run(cmd_commit, cwd=repo_root, capture_output=True, text=True, env=git_env, timeout=30)
     if commit_res.returncode != 0:
-        if "nothing to commit" in commit_res.stdout:
+        if "nothing to commit" in (commit_res.stdout + commit_res.stderr):
             print("ℹ️ Nothing to commit, working tree clean.")
         else:
             print(f"❌ Git commit failed: {commit_res.stderr}")
@@ -721,13 +723,13 @@ def format_codebase(repo_root: Path, target_lang: str = None, target_name: str =
             lines = raw_text.splitlines()
             cleaned_lines = [line.rstrip(" \t") for line in lines]
 
-            # Collapse 3+ consecutive empty lines to 1
+            # Collapse 2+ consecutive empty lines to 1 (ktlint allows at most 1 blank line)
             collapsed = []
             empty_count = 0
             for line in cleaned_lines:
                 if not line:
                     empty_count += 1
-                    if empty_count <= 2:
+                    if empty_count <= 1:
                         collapsed.append(line)
                 else:
                     empty_count = 0
@@ -791,6 +793,14 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
             i += 1
         return joined
 
+    def _warn_on_joined(logical_lines: list, file_warnings: list, pattern, message, flags=0):
+        """Emit a warning if *pattern* matches any logical line, reporting
+        the first physical line number of the matched group."""
+        for lineno, text in logical_lines:
+            if re.search(pattern, text, flags):
+                file_warnings.append(f"[L{lineno}] {message}")
+                return  # report once per file
+
     if target_lang and target_name:
         scan_roots = [repo_root / "src" / target_lang / target_name]
     else:
@@ -809,14 +819,6 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
             logical_lines = _join_continuation_lines(raw_lines)
             # joined_content reassembles the logical lines for full-file patterns.
             joined_content = '\n'.join(text for _, text in logical_lines)
-
-            def _warn_on_joined(pattern, message, flags=0):
-                """Emit a warning if *pattern* matches any logical line, reporting
-                the first physical line number of the matched group."""
-                for lineno, text in logical_lines:
-                    if re.search(pattern, text, flags):
-                        file_warnings.append(f"[L{lineno}] {message}")
-                        return  # report once per file
 
             # 1. Blocking Thread.sleep call
             if "Thread.sleep" in content:
@@ -855,41 +857,10 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
             if "it.quality" in content:
                 file_warnings.append("Deprecated Video property 'it.quality' — use it.videoTitle (v16 API)")
 
-            # 20. Double.toString() decimal suffix on whole-number episode strings
-            _warn_on_joined(
-                r'episode_number\s*\.\s*toString\s*\(\s*\)',
-                "Direct Double.toString() on episode_number produces trailing '.0' (e.g. '1.0') — use episodeNumber.toInt().toString() or if (num % 1.0 == 0.0) num.toInt().toString() else num.toString()",
-            )
-
-            # 21. Invalid SAnime status constants
-            invalid_sanime = re.findall(r'\bSAnime\.(NOT_YET_RELEASED|AIRING|RELEASING|FINISHED|HIATUS)\b', content)
-            if invalid_sanime:
-                file_warnings.append(f"Invalid SAnime status constant(s) '{', '.join(set(invalid_sanime))}' — use ONGOING, COMPLETED, LICENSED, PUBLISHING_FINISHED, CANCELLED, ON_HIATUS, or UNKNOWN")
-
-            # 22. sortVideos non-extension declaration signature clash
-            if re.search(r'(?:private\s+)?fun\s+sortVideos\s*\(\s*\w+\s*:\s*List<Video>\s*\)', content):
-                file_warnings.append("Declared 'fun sortVideos(videos: List<Video>)' clashing with AnimeHttpSource — use 'override fun List<Video>.sortVideos(): List<Video>'")
-
-            # 23. Redundant "Server:" prefix in hosterName
-            if re.search(r'Hoster\s*\(\s*(?:hosterName\s*=\s*)?["\']Server:\s+', content):
-                file_warnings.append('Redundant "Server:" prefix in hosterName — use clean provider name (e.g. "Misa", "MegaCloud")')
-
-            # 24. Suspend extractor called from non-suspend private helper function
-            suspend_extractors = ["vidMolyExtractor", "voeExtractor", "filemoonExtractor", "luluExtractor", "streamWishExtractor", "vidGuardExtractor"]
-            for m in re.finditer(r'(?:private|protected|internal)?\s+fun\s+(\w+)\s*\([^)]*\)\s*(?::\s*List<Video>|\s*\{)', content):
-                fn_name = m.group(1)
-                full_match = m.group(0)
-                if "suspend" not in full_match and fn_name not in ["videoListParse", "popularAnimeParse", "latestUpdatesParse", "searchAnimeParse", "animeDetailsParse", "episodeListParse", "setupPreferenceScreen", "sortVideos"]:
-                    start_pos = m.end()
-                    fn_chunk = content[start_pos:start_pos + 1200]
-                    for ext in suspend_extractors:
-                        if f"{ext}.videosFromUrl" in fn_chunk:
-                            file_warnings.append(f"Function '{fn_name}' calls suspend extractor '{ext}.videosFromUrl' but is not marked 'suspend' — use 'private suspend fun {fn_name}(...)'")
-                            break
-
             # 9. Deprecated positional Video constructor — use joined_content so
             #    multi-line Video( calls are caught.
             _warn_on_joined(
+                logical_lines, file_warnings,
                 r'\bVideo\s*\([^)]*,[^)]*,[^)]*,[^)]*\)',
                 "Deprecated 4-arg positional Video(...) constructor — use Video(videoUrl=, videoTitle=, headers=)",
             )
@@ -904,9 +875,9 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
 
             # 11. DTO Null-Safety
             if "@Serializable" in content and "data class" in content:
-                for match in re.finditer(r'@Serializable(?:\([^)]*\))?\s+(?:private\s+|protected\s+|internal\s+|public\s+)?data\s+class\s+(\w+)\s*\(([\s\S]*?)\)', content):
+                for match in re.finditer(r'@Serializable(?:\([^)]*\))?\s+(?:private\s+|protected\s+|internal\s+|public\s+)?data\s+class\s+(\w+)\s*\([\s\S]*?\)', content):
                     cls_name = match.group(1)
-                    param_block = match.group(2)
+                    param_block = match.group(2) if match.lastindex and match.lastindex >= 2 else ""
                     for line in param_block.splitlines():
                         clean_line = line.strip().rstrip(",")
                         # Strip annotations like @SerialName("...") or @Transient
@@ -958,17 +929,51 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
 
             # 19. runBlocking { } inside coroutine
             _warn_on_joined(
+                logical_lines, file_warnings,
                 r'\brunBlocking\s*\{',
                 "runBlocking { } inside coroutine — use withContext(Dispatchers.IO) { } instead",
             )
 
-            # 24. PlaylistUtils.extractFromHls parameter mismatch (subtitleTracks / audioTracks vs subtitleList / audioList)
+            # 20. Double.toString() decimal suffix on whole-number episode strings
+            _warn_on_joined(
+                logical_lines, file_warnings,
+                r'episode_number\s*\.\s*toString\s*\(\s*\)',
+                "Direct Double.toString() on episode_number produces trailing '.0' (e.g. '1.0') — use episodeNumber.toInt().toString() or if (num % 1.0 == 0.0) num.toInt().toString() else num.toString()",
+            )
+
+            # 21. Invalid SAnime status constants
+            invalid_sanime = re.findall(r'\bSAnime\.(NOT_YET_RELEASED|AIRING|RELEASING|FINISHED|HIATUS)\b', content)
+            if invalid_sanime:
+                file_warnings.append(f"Invalid SAnime status constant(s) '{', '.join(set(invalid_sanime))}' — use ONGOING, COMPLETED, LICENSED, PUBLISHING_FINISHED, CANCELLED, ON_HIATUS, or UNKNOWN")
+
+            # 22. sortVideos non-extension declaration signature clash
+            if re.search(r'(?:private\s+)?fun\s+sortVideos\s*\(\s*\w+\s*:\s*List<Video>\s*\)', content):
+                file_warnings.append("Declared 'fun sortVideos(videos: List<Video>)' clashing with AnimeHttpSource — use 'override fun List<Video>.sortVideos(): List<Video>'")
+
+            # 23. Redundant "Server:" prefix in hosterName
+            if re.search(r'Hoster\s*\(\s*(?:hosterName\s*=\s*)?["\']Server:\s+', content):
+                file_warnings.append('Redundant "Server:" prefix in hosterName — use clean provider name (e.g. "Misa", "MegaCloud")')
+
+            # 24. Suspend extractor called from non-suspend private helper function
+            suspend_extractors = ["vidMolyExtractor", "voeExtractor", "filemoonExtractor", "luluExtractor", "streamWishExtractor", "vidGuardExtractor"]
+            for m in re.finditer(r'(?:private|protected|internal)?\s+fun\s+(\w+)\s*\([^)]*\)\s*(?::\s*List<Video>|\s*\{)', content):
+                fn_name = m.group(1)
+                full_match = m.group(0)
+                if "suspend" not in full_match and fn_name not in ["videoListParse", "popularAnimeParse", "latestUpdatesParse", "searchAnimeParse", "animeDetailsParse", "episodeListParse", "setupPreferenceScreen", "sortVideos"]:
+                    start_pos = m.end()
+                    fn_chunk = content[start_pos:start_pos + 1200]
+                    for ext in suspend_extractors:
+                        if f"{ext}.videosFromUrl" in fn_chunk:
+                            file_warnings.append(f"Function '{fn_name}' calls suspend extractor '{ext}.videosFromUrl' but is not marked 'suspend' — use 'private suspend fun {fn_name}(...)'")
+                            break
+
+            # 25. PlaylistUtils.extractFromHls parameter mismatch (subtitleTracks / audioTracks vs subtitleList / audioList)
             if re.search(r'extractFromHls\s*\([^)]*subtitleTracks\s*=', joined_content):
                 file_warnings.append("PlaylistUtils.extractFromHls() parameter name mismatch: 'subtitleTracks' is invalid — use 'subtitleList = ...'")
             if re.search(r'extractFromHls\s*\([^)]*audioTracks\s*=', joined_content):
                 file_warnings.append("PlaylistUtils.extractFromHls() parameter name mismatch: 'audioTracks' is invalid — use 'audioList = ...'")
 
-            # 25. UniversalExtractor method name mismatch
+            # 26. UniversalExtractor method name mismatch
             if re.search(r'universalExtractor\s*\.\s*toVideoList\s*\(', joined_content) or re.search(r'UniversalExtractor\s*\([^)]*\)\s*\.\s*toVideoList\s*\(', joined_content):
                 file_warnings.append("UniversalExtractor method mismatch: '.toVideoList()' does not exist — use '.videosFromUrl(origRequestUrl, origRequestHeader, ...)'")
 
@@ -982,7 +987,7 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
         print("  ✓ No lint warnings or code smells detected across codebase.")
     else:
         print(f"\nSummary: {warnings} lint warning(s) found.")
-    return True
+    return warnings == 0
 
 
 def inspect_hosters(repo_root: Path, target_lang: str, target_name: str) -> bool:
@@ -1033,6 +1038,9 @@ def inspect_hosters(repo_root: Path, target_lang: str, target_name: str) -> bool
 def preflight_extension(repo_root: Path, target_lang: str, target_name: str) -> bool:
     """Chains the entire quality gate pipeline for a single extension before PR or release."""
     target_lang, target_name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
+    if not target_lang or not target_name:
+        print("❌ Could not resolve target extension module. Specify as '<module>' or '<lang>/<module>'.")
+        return False
     mod_path = f"src/{target_lang}/{target_name}"
     print(f"🚀 Running Master Pre-Flight Quality Gate on {mod_path}...\n" + "=" * 70)
 
@@ -1121,14 +1129,19 @@ def doctor(repo_root: Path) -> bool:
         all_ok = False
         errors += 1
 
-    # Check optional packages
-    opt_pkgs = {"bs4": "BeautifulSoup4 (HTML DOM parsing)", "PIL": "Pillow (Icon processing)"}
+    # Check optional packages (F-28: expanded from just bs4/PIL)
+    opt_pkgs = {
+        "bs4": "BeautifulSoup4 (HTML DOM parsing)",
+        "PIL": "Pillow (Icon processing)",
+        "requests": "requests (HTTP client for site-recon/probe-stream)",
+        "lxml": "lxml (fast HTML/XML parser)",
+    }
     for mod, desc in opt_pkgs.items():
         try:
             __import__(mod)
             print(f"  ✅ Optional Package: {desc} is available")
         except ImportError:
-            print(f"  ℹ️  Optional Package: {desc} not installed (stdlib fallbacks active)")
+            print(f"  ℹ️  Optional Package: {desc} not installed (some CLI commands may not work)")
 
     # 2. Git Version Control Check
     print("\n2️⃣  Git Version Control System:")
@@ -1149,6 +1162,18 @@ def doctor(repo_root: Path) -> bool:
         print("  ❌ Git is not installed or not found on PATH.")
         all_ok = False
         errors += 1
+
+    # GitHub CLI check (F-26)
+    gh_bin = shutil.which("gh")
+    if gh_bin:
+        try:
+            gh_ver = subprocess.run(["gh", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
+            print(f"  ✅ GitHub CLI: {gh_ver} ({gh_bin})")
+        except Exception:
+            print(f"  ✅ GitHub CLI found ({gh_bin})")
+    else:
+        print("  ⚠️  GitHub CLI (gh) not found — required for publish/CI workflow (gh run view, gh run download)")
+        warnings += 1
 
     # 3. Image Processing (ImageMagick)
     print("\n3️⃣  Image Processing Tooling:")
@@ -1175,6 +1200,13 @@ def doctor(repo_root: Path) -> bool:
         print(f"  ✅ Android SDK: {android_home}")
     else:
         print("  ℹ️  ANDROID_HOME not set (Remote CI builds handle APK compilation)")
+
+    # ADB check (F-26)
+    adb_bin = shutil.which("adb")
+    if adb_bin:
+        print(f"  ✅ ADB found ({adb_bin})")
+    else:
+        print("  ℹ️  ADB not found on PATH (required for Connected ADB Device Workflow)")
 
     # 5. Shared Extractors (lib/ health)
     print("\n5️⃣  Shared Extractor Libraries (`lib/`):")
@@ -1369,6 +1401,10 @@ def main():
             "auto-create": {
                 "script": "auto_create.py",
                 "desc": "Autonomous 1-click extension synthesizer: Recon -> AI Selectors -> Kotlin -> Icon -> Validate."
+            },
+            "status-update": {
+                "script": "status_notifier.py",
+                "desc": "Post clean status update & AI review sentiment metrics to Discord #status-update channel."
             }
         }
 
@@ -1413,6 +1449,7 @@ def main():
                 ("bump-theme", "Increment baseVersionCode in lib-multisrc."),
                 ("bump-lib", "Cascade version bumps to all modules depending on a lib."),
                 ("migrate-domain", "Automate base URL domain migration across sources."),
+                ("status-update", "Broadcast extension status, providers, audio, and sentiment to #status-update."),
             ]),
             ("🩺 Maintenance & Diagnostics", [
                 ("doctor", "Diagnose developer environment (Python, Git, Java, Android SDK)."),
@@ -1421,6 +1458,7 @@ def main():
                 ("sync-lib", "Synchronize shared extractors with upstream repositories."),
                 ("verify-extractors", "Empirically test video extractors against live HTTP streams."),
                 ("auto-maintain", "Run automated maintenance (sync, fix dependencies, validate)."),
+                ("info", "Show detailed metadata for a single extension module."),
                 ("list", "List installed extension modules and version codes."),
                 ("list-extractors", "List all 65 pre-built video extractor libraries."),
                 ("doc", "Generate markdown extension catalog table."),
@@ -1621,7 +1659,9 @@ def main():
                     d_cmd = [sys.executable, str(detect_script), "--fix"]
                     if lang and name:
                         d_cmd.extend(["--lang", lang, "--name", name])
-                    subprocess.run(d_cmd, cwd=repo_root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+                    d_res = subprocess.run(d_cmd, cwd=repo_root, capture_output=True, text=True, timeout=20)
+                    if d_res.returncode != 0:
+                        print(f"  ⚠️  detect_extractors exited with code {d_res.returncode}: {d_res.stderr.strip()}")
             success = validate_extensions(repo_root, lang, name)
             sys.exit(0 if success else 1)
 
@@ -1717,13 +1757,18 @@ def main():
         if args.command == "fetch-skip-times":
             script_path = scripts_dir / "fetch_metadata.py"
             # Support positional MAL ID: cli.py fetch-skip-times <id>
+            # F-05: validate that the positional arg is numeric before forwarding
             extra = []
             if args.args and not args.args[0].startswith("-"):
-                extra = ["--mal-id", args.args[0]] + args.args[1:]
+                mal_id_raw = args.args[0]
+                if not mal_id_raw.isdigit():
+                    print(f"❌ fetch-skip-times: MAL ID must be a numeric value, got '{mal_id_raw}'")
+                    sys.exit(1)
+                extra = ["--mal-id", mal_id_raw] + args.args[1:]
             else:
                 extra = args.args
             cmd = [sys.executable, str(script_path), "--aniskip"] + extra
-            result = subprocess.run(cmd)
+            result = subprocess.run(cmd, timeout=300)  # F-12: network I/O timeout
             sys.exit(result.returncode)
 
         if args.command == "agent":
@@ -1749,7 +1794,7 @@ def main():
 
             heal_p = agent_subparsers.add_parser("heal", help="Triage compiler / CI failure and apply AST patch")
             heal_p.add_argument("log_file", help="Compiler build log file")
-            heal_p.add_argument("--file", help="Target source file")
+            # Note: --file was removed (F-29) — it was parsed but never used in dispatch
 
             agent_args = agent_parser.parse_args(args.args)
             if not agent_args.subcommand:
@@ -1795,10 +1840,15 @@ def main():
         if args.command == "cross-map-id":
             script_path = scripts_dir / "fetch_metadata.py"
             cmd = [sys.executable, str(script_path), "--cross-map"] + args.args
-            result = subprocess.run(cmd)
+            result = subprocess.run(cmd, timeout=300)
             sys.exit(result.returncode)
 
         script_name = commands_info[args.command]["script"]
+        # F-01/F-16: Guard against None script — all None-script commands must have an
+        # explicit dispatch block above. If one is missing, fail fast with a clear message.
+        if script_name is None:
+            print(f"❌ No dispatch handler registered for command '{args.command}'. This is a bug — please add an explicit 'if args.command == \"{args.command}\"' block.")
+            sys.exit(1)
         script_path = scripts_dir / script_name
 
         if not script_path.exists():
@@ -1806,7 +1856,7 @@ def main():
             sys.exit(1)
 
         cmd = [sys.executable, str(script_path)] + args.args
-        result = subprocess.run(cmd)
+        result = subprocess.run(cmd, timeout=300)  # F-13: prevent indefinite hang on network scripts
         sys.exit(result.returncode)
 
     except KeyboardInterrupt:
