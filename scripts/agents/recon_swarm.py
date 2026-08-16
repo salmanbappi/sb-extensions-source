@@ -408,3 +408,51 @@ class ReconSwarmAgent:
             html_samples=html_samples if html_samples else None,
         )
         return dataclasses.asdict(site_map)
+
+    @staticmethod
+    def fetch_jina_markdown(url: str, timeout: int = 10) -> Optional[str]:
+        """Fetches high-speed markdown extraction via Jina Reader (Zero API key required)."""
+        import ssl
+        import urllib.request
+        jina_url = f"https://r.jina.ai/{url}" if not url.startswith("https://r.jina.ai/") else url
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            req = urllib.request.Request(
+                jina_url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                if resp.status == 200:
+                    return resp.read().decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def fetch_firecrawl_scrape(url: str, api_key: str, timeout: int = 15) -> Optional[str]:
+        """Scrapes headless JS web page into clean markdown via Firecrawl API (Requires FIRECRAWL_API_KEY)."""
+        import ssl
+        import urllib.request
+        if not api_key:
+            return None
+        endpoint = "https://api.firecrawl.dev/v1/scrape"
+        payload = json.dumps({"url": url, "formats": ["markdown"]}).encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        }
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            req = urllib.request.Request(endpoint, data=payload, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if data.get("success") and "data" in data:
+                    return data["data"].get("markdown", "")
+        except Exception:
+            pass
+        return None
