@@ -25,6 +25,7 @@ import extensions.utils.EpisodeMetadataFetcher
 import extensions.utils.Source
 import extensions.utils.parseAs
 import extensions.utils.toJsonString
+import java.net.URLEncoder
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.Serializable
@@ -34,7 +35,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
-import java.net.URLEncoder
 
 class Lunar : Source() {
 
@@ -65,7 +65,9 @@ class Lunar : Source() {
 
     // ============================== POPULAR ANIME ==============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$API_BASE/api/animes/search?query=", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        return GET("$API_BASE/api/animes/search?query=", headers)
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val searchData = response.parseAs<SearchResponse>(json)
@@ -81,7 +83,9 @@ class Lunar : Source() {
 
     // ============================== LATEST UPDATES ==============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/anime/latest-aired?limit=25", headers)
+    override fun latestUpdatesRequest(page: Int): Request {
+        return GET("$baseUrl/api/anime/latest-aired?limit=25", headers)
+    }
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val latestData = response.parseAs<LatestResponse>(json)
@@ -452,7 +456,7 @@ class Lunar : Source() {
         return episodes.reversed()
     }
 
-    // ============================== HOSTER LIST (BY LANGUAGE) ==============================
+    // ============================== HOSTER LIST (BY LANGUAGE FOLDERS) ==============================
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val data = runCatching {
@@ -476,42 +480,34 @@ class Lunar : Source() {
         }
 
         val hosters = streamData?.episodes?.flatMap { it.hosters }.orEmpty()
-        val availableLangs = hosters.mapNotNull { it.language?.lowercase()?.trim() }.filter { it.isNotBlank() }.distinct()
+        val availableLangs = hosters.mapNotNull { it.language?.lowercase()?.trim() }.filter { it.isNotBlank() }
+
+        val hasGerman = availableLangs.any { it.startsWith("ger") || it == "de" }
+        val otherLangs = availableLangs.filter { !it.startsWith("eng") && !it.startsWith("ger") && it != "en" && it != "de" }.distinct()
 
         val hosterList = mutableListOf<Hoster>()
 
-        // Always provide English Dub / Dual Audio folder
-        hosterList.add(
-            Hoster(
-                hosterName = "English Dub / Dual Audio (ENG-DUB / Fast Cloud)",
-                hosterUrl = "${data.slug}|${data.season}|${data.episode}|eng-dub",
-            ),
-        )
+        // Always provide English Folder (containing Sub, Dub, HSub, and all qualities)
+        hosterList.add(Hoster(hosterName = "English", hosterUrl = "${data.slug}|${data.season}|${data.episode}|en"))
 
-        for (lang in availableLangs) {
-            if (lang == "eng-dub") continue // Handled above
-            val displayName = when (lang) {
-                "ger-dub" -> "German Dub (GER-DUB)"
-                "ger-sub" -> "German Sub (GER-SUB)"
-                "eng-sub" -> "English Sub (ENG-SUB)"
-                "jap-sub" -> "Japanese Sub (JAP-SUB)"
-                else -> "${lang.uppercase()} Sub/Dub"
-            }
-            val hosterUrl = "${data.slug}|${data.season}|${data.episode}|$lang"
-            hosterList.add(Hoster(hosterName = displayName, hosterUrl = hosterUrl))
+        if (hasGerman) {
+            hosterList.add(Hoster(hosterName = "German", hosterUrl = "${data.slug}|${data.season}|${data.episode}|de"))
         }
 
-        // Always provide 3rd Provider (English Streams) folder
-        hosterList.add(
-            Hoster(
-                hosterName = "English Streams (3rd Provider)",
-                hosterUrl = "${data.slug}|${data.season}|${data.episode}|3rdprovider",
-            ),
-        )
+        for (lang in otherLangs) {
+            val displayName = when (lang) {
+                "jap-sub", "jap-dub", "jap" -> "Japanese"
+                "fra-sub", "fra-dub", "fra" -> "French"
+                "spa-sub", "spa-dub", "spa" -> "Spanish"
+                "ita-sub", "ita-dub", "ita" -> "Italian"
+                else -> lang.replace("-", " ").uppercase()
+            }
+            hosterList.add(Hoster(hosterName = displayName, hosterUrl = "${data.slug}|${data.season}|${data.episode}|$lang"))
+        }
 
-        // Prioritize folders based on user's preferred language setting
+        // Prioritize folders based on user's preferred language folder setting
         val preferredLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT) ?: PREF_LANG_DEFAULT
-        return hosterList.sortedByDescending { it.hosterUrl.contains(preferredLang, ignoreCase = true) }
+        return hosterList.sortedByDescending { it.hosterUrl.endsWith("|$preferredLang", ignoreCase = true) }
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -522,10 +518,6 @@ class Lunar : Source() {
         val episode = parts[2].toIntOrNull() ?: 1
         val targetLang = parts[3].lowercase()
         val cleanSlug = extractCleanSlug(slug)
-
-        if (targetLang == "3rdprovider") {
-            return fetch3rdProviderVideos(slug, episode)
-        }
 
         var streamReq = GET("$API_BASE/api/stream?slug=$slug&season=$season&episode=$episode", headers)
         var streamData = runCatching {
@@ -541,15 +533,27 @@ class Lunar : Source() {
             }.getOrNull()
         }
 
-        val matchingHosters = streamData?.episodes?.flatMap { it.hosters }
-            ?.filter { it.language.orEmpty().equals(targetLang, ignoreCase = true) }
-            .orEmpty()
+        val allHosters = streamData?.episodes?.flatMap { it.hosters }.orEmpty()
+
+        val matchingHosters = when (targetLang) {
+            "en", "english" -> allHosters.filter {
+                val l = it.language.orEmpty().lowercase()
+                l.startsWith("eng") || l == "en"
+            }
+            "de", "german" -> allHosters.filter {
+                val l = it.language.orEmpty().lowercase()
+                l.startsWith("ger") || l == "de"
+            }
+            else -> allHosters.filter {
+                it.language.orEmpty().equals(targetLang, ignoreCase = true)
+            }
+        }
 
         val videos = matchingHosters.parallelCatchingFlatMap { hosterItem ->
             extractVideoFromHoster(hosterItem)
         }.toMutableList()
 
-        if (targetLang == "eng-dub" || targetLang == "dual") {
+        if (targetLang == "en" || targetLang == "english") {
             videos.addAll(fetch3rdProviderVideos(slug, episode))
         }
 
@@ -569,21 +573,61 @@ class Lunar : Source() {
             for (item in thirdData.data) {
                 val playerUrl = item.player_url.orEmpty()
                 if (playerUrl.isBlank()) continue
-                val serverName = item.server ?: "Fast Cloud"
-                val audio = when (item.audio?.lowercase()) {
-                    "dual" -> "ENG-DUB (Dual)"
-                    "dub" -> "ENG-DUB"
-                    "sub" -> "ENG-SUB"
-                    else -> item.audio?.uppercase() ?: "ENG-DUB"
+                val serverName = when (item.server?.lowercase()) {
+                    "sv-1" -> "Fast Cloud 1"
+                    "sv-2" -> "Fast Cloud 2"
+                    null -> "Fast Cloud"
+                    else -> item.server
                 }
-                val prefix = "[$serverName - $audio] "
-                when {
-                    playerUrl.contains(".m3u8") -> {
-                        videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> prefix + q }))
-                    }
+                val audio = item.audio?.lowercase() ?: "dual"
 
+                when (audio) {
+                    "dual" -> {
+                        val dubPrefix = "[Dub] [$serverName] "
+                        val subPrefix = "[Sub] [$serverName] "
+                        when {
+                            playerUrl.contains(".m3u8") -> {
+                                videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> dubPrefix + q }))
+                                videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> subPrefix + q }))
+                            }
+                            else -> {
+                                videos.addAll(universalExtractor.videosFromUrl(playerUrl, headers, prefix = dubPrefix))
+                                videos.addAll(universalExtractor.videosFromUrl(playerUrl, headers, prefix = subPrefix))
+                            }
+                        }
+                    }
+                    "dub" -> {
+                        val prefix = "[Dub] [$serverName] "
+                        when {
+                            playerUrl.contains(".m3u8") -> {
+                                videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> prefix + q }))
+                            }
+                            else -> {
+                                videos.addAll(universalExtractor.videosFromUrl(playerUrl, headers, prefix = prefix))
+                            }
+                        }
+                    }
+                    "hsub" -> {
+                        val prefix = "[HSub] [$serverName] "
+                        when {
+                            playerUrl.contains(".m3u8") -> {
+                                videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> prefix + q }))
+                            }
+                            else -> {
+                                videos.addAll(universalExtractor.videosFromUrl(playerUrl, headers, prefix = prefix))
+                            }
+                        }
+                    }
                     else -> {
-                        videos.addAll(universalExtractor.videosFromUrl(playerUrl, headers, prefix = prefix))
+                        val prefix = "[Sub] [$serverName] "
+                        when {
+                            playerUrl.contains(".m3u8") -> {
+                                videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> prefix + q }))
+                            }
+                            else -> {
+                                videos.addAll(universalExtractor.videosFromUrl(playerUrl, headers, prefix = prefix))
+                            }
+                        }
                     }
                 }
             }
@@ -627,48 +671,68 @@ class Lunar : Source() {
     }
 
     private fun extractVideoFromHoster(hosterItem: HosterItem): List<Video> {
-        val hoster = hosterItem.hoster.orEmpty().lowercase()
-        val lang = hosterItem.language.orEmpty()
+        val rawHoster = hosterItem.hoster.orEmpty().trim().lowercase()
+        val lang = hosterItem.language.orEmpty().lowercase()
         val uri = hosterItem.redirect_uri.orEmpty()
         if (uri.isBlank()) return emptyList()
 
-        val prefix = "[${hoster.uppercase()}${if (lang.isNotBlank()) " - ${lang.uppercase()}" else ""}] "
+        val typeTag = when {
+            lang.contains("hsub") -> "[HSub]"
+            lang.contains("dub") -> "[Dub]"
+            else -> "[Sub]"
+        }
+
+        val hosterDisplayName = when (rawHoster) {
+            "vidmoly" -> "Vidmoly"
+            "voe" -> "VOE"
+            "filemoon" -> "Filemoon"
+            "doodstream", "dood" -> "DoodStream"
+            "streamtape" -> "StreamTape"
+            "luluvdo", "lulu" -> "LuluStream"
+            "streamwish" -> "StreamWish"
+            "vidguard" -> "Vidguard"
+            "videzz" -> "Videzz"
+            else -> rawHoster.replaceFirstChar { it.uppercase() }.ifBlank { "Stream" }
+        }
+
+        val hosterTag = "[$hosterDisplayName]"
+        val prefix = "$typeTag $hosterTag "
 
         return when {
-            hoster == "vidmoly" || uri.contains("vidmoly") -> {
+            rawHoster == "vidmoly" || uri.contains("vidmoly") -> {
                 vidMolyExtractor.videosFromUrl(uri, prefix = prefix)
             }
 
-            hoster == "voe" || uri.contains("voe.") -> {
+            rawHoster == "voe" || uri.contains("voe.") -> {
                 voeExtractor.videosFromUrl(uri, prefix = prefix)
             }
 
-            hoster == "filemoon" || uri.contains("filemoon") -> {
+            rawHoster == "filemoon" || uri.contains("filemoon") -> {
                 filemoonExtractor.videosFromUrl(uri, prefix = prefix)
             }
 
-            hoster == "doodstream" || hoster == "dood" || uri.contains("dood") || uri.contains("ds2play") || uri.contains("bysezejataos") -> {
-                doodExtractor.videosFromUrl(uri, quality = "${prefix}DoodStream")
+            rawHoster == "doodstream" || rawHoster == "dood" || uri.contains("dood") || uri.contains("ds2play") || uri.contains("bysezejataos") -> {
+                doodExtractor.videosFromUrl(uri, quality = "$typeTag [$hosterDisplayName] DoodStream")
             }
 
-            hoster == "streamtape" || uri.contains("streamtape") -> {
-                streamTapeExtractor.videosFromUrl(uri, quality = "${prefix}StreamTape")
+            rawHoster == "streamtape" || uri.contains("streamtape") -> {
+                streamTapeExtractor.videosFromUrl(uri, quality = "$typeTag [$hosterDisplayName] StreamTape")
             }
 
-            hoster == "luluvdo" || hoster == "lulu" || uri.contains("luluvdo") -> {
+            rawHoster == "luluvdo" || rawHoster == "lulu" || uri.contains("luluvdo") -> {
                 luluExtractor.videosFromUrl(uri, prefix = prefix)
             }
 
-            hoster == "streamwish" || uri.contains("streamwish") || uri.contains("wishembed") || uri.contains("swish") -> {
+            rawHoster == "streamwish" || uri.contains("streamwish") || uri.contains("wishembed") || uri.contains("swish") -> {
                 streamWishExtractor.videosFromUrl(uri, prefix = prefix)
             }
 
-            hoster == "vidguard" || uri.contains("vidguard") || uri.contains("vgfplay") || uri.contains("vembed") -> {
+            rawHoster == "vidguard" || uri.contains("vidguard") || uri.contains("vgfplay") || uri.contains("vembed") -> {
                 vidGuardExtractor.videosFromUrl(uri, prefix = prefix)
             }
 
             uri.contains(".m3u8") -> {
-                playlistUtils.extractFromHls(uri, videoNameGen = { q -> prefix + q })
+                playlistUtils.extractFromHls(uri, videoNameGen = { q -> "$typeTag $hosterTag $q" })
             }
 
             else -> {
@@ -680,16 +744,15 @@ class Lunar : Source() {
     // ============================== PREFERENCES & SORTING ==============================
 
     override fun List<Video>.sortVideos(): List<Video> {
+        val preferredType = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT).orEmpty().lowercase()
         val preferredHoster = preferences.getString(PREF_HOSTER_KEY, PREF_HOSTER_DEFAULT).orEmpty().lowercase()
-        val preferredLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT).orEmpty().lowercase()
         val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT).orEmpty()
 
         return sortedWith(
             compareByDescending<Video> { video ->
                 val q = video.videoTitle.lowercase()
                 when {
-                    preferredLang == "eng-dub" && (q.contains("eng-dub") || q.contains("dual") || q.contains("fast cloud")) -> 2
-                    preferredLang.isNotBlank() && preferredLang != "all" && q.contains(preferredLang) -> 1
+                    preferredType.isNotBlank() && q.contains("[$preferredType]") -> 1
                     else -> 0
                 }
             }.thenByDescending { video ->
@@ -710,10 +773,25 @@ class Lunar : Source() {
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
             key = PREF_LANG_KEY
-            title = "Preferred Audio / Language Folder"
-            entries = arrayOf("English Dub / Dual Audio (ENG-DUB)", "English Sub (ENG-SUB)", "German Dub (GER-DUB)", "German Sub (GER-SUB)", "All Languages")
-            entryValues = arrayOf("eng-dub", "eng-sub", "ger-dub", "ger-sub", "all")
+            title = "Preferred Language Folder"
+            entries = arrayOf("English", "German", "All Languages")
+            entryValues = arrayOf("en", "de", "all")
             setDefaultValue(PREF_LANG_DEFAULT)
+            summary = "%s"
+            setOnPreferenceChangeListener { _, newValue ->
+                val selected = newValue as String
+                val index = findIndexOfValue(selected)
+                val entry = entryValues[index] as String
+                preferences.edit().putString(key, entry).commit()
+            }
+        }.also(screen::addPreference)
+
+        ListPreference(screen.context).apply {
+            key = PREF_TYPE_KEY
+            title = "Preferred Audio / Stream Type"
+            entries = arrayOf("Dub (English / German Dub)", "Sub (Subbed)", "HSub (Hardsub)")
+            entryValues = arrayOf("dub", "sub", "hsub")
+            setDefaultValue(PREF_TYPE_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
                 val selected = newValue as String
@@ -726,8 +804,8 @@ class Lunar : Source() {
         ListPreference(screen.context).apply {
             key = PREF_HOSTER_KEY
             title = "Preferred Server / Hoster"
-            entries = arrayOf("VOE", "Vidmoly", "Filemoon", "DoodStream", "StreamTape", "LuluStream", "StreamWish", "Vidguard")
-            entryValues = arrayOf("voe", "vidmoly", "filemoon", "dood", "streamtape", "lulu", "streamwish", "vidguard")
+            entries = arrayOf("Fast Cloud", "VOE", "Vidmoly", "Filemoon", "DoodStream", "StreamTape", "LuluStream", "StreamWish", "Vidguard")
+            entryValues = arrayOf("fast cloud", "voe", "vidmoly", "filemoon", "dood", "streamtape", "lulu", "streamwish", "vidguard")
             setDefaultValue(PREF_HOSTER_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
@@ -786,10 +864,12 @@ class Lunar : Source() {
 
     // ============================== UTILITIES & DTOS ==============================
 
-    private fun extractSlug(url: String): String = url.removePrefix("/anime/")
-        .removePrefix("/")
-        .substringBefore("?")
-        .substringBefore("#")
+    private fun extractSlug(url: String): String {
+        return url.removePrefix("/anime/")
+            .removePrefix("/")
+            .substringBefore("?")
+            .substringBefore("#")
+    }
 
     private fun extractCleanSlug(urlOrSlug: String): String {
         val slug = extractSlug(urlOrSlug)
@@ -808,10 +888,13 @@ class Lunar : Source() {
         private const val API_BASE = "https://api.lunarx.to"
 
         private const val PREF_LANG_KEY = "preferred_language"
-        private const val PREF_LANG_DEFAULT = "eng-dub"
+        private const val PREF_LANG_DEFAULT = "en"
+
+        private const val PREF_TYPE_KEY = "preferred_type"
+        private const val PREF_TYPE_DEFAULT = "dub"
 
         private const val PREF_HOSTER_KEY = "preferred_hoster"
-        private const val PREF_HOSTER_DEFAULT = "voe"
+        private const val PREF_HOSTER_DEFAULT = "fast cloud"
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
