@@ -25,7 +25,6 @@ import extensions.utils.EpisodeMetadataFetcher
 import extensions.utils.Source
 import extensions.utils.parseAs
 import extensions.utils.toJsonString
-import java.net.URLEncoder
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.Serializable
@@ -35,6 +34,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
+import java.net.URLEncoder
 
 class Lunar : Source() {
 
@@ -65,9 +65,7 @@ class Lunar : Source() {
 
     // ============================== POPULAR ANIME ==============================
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return GET("$API_BASE/api/animes/search?query=", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request = GET("$API_BASE/api/animes/search?query=", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val searchData = response.parseAs<SearchResponse>(json)
@@ -83,9 +81,7 @@ class Lunar : Source() {
 
     // ============================== LATEST UPDATES ==============================
 
-    override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/api/anime/latest-aired?limit=25", headers)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/anime/latest-aired?limit=25", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val latestData = response.parseAs<LatestResponse>(json)
@@ -951,12 +947,10 @@ class Lunar : Source() {
 
     // ============================== UTILITIES & DTOS ==============================
 
-    private fun extractSlug(url: String): String {
-        return url.removePrefix("/anime/")
-            .removePrefix("/")
-            .substringBefore("?")
-            .substringBefore("#")
-    }
+    private fun extractSlug(url: String): String = url.removePrefix("/anime/")
+        .removePrefix("/")
+        .substringBefore("?")
+        .substringBefore("#")
 
     private fun extractCleanSlug(urlOrSlug: String): String {
         val slug = extractSlug(urlOrSlug)
