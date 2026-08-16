@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
@@ -27,7 +28,15 @@ import extensions.utils.parseAs
 import extensions.utils.toJsonString
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
+import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -626,6 +635,35 @@ class Lunar : Source() {
         }
     }
 
+    @Volatile
+    private var flixProxyServer: FlixProxyServer? = null
+
+    @Synchronized
+    private fun getFlixProxyServer(headers: Headers, segmentMask: ByteArray): FlixProxyServer {
+        if (flixProxyServer == null || !flixProxyServer!!.isAlive) {
+            flixProxyServer?.stop()
+            flixProxyServer = FlixProxyServer(headers, segmentMask)
+            flixProxyServer!!.start()
+        } else {
+            flixProxyServer!!.updateSegmentMask(segmentMask)
+        }
+        return flixProxyServer!!
+    }
+
+    private fun loadSavedXorMask(): ByteArray? {
+        val savedStr = preferences.getString("flixcloud_xor_mask", null) ?: return null
+        return try {
+            savedStr.split(",").map { it.trim().toInt().toByte() }.toByteArray()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun saveXorMask(mask: ByteArray) {
+        val maskStr = mask.joinToString(",") { (it.toInt() and 0xFF).toString() }
+        preferences.edit().putString("flixcloud_xor_mask", maskStr).apply()
+    }
+
     // ============================== 3RD PROVIDER RESOLVER ==============================
 
     private fun fetch3rdProviderVideos(slug: String, episode: Int, showProvider: Boolean = true): List<Video> {
@@ -646,6 +684,14 @@ class Lunar : Source() {
                     else -> item.server
                 }
                 val audio = item.audio?.lowercase() ?: "dual"
+
+                if (playerUrl.contains("flixcloud") || playerUrl.contains("megacloud") || playerUrl.contains("/e/")) {
+                    val flixVideos = extractFlixCloud(playerUrl, serverName, audio, showProvider)
+                    if (flixVideos.isNotEmpty()) {
+                        videos.addAll(flixVideos)
+                        continue
+                    }
+                }
 
                 when (audio) {
                     "dual" -> {
@@ -713,6 +759,193 @@ class Lunar : Source() {
 
         return videos.sortVideos()
     }
+
+    private fun extractFlixCloud(
+        playerUrl: String,
+        serverName: String,
+        audio: String,
+        showProvider: Boolean,
+    ): List<Video> {
+        val flixHeaders = headers.newBuilder()
+            .set("Accept", "*/*")
+            .set("Origin", FlixProxyServer.flixCloudUrl)
+            .set("Referer", "${FlixProxyServer.flixCloudUrl}/")
+            .build()
+
+        val decHeaders = headers.newBuilder()
+            .set("Accept", "*/*")
+            .build()
+
+        return runCatching {
+            val html = client.newCall(GET(playerUrl, flixHeaders)).execute().use { it.body.string() }
+
+            val hardcodedFallback = listOf(
+                157, 42, 241, 71, 179, 142, 92, 112,
+                166, 25, 228, 59, 216, 98, 15, 197,
+            ).map { it.toByte() }.toByteArray()
+
+            var xorMask: ByteArray? = null
+            val scriptPath = HLS_SCRIPT_REGEX.find(html)?.groupValues?.get(1)
+            if (scriptPath != null) {
+                val scriptUrl = if (scriptPath.startsWith("http")) scriptPath else "${FlixProxyServer.flixCloudUrl}$scriptPath"
+                runCatching {
+                    val jsContent = client.newCall(GET(scriptUrl, flixHeaders)).execute().use { it.body.string() }
+                    xorMask = XOR_MASK_REGEX.find(jsContent)?.groupValues?.get(1)
+                        ?.split(",")
+                        ?.map { it.trim().toInt().toByte() }
+                        ?.toByteArray()
+                }
+            }
+
+            if (xorMask != null) {
+                saveXorMask(xorMask!!)
+            } else {
+                xorMask = loadSavedXorMask() ?: hardcodedFallback
+            }
+
+            val dataMatch = EMBED_DATA_REGEX.find(html) ?: return emptyList()
+            val rawJson = json5ToJson(dataMatch.groupValues[1])
+
+            val embedDataDto = runCatching {
+                json.decodeFromString<FlixcloudEmbedDataDto>(rawJson)
+            }.getOrDefault(FlixcloudEmbedDataDto())
+
+            val subtitleTracks = embedDataDto.subtitles
+                ?.mapNotNull { sub ->
+                    val subUrl = sub.url ?: return@mapNotNull null
+                    Track(subUrl, sub.language ?: "Unknown")
+                } ?: emptyList()
+
+            val embedData = runCatching {
+                val obj = json.parseToJsonElement(rawJson).jsonObject.toMutableMap()
+                obj.remove("subtitles")
+                obj.remove("intro_chapter")
+                obj.remove("outro_chapter")
+                JsonObject(obj).toString()
+            }.getOrDefault(rawJson)
+
+            val tokenPayload = """{"data":$embedData}"""
+            val tokenDto = client.newCall(
+                Request.Builder()
+                    .url("${FlixProxyServer.decApi}/dec-flixcloud?type=token")
+                    .post(tokenPayload.toRequestBody("application/json".toMediaTypeOrNull()))
+                    .headers(decHeaders)
+                    .build(),
+            ).execute().use { it.parseAs<DecFlixCloudTokenResponseDto>(json) }
+
+            if (tokenDto.status != 200 || tokenDto.result == null) return emptyList()
+
+            val m3u8Body = client.newCall(
+                GET("${FlixProxyServer.flixCloudUrl}/api/m3u8/${tokenDto.result.token}", flixHeaders),
+            ).execute().use { it.body.string() }
+
+            val m3u8JsonElement = json.parseToJsonElement(m3u8Body)
+
+            val streamPayload = buildJsonObject {
+                putJsonObject("data") {
+                    put("context", tokenDto.result.context)
+                    put("stream_response", m3u8JsonElement.jsonObject)
+                }
+            }.toString()
+
+            val streamDto = client.newCall(
+                Request.Builder()
+                    .url("${FlixProxyServer.decApi}/dec-flixcloud?type=stream")
+                    .post(streamPayload.toRequestBody("application/json".toMediaTypeOrNull()))
+                    .headers(decHeaders)
+                    .build(),
+            ).execute().use { it.parseAs<DecFlixCloudStreamResponseDto>(json) }
+
+            if (streamDto.status != 200 || streamDto.result == null) return emptyList()
+
+            val streamUrl = streamDto.result.stream
+            val wPayload = streamDto.result.context["w_payload"]?.jsonPrimitive?.content ?: return emptyList()
+
+            val server = getFlixProxyServer(headers, xorMask!!)
+            val localManifestUrl = server.createProxyUrl(streamUrl, wPayload)
+
+            val videoList = mutableListOf<Video>()
+
+            when (audio.lowercase()) {
+                "dual" -> {
+                    val dubPrefix = if (showProvider) "[Dub] [$serverName] " else "[English Dub (Dual)] "
+                    val subPrefix = if (showProvider) "[Sub] [$serverName] " else "[English Sub] "
+
+                    videoList.addAll(
+                        playlistUtils.extractFromHls(
+                            playlistUrl = localManifestUrl,
+                            referer = FlixProxyServer.flixCloudUrl,
+                            masterHeaders = headers,
+                            videoHeaders = headers,
+                            videoNameGen = { q -> dubPrefix + q },
+                            subtitleList = subtitleTracks,
+                        ),
+                    )
+                    videoList.addAll(
+                        playlistUtils.extractFromHls(
+                            playlistUrl = localManifestUrl,
+                            referer = FlixProxyServer.flixCloudUrl,
+                            masterHeaders = headers,
+                            videoHeaders = headers,
+                            videoNameGen = { q -> subPrefix + q },
+                            subtitleList = subtitleTracks,
+                        ),
+                    )
+                }
+
+                "dub" -> {
+                    val prefix = if (showProvider) "[Dub] [$serverName] " else "[English Dub] "
+                    videoList.addAll(
+                        playlistUtils.extractFromHls(
+                            playlistUrl = localManifestUrl,
+                            referer = FlixProxyServer.flixCloudUrl,
+                            masterHeaders = headers,
+                            videoHeaders = headers,
+                            videoNameGen = { q -> prefix + q },
+                            subtitleList = subtitleTracks,
+                        ),
+                    )
+                }
+
+                "hsub" -> {
+                    val prefix = if (showProvider) "[HSub] [$serverName] " else "[English HSub] "
+                    videoList.addAll(
+                        playlistUtils.extractFromHls(
+                            playlistUrl = localManifestUrl,
+                            referer = FlixProxyServer.flixCloudUrl,
+                            masterHeaders = headers,
+                            videoHeaders = headers,
+                            videoNameGen = { q -> prefix + q },
+                            subtitleList = subtitleTracks,
+                        ),
+                    )
+                }
+
+                else -> {
+                    val prefix = if (showProvider) "[Sub] [$serverName] " else "[English Sub] "
+                    videoList.addAll(
+                        playlistUtils.extractFromHls(
+                            playlistUrl = localManifestUrl,
+                            referer = FlixProxyServer.flixCloudUrl,
+                            masterHeaders = headers,
+                            videoHeaders = headers,
+                            videoNameGen = { q -> prefix + q },
+                            subtitleList = subtitleTracks,
+                        ),
+                    )
+                }
+            }
+
+            videoList
+        }.getOrDefault(emptyList())
+    }
+
+    private fun json5ToJson(json5: String): String = json5
+        .replace(JSON5_KEY_REGEX) {
+            "${it.groupValues[1]}\"${it.groupValues[2]}\"${it.groupValues[3]}"
+        }
+        .replace(JSON5_TRAILING_COMMA_REGEX, "$1")
+        .replace(JSON5_UNDEFINED_REGEX, ": null")
 
     // ============================== VIDEO LIST (FALLBACK) ==============================
 
@@ -812,6 +1045,11 @@ class Lunar : Source() {
 
             rawHoster == "vidguard" || uri.contains("vidguard") || uri.contains("vgfplay") || uri.contains("vembed") -> {
                 vidGuardExtractor.videosFromUrl(uri, prefix = prefix)
+            }
+
+            rawHoster == "flixcloud" || rawHoster == "megacloud" || uri.contains("flixcloud") || uri.contains("megacloud") -> {
+                val flixVids = extractFlixCloud(uri, hosterDisplayName, lang, showProvider)
+                if (flixVids.isNotEmpty()) flixVids else universalExtractor.videosFromUrl(uri, headers, prefix = prefix)
             }
 
             uri.contains(".m3u8") -> {
@@ -983,6 +1221,13 @@ class Lunar : Source() {
         private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
         private const val PREF_LOAD_DESCRIPTIONS_KEY = "pref_load_descriptions"
         private const val PREF_LOAD_TITLES_KEY = "pref_load_titles"
+
+        private val EMBED_DATA_REGEX = Regex("""type:\s*"data",\s*data:\s*(\{.*?\}),?\s*uses:""", RegexOption.DOT_MATCHES_ALL)
+        private val JSON5_KEY_REGEX = Regex("""([{,]\s*)([\w_]+)(\s*:)""")
+        private val JSON5_TRAILING_COMMA_REGEX = Regex(""",\s*([}\]])""")
+        private val JSON5_UNDEFINED_REGEX = Regex(""":\s*undefined\b""")
+        private val HLS_SCRIPT_REGEX = Regex("""href="([^"]*hls\.js[^"]*)"""")
+        private val XOR_MASK_REGEX = Regex("""for\(var f=\[(\d{1,3}(?:,\d{1,3}){15})]""")
     }
 
     @Serializable
@@ -1092,5 +1337,48 @@ class Lunar : Source() {
         val server: String? = null,
         val audio: String? = null,
         val player_url: String? = null,
+    )
+
+    @Serializable
+    data class FlixcloudChapterDto(
+        val start: Long? = null,
+        val end: Long? = null,
+    )
+
+    @Serializable
+    data class FlixcloudSubtitleDto(
+        val url: String? = null,
+        val language: String? = null,
+    )
+
+    @Serializable
+    data class FlixcloudEmbedDataDto(
+        val subtitles: List<FlixcloudSubtitleDto>? = null,
+        @SerialName("intro_chapter") val introChapter: FlixcloudChapterDto? = null,
+        @SerialName("outro_chapter") val outroChapter: FlixcloudChapterDto? = null,
+    )
+
+    @Serializable
+    data class DecFlixCloudTokenResponseDto(
+        val status: Int? = null,
+        val result: DecFlixCloudTokenResultDto? = null,
+    )
+
+    @Serializable
+    data class DecFlixCloudTokenResultDto(
+        val token: String = "",
+        val context: JsonObject = JsonObject(emptyMap()),
+    )
+
+    @Serializable
+    data class DecFlixCloudStreamResponseDto(
+        val status: Int? = null,
+        val result: DecFlixCloudStreamResultDto? = null,
+    )
+
+    @Serializable
+    data class DecFlixCloudStreamResultDto(
+        val stream: String = "",
+        val context: JsonObject = JsonObject(emptyMap()),
     )
 }
