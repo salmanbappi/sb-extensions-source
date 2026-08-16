@@ -170,7 +170,8 @@ class Animesalt : Source() {
                 fetch_type = FetchType.Episodes
             }
         }
-        val hasNext = doc.selectFirst(".pagination .next, a.next, .nav-links .next") != null
+        val hasNext = doc.select(".pag a, .pagination a, nav a, a").any { it.text().trim().equals("NEXT", ignoreCase = true) } ||
+            doc.selectFirst(".pagination .next, a.next, .nav-links .next, a:containsOwn(NEXT)") != null
         return AnimesPage(animes, hasNext)
     }
 
@@ -315,28 +316,14 @@ class Animesalt : Source() {
         val doc = client.newCall(GET("$baseUrl${episode.url}", headers)).execute().asJsoup()
         val hosters = mutableListOf<Hoster>()
 
-        // 1. Direct AS-CDN / FirePlayer iframes
+        // Direct AS-CDN / FirePlayer iframes
         val cdnIframes = doc.select(".video.aa-tb iframe, iframe[src*='as-cdn'], iframe[data-src*='as-cdn'], iframe[src*='/video/'], iframe[data-src*='/video/']")
         cdnIframes.forEachIndexed { idx, iframe ->
             val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
             if (src.isNotBlank() && !src.contains("multi-lang-plyr")) {
                 hosters.add(
                     Hoster(
-                        hosterName = if (idx == 0) "FirePlayer (Multi-Audio)" else "FirePlayer Server ${idx + 1}",
-                        hosterUrl = src,
-                    ),
-                )
-            }
-        }
-
-        // 2. Multi-Language Player iframes
-        val multiLangIframes = doc.select("iframe[src*='multi-lang-plyr'], iframe[data-src*='multi-lang-plyr']")
-        for (iframe in multiLangIframes) {
-            val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-            if (src.isNotBlank()) {
-                hosters.add(
-                    Hoster(
-                        hosterName = "Multi-Language Streams",
+                        hosterName = if (cdnIframes.size == 1) "FirePlayer (Multi-Audio)" else "FirePlayer Server ${idx + 1}",
                         hosterUrl = src,
                     ),
                 )
@@ -344,10 +331,10 @@ class Animesalt : Source() {
         }
 
         if (hosters.isEmpty()) {
-            // Fallback: check any iframe on page
+            // Fallback: check any functional iframe on page (excluding dead multi-lang-plyr)
             doc.select("iframe").forEachIndexed { idx, iframe ->
                 val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-                if (src.isNotBlank() && !src.startsWith("about:") && !src.startsWith("javascript:")) {
+                if (src.isNotBlank() && !src.startsWith("about:") && !src.startsWith("javascript:") && !src.contains("multi-lang-plyr")) {
                     hosters.add(
                         Hoster(
                             hosterName = "Server ${idx + 1}",
@@ -397,42 +384,6 @@ class Animesalt : Source() {
                         videoNameGen = { quality -> quality },
                     )
                     videos.addAll(hlsVideos)
-                }
-            }
-        } else if (hosterUrl.contains("multi-lang-plyr")) {
-            // Decode base64 data query param
-            val encodedData = hosterUrl.toHttpUrl().queryParameter("data")
-            if (!encodedData.isNullOrBlank()) {
-                val decodedJson = runCatching {
-                    val raw = Base64.decode(encodedData, Base64.DEFAULT)
-                    String(raw, Charsets.UTF_8)
-                }.getOrNull()
-
-                if (!decodedJson.isNullOrBlank()) {
-                    val array = runCatching { json.parseToJsonElement(decodedJson).jsonArray }.getOrNull()
-                    array?.forEach { item ->
-                        val obj = item.jsonObject
-                        val lang = obj["language"]?.jsonPrimitive?.content ?: "Unknown"
-                        val link = obj["link"]?.jsonPrimitive?.content ?: return@forEach
-
-                        val extracted = when {
-                            link.contains("dood") || link.contains("ds2play") ->
-                                doodExtractor.videosFromUrl(link)
-
-                            link.contains("streamtape") ->
-                                streamtapeExtractor.videoFromUrl(link)?.let { listOf(it) } ?: emptyList()
-
-                            link.contains("filemoon") || link.contains("moonplayer") ->
-                                filemoonExtractor.videosFromUrl(link, prefix = "$lang - ")
-
-                            link.endsWith(".m3u8") || link.contains(".m3u8?") ->
-                                playlistUtils.extractFromHls(link, referer = "$baseUrl/", videoNameGen = { q -> "$q [$lang]" })
-
-                            else ->
-                                universalExtractor.videosFromUrl(link, headers, prefix = "$lang - ")
-                        }
-                        videos.addAll(extracted)
-                    }
                 }
             }
         } else {
