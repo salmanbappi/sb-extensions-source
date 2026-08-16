@@ -25,6 +25,7 @@ import extensions.utils.EpisodeMetadataFetcher
 import extensions.utils.Source
 import extensions.utils.parseAs
 import extensions.utils.toJsonString
+import java.net.URLEncoder
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.Serializable
@@ -34,7 +35,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
-import java.net.URLEncoder
 
 class Lunar : Source() {
 
@@ -65,7 +65,9 @@ class Lunar : Source() {
 
     // ============================== POPULAR ANIME ==============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$API_BASE/api/animes/search?query=", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        return GET("$API_BASE/api/animes/search?query=", headers)
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val searchData = response.parseAs<SearchResponse>(json)
@@ -81,7 +83,9 @@ class Lunar : Source() {
 
     // ============================== LATEST UPDATES ==============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/anime/latest-aired?limit=25", headers)
+    override fun latestUpdatesRequest(page: Int): Request {
+        return GET("$baseUrl/api/anime/latest-aired?limit=25", headers)
+    }
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val latestData = response.parseAs<LatestResponse>(json)
@@ -246,7 +250,7 @@ class Lunar : Source() {
             val titleObj = media.optJSONObject("title")
             val englishTitle = titleObj?.optString("english")?.takeIf { it.isNotBlank() }
                 ?: titleObj?.optString("userPreferred")?.takeIf { it.isNotBlank() }
-                ?: titleObj?.optString("romaji")?.takeIf { it.isNotBlank() }
+                ?: titleObj?.optString("romaji")
 
             val rawDesc = media.optString("description")
             val cleanDesc = cleanHtml(rawDesc)
@@ -261,7 +265,7 @@ class Lunar : Source() {
 
             val coverObj = media.optJSONObject("coverImage")
             val cover = coverObj?.optString("extraLarge")?.takeIf { it.isNotBlank() }
-                ?: coverObj?.optString("large")?.takeIf { it.isNotBlank() }
+                ?: coverObj?.optString("large")
                 ?: coverObj?.optString("medium")
 
             val statusStr = media.optString("status")
@@ -452,7 +456,9 @@ class Lunar : Source() {
         return episodes.reversed()
     }
 
-    // ============================== HOSTER LIST (BY LANGUAGE FOLDERS) ==============================
+    // ============================== ADAPTIVE HOSTER LIST ==============================
+    // When languages.size > providers.size -> Group by Language as Hoster
+    // When providers.size >= languages.size -> Group by Provider as Hoster
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val data = runCatching {
@@ -475,44 +481,89 @@ class Lunar : Source() {
             }.getOrNull()
         }
 
-        val hosters = streamData?.episodes?.flatMap { it.hosters }.orEmpty()
-        val availableLangs = hosters.mapNotNull { it.language?.lowercase()?.trim() }.filter { it.isNotBlank() }
+        val directHosters = streamData?.episodes?.flatMap { it.hosters }.orEmpty()
 
-        val hasGerman = availableLangs.any { it.startsWith("ger") || it == "de" }
-        val otherLangs = availableLangs.filter { !it.startsWith("eng") && !it.startsWith("ger") && it != "en" && it != "de" }.distinct()
+        val distinctLangs = mutableSetOf<String>()
+        val distinctProviders = mutableSetOf<String>()
+
+        for (h in directHosters) {
+            val l = h.language?.lowercase()?.trim().orEmpty()
+            if (l.isNotBlank()) {
+                val canonLang = when {
+                    l.startsWith("eng") || l == "en" -> "English"
+                    l.startsWith("ger") || l == "de" -> "German"
+                    l.startsWith("jap") || l == "ja" -> "Japanese"
+                    l.startsWith("fra") || l == "fr" -> "French"
+                    l.startsWith("spa") || l == "es" -> "Spanish"
+                    l.startsWith("ita") || l == "it" -> "Italian"
+                    else -> l.uppercase()
+                }
+                distinctLangs.add(canonLang)
+            }
+            val p = h.hoster?.lowercase()?.trim().orEmpty()
+            if (p.isNotBlank()) {
+                distinctProviders.add(p)
+            }
+        }
+
+        // Fast Cloud / 3rd Provider is always English
+        distinctLangs.add("English")
+        distinctProviders.add("fastcloud")
 
         val hosterList = mutableListOf<Hoster>()
 
-        // Always provide English Folder (containing Sub, Dub, HSub, and all qualities)
-        hosterList.add(Hoster(hosterName = "English", hosterUrl = "${data.slug}|${data.season}|${data.episode}|en"))
-
-        if (hasGerman) {
-            hosterList.add(Hoster(hosterName = "German", hosterUrl = "${data.slug}|${data.season}|${data.episode}|de"))
-        }
-
-        for (lang in otherLangs) {
-            val displayName = when (lang) {
-                "jap-sub", "jap-dub", "jap" -> "Japanese"
-                "fra-sub", "fra-dub", "fra" -> "French"
-                "spa-sub", "spa-dub", "spa" -> "Spanish"
-                "ita-sub", "ita-dub", "ita" -> "Italian"
-                else -> lang.replace("-", " ").uppercase()
+        if (distinctLangs.size > distinctProviders.size) {
+            // MODE: Language as Hoster
+            for (lang in distinctLangs) {
+                val langKey = when (lang) {
+                    "English" -> "en"
+                    "German" -> "de"
+                    "Japanese" -> "ja"
+                    "French" -> "fr"
+                    "Spanish" -> "es"
+                    "Italian" -> "it"
+                    else -> lang.lowercase()
+                }
+                hosterList.add(Hoster(hosterName = lang, hosterUrl = "lang:${data.slug}|${data.season}|${data.episode}|$langKey"))
             }
-            hosterList.add(Hoster(hosterName = displayName, hosterUrl = "${data.slug}|${data.season}|${data.episode}|$lang"))
-        }
+            val preferredLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT) ?: PREF_LANG_DEFAULT
+            return hosterList.sortedByDescending { it.hosterUrl.endsWith("|$preferredLang", ignoreCase = true) }
+        } else {
+            // MODE: Provider as Hoster
+            // 1. Fast Cloud
+            hosterList.add(Hoster(hosterName = "Fast Cloud", hosterUrl = "provider:${data.slug}|${data.season}|${data.episode}|fastcloud"))
 
-        // Prioritize folders based on user's preferred language folder setting
-        val preferredLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT) ?: PREF_LANG_DEFAULT
-        return hosterList.sortedByDescending { it.hosterUrl.endsWith("|$preferredLang", ignoreCase = true) }
+            // 2. Direct Providers
+            for (provider in distinctProviders) {
+                if (provider == "fastcloud") continue
+                val displayName = when (provider) {
+                    "vidmoly" -> "Vidmoly"
+                    "voe" -> "VOE"
+                    "filemoon" -> "Filemoon"
+                    "doodstream", "dood" -> "DoodStream"
+                    "streamtape" -> "StreamTape"
+                    "luluvdo", "lulu" -> "LuluStream"
+                    "streamwish" -> "StreamWish"
+                    "vidguard" -> "Vidguard"
+                    "videzz" -> "Videzz"
+                    else -> provider.replaceFirstChar { it.uppercase() }
+                }
+                hosterList.add(Hoster(hosterName = displayName, hosterUrl = "provider:${data.slug}|${data.season}|${data.episode}|$provider"))
+            }
+            val preferredHoster = preferences.getString(PREF_HOSTER_KEY, PREF_HOSTER_DEFAULT) ?: PREF_HOSTER_DEFAULT
+            return hosterList.sortedByDescending { it.hosterName.contains(preferredHoster, ignoreCase = true) }
+        }
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val parts = hoster.hosterUrl.split("|")
+        val isLangMode = hoster.hosterUrl.startsWith("lang:")
+        val rawUrl = hoster.hosterUrl.removePrefix("lang:").removePrefix("provider:")
+        val parts = rawUrl.split("|")
         if (parts.size < 4) return emptyList()
         val slug = parts[0]
         val season = parts[1].toIntOrNull() ?: 1
         val episode = parts[2].toIntOrNull() ?: 1
-        val targetLang = parts[3].lowercase()
+        val target = parts[3].lowercase()
         val cleanSlug = extractCleanSlug(slug)
 
         var streamReq = GET("$API_BASE/api/stream?slug=$slug&season=$season&episode=$episode", headers)
@@ -531,36 +582,57 @@ class Lunar : Source() {
 
         val allHosters = streamData?.episodes?.flatMap { it.hosters }.orEmpty()
 
-        val matchingHosters = when (targetLang) {
-            "en", "english" -> allHosters.filter {
-                val l = it.language.orEmpty().lowercase()
-                l.startsWith("eng") || l == "en"
+        if (isLangMode) {
+            // MODE: Language folder -> show [Type] [Provider] [Quality]
+            val matchingHosters = when (target) {
+                "en", "english" -> allHosters.filter {
+                    val l = it.language.orEmpty().lowercase()
+                    l.startsWith("eng") || l == "en"
+                }
+
+                "de", "german" -> allHosters.filter {
+                    val l = it.language.orEmpty().lowercase()
+                    l.startsWith("ger") || l == "de"
+                }
+
+                else -> allHosters.filter {
+                    it.language.orEmpty().equals(target, ignoreCase = true)
+                }
             }
 
-            "de", "german" -> allHosters.filter {
-                val l = it.language.orEmpty().lowercase()
-                l.startsWith("ger") || l == "de"
+            val videos = matchingHosters.parallelCatchingFlatMap { hosterItem ->
+                extractVideoFromHoster(hosterItem, showProvider = true)
+            }.toMutableList()
+
+            if (target == "en" || target == "english") {
+                videos.addAll(fetch3rdProviderVideos(slug, episode, showProvider = true))
             }
 
-            else -> allHosters.filter {
-                it.language.orEmpty().equals(targetLang, ignoreCase = true)
+            return videos.sortVideos()
+        } else {
+            // MODE: Provider folder -> show [Language - Type] [Quality]
+            if (target == "fastcloud") {
+                return fetch3rdProviderVideos(slug, episode, showProvider = false)
             }
+
+            val matchingHosters = allHosters.filter {
+                val h = it.hoster.orEmpty().lowercase()
+                h == target || (target == "doodstream" && (h == "dood" || h == "doodstream")) ||
+                    (target == "streamtape" && (h == "streamtape" || h == "strcloud")) ||
+                    (target == "luluvdo" && (h == "lulu" || h == "luluvdo"))
+            }
+
+            val videos = matchingHosters.parallelCatchingFlatMap { hosterItem ->
+                extractVideoFromHoster(hosterItem, showProvider = false)
+            }
+
+            return videos.sortVideos()
         }
-
-        val videos = matchingHosters.parallelCatchingFlatMap { hosterItem ->
-            extractVideoFromHoster(hosterItem)
-        }.toMutableList()
-
-        if (targetLang == "en" || targetLang == "english") {
-            videos.addAll(fetch3rdProviderVideos(slug, episode))
-        }
-
-        return videos.sortVideos()
     }
 
     // ============================== 3RD PROVIDER RESOLVER ==============================
 
-    private fun fetch3rdProviderVideos(slug: String, episode: Int): List<Video> {
+    private fun fetch3rdProviderVideos(slug: String, episode: Int, showProvider: Boolean = true): List<Video> {
         val videos = mutableListOf<Video>()
         val cleanSlug = extractCleanSlug(slug)
 
@@ -581,8 +653,8 @@ class Lunar : Source() {
 
                 when (audio) {
                     "dual" -> {
-                        val dubPrefix = "[Dub] [$serverName] "
-                        val subPrefix = "[Sub] [$serverName] "
+                        val dubPrefix = if (showProvider) "[Dub] [$serverName] " else "[English Dub (Dual)] "
+                        val subPrefix = if (showProvider) "[Sub] [$serverName] " else "[English Sub] "
                         when {
                             playerUrl.contains(".m3u8") -> {
                                 videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> dubPrefix + q }))
@@ -597,7 +669,7 @@ class Lunar : Source() {
                     }
 
                     "dub" -> {
-                        val prefix = "[Dub] [$serverName] "
+                        val prefix = if (showProvider) "[Dub] [$serverName] " else "[English Dub] "
                         when {
                             playerUrl.contains(".m3u8") -> {
                                 videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> prefix + q }))
@@ -610,7 +682,7 @@ class Lunar : Source() {
                     }
 
                     "hsub" -> {
-                        val prefix = "[HSub] [$serverName] "
+                        val prefix = if (showProvider) "[HSub] [$serverName] " else "[English HSub] "
                         when {
                             playerUrl.contains(".m3u8") -> {
                                 videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> prefix + q }))
@@ -623,7 +695,7 @@ class Lunar : Source() {
                     }
 
                     else -> {
-                        val prefix = "[Sub] [$serverName] "
+                        val prefix = if (showProvider) "[Sub] [$serverName] " else "[English Sub] "
                         when {
                             playerUrl.contains(".m3u8") -> {
                                 videos.addAll(playlistUtils.extractFromHls(playerUrl, videoNameGen = { q -> prefix + q }))
@@ -667,15 +739,15 @@ class Lunar : Source() {
         val hosters = streamData?.episodes?.flatMap { it.hosters }.orEmpty()
 
         val videos = hosters.parallelCatchingFlatMapBlocking { hosterItem ->
-            extractVideoFromHoster(hosterItem)
+            extractVideoFromHoster(hosterItem, showProvider = true)
         }.toMutableList()
 
-        videos.addAll(fetch3rdProviderVideos(slug, episode))
+        videos.addAll(fetch3rdProviderVideos(slug, episode, showProvider = true))
 
         return videos.sortVideos()
     }
 
-    private suspend fun extractVideoFromHoster(hosterItem: HosterItem): List<Video> {
+    private suspend fun extractVideoFromHoster(hosterItem: HosterItem, showProvider: Boolean = true): List<Video> {
         val rawHoster = hosterItem.hoster.orEmpty().trim().lowercase()
         val lang = hosterItem.language.orEmpty().lowercase()
         val uri = hosterItem.redirect_uri.orEmpty()
@@ -685,6 +757,13 @@ class Lunar : Source() {
             lang.contains("hsub") -> "[HSub]"
             lang.contains("dub") -> "[Dub]"
             else -> "[Sub]"
+        }
+
+        val langTag = when {
+            lang.startsWith("eng") || lang == "en" -> "English"
+            lang.startsWith("ger") || lang == "de" -> "German"
+            lang.startsWith("jap") || lang == "ja" -> "Japanese"
+            else -> lang.uppercase()
         }
 
         val hosterDisplayName = when (rawHoster) {
@@ -700,8 +779,11 @@ class Lunar : Source() {
             else -> rawHoster.replaceFirstChar { it.uppercase() }.ifBlank { "Stream" }
         }
 
-        val hosterTag = "[$hosterDisplayName]"
-        val prefix = "$typeTag $hosterTag "
+        val prefix = if (showProvider) {
+            "$typeTag [$hosterDisplayName] "
+        } else {
+            "[$langTag - ${typeTag.removeSurrounding("[", "]")}] "
+        }
 
         return when {
             rawHoster == "vidmoly" || uri.contains("vidmoly") -> {
@@ -717,11 +799,11 @@ class Lunar : Source() {
             }
 
             rawHoster == "doodstream" || rawHoster == "dood" || uri.contains("dood") || uri.contains("ds2play") || uri.contains("bysezejataos") -> {
-                doodExtractor.videosFromUrl(uri, quality = "$typeTag [$hosterDisplayName] DoodStream")
+                doodExtractor.videosFromUrl(uri, quality = "${prefix}DoodStream")
             }
 
             rawHoster == "streamtape" || uri.contains("streamtape") -> {
-                streamTapeExtractor.videosFromUrl(uri, quality = "$typeTag [$hosterDisplayName] StreamTape")
+                streamTapeExtractor.videosFromUrl(uri, quality = "${prefix}StreamTape")
             }
 
             rawHoster == "luluvdo" || rawHoster == "lulu" || uri.contains("luluvdo") -> {
@@ -737,7 +819,7 @@ class Lunar : Source() {
             }
 
             uri.contains(".m3u8") -> {
-                playlistUtils.extractFromHls(uri, videoNameGen = { q -> "$typeTag $hosterTag $q" })
+                playlistUtils.extractFromHls(uri, videoNameGen = { q -> prefix + q })
             }
 
             else -> {
@@ -757,7 +839,7 @@ class Lunar : Source() {
             compareByDescending<Video> { video ->
                 val q = video.videoTitle.lowercase()
                 when {
-                    preferredType.isNotBlank() && q.contains("[$preferredType]") -> 1
+                    preferredType.isNotBlank() && q.contains("[$preferredType") -> 1
                     else -> 0
                 }
             }.thenByDescending { video ->
@@ -869,10 +951,12 @@ class Lunar : Source() {
 
     // ============================== UTILITIES & DTOS ==============================
 
-    private fun extractSlug(url: String): String = url.removePrefix("/anime/")
-        .removePrefix("/")
-        .substringBefore("?")
-        .substringBefore("#")
+    private fun extractSlug(url: String): String {
+        return url.removePrefix("/anime/")
+            .removePrefix("/")
+            .substringBefore("?")
+            .substringBefore("#")
+    }
 
     private fun extractCleanSlug(urlOrSlug: String): String {
         val slug = extractSlug(urlOrSlug)
