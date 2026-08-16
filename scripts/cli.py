@@ -7,6 +7,7 @@ lint, migrate domains, bump version, and manage individual and multi-source exte
 
 import argparse
 import base64
+import json
 import os
 import re
 import shutil
@@ -1321,6 +1322,10 @@ def main():
                 "script": "deobfuscate.py",
                 "desc": "Reverse-engineer Dean Edwards, PlayerJS, CryptoJS AES, and Stego media payloads."
             },
+            "agent": {
+                "script": None,
+                "desc": "Autonomous multi-agent swarms (pipeline, recon, deobfuscate, critique, heal)."
+            },
             "canary-monitor": {
                 "script": "canary_monitor.py",
                 "desc": "Monitor health across all 65+ video extractors in lib/ and generate health matrices."
@@ -1717,6 +1722,72 @@ def main():
             cmd = [sys.executable, str(script_path), "--aniskip"] + extra
             result = subprocess.run(cmd)
             sys.exit(result.returncode)
+
+        if args.command == "agent":
+            from scripts.agents import OrchestratorAgent, ReconSwarmAgent, DeobfuscatorAgent, AdversarialCriticAgent, CiGuardianAgent
+            agent_parser = argparse.ArgumentParser(prog="cli.py agent")
+            agent_subparsers = agent_parser.add_subparsers(dest="subcommand", help="Agent subcommand")
+
+            pipe_p = agent_subparsers.add_parser("pipeline", help="Run full autonomous multi-agent pipeline")
+            pipe_p.add_argument("url", help="Target website URL")
+            pipe_p.add_argument("--name", help="Extension name")
+            pipe_p.add_argument("--lang", default="en", help="Language code")
+
+            recon_p = agent_subparsers.add_parser("recon", help="Run deep reconnaissance and schema inference")
+            recon_p.add_argument("url", help="Target website URL")
+
+            deobf_p = agent_subparsers.add_parser("deobfuscate", help="Solve obfuscated JS/Player payload")
+            deobf_p.add_argument("payload", help="Encrypted / packed JS string")
+            deobf_p.add_argument("--engine", default="auto", choices=["auto", "packer", "playerjs", "aes", "rc4"])
+            deobf_p.add_argument("--key", default="", help="Cipher key")
+
+            crit_p = agent_subparsers.add_parser("critique", help="Run adversarial red team critique on extension code")
+            crit_p.add_argument("target", help="Module name or file path")
+
+            heal_p = agent_subparsers.add_parser("heal", help="Triage compiler / CI failure and apply AST patch")
+            heal_p.add_argument("log_file", help="Compiler build log file")
+            heal_p.add_argument("--file", help="Target source file")
+
+            agent_args = agent_parser.parse_args(args.args)
+            if not agent_args.subcommand:
+                agent_parser.print_help()
+                sys.exit(1)
+
+            if agent_args.subcommand == "pipeline":
+                orchestrator = OrchestratorAgent(repo_root)
+                res = orchestrator.run_pipeline(agent_args.url, name=agent_args.name, lang=agent_args.lang)
+                print(json.dumps(res, indent=2))
+                sys.exit(0 if res.get("status") == "SUCCESS" else 1)
+
+            elif agent_args.subcommand == "recon":
+                swarm = ReconSwarmAgent()
+                res = swarm.explore_site(agent_args.url)
+                print(json.dumps(res, indent=2))
+                sys.exit(0)
+
+            elif agent_args.subcommand == "deobfuscate":
+                import dataclasses
+                solver = DeobfuscatorAgent()
+                res = solver.solve(agent_args.payload, key=agent_args.key or None)
+                print(json.dumps(dataclasses.asdict(res), indent=2))
+                sys.exit(0 if res.success else 1)
+
+            elif agent_args.subcommand == "critique":
+                import dataclasses
+                critic = AdversarialCriticAgent()
+                target_path = Path(agent_args.target)
+                code = target_path.read_text(encoding="utf-8") if target_path.exists() else agent_args.target
+                report = critic.review(code)
+                print(json.dumps(dataclasses.asdict(report), indent=2, default=str))
+                sys.exit(0 if report.is_passing else 1)
+
+            elif agent_args.subcommand == "heal":
+                import dataclasses
+                guardian = CiGuardianAgent()
+                log_txt = Path(agent_args.log_file).read_text(encoding="utf-8")
+                triage = guardian.triage_log(log_txt)
+                print(json.dumps(dataclasses.asdict(triage), indent=2, default=str))
+                sys.exit(0 if not triage.has_errors else 1)
 
         if args.command == "cross-map-id":
             script_path = scripts_dir / "fetch_metadata.py"
