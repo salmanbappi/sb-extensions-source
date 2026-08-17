@@ -226,18 +226,44 @@ class Desidubanime : Source() {
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val doc = client.newCall(GET(UrlUtils.fixUrl(anime.url, baseUrl), headers)).execute().asJsoup()
-        val titleText = doc.selectFirst("meta[property=og:title]")?.attr("content")
+        val titleText = doc.selectFirst("h1, h2.entry-title, meta[property=og:title]")?.text()
             ?.substringBefore(" - Desi Dub Anime")
             ?.substringBefore(" - DesiDubAnime")
-            ?: doc.selectFirst("h1, h2.entry-title")?.text()
             ?: anime.title
 
-        val desc = doc.selectFirst("meta[property=og:description]")?.attr("content")
-            ?: doc.selectFirst("div.entry-content p, p.text-muted")?.text()
-            ?: ""
+        val poster = doc.selectFirst("img.anime-main-image, img[src*='anilistcdn'], img[data-src*='anilistcdn'], div.post-thumbnail img, img[alt*='poster']")?.let { img ->
+            img.attr("src").ifBlank { img.attr("data-src") }
+        }?.takeIf { !it.contains("Logoo", ignoreCase = true) && !it.contains("logo", ignoreCase = true) }
+            ?: anime.thumbnail_url
 
-        val genres = doc.select("a[href*='/genre/']").map { it.text().trim() }
-            .filter { it.isNotBlank() }
+        val metadataMap = mutableMapOf<String, String>()
+        doc.select("dl > div").forEach { item ->
+            val dt = item.selectFirst("dt")?.text()?.trim().orEmpty()
+            val dd = item.selectFirst("dd")?.text()?.trim().orEmpty()
+            if (dt.isNotBlank() && dd.isNotBlank() && dd != "N/A") {
+                metadataMap[dt] = dd
+            }
+        }
+
+        val synopsis = doc.selectFirst("div.entry-content, #synopsis, div.synopsis, meta[property=og:description]")?.text()
+            ?.substringBefore("Tags:")
+            ?.trim()
+            .orEmpty()
+
+        val descriptionBuilder = StringBuilder()
+        if (synopsis.isNotBlank()) {
+            descriptionBuilder.append(synopsis).append("\n\n")
+        }
+
+        listOf("Native", "Synonyms", "English", "Type", "Episodes", "Aired", "Season", "Released Year", "Producers", "Licensors", "Tags").forEach { key ->
+            metadataMap[key]?.let { value ->
+                descriptionBuilder.append("$key: $value\n")
+            }
+        }
+
+        val studios = metadataMap["Studios"]
+        val genres = doc.select("a[href*='/genre/'], a[href*='/tag/']").map { it.text().trim() }
+            .filter { it.isNotBlank() && it != "N/A" }
             .distinct()
             .joinToString(", ")
 
@@ -247,11 +273,11 @@ class Desidubanime : Source() {
         return SAnime.create().apply {
             title = titleText.trim()
             setUrlWithoutDomain(anime.url)
-            thumbnail_url = doc.selectFirst("meta[property=og:image]")?.attr("content")
-                ?: doc.selectFirst("img[alt*='poster'], div.post-thumbnail img")?.attr("src")
-                ?: anime.thumbnail_url
-            description = desc.trim()
-            genre = genres
+            thumbnail_url = poster
+            description = descriptionBuilder.toString().trim()
+            genre = genres.ifBlank { metadataMap["Genres"] }
+            author = studios
+            artist = studios
             status = if (isOngoing) SAnime.ONGOING else SAnime.COMPLETED
             initialized = true
         }
