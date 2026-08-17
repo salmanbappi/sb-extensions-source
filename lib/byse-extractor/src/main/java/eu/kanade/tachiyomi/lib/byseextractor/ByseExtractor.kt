@@ -111,6 +111,8 @@ class ByseExtractor(
                         playlistUtils.extractFromHls(
                             playlistUrl = videoUrl,
                             referer = "$host/",
+                            masterHeaders = apiHeaders,
+                            videoHeaders = apiHeaders,
                             videoNameGen = { quality -> "$prefix$label ($quality)" },
                             subtitleList = subtitleTracks,
                         )

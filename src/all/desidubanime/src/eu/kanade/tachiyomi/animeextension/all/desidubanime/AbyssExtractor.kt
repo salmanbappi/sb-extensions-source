@@ -318,6 +318,9 @@ class AbyssExtractor(
                     val sub = src.optString("sub", "")
 
                     val direct = src.optString("file", "")
+                    val srcUrl = src.optString("url", "")
+                    val path = src.optString("path", "")
+
                     if (direct.isNotEmpty()) {
                         videoList.add(
                             Video(
@@ -328,6 +331,19 @@ class AbyssExtractor(
                             ),
                         )
                         continue
+                    }
+
+                    if (srcUrl.isNotEmpty() && path.isNotEmpty()) {
+                        val normUrl = if (srcUrl.startsWith("http")) srcUrl else "https://$srcUrl"
+                        val directUrl = "${normUrl.trimEnd('/')}/${path.trimStart('/')}"
+                        videoList.add(
+                            Video(
+                                videoUrl = directUrl,
+                                videoTitle = "${prefix}Abyss - $label (Direct)",
+                                headers = streamHeaders,
+                                subtitleTracks = subtitles,
+                            ),
+                        )
                     }
 
                     if (size.isNotEmpty() && resId.isNotEmpty() && sub.isNotEmpty() && domains != null) {
