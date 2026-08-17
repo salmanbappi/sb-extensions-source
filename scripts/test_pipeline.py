@@ -224,7 +224,7 @@ class PipelineTester:
         # Match with extractor registry if available
         matched_hosters = []
         try:
-            from detect_extractors import EXTRACTOR_REGISTRY
+            from detect_extractors import KNOWN_EXTRACTOR_PATTERNS as EXTRACTOR_REGISTRY
             for emb in discovered_embeds:
                 for ext_id, meta in EXTRACTOR_REGISTRY.items():
                     if re.search(meta.get("regex", ""), emb, re.IGNORECASE):

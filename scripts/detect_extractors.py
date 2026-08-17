@@ -212,6 +212,8 @@ KNOWN_EXTRACTOR_PATTERNS = {
     }
 }
 
+EXTRACTOR_REGISTRY = KNOWN_EXTRACTOR_PATTERNS
+
 
 def discover_all_extractors(repo_root: Path) -> List[Dict]:
     """Dynamically scans the lib/ directory to discover all available extractor modules and their Kotlin metadata."""

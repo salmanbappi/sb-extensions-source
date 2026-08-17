@@ -815,11 +815,10 @@ def main():
         latencies = [elapsed]
         for idx in range(2, args.benchmark + 1):
             try:
-                _, _, el = session.fetch(
+                _, _, _, el = session.fetch(
                     url=target_url,
                     method=args.method,
-                    headers=req_headers,
-                    insecure=args.insecure,
+                    headers=headers,
                     data=args.data
                 )
                 latencies.append(el)

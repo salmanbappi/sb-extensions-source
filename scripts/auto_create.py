@@ -140,7 +140,10 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en")
             content = build_gradle_path.read_text(encoding="utf-8")
             dep_lines = [f"    implementation(project(\"{lib}\"))" for lib in sorted(libs) if f"project(\"{lib}\")" not in content]
             if dep_lines:
-                content = content.replace("dependencies {", "dependencies {\n" + "\n".join(dep_lines))
+                if "dependencies {" in content:
+                    content = content.replace("dependencies {", "dependencies {\n" + "\n".join(dep_lines))
+                else:
+                    content = content.rstrip() + "\n\ndependencies {\n" + "\n".join(dep_lines) + "\n}\n"
                 build_gradle_path.write_text(content, encoding="utf-8")
                 print(f"  [✓] Injected {len(dep_lines)} video extractor dependencies into build.gradle")
 

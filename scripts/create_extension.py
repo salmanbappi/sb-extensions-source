@@ -1047,8 +1047,6 @@ class {class_name} : Source() {{
 
     override val supportsLatest = true
 
-    private val json: Json by injectLazy()
-
     override val client: OkHttpClient by lazy {{
         network.client.newBuilder()
             .rateLimit(permits = 4, period = 1.seconds)
@@ -1141,7 +1139,7 @@ data class AnimeItemDto(
 ) {{
     fun toSAnime(): SAnime = SAnime.create().apply {{
         title = this@AnimeItemDto.title ?: ""
-        setUrlWithoutDomain(this@AnimeItemDto.id ?: "")
+        url = this@AnimeItemDto.id ?: ""
         thumbnail_url = this@AnimeItemDto.image
         description = this@AnimeItemDto.description
         genre = this@AnimeItemDto.genres?.joinToString()
@@ -1163,7 +1161,7 @@ data class EpisodeDto(
     fun toSEpisode(): SEpisode = SEpisode.create().apply {{
         name = this@EpisodeDto.title ?: "Episode ${{this@EpisodeDto.number ?: 1f}}"
         episode_number = this@EpisodeDto.number ?: 1f
-        setUrlWithoutDomain(this@EpisodeDto.id ?: "")
+        url = this@EpisodeDto.id ?: ""
     }}
 }}
 
