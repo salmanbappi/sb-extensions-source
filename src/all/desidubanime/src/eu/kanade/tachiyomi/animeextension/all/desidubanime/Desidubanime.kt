@@ -27,12 +27,8 @@ import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.UrlUtils
 import extensions.utils.asJsoup
-import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Locale
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.parallelCatchingFlatMap
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -50,6 +46,10 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
 
 class Desidubanime : Source() {
 
@@ -145,18 +145,21 @@ class Desidubanime : Source() {
                         break
                     }
                 }
+
                 is Filters.GenreFilter -> {
                     if (!filter.isDefault()) {
                         filterPath = filter.toPath()
                         break
                     }
                 }
+
                 is Filters.SeasonFilter -> {
                     if (!filter.isDefault()) {
                         filterPath = filter.toPath()
                         break
                     }
                 }
+
                 else -> {}
             }
         }
@@ -392,6 +395,7 @@ class Desidubanime : Source() {
 
                     val mresultString = when {
                         mresultElement == null -> null
+
                         mresultElement is JsonPrimitive && mresultElement.isString -> {
                             val base64Str = mresultElement.content
                             try {
@@ -400,6 +404,7 @@ class Desidubanime : Source() {
                                 base64Str
                             }
                         }
+
                         else -> mresultElement.toString()
                     }
 
@@ -671,18 +676,21 @@ class Desidubanime : Source() {
                             addVideo(cfPath, "Cloudflare", params)
                         }
                     }
+
                     "Tiktok" -> {
                         val tiktokPath = jsonObject["hlsVideoTiktok"]?.jsonPrimitive?.contentOrNull
                         if (!tiktokPath.isNullOrBlank()) {
                             addVideo(tiktokPath, "Tiktok", params)
                         }
                     }
+
                     "Google" -> {
                         val googlePath = jsonObject["hlsVideoGoogle"]?.jsonPrimitive?.contentOrNull
                         if (!googlePath.isNullOrBlank()) {
                             addVideo(googlePath, "Google", params)
                         }
                     }
+
                     "In-House" -> {
                         val sourcePath = jsonObject["source"]?.jsonPrimitive?.contentOrNull
                         if (!sourcePath.isNullOrBlank()) {
