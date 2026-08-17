@@ -245,7 +245,7 @@ class Desidubanime : Source() {
             }
         }
 
-        val synopsis = doc.selectFirst("div.entry-content, #synopsis, div.synopsis, meta[property=og:description]")?.text()
+        val synopsis = doc.selectFirst("section[aria-label*='Overview'] p, section[aria-label*='Overview'], div.entry-content, #synopsis, div.synopsis")?.text()
             ?.substringBefore("Tags:")
             ?.trim()
             .orEmpty()
