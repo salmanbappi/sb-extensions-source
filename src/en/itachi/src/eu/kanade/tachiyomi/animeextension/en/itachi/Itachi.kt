@@ -68,8 +68,7 @@ class Itachi :
 
     // ============================== Popular / Latest ==============================
 
-    override fun popularAnimeRequest(page: Int): Request =
-        graphQLRequest(POPULAR_QUERY, GraphQLVariables(page = page))
+    override fun popularAnimeRequest(page: Int): Request = graphQLRequest(POPULAR_QUERY, GraphQLVariables(page = page))
 
     override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
 
@@ -114,6 +113,7 @@ class Itachi :
         filters.forEach { filter ->
             when (filter) {
                 is SortFilter -> selectedSort = listOf(filter.toValue())
+
                 is GenreFilter -> {
                     val genres = filter.getCheckedValues()
                     if (genres.isNotEmpty()) selectedGenres = genres
@@ -670,7 +670,7 @@ class Itachi :
 @Serializable
 data class GraphQLRequest(
     val query: String? = null,
-    val variables: GraphQLVariables? = null
+    val variables: GraphQLVariables? = null,
 )
 
 @Serializable
@@ -685,35 +685,35 @@ data class GraphQLVariables(
     val seasonYear: Int? = null,
     val id: Int? = null,
     val airingAtGreater: Long? = null,
-    val airingAtLesser: Long? = null
+    val airingAtLesser: Long? = null,
 )
 
 @Serializable
 data class AnilistGraphQLResponse(
-    val data: AnilistData? = null
+    val data: AnilistData? = null,
 )
 
 @Serializable
 data class AnilistData(
     val Page: AnilistPage? = null,
-    val Media: AnilistMedia? = null
+    val Media: AnilistMedia? = null,
 )
 
 @Serializable
 data class AnilistPage(
     val pageInfo: AnilistPageInfo? = null,
     val media: List<AnilistMedia> = emptyList(),
-    val airingSchedules: List<AnilistAiringSchedule> = emptyList()
+    val airingSchedules: List<AnilistAiringSchedule> = emptyList(),
 )
 
 @Serializable
 data class AnilistPageInfo(
-    val hasNextPage: Boolean? = null
+    val hasNextPage: Boolean? = null,
 )
 
 @Serializable
 data class AnilistAiringSchedule(
-    val media: AnilistMedia? = null
+    val media: AnilistMedia? = null,
 )
 
 @Serializable
@@ -732,58 +732,58 @@ data class AnilistMedia(
     val source: String? = null,
     val studios: AnilistStudios? = null,
     val nextAiringEpisode: AnilistNextAiringEpisode? = null,
-    val streamingEpisodes: List<AnilistStreamingEpisode> = emptyList()
+    val streamingEpisodes: List<AnilistStreamingEpisode> = emptyList(),
 )
 
 @Serializable
 data class AnilistTitle(
     val english: String? = null,
     val romaji: String? = null,
-    val native: String? = null
+    val native: String? = null,
 )
 
 @Serializable
 data class AnilistCoverImage(
     val large: String? = null,
-    val extraLarge: String? = null
+    val extraLarge: String? = null,
 )
 
 @Serializable
 data class AnilistStudios(
-    val nodes: List<AnilistStudioNode> = emptyList()
+    val nodes: List<AnilistStudioNode> = emptyList(),
 )
 
 @Serializable
 data class AnilistStudioNode(
-    val name: String? = null
+    val name: String? = null,
 )
 
 @Serializable
 data class AnilistNextAiringEpisode(
-    val episode: Int? = null
+    val episode: Int? = null,
 )
 
 @Serializable
 data class AnilistStreamingEpisode(
     val title: String? = null,
     val thumbnail: String? = null,
-    val url: String? = null
+    val url: String? = null,
 )
 
 @Serializable
 data class FastSourcesResponse(
     val sources: FastSourceFile? = null,
-    val tracks: List<FastTrack>? = null
+    val tracks: List<FastTrack>? = null,
 )
 
 @Serializable
 data class FastSourceFile(
-    val file: String? = null
+    val file: String? = null,
 )
 
 @Serializable
 data class FastTrack(
     val file: String? = null,
     val label: String? = null,
-    val kind: String? = null
+    val kind: String? = null,
 )
