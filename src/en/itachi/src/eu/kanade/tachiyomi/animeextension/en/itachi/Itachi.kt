@@ -94,7 +94,8 @@ class Itachi :
         val seen = mutableSetOf<Int>()
         val animeList = schedule.mapNotNull { entry ->
             val media = entry.media ?: return@mapNotNull null
-            if (!seen.add(media.id)) return@mapNotNull null
+            val mediaId = media.id ?: return@mapNotNull null
+            if (!seen.add(mediaId)) return@mapNotNull null
             media.toSAnime()
         }
         return AnimesPage(animeList, animeList.size == 24)
@@ -169,17 +170,20 @@ class Itachi :
         return AnimesPage(animeList, pageInfo.pageInfo?.hasNextPage ?: (animeList.size == 24))
     }
 
-    private fun AnilistMedia.toSAnime(): SAnime = SAnime.create().apply {
-        url = "/anime/$id"
-        val titleLang = preferences.getString(PREF_TITLE_LANG_KEY, "english") ?: "english"
-        title = when (titleLang) {
-            "romaji" -> title.romaji ?: title.english ?: title.native ?: "Unknown Title"
-            "native" -> title.native ?: title.english ?: title.romaji ?: "Unknown Title"
-            else -> title.english ?: title.romaji ?: title.native ?: "Unknown Title"
+    private fun AnilistMedia.toSAnime(): SAnime {
+        val mediaTitle = title
+        return SAnime.create().apply {
+            url = "/anime/$id"
+            val titleLang = preferences.getString(PREF_TITLE_LANG_KEY, "english") ?: "english"
+            title = when (titleLang) {
+                "romaji" -> mediaTitle?.romaji ?: mediaTitle?.english ?: mediaTitle?.native ?: "Unknown Title"
+                "native" -> mediaTitle?.native ?: mediaTitle?.english ?: mediaTitle?.romaji ?: "Unknown Title"
+                else -> mediaTitle?.english ?: mediaTitle?.romaji ?: mediaTitle?.native ?: "Unknown Title"
+            }
+            thumbnail_url = coverImage?.extraLarge ?: coverImage?.large
+            description = this@toSAnime.description
+            genre = genres?.joinToString() ?: ""
         }
-        thumbnail_url = coverImage?.extraLarge ?: coverImage?.large
-        description = this@toSAnime.description
-        genre = genres?.joinToString() ?: ""
     }
 
     // ============================== Anime Details ==============================
