@@ -1,7 +1,7 @@
 ext {
     extName = 'DesiDubAnime'
     extClass = '.Desidubanime'
-    extVersionCode = 13
+    extVersionCode = 14
     isNsfw = false
 }
 
@@ -9,14 +9,10 @@ apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation(project(":lib:byse-extractor"))
+    implementation(project(":lib:filemoon-extractor"))
+    implementation(project(":lib:buzzheavier-extractor"))
+    implementation(project(":lib:vidhide-extractor"))
+    implementation(project(":lib:playlist-utils"))
     implementation(project(":lib:unpacker"))
     implementation(project(":lib:synchrony"))
-    implementation(project(":lib:buzzheavier-extractor"))
-    implementation(project(":lib:dood-extractor"))
-    implementation(project(":lib:filemoon-extractor"))
-    implementation(project(":lib:playlist-utils"))
-    implementation(project(":lib:streamtape-extractor"))
-    implementation(project(":lib:streamwish-extractor"))
-    implementation(project(":lib:universal-extractor"))
-    implementation(project(":lib:vidhide-extractor"))
 }
