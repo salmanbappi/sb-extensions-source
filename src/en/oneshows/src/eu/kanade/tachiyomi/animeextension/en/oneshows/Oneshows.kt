@@ -252,7 +252,7 @@ class Oneshows :
             )
         }
 
-        return episodeList.reversed()
+        return episodeList.distinctBy { it.url }.reversed()
     }
 
     // ============================ Video Links =============================
@@ -295,13 +295,31 @@ class Oneshows :
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val embedUrl = hoster.hosterUrl
+        val embedUri = Uri.parse(embedUrl)
+        val embedHost = embedUri.host ?: "player.vidzee.wtf"
         val embedHeaders = Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .add("Referer", "$baseUrl/")
+            .add("Referer", embedUrl)
+            .add("Origin", "https://$embedHost")
+            .build()
+
+        val videoHeaders = Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .add("Referer", "https://$embedHost/")
+            .add("Origin", "https://$embedHost")
             .build()
 
         return try {
-            universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName).sort()
+            val videos = universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
+            videos.map { v ->
+                Video(
+                    videoUrl = v.videoUrl,
+                    videoTitle = v.videoTitle,
+                    headers = videoHeaders,
+                    audioTracks = v.audioTracks,
+                    subtitleTracks = v.subtitleTracks,
+                )
+            }.sort()
         } catch (_: Exception) {
             emptyList()
         }
