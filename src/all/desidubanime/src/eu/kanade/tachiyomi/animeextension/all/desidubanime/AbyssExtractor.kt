@@ -391,4 +391,3 @@ class AbyssExtractor(
         private val idRegex = Regex("""['"]id['"]\s*:\s*['"]([^'"]+)['"]""")
     }
 }
-
