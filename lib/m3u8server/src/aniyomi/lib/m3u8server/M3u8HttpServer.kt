@@ -9,6 +9,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.nanohttpd.protocols.http.IHTTPSession
 import org.nanohttpd.protocols.http.NanoHTTPD
+import org.nanohttpd.protocols.http.NanoHTTPD.MIME_PLAINTEXT
 import org.nanohttpd.protocols.http.response.Response
 import org.nanohttpd.protocols.http.response.Response.newChunkedResponse
 import org.nanohttpd.protocols.http.response.Response.newFixedLengthResponse
