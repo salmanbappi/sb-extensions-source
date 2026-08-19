@@ -499,9 +499,12 @@ class Desidubanime : Source() {
 
         return filteredHosters.distinctBy { it.hosterUrl }.sortedWith(
             compareByDescending<Hoster> {
-                if (prefServer != "auto") it.hosterName.contains(prefServer, ignoreCase = true)
-                else it.hosterName.contains("byse", ignoreCase = true)
-            }.thenByDescending { it.hosterName.contains("byse", ignoreCase = true) }
+                if (prefServer != "auto") {
+                    it.hosterName.contains(prefServer, ignoreCase = true)
+                } else {
+                    it.hosterName.contains("byse", ignoreCase = true)
+                }
+            }.thenByDescending { it.hosterName.contains("byse", ignoreCase = true) },
         )
     }
 
