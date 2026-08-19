@@ -3,5 +3,5 @@ plugins {
 }
 
 dependencies {
-    implementation("org.nanohttpd:nanohttpd:2.3.1")
+    api("org.nanohttpd:nanohttpd:2.3.1")
 }
