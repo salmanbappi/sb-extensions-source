@@ -13,6 +13,7 @@ IS_NSFW_REGEX = re.compile(r"'tachiyomi.animeextension.nsfw' value='([^']+)'")
 APPLICATION_LABEL_REGEX = re.compile(r"^application-label:'([^']+)'", re.MULTILINE)
 APPLICATION_ICON_320_REGEX = re.compile(r"^application-icon-(?:320|480|640|240|160):'([^']+)'", re.MULTILINE)
 APPLICATION_ICON_FALLBACK_REGEX = re.compile(r"(?:application-icon(?:-\d+)?|icon)='([^']+)'")
+LANGUAGE_REGEX = re.compile(r"aniyomi-([^.]+)")
 sdk_root = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
 ANDROID_BUILD_TOOLS = None
 if sdk_root and Path(sdk_root).is_dir():
