@@ -424,21 +424,10 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
 
     print(f"🚀 Publishing extension: src/{lang}/{name}...\n" + "=" * 60)
 
-    # 1. Run auto-fix, dependency detection, formatting & static validation
-    print("1️⃣ Running pre-flight auto-remediation, formatting & static validation...")
-    try:
-        from scripts.ast_fixer import fix_codebase
-        fix_codebase(repo_root, lang, name)
-    except Exception as e:
-        print(f"  [!] Notice: AST auto-remediation skipped ({e})")
-
-    detect_script = repo_root / "scripts" / "detect_extractors.py"
-    if detect_script.exists():
-        subprocess.run([sys.executable, str(detect_script), "--lang", lang, "--name", name, "--fix"], cwd=repo_root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
-
-    format_codebase(repo_root, lang, name)
-    if not validate_extensions(repo_root, lang, name):
-        print("❌ Validation failed. Fix errors before publishing.")
+    # 1. Run Master Pre-Flight Quality Gate (Format, AST Remediation, Dependencies, Linting, Validation)
+    print("1️⃣ Running Master Pre-Flight Quality Gate...")
+    if not preflight_extension(repo_root, lang, name):
+        print("❌ Master Pre-Flight quality gate failed. Fix reported errors before publishing.")
         return False
 
     # 2. Bump version
@@ -955,11 +944,11 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                 file_warnings.append('Redundant "Server:" prefix in hosterName — use clean provider name (e.g. "Misa", "MegaCloud")')
 
             # 24. Suspend extractor called from non-suspend private helper function
-            suspend_extractors = ["vidMolyExtractor", "voeExtractor", "filemoonExtractor", "luluExtractor", "streamWishExtractor", "vidGuardExtractor"]
-            for m in re.finditer(r'(?:private|protected|internal)?\s+fun\s+(\w+)\s*\([^)]*\)\s*(?::\s*List<Video>|\s*\{)', content):
+            suspend_extractors = ["vidMolyExtractor", "voeExtractor", "filemoonExtractor", "luluExtractor", "streamWishExtractor", "vidGuardExtractor", "byseExtractor"]
+            for m in re.finditer(r'(?:(?:override|private|protected|internal|suspend|open)\s+)*fun\s+(\w+)\s*\([^)]*\)\s*(?::\s*List<Video>|\s*\{)', content):
                 fn_name = m.group(1)
                 full_match = m.group(0)
-                if "suspend" not in full_match and fn_name not in ["videoListParse", "popularAnimeParse", "latestUpdatesParse", "searchAnimeParse", "animeDetailsParse", "episodeListParse", "setupPreferenceScreen", "sortVideos"]:
+                if "suspend" not in full_match and fn_name not in ["videoListParse", "popularAnimeParse", "latestUpdatesParse", "searchAnimeParse", "animeDetailsParse", "episodeListParse", "setupPreferenceScreen", "sortVideos", "getVideoList", "getHosterList", "getEpisodeList", "getPopularAnime", "getLatestUpdates", "getSearchAnime", "getAnimeDetails"]:
                     start_pos = m.end()
                     fn_chunk = content[start_pos:start_pos + 1200]
                     for ext in suspend_extractors:
@@ -1308,7 +1297,7 @@ def main():
             },
             "test-extractor": {
                 "script": "test_extractors.py",
-                "desc": "Test video embed link extraction logic (DoodStream, StreamTape, FileMoon, MixDrop, VidSrc) locally."
+                "desc": "Test video embed link extraction logic locally with one-click real FFmpeg playback simulation (--play, --probe)."
             },
             "list-extractors": {
                 "script": None,
@@ -1344,7 +1333,7 @@ def main():
             },
             "probe-stream": {
                 "script": "probe_stream.py",
-                "desc": "Deep media inspector for HLS (M3U8), DASH, direct video streams, codecs, and subtitles."
+                "desc": "Deep media inspector for HLS (M3U8), DASH, direct video streams, codecs, audio/subtitles, and real FFmpeg playback (--play)."
             },
             "json-to-dto": {
                 "script": "json_to_dto.py",
@@ -1423,7 +1412,7 @@ def main():
             ("🔬 Testing & Scraper Sandbox", [
                 ("test-scraper", "Test live HTTP requests, CSS selectors, regex, DevTools headers, and REPL."),
                 ("test-pipeline", "Run full 5-stage automated scraper verification (Popular -> Stream)."),
-                ("test-extractor", "Unit test video embed resolvers and unpackers (alias: test-extractors)."),
+                ("test-extractor", "Unit test video embed resolvers with one-click FFmpeg playback simulation (--play)."),
                 ("test-filters", "Combinatorial search filter matrix fuzzer."),
                 ("sandbox", "Zero-APK fast in-memory Kotlin runtime simulator."),
             ]),
@@ -1436,7 +1425,7 @@ def main():
                 ("inspect-hosters", "Inspect & audit hoster folder architecture and stream quality sorting."),
             ]),
             ("📡 Media & Stream Diagnostics", [
-                ("probe-stream", "Deep media inspector for HLS (.m3u8), DASH, direct streams, and codecs."),
+                ("probe-stream", "Deep media inspector for HLS (.m3u8), audio/subtitles, and real FFmpeg playback (--play)."),
                 ("deobfuscate", "Decode Dean Edwards, PlayerJS, CryptoJS AES, and Stego media payloads."),
                 ("fetch-metadata", "Fetch episode metadata from Jikan, AniList, Kitsu, TMDB, and TVMaze."),
                 ("fetch-skip-times", "Fetch AniSkip intro/outro/recap skip timestamps."),
@@ -1444,7 +1433,7 @@ def main():
                 ("fetch-icon", "Fetch website favicon and convert to 192x192 PNG launcher icon."),
             ]),
             ("🚀 Release & Versioning", [
-                ("publish", "Pre-flight auto-fix, format, validate, bump version, commit, and push."),
+                ("publish", "Full master preflight, format, validate, bump version, commit, and push."),
                 ("bump-version", "Increment extVersionCode in build.gradle."),
                 ("bump-theme", "Increment baseVersionCode in lib-multisrc."),
                 ("bump-lib", "Cascade version bumps to all modules depending on a lib."),

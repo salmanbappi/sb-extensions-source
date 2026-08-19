@@ -128,7 +128,7 @@ class StreamProber:
 
         return result
 
-    def probe_stream(self, url: str, deep: bool = False, probe_segments: int = 3) -> bool:
+    def probe_stream(self, url: str, deep: bool = False, probe_segments: int = 3, verify_play: bool = False) -> bool:
         """Probes a video stream URL with full analysis."""
         print(f"📡 Probing Stream URL: {url}\n" + "=" * 60)
 
@@ -221,9 +221,18 @@ class StreamProber:
             elif body.startswith(b"\x1a\x45\xdf\xa3"):
                 print("  ✓ Valid Matroska/WebM container signature detected")
 
-        # Check FFprobe if available
-        if shutil.which("ffprobe") and (parsed_path.endswith(".mp4") or is_m3u8):
-            self._run_ffprobe(url)
+        # Determine probe target URL (if master playlist, use top video variant for fast and direct ffprobe/ffmpeg decode)
+        probe_target_url = url
+        if is_m3u8 and parsed.get("is_master") and parsed.get("variants"):
+            top_var = parsed["variants"][0].get("url")
+            if top_var:
+                probe_target_url = top_var
+
+        # Run FFprobe / FFmpeg playability inspection if available
+        if shutil.which("ffprobe"):
+            self._run_ffprobe(probe_target_url)
+        if verify_play or (shutil.which("ffmpeg") and deep):
+            self._run_ffmpeg_playback_test(probe_target_url)
 
         print("\n" + "=" * 60)
         print("✅ Stream Reachability & Integrity Validation Passed!")
@@ -275,28 +284,138 @@ class StreamProber:
             print("\n  💡 Warning: Segments use fake image/script extensions (.jpg/.png/.html/etc.).")
             print("     Implement `:lib:m3u8server` and wrap video output with `m3u8Integration.processVideoList(videos)`.")
 
+    def _build_ffmpeg_headers(self) -> Tuple[List[str], str]:
+        """Builds FFmpeg CLI arguments for User-Agent and custom request headers."""
+        cli_args = []
+        custom_headers = []
+        for k, v in self.headers.items():
+            if k.lower() == "user-agent":
+                cli_args.extend(["-user_agent", v])
+            else:
+                custom_headers.append(f"{k}: {v}\r\n")
+        header_str = "".join(custom_headers)
+        if header_str:
+            cli_args.extend(["-headers", header_str])
+        return cli_args, header_str
+
     def _run_ffprobe(self, url: str):
-        """Runs ffprobe for deep codec extraction if installed."""
+        """Runs ffprobe for deep media inspection: duration, video resolution/codec, audio tracks/languages, subtitles."""
         try:
             print("\n  🎞️ Running FFprobe Deep Inspection...")
+            header_args, _ = self._build_ffmpeg_headers()
             cmd = [
                 "ffprobe", "-v", "error",
-                "-show_entries", "stream=index,codec_name,codec_type,width,height,bit_rate",
+                *header_args,
+                "-show_entries", "format=duration,size,bit_rate,format_name:stream=index,codec_name,codec_type,width,height,channels,channel_layout,sample_rate,r_frame_rate:stream_tags=language,title",
                 "-of", "json",
-                "-headers", "".join(f"{k}: {v}\r\n" for k, v in self.headers.items()),
                 url
             ]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             if res.returncode == 0:
                 data = json.loads(res.stdout)
+                fmt = data.get("format", {})
                 streams = data.get("streams", [])
-                for s in streams:
-                    stype = s.get("codec_type", "unknown")
-                    cname = s.get("codec_name", "unknown")
-                    dim = f"{s.get('width')}x{s.get('height')}" if "width" in s else ""
-                    print(f"     • {stype.upper()}: {cname} {dim}")
-        except Exception:
-            pass
+                
+                # Duration
+                dur_raw = fmt.get("duration")
+                if dur_raw:
+                    try:
+                        dur_sec = float(dur_raw)
+                        mins, secs = divmod(int(dur_sec), 60)
+                        hours, mins = divmod(mins, 60)
+                        dur_formatted = f"{hours}h {mins}m {secs}s" if hours > 0 else f"{mins}m {secs}s"
+                        print(f"     ⏱️  Duration:     {dur_formatted} ({dur_sec:.2f}s)")
+                    except Exception:
+                        print(f"     ⏱️  Duration:     {dur_raw}s")
+
+                video_streams = [s for s in streams if s.get("codec_type") == "video"]
+                audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+                sub_streams = [s for s in streams if s.get("codec_type") == "subtitle"]
+
+                for v in video_streams:
+                    w = v.get("width")
+                    h = v.get("height")
+                    cname = v.get("codec_name", "unknown").upper()
+                    fps_raw = v.get("r_frame_rate", "")
+                    fps_str = ""
+                    if "/" in fps_raw:
+                        num, den = fps_raw.split("/")
+                        if den and den != "0":
+                            fps_val = float(num) / float(den)
+                            fps_str = f" @ {fps_val:.2f} fps" if fps_val > 0 else ""
+                    res_label = f"{h}p ({w}x{h})" if w and h else "Unknown Resolution"
+                    print(f"     📺 Video Track:  {res_label} [{cname}]{fps_str}")
+
+                if audio_streams:
+                    lang_map = {
+                        "hi": "Hindi", "ta": "Tamil", "te": "Telugu", "en": "English",
+                        "ja": "Japanese", "jpn": "Japanese", "es": "Spanish", "fr": "French",
+                        "de": "German", "it": "Italian", "pt": "Portuguese", "ko": "Korean",
+                        "kor": "Korean", "zh": "Chinese", "zho": "Chinese", "und": "Undetermined"
+                    }
+                    print(f"     🔊 Audio Tracks ({len(audio_streams)}):")
+                    for a in audio_streams:
+                        idx = a.get("index", "?")
+                        cname = a.get("codec_name", "unknown").upper()
+                        channels = a.get("channels", 2)
+                        layout = a.get("channel_layout", "stereo")
+                        sr = a.get("sample_rate", "44100")
+                        tags = a.get("tags", {})
+                        lang_code = tags.get("language", "und").lower()
+                        lang_name = lang_map.get(lang_code, lang_code.upper())
+                        title = tags.get("title", "")
+                        title_info = f' "{title}"' if title else ""
+                        print(f"        • [Stream #{idx}] {lang_name} ({lang_code}){title_info} — {cname} {layout} ({channels}ch, {sr}Hz)")
+
+                if sub_streams:
+                    print(f"     💬 Subtitles ({len(sub_streams)}):")
+                    for s in sub_streams:
+                        idx = s.get("index", "?")
+                        cname = s.get("codec_name", "unknown").upper()
+                        tags = s.get("tags", {})
+                        lang = tags.get("language", "und")
+                        title = tags.get("title", "")
+                        print(f"        • [Stream #{idx}] {lang} ({title or cname})")
+            else:
+                if "403" in res.stderr or "Forbidden" in res.stderr:
+                    print("     ⚠️ FFprobe: HTTP 403 Forbidden (Check Referer / User-Agent headers)")
+                elif res.stderr.strip():
+                    first_err = res.stderr.strip().splitlines()[-1]
+                    print(f"     ⚠️ FFprobe Notice: {first_err}")
+        except subprocess.TimeoutExpired:
+            print("     ⚠️ FFprobe timed out (stream server took >15s to respond)")
+        except Exception as e:
+            print(f"     ⚠️ FFprobe exception: {e}")
+
+    def _run_ffmpeg_playback_test(self, url: str, duration_sec: int = 2):
+        """Runs ffmpeg decode test to confirm stream can actually be decoded and played smoothly in ExoPlayer."""
+        if not shutil.which("ffmpeg"):
+            return
+        try:
+            print(f"\n  🎬 Testing Real Playback Decode ({duration_sec}s sample)...")
+            header_args, _ = self._build_ffmpeg_headers()
+            cmd = [
+                "ffmpeg", "-v", "error",
+                *header_args,
+                "-ss", "00:00:02",
+                "-t", str(duration_sec),
+                "-i", url,
+                "-f", "null",
+                "-"
+            ]
+            start_t = time.time()
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            elapsed = time.time() - start_t
+            if res.returncode == 0 and not res.stderr.strip():
+                print(f"     ✅ Playback Simulation PASSED: Stream decoded perfectly in {elapsed:.2f}s (0 frame errors, ExoPlayer ready)")
+            elif res.returncode == 0:
+                print(f"     ⚠️ Playback Simulation: Decoded with minor stream notices: {res.stderr.strip()[:150]}")
+            else:
+                print(f"     ❌ Playback Simulation FAILED: {res.stderr.strip()[:200]}")
+        except subprocess.TimeoutExpired:
+            print("     ⚠️ Playback test timed out (>15s). Stream bandwidth may be constrained.")
+        except Exception as e:
+            print(f"     ⚠️ Playback test exception: {e}")
 
 
     def detect_stego_offset(self, url: str) -> bool:
@@ -382,6 +501,7 @@ def main():
     parser.add_argument("--deep", action="store_true", help="Probe nested variant playlists and video segment chunks")
     parser.add_argument("--probe-segments", type=int, default=3, help="Number of segments to probe in deep mode (default: 3)")
     parser.add_argument("--detect-offset", action="store_true", help="Scan stream for fake image wrappers (PNG/JPEG/GIF) and calculate LocalProxy byte offset")
+    parser.add_argument("--verify-play", "--play", action="store_true", help="Run real FFmpeg decoding test to verify video/audio actually play without frame errors")
 
     args = parser.parse_args()
 
@@ -401,7 +521,7 @@ def main():
     if args.detect_offset:
         success = prober.detect_stego_offset(args.url)
     else:
-        success = prober.probe_stream(args.url, deep=args.deep, probe_segments=args.probe_segments)
+        success = prober.probe_stream(args.url, deep=args.deep, probe_segments=args.probe_segments, verify_play=args.verify_play)
     sys.exit(0 if success else 1)
 
 

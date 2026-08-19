@@ -44,7 +44,7 @@ class ExtensionSandbox:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": f"{self.base_url}/",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": "application/json, text/plain, text/html, */*",
         }
         return headers
 
@@ -52,15 +52,20 @@ class ExtensionSandbox:
         """Performs HTTP request replicating Aniyomi OkHttpClient."""
         base = self.base_url if self.base_url.endswith("/") else f"{self.base_url}/"
         full_url = path_or_url if (path_or_url.startswith("http://") or path_or_url.startswith("https://")) else urllib.parse.urljoin(base, path_or_url.lstrip("/"))
-        req = urllib.request.Request(full_url, headers=self.headers)
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                body = resp.read().decode("utf-8", errors="ignore")
-                return resp.getcode(), body
-        except urllib.error.HTTPError as e:
-            return e.code, e.read().decode("utf-8", errors="ignore")
-        except Exception as e:
-            return 0, str(e)
+        for attempt in range(2):
+            req = urllib.request.Request(full_url, headers=self.headers)
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    body = resp.read().decode("utf-8", errors="ignore")
+                    return resp.getcode(), body
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt == 0:
+                    time.sleep(1.5)
+                    continue
+                return e.code, e.read().decode("utf-8", errors="ignore")
+            except Exception as e:
+                return 0, str(e)
+        return 0, "Max attempts reached"
 
     def _extract_endpoint(self, method_name: str, default_path: str, query: Optional[str] = None) -> str:
         """Extracts endpoint URL from Kotlin source method body, resolving variables."""
@@ -92,7 +97,7 @@ class ExtensionSandbox:
             raw_url = raw_url.replace("${PAGE_SIZE}", "20").replace("$PAGE_SIZE", "20")
             if query:
                 encoded_q = urllib.parse.quote(query)
-                raw_url = re.sub(r'\$\{(?:encodedQuery|query|q)\}', encoded_q, raw_url)
+                raw_url = re.sub(r'\$\{(?:Uri\.encode\(query\)|URLEncoder\.encode\(query[^)]*\)|encodedQuery|query|q)\}', encoded_q, raw_url)
                 raw_url = re.sub(r'\$(?:encodedQuery|query|q)\b', encoded_q, raw_url)
             return raw_url
 

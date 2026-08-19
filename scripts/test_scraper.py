@@ -648,9 +648,11 @@ def inspect_extension_module(repo_root: Path, lang: str, name: str) -> Tuple[Opt
     for kt_file in ext_dir.rglob("*.kt"):
         content = kt_file.read_text(encoding="utf-8", errors="ignore")
         if not base_url:
-            m_base = re.search(r'(?:baseUrl|defaultBaseUrl|PREF_DOMAIN_DEFAULT)\s*=\s*["\'](https?://[^"\']+)["\']', content)
+            m_base = re.search(r'(?:baseUrl|defaultBaseUrl|PREF_[A-Z_]*DEFAULT|DEFAULT_[A-Z_]*|BASE_URL)\s*=\s*["\'](https?://[^"\']+)["\']', content)
             if not m_base:
                 m_base = re.search(r'baseUrl\s*:\s*String.*?get\(\)\s*=\s*[^"\']*["\'](https?://[^"\']+)["\']', content, re.DOTALL)
+            if not m_base:
+                m_base = re.search(r'["\'](https?://(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/[^"\']*)?)["\']', content)
             if m_base:
                 base_url = m_base.group(1).rstrip("/")
 
