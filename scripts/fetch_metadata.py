@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
-
 # ==============================================================================
 # Network Utilities with Exponential Backoff & Retry Handling
 # ==============================================================================
@@ -104,11 +103,9 @@ def http_request_with_retry(
 
     return last_status, None, last_resp_headers
 
-
 def http_get_json(url: str, headers: Optional[Dict[str, str]] = None, max_retries: int = 3) -> Optional[Dict[str, Any]]:
     status, payload, _ = http_request_with_retry(url, method="GET", headers=headers, max_retries=max_retries)
     return payload if isinstance(payload, dict) else None
-
 
 def http_post_json(url: str, payload: Dict[str, Any], headers: Optional[Dict[str, str]] = None, max_retries: int = 3) -> Optional[Dict[str, Any]]:
     post_headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -117,7 +114,6 @@ def http_post_json(url: str, payload: Dict[str, Any], headers: Optional[Dict[str
     data = json.dumps(payload).encode("utf-8")
     status, res, _ = http_request_with_retry(url, method="POST", headers=post_headers, data=data, max_retries=max_retries)
     return res if isinstance(res, dict) else None
-
 
 # ==============================================================================
 # Lightweight JSON Schema / Format Validator
@@ -162,7 +158,6 @@ class SchemaValidator:
 
         return len(errors) == 0, errors
 
-
 JIKAN_EPISODES_SCHEMA = {
     "data": {"type": list, "required": True, "item_schema": {
         "mal_id": {"type": (int, float), "required": True},
@@ -178,7 +173,6 @@ ANILIST_RESPONSE_SCHEMA = {
         "Media": {"type": (dict, type(None)), "required": True}
     }}
 }
-
 
 # ==============================================================================
 # Provider Fetchers
@@ -217,7 +211,6 @@ def fetch_jikan_episodes(mal_id: str, max_pages: int = 10) -> Dict[int, Dict[str
         print(f"  [!] Jikan: reached max_pages limit ({max_pages}). Some episodes may be missing.", file=sys.stderr)
     return episodes
 
-
 def fetch_jikan_details(mal_id: str) -> Dict[str, Any]:
     """Fetch high-level anime metadata from Jikan REST API."""
     url = f"https://api.jikan.moe/v4/anime/{mal_id}"
@@ -237,7 +230,6 @@ def fetch_jikan_details(mal_id: str) -> Dict[str, Any]:
         "episodes": data.get("episodes"),
         "score": data.get("score")
     }
-
 
 def fetch_anilist_metadata(mal_id: str) -> Dict[str, Any]:
     """
@@ -346,7 +338,6 @@ def fetch_anilist_metadata(mal_id: str) -> Dict[str, Any]:
 
     return result
 
-
 def fetch_kitsu_episodes(mal_id: str, max_pages: int = 10) -> Dict[int, Dict[str, Any]]:
     """Fetch episode descriptions and thumbnails from Kitsu API."""
     map_url = f"https://kitsu.app/api/edge/mappings?filter[externalSite]=myanimelist/anime&filter[externalId]={mal_id}&include=item"
@@ -388,7 +379,6 @@ def fetch_kitsu_episodes(mal_id: str, max_pages: int = 10) -> Dict[int, Dict[str
         print(f"  [!] Kitsu: reached max_pages limit ({max_pages}). Some episodes may be missing.", file=sys.stderr)
     return episodes
 
-
 def parse_seasons_arg(season_str: str) -> List[int]:
     """Parses season arguments like '1', '1,2,3', '1-4' into a list of integers."""
     seasons = set()
@@ -403,7 +393,6 @@ def parse_seasons_arg(season_str: str) -> List[int]:
         elif part.isdigit():
             seasons.add(int(part))
     return sorted(list(seasons)) or [1]
-
 
 def fetch_tmdb_episodes(title: str, api_key: str, seasons_spec: str = "1") -> Dict[int, Dict[str, Any]]:
     """
@@ -469,7 +458,6 @@ def fetch_tmdb_episodes(title: str, api_key: str, seasons_spec: str = "1") -> Di
 
     return episodes
 
-
 def fetch_tvmaze_episodes(title: str) -> Dict[int, Dict[str, Any]]:
     """Fetch 100% keyless TV and series episode metadata from TVMaze API."""
     if not title:
@@ -503,7 +491,6 @@ def fetch_tvmaze_episodes(title: str) -> Dict[int, Dict[str, Any]]:
 
     return episodes
 
-
 def fetch_aniskip_times(mal_id: str, episode: int = 1, episode_length: int = 1420) -> Dict[str, Any]:
     """Fetch intro (OP), outro (ED), and recap skip timestamps from AniSkip API."""
     url = f"https://api.aniskip.com/v2/skip-times/{mal_id}/{episode}?types=op&types=ed&types=recap&types=mixed-op&types=mixed-ed&episodeLength={episode_length}"
@@ -511,7 +498,6 @@ def fetch_aniskip_times(mal_id: str, episode: int = 1, episode_length: int = 142
     if not payload or not isinstance(payload, dict) or not payload.get("found"):
         return {"found": False, "results": []}
     return payload
-
 
 def cross_map_id(mal_id: Optional[str] = None, imdb_id: Optional[str] = None, anilist_id: Optional[str] = None) -> Dict[str, Any]:
     """Cross-maps anime and movie IDs across MAL, AniList, IMDb, TMDB, TVDB, Kitsu, and TVMaze."""
@@ -567,7 +553,6 @@ def cross_map_id(mal_id: Optional[str] = None, imdb_id: Optional[str] = None, an
             result["title"] = tv_res.get("name")
 
     return result
-
 
 # ==============================================================================
 # Main Orchestrator
@@ -656,7 +641,6 @@ def run_fetch_metadata(
             print(f"{num:<5} | {t_str:<35} | {air_str:<12} | {thumb_str:<45} | {stream_str}")
         print("=" * 125)
 
-
 def main():
     parser = argparse.ArgumentParser(description="Fetch and merge anime/TV episode metadata from external APIs (Jikan, AniList, Kitsu, TMDB, TVMaze, AniSkip, SIMKL).")
     parser.add_argument("--mal-id", help="MyAnimeList Anime ID")
@@ -702,7 +686,6 @@ def main():
 
     tmdb_key = args.tmdb_key or os.environ.get("TMDB_API_KEY", "")
     run_fetch_metadata(args.mal_id, args.title, tmdb_key, args.season, args.format, args.max_pages)
-
 
 if __name__ == "__main__":
     main()

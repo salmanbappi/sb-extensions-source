@@ -34,62 +34,54 @@ except ImportError:
 BOT_TOKEN = get_secret("DISCORD_BOT_TOKEN", os.environ.get("DISCORD_BOT_TOKEN", ""))
 STATUS_UPDATE_CHANNEL_ID = os.environ.get("DISCORD_STATUS_CHANNEL_ID", "1517517856231919687")  # #status-update
 
-
-def make_clean_bar(positive_pct: int, total_blocks: int = 10) -> str:
-    """Generates a clean unicode progress bar without emojis."""
-    pos_blocks = round((positive_pct / 100) * total_blocks)
-    neg_blocks = total_blocks - pos_blocks
-    return "■" * pos_blocks + "□" * neg_blocks
-
-
 def format_status_update(
     title: str,
     action_type: str,
     site_url: str,
-    audio_languages: List[str],
-    library_size: str,
-    provider_count: int,
-    providers: List[str],
-    reliability_score: int,
-    changelog: List[str],
-    positive_sentiment: int,
-    review_highlights: List[str],
+    audio_languages: Optional[List[str]] = None,
+    library_size: Optional[str] = None,
+    provider_count: int = 0,
+    providers: Optional[List[str]] = None,
+    changelog: Optional[List[str]] = None,
     version: str = "v16.1.0"
 ) -> str:
-    """Formats extension status update into clean plaintext Discord Markdown without emojis."""
-    negative_sentiment = 100 - positive_sentiment
-    bar = make_clean_bar(positive_sentiment, 10)
-    
-    audio_str = " | ".join([f"`{lang}`" for lang in audio_languages]) if audio_languages else "`Standard Sub/Dub`"
-    provider_str = ", ".join(providers) if providers else "Direct Stream / HLS"
-    changes_str = "\n".join([f"- {c}" for c in changelog]) if changelog else "- Initial Release under API v16 standard"
-    feedback_str = "\n".join([f"> *\"{r}\"*" for r in review_highlights]) if review_highlights else "> *\"High streaming reliability and responsive navigation.\"*"
-    
-    message = (
-        f"### [{action_type.upper()}] {title} `{version}`\n"
-        f"**URL**: <{site_url}>\n"
-        f"**Audio Tracks**: {audio_str}\n"
-        f"**Library Scale**: `{library_size}` | **Reliability**: `{reliability_score}%` | **Providers ({provider_count})**: {provider_str}\n\n"
-        f"**Changes & Fixes**:\n"
-        f"{changes_str}\n\n"
-        f"**AI Sentiment Analysis**: `[{bar}]` **{positive_sentiment}% Positive** / **{negative_sentiment}% Negative**\n"
-        f"{feedback_str}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    )
-    return message
+    """Formats extension status update into clean plaintext Discord Markdown without emojis.
 
+    Only fields that are actually known (passed explicitly or detected from source)
+    are included — no fabricated reliability/sentiment/language stats.
+    """
+    audio_str = " | ".join([f"`{lang}`" for lang in audio_languages]) if audio_languages else None
+    provider_str = ", ".join(providers) if providers else None
+    changes_str = "\n".join([f"- {c}" for c in changelog]) if changelog else "- Initial Release under API v16 standard"
+
+    lines = [
+        f"### [{action_type.upper()}] {title} `{version}`",
+        f"**URL**: <{site_url}>",
+    ]
+    if audio_str:
+        lines.append(f"**Audio Tracks**: {audio_str}")
+    if library_size:
+        lines.append(f"**Library Scale**: `{library_size}`")
+    if provider_str:
+        lines.append(f"**Providers ({provider_count})**: {provider_str}")
+    lines.append("")
+    lines.append("**Changes & Fixes**:")
+    lines.append(changes_str)
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    return "\n".join(lines)
 
 def send_message(content: str, channel_id: str = STATUS_UPDATE_CHANNEL_ID, token: str = BOT_TOKEN) -> bool:
     """Sends payload directly to Discord channel via Bot REST API."""
     url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     payload = json.dumps({"content": content}).encode("utf-8")
-    
+
     headers = {
         "Authorization": f"Bot {token}",
         "Content-Type": "application/json",
         "User-Agent": "DiscordBot (https://discord.com, 1.0)"
     }
-    
+
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req) as resp:
@@ -101,12 +93,11 @@ def send_message(content: str, channel_id: str = STATUS_UPDATE_CHANNEL_ID, token
         print(f"Error sending message: {e}")
         return False
 
-
 def inspect_extension(repo_root: Path, target: str) -> Dict[str, Any]:
     """Auto-inspects an extension module directory to extract metadata, providers, audio, and version."""
     src_dir = repo_root / "src"
     matched_dir = None
-    
+
     # Try direct path
     if (src_dir / target).is_dir():
         matched_dir = src_dir / target
@@ -120,10 +111,9 @@ def inspect_extension(repo_root: Path, target: str) -> Dict[str, Any]:
         "title": target.capitalize(),
         "version": "v16.1.0",
         "site_url": "https://example.com",
-        "audio_languages": ["Japanese", "English"],
-        "library_size": "Large (10,000+)",
+        "audio_languages": None,  # only set when detected from source
+        "library_size": None,  # only set when a real count is found
         "providers": [],
-        "reliability_score": 95,
         "changelog": []
     }
 
@@ -171,6 +161,8 @@ def inspect_extension(repo_root: Path, target: str) -> Dict[str, Any]:
         ("VidGuard", r'VidGuard|vidguard'),
         ("MixDrop", r'MixDrop|mixdrop'),
         ("Voe", r'VoeExtractor|voe'),
+        ("MegaPlay", r'MegaPlay|megaplay'),
+        ("VidNest", r'VidNest|vidnest'),
     ]
     detected_providers = []
     for name, pattern in known_extractors:
@@ -178,33 +170,43 @@ def inspect_extension(repo_root: Path, target: str) -> Dict[str, Any]:
             detected_providers.append(name)
     if detected_providers:
         info["providers"] = detected_providers
-    else:
-        info["providers"] = ["Native HLS / CDN", "Direct MP4"]
+    # No fabricated provider fallback — line is omitted when nothing is detected.
 
-    # Detect Audio Languages
+    # Detect audio tracks (Sub/Dub only) from real source markers — never guess languages
     detected_audio = []
-    lang_checks = [
-        ("Japanese", r'Japanese|JAP|Sub'),
-        ("English", r'English|ENG|Dub'),
-        ("Hindi", r'Hindi|HIN'),
-        ("Tamil", r'Tamil|TAM'),
-        ("Telugu", r'Telugu|TEL'),
-        ("Malayalam", r'Malayalam|MAL'),
-        ("Bengali", r'Bengali|BEN'),
-        ("Spanish", r'Spanish|Latino|Castellano'),
-        ("Portuguese", r'Portuguese|Legendado|Dublado'),
-        ("French", r'French|VF|VOSTFR'),
-        ("German", r'German|Deutsch'),
-        ("Italian", r'Italian|ITA'),
-    ]
-    for lang_name, pattern in lang_checks:
-        if re.search(pattern, all_kt_text, re.IGNORECASE):
-            detected_audio.append(lang_name)
+    if re.search(r'["\']sub["\']', all_kt_text, re.IGNORECASE) or re.search(r'scanlator\s*=\s*"[^"]*[Ss]ub', all_kt_text):
+        detected_audio.append("Sub")
+    if re.search(r'["\']dub["\']', all_kt_text, re.IGNORECASE) or re.search(r'scanlator\s*=\s*"[^"]*[Dd]ub', all_kt_text):
+        detected_audio.append("Dub")
+
     if detected_audio:
-        info["audio_languages"] = detected_audio[:5]
+        info["audio_languages"] = detected_audio
+
+    # Estimate library size from live site
+    site_url = info.get("site_url", "")
+    if site_url and site_url != "https://example.com":
+        try:
+            req = urllib.request.Request(site_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                body = resp.read(32768).decode("utf-8", errors="ignore")
+            # Try to find a numeric anime count in the page
+            count_m = re.search(r'([\d,]+)\+?\s*(?:anime|series|titles)', body, re.IGNORECASE)
+            if count_m:
+                raw = int(count_m.group(1).replace(",", ""))
+                if raw >= 20000:
+                    info["library_size"] = f"Huge ({raw:,}+)"
+                elif raw >= 10000:
+                    info["library_size"] = f"Large ({raw:,}+)"
+                elif raw >= 5000:
+                    info["library_size"] = f"Large ({raw:,}+)"
+                elif raw >= 1000:
+                    info["library_size"] = f"Medium ({raw:,}+)"
+                else:
+                    info["library_size"] = f"Small ({raw:,}+)"
+        except Exception:
+            pass  # fall back to default
 
     return info
-
 
 def generate_status_update(
     repo_root: Path,
@@ -214,16 +216,13 @@ def generate_status_update(
     audio: Optional[List[str]] = None,
     library_size: Optional[str] = None,
     providers: Optional[List[str]] = None,
-    reliability: Optional[int] = None,
     changes: Optional[List[str]] = None,
-    positive: Optional[int] = None,
-    reviews: Optional[List[str]] = None,
     version: Optional[str] = None,
     channel_id: str = STATUS_UPDATE_CHANNEL_ID,
     dry_run: bool = False
 ) -> Tuple[bool, str]:
     """Generates status update and dispatches to Discord #status-update channel."""
-    
+
     inspected = {}
     if target:
         inspected = inspect_extension(repo_root, target)
@@ -234,11 +233,10 @@ def generate_status_update(
 
     final_url = site_url or inspected.get("site_url", "https://example.com")
     final_version = version or inspected.get("version", "v16.1.0")
-    final_audio = audio or inspected.get("audio_languages", ["Japanese", "English"])
-    final_library = library_size or inspected.get("library_size", "Large (10,000+)")
-    final_providers = providers or inspected.get("providers", ["Native HLS", "Direct Stream"])
-    final_reliability = reliability or inspected.get("reliability_score", 95)
-    
+    final_audio = audio or inspected.get("audio_languages") or None
+    final_library = library_size or inspected.get("library_size") or None
+    final_providers = providers or inspected.get("providers") or None
+
     # Handle changes / changelog
     if changes:
         final_changes = changes
@@ -259,28 +257,15 @@ def generate_status_update(
             "Performance and stability optimizations for API v16"
         ]
 
-    # Handle sentiment & review metrics
-    final_positive = positive if positive is not None else 88
-    if reviews:
-        final_reviews = reviews
-    else:
-        final_reviews = [
-            "Fast video load times and reliable stream availability.",
-            "High video quality and clean episode listing."
-        ]
-
     formatted_text = format_status_update(
         title=title,
         action_type=action,
         site_url=final_url,
         audio_languages=final_audio,
         library_size=final_library,
-        provider_count=len(final_providers),
+        provider_count=len(final_providers) if final_providers else 0,
         providers=final_providers,
-        reliability_score=final_reliability,
         changelog=final_changes,
-        positive_sentiment=final_positive,
-        review_highlights=final_reviews,
         version=final_version
     )
 
@@ -296,7 +281,6 @@ def generate_status_update(
         print(f"Failed to send status update to Discord channel {channel_id}.")
     return success, formatted_text
 
-
 def main():
     parser = argparse.ArgumentParser(description="SB Extensions - Status Update Notifier")
     parser.add_argument("target", nargs="?", help="Target extension module name (e.g. animesalt, hianime)")
@@ -305,10 +289,7 @@ def main():
     parser.add_argument("--audio", help="Comma-separated audio languages (e.g. 'Japanese,English,Hindi')")
     parser.add_argument("--library-size", help="Library scale (e.g. 'Large (14,500+)')")
     parser.add_argument("--providers", help="Comma-separated stream providers (e.g. 'StreamWish,Gofile')")
-    parser.add_argument("--reliability", type=int, help="Reliability percentage (e.g. 96)")
     parser.add_argument("-m", "--changes", action="append", help="Changelog entries / fixes (repeatable or single)")
-    parser.add_argument("--positive", type=int, help="Positive sentiment percentage (e.g. 90)")
-    parser.add_argument("--reviews", action="append", help="Review highlights (repeatable)")
     parser.add_argument("--version", help="Extension version (e.g. 'v16.1.0')")
     parser.add_argument("--channel", default=STATUS_UPDATE_CHANNEL_ID, help="Target Discord Channel ID")
     parser.add_argument("--dry-run", action="store_true", help="Print message locally without sending")
@@ -318,7 +299,7 @@ def main():
 
     audio_list = [a.strip() for a in args.audio.split(",")] if args.audio else None
     prov_list = [p.strip() for p in args.providers.split(",")] if args.providers else None
-    
+
     success, _ = generate_status_update(
         repo_root=repo_root,
         target=args.target,
@@ -327,16 +308,12 @@ def main():
         audio=audio_list,
         library_size=args.library_size,
         providers=prov_list,
-        reliability=args.reliability,
         changes=args.changes,
-        positive=args.positive,
-        reviews=args.reviews,
         version=args.version,
         channel_id=args.channel,
         dry_run=args.dry_run
     )
     sys.exit(0 if success else 1)
-
 
 if __name__ == "__main__":
     main()

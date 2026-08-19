@@ -12,7 +12,6 @@ from typing import Tuple, List
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-
 def split_params_depth_aware(params_str: str) -> list[str]:
     """Splits parameter declarations by comma, respecting generic brackets and parentheses."""
     parts = []
@@ -42,7 +41,6 @@ def split_params_depth_aware(params_str: str) -> list[str]:
     if current:
         parts.append(''.join(current).strip())
     return [p for p in parts if p]
-
 
 class ExtensionAstFixer:
     def __init__(self, dry_run: bool = False):
@@ -191,11 +189,11 @@ class ExtensionAstFixer:
                             continue
 
                         # Check rating/score/vote type migration strictly inside DTO
-                        val_match = re.search(r'\bval\s+([a-zA-Z0-9_]+)\s*:\s*(Int|Long)(\??)(.*)', p_clean)
+                        val_match = re.search(r'\b(val|var)\s+([a-zA-Z0-9_]+)\s*:\s*(Int|Long)(\??)(.*)', p_clean)
                         if val_match:
-                            prop_name = val_match.group(1)
+                            prop_name = val_match.group(2)
                             if re.search(r'\b(?:votes|rating|score|stars|rank)\b', prop_name, re.IGNORECASE):
-                                p_type_fixed = re.sub(r'(\bval\s+[a-zA-Z0-9_]+\s*:\s*)(Int|Long)', r'\1Double', p_clean)
+                                p_type_fixed = re.sub(r'(\b(?:val|var)\s+[a-zA-Z0-9_]+\s*:\s*)(Int|Long)', r'\1Double', p_clean)
                                 if p_type_fixed != p_clean:
                                     type_modified = True
                                     p_clean = p_type_fixed
@@ -269,7 +267,18 @@ class ExtensionAstFixer:
             content = re.sub(r'(\bextractFromHls\s*\([^)]*)\baudioTracks\s*=', r'\1audioList =', content)
             fixes_applied.append("Fixed `PlaylistUtils.extractFromHls` parameter `audioTracks` -> `audioList`")
 
-        # 10. Normalize line endings and whitespace
+        # 10. Audit brittle selector anti-patterns (e.g., deep :nth-child or CSS-in-JS hashes)
+        brittle_matches = re.finditer(r'select(?:First)?\(\s*["\']([^"\']+)["\']\s*\)', content)
+        for bm in brittle_matches:
+            sel = bm.group(1)
+            # Check deep nth-child chains (> 2)
+            if len(re.findall(r':nth-child\(', sel)) > 2:
+                fixes_applied.append(f"⚠️ Warning: Brittle selector with deep `:nth-child` found: `{sel}` (consider semantic attributes)")
+            # Check dynamic framework hash classes
+            if re.search(r'\.(?:jsx-|css-|style__|_)[a-zA-Z0-9]{5,}\b', sel):
+                fixes_applied.append(f"⚠️ Warning: Volatile hash class found in selector: `{sel}`")
+
+        # 11. Normalize line endings and whitespace
         lines = [line.rstrip() for line in content.replace("\r\n", "\n").split("\n")]
         # Collapse 3+ blank lines to 2
         normalized_lines = []
@@ -291,7 +300,6 @@ class ExtensionAstFixer:
             return True, fixes_applied
 
         return False, []
-
 
 def auto_fix_target(repo_root: Path, target_lang: str = None, target_name: str = None, dry_run: bool = False) -> bool:
     fixer = ExtensionAstFixer(dry_run=dry_run)
@@ -354,9 +362,7 @@ def auto_fix_target(repo_root: Path, target_lang: str = None, target_name: str =
 
     return True
 
-
 fix_codebase = auto_fix_target
-
 
 def main():
     parser = argparse.ArgumentParser(description="AST Code Smell Auto-Fixer & Remediation Engine (API v16)")
@@ -378,7 +384,6 @@ def main():
 
     success = auto_fix_target(repo_root, target_lang, target_name, dry_run=args.dry_run)
     sys.exit(0 if success else 1)
-
 
 if __name__ == "__main__":
     main()

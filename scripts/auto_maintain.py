@@ -12,7 +12,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 def run_command(cmd: list, timeout: int = 120) -> tuple[int, str]:
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
@@ -21,7 +20,6 @@ def run_command(cmd: list, timeout: int = 120) -> tuple[int, str]:
         return 1, f"Command timed out after {timeout}s: {' '.join(cmd)}"
     except Exception as e:
         return 1, str(e)
-
 
 def main():
     parser = argparse.ArgumentParser(description="Automated Maintenance Suite")
@@ -90,7 +88,6 @@ def main():
     else:
         print("✅ Automated Maintenance Cycle Completed Successfully.")
         sys.exit(0)
-
 
 if __name__ == "__main__":
     main()

@@ -20,14 +20,13 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
 }
 
-
 # ==============================================================================
 # JS UNPACKER (Dean Edwards Algorithm)
 # ==============================================================================
 class JsUnpacker:
     @staticmethod
     def detect(source: str) -> bool:
-        return bool(re.search(r"eval\(function\(p,a,c,k,e,[rd]?", source, re.IGNORE_CASE))
+        return bool(re.search(r"eval\(function\(p,a,c,k,e,[rd]?", source, re.IGNORECASE))
 
     @staticmethod
     def unpack(source: str) -> str:
@@ -82,7 +81,6 @@ class JsUnpacker:
             current_source = "\n".join(unpacked_blocks)
 
         return current_source
-
 
 # ==============================================================================
 # PLAYERJS PAYLOAD DECODER
@@ -149,7 +147,6 @@ class PlayerJsDecoder:
 
         return results
 
-
 # ==============================================================================
 # STREAM OBFUSCATION SOLVER
 # ==============================================================================
@@ -181,7 +178,6 @@ class StreamObfuscationSolver:
         regex = r"(https?://[^\s\"'<>\\]+\.(?:m3u8|mp4)[^\s\"'<>\\]*)"
         return list(set(re.findall(regex, text)))
 
-
 def fetch_html(url, headers=None, referer=None):
     if headers is None:
         headers = HEADERS.copy()
@@ -196,7 +192,6 @@ def fetch_html(url, headers=None, referer=None):
     except Exception as e:
         print(f"[ERROR] Failed to fetch {url}: {e}")
         return ""
-
 
 def extract_filemoon(html, url):
     print("[INFO] Running FileMoon extraction logic...")
@@ -215,7 +210,6 @@ def extract_filemoon(html, url):
     print("[ERROR] FileMoon m3u8 not found.")
     return None
 
-
 def extract_mixdrop(html, url):
     print("[INFO] Running MixDrop extraction logic...")
     if JsUnpacker.detect(html):
@@ -232,7 +226,6 @@ def extract_mixdrop(html, url):
     print("[ERROR] MixDrop video URL not found.")
     return None
 
-
 def extract_playerjs(html, url):
     print("[INFO] Running PlayerJS extraction logic...")
     file_match = re.search(r'file:\s*["\']([^"\']+)["\']', html)
@@ -248,7 +241,6 @@ def extract_playerjs(html, url):
         decoded_url = PlayerJsDecoder.decode_payload(raw_payload)
         return {"type": "single", "url": decoded_url}
 
-
 def extract_doodstream(html, url):
     print("[INFO] Running Doodstream extraction logic...")
     md5_match = re.search(r"(/pass_md5/[^']*)", html)
@@ -261,7 +253,6 @@ def extract_doodstream(html, url):
     token = token_match.group(1) if token_match else "unknown"
     return {"pass_url": pass_url, "token": token}
 
-
 def extract_streamtape(html, url):
     print("[INFO] Running StreamTape extraction logic...")
     robotlink_match = re.search(r"document\.getElementById\('robotlink'\)\.innerHTML\s*=\s*'([^']+)'", html)
@@ -269,14 +260,12 @@ def extract_streamtape(html, url):
         return {"stream_url_part": robotlink_match.group(1)}
     return None
 
-
 def extract_vidsrc(html, url):
     print("[INFO] Running VidSrc extraction logic...")
     iframe_match = re.search(r'<iframe[^>]+src=["\']([^"\']+)["\']', html)
     if iframe_match:
         return {"iframe_src": iframe_match.group(1)}
     return None
-
 
 def extract_voe(html, url):
     print("[INFO] Running VOE extraction logic...")
@@ -293,7 +282,6 @@ def extract_voe(html, url):
     urls = StreamObfuscationSolver.extract_stream_urls(html)
     return {"hls_url": urls[0]} if urls else None
 
-
 def extract_vidmoly(html, url):
     print("[INFO] Running Vidmoly extraction logic...")
     m = re.search(r'file\s*:\s*["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', html)
@@ -301,7 +289,6 @@ def extract_vidmoly(html, url):
         return {"hls_url": m.group(1)}
     urls = StreamObfuscationSolver.extract_stream_urls(html)
     return {"hls_url": urls[0]} if urls else None
-
 
 def extract_streamwish(html, url):
     print("[INFO] Running StreamWish extraction logic...")
@@ -313,7 +300,6 @@ def extract_streamwish(html, url):
     urls = StreamObfuscationSolver.extract_stream_urls(html)
     return {"hls_url": urls[0]} if urls else None
 
-
 def extract_vidguard(html, url):
     print("[INFO] Running VidGuard extraction logic...")
     if "svg" in html or "stream" in html:
@@ -322,14 +308,12 @@ def extract_vidguard(html, url):
             return {"hls_url": urls[0]}
     return {"status": "requires svg unpacker / resolver"}
 
-
 def extract_lulu(html, url):
     print("[INFO] Running LuluStream extraction logic...")
     if JsUnpacker.detect(html):
         html = JsUnpacker.unpack(html)
     urls = StreamObfuscationSolver.extract_stream_urls(html)
     return {"hls_url": urls[0]} if urls else None
-
 
 def extract_megacloud_flixcloud(html, url):
     print("[INFO] Running MegaCloud / FlixCloud extraction logic...")
@@ -338,7 +322,6 @@ def extract_megacloud_flixcloud(html, url):
         return {"hls_url": urls[0]}
     embed_match = re.search(r'["\'](https?://[^"\']+(?:embed|player)[^"\']*)["\']', html)
     return {"embed_url": embed_match.group(1)} if embed_match else {"status": "requires webview / source key decryption"}
-
 
 def auto_detect_provider(url):
     url_lower = url.lower()
@@ -356,7 +339,6 @@ def auto_detect_provider(url):
     if "flixcloud" in url_lower or "megacloud" in url_lower or "rapid-cloud" in url_lower: return "megacloud"
     return None
 
-
 def extract(html, url, provider):
     if provider == "doodstream": return extract_doodstream(html, url)
     if provider == "streamtape": return extract_streamtape(html, url)
@@ -372,7 +354,6 @@ def extract(html, url, provider):
     if provider == "megacloud": return extract_megacloud_flixcloud(html, url)
     print(f"[ERROR] Unsupported provider: {provider}")
     return None
-
 
 def main():
     parser = argparse.ArgumentParser(description="Extractor Testing Tool")
@@ -423,7 +404,6 @@ def main():
     result = extract(html, url, provider)
     print("\n--- Extraction Result ---")
     print(json.dumps(result, indent=2) if result else "Failed to extract data.")
-
 
 if __name__ == "__main__":
     main()

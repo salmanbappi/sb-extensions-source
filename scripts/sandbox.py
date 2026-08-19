@@ -17,7 +17,6 @@ from typing import Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-
 class ExtensionSandbox:
     def __init__(self, target_dir: Path):
         self.target_dir = target_dir
@@ -227,7 +226,6 @@ class ExtensionSandbox:
         print("\n" + "=" * 65)
         print("✅ Sandbox execution completed successfully without compiling APK.")
 
-
 def main():
     parser = argparse.ArgumentParser(description="Zero-APK Kotlin Runtime Micro-Simulator & Sandbox")
     parser.add_argument("target", help="Target extension name (e.g. 'animestream' or 'en/animestream')")
@@ -253,7 +251,6 @@ def main():
 
     sandbox = ExtensionSandbox(target_dir)
     sandbox.run_action(args.action, query=args.query, url=args.url)
-
 
 if __name__ == "__main__":
     main()

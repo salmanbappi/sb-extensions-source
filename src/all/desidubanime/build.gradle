@@ -1,13 +1,14 @@
 ext {
     extName = 'DesiDubAnime'
     extClass = '.Desidubanime'
-    extVersionCode = 3
+    extVersionCode = 4
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
+    implementation(project(":lib:abyss-extractor"))
     implementation(project(":lib:byse-extractor"))
     implementation(project(":lib:unpacker"))
     implementation(project(":lib:synchrony"))

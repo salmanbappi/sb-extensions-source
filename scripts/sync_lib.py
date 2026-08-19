@@ -35,9 +35,7 @@ UPSTREAM_REPOS = {
     ]
 }
 
-
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
 
 def fetch_raw_file(url: str) -> Optional[str]:
     """Fetches text content from raw GitHub URL."""
@@ -49,7 +47,6 @@ def fetch_raw_file(url: str) -> Optional[str]:
     except Exception:
         pass
     return None
-
 
 def fetch_upstream_file(upstream_key: str, module_name: str, rel_path: Path) -> Optional[str]:
     candidate_bases = UPSTREAM_REPOS.get(upstream_key, UPSTREAM_REPOS["keiyoushi"])
@@ -70,14 +67,12 @@ def fetch_upstream_file(upstream_key: str, module_name: str, rel_path: Path) -> 
                 return content
     return None
 
-
 def get_local_extractors(repo_root: Path) -> Dict[str, Path]:
     """Returns dictionary of extractor module name -> module directory Path."""
     lib_dir = repo_root / "lib"
     if not lib_dir.exists():
         return {}
     return {d.name: d for d in lib_dir.iterdir() if d.is_dir()}
-
 
 def check_module_updates(repo_root: Path, module_name: str, upstream_key: str = "keiyoushi") -> bool:
     """Checks if a local extractor module differs from upstream."""
@@ -116,7 +111,6 @@ def check_module_updates(repo_root: Path, module_name: str, upstream_key: str = 
 
     return has_updates
 
-
 def sync_module(repo_root: Path, module_name: str, upstream_key: str = "keiyoushi", dry_run: bool = False) -> bool:
     """Syncs a single extractor module from upstream repository."""
     lib_dir = repo_root / "lib" / module_name
@@ -144,14 +138,12 @@ def sync_module(repo_root: Path, module_name: str, upstream_key: str = "keiyoush
                 kt_path.write_text(upstream_content, encoding="utf-8")
             updated_count += 1
 
-
     if updated_count > 0:
         print(f"✅ Successfully synced {updated_count} file(s) in lib/{module_name}")
         return True
     else:
         print(f"✓ lib/{module_name} is already up to date.")
         return True
-
 
 def main():
     parser = argparse.ArgumentParser(description="Synchronize extractor modules from upstream repositories.")
@@ -179,7 +171,6 @@ def main():
             check_module_updates(repo_root, mod, args.upstream)
         else:
             sync_module(repo_root, mod, args.upstream, dry_run=args.dry_run)
-
 
 if __name__ == "__main__":
     main()

@@ -19,7 +19,6 @@ from .kotlin_synthesizer import (
 )
 from .recon_swarm import ReconSwarmAgent, SiteMap
 
-
 class PipelineStage(str, Enum):
     INIT = "INIT"
     RECON = "RECON"
@@ -30,7 +29,6 @@ class PipelineStage(str, Enum):
     VALIDATION = "VALIDATION"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
-
 
 @dataclass
 class WorkflowState:
@@ -50,14 +48,12 @@ class WorkflowState:
         self.history.append(entry)
         self.current_stage = stage
 
-
 @dataclass
 class OrchestratorConfig:
     max_debate_rounds: int = 3
     min_passing_score: int = 80
     auto_remediate: bool = True
     stop_on_blocker: bool = False
-
 
 @dataclass
 class WorkflowResult:
@@ -68,7 +64,6 @@ class WorkflowResult:
     critic_report: Optional[CriticReport] = None
     triage_result: Optional[LogTriageResult] = None
     debate_rounds: int = 0
-
 
 class OrchestratorAgent:
     """Master Orchestrator coordinating all specialized engineering agents."""

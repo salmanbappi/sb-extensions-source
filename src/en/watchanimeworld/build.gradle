@@ -1,12 +1,13 @@
 ext {
     extName = 'WatchAnimeWorld'
     extClass = '.WatchAnimeWorld'
-    extVersionCode = 26
+    extVersionCode = 27
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
+    implementation(project(':lib:abyss-extractor'))
     implementation(project(':lib:cloudflare-interceptor'))
     implementation(project(':lib:playlist-utils'))
 }

@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
-
 class DeanEdwardsUnpacker:
     """Unpacks Dean Edwards p.a.c.k.e.r JavaScript obfuscation."""
 
@@ -63,7 +62,6 @@ class DeanEdwardsUnpacker:
             return DeanEdwardsUnpacker.unpack(unpacked)
         return unpacked
 
-
 class CryptoAesHelper:
     """Derives OpenSSL AES key/IV and decrypts Salted__ payloads."""
 
@@ -101,7 +99,6 @@ class CryptoAesHelper:
         except Exception as e:
             return f"Error: {e}"
 
-
 class PlayerJsDecoder:
     """Decodes PlayerJS encoded video and subtitle playlists."""
 
@@ -138,7 +135,6 @@ class PlayerJsDecoder:
 
         return cleaned
 
-
 def deobfuscate_auto(content: str) -> list[tuple[str, str]]:
     """Attempts automatic deobfuscation across multiple techniques."""
     results = []
@@ -164,7 +160,6 @@ def deobfuscate_auto(content: str) -> list[tuple[str, str]]:
             pass
 
     return results
-
 
 def main():
     parser = argparse.ArgumentParser(description="Universal Media Deobfuscation Workbench")
@@ -211,7 +206,6 @@ def main():
     else:
         print("❌ No matching automatic deobfuscator found for this payload.")
         print("💡 Try specifying explicit engine: --engine {packer|playerjs|aes}")
-
 
 if __name__ == "__main__":
     main()

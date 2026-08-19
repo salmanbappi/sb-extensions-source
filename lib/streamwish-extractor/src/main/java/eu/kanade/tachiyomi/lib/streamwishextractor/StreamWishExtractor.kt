@@ -29,57 +29,82 @@ class StreamWishExtractor(private val client: OkHttpClient, private val headers:
 
     fun videosFromUrl(url: String, videoNameGen: (String) -> String = { quality -> "StreamWish - $quality" }): List<Video> {
         val embedUrl = getEmbedUrl(url).toHttpUrl()
-        var doc = client.newCall(GET(embedUrl, headers)).execute().asJsoup()
+        var doc = try {
+            val res = client.newCall(GET(embedUrl, headers)).execute()
+            if (!res.isSuccessful) return emptyList()
+            res.asJsoup()
+        } catch (_: Exception) {
+            return emptyList()
+        }
 
         val scriptElement = doc.selectFirst("body > script[src*=/main.js]")
         if (scriptElement != null) {
             val scriptUrl = scriptElement.absUrl("src")
-            val scriptContent = client.newCall(GET(scriptUrl, headers)).execute().body.string()
+            val scriptContent = try {
+                val res = client.newCall(GET(scriptUrl, headers)).execute()
+                if (res.isSuccessful) res.body.string() else null
+            } catch (_: Exception) {
+                null
+            }
 
-            val deobfuscatedScript = runCatching { Deobfuscator.deobfuscateScript(scriptContent) }.getOrNull()
-                ?: return emptyList()
+            if (!scriptContent.isNullOrBlank()) {
+                val deobfuscatedScript = runCatching { Deobfuscator.deobfuscateScript(scriptContent) }.getOrNull()
+                if (deobfuscatedScript != null) {
+                    val dmcaServers = extractServerList(dmcaServersRegex, deobfuscatedScript)
+                    val mainServers = extractServerList(mainServersRegex, deobfuscatedScript)
+                    val rulesServers = extractServerList(rulesServersRegex, deobfuscatedScript)
 
-            val dmcaServers = extractServerList(dmcaServersRegex, deobfuscatedScript)
+                    val candidateServers = if (embedUrl.host in rulesServers) {
+                        (mainServers + dmcaServers).distinct().shuffled()
+                    } else {
+                        (dmcaServers + mainServers).distinct().shuffled()
+                    }
 
-            val mainServers = extractServerList(mainServersRegex, deobfuscatedScript)
+                    for (destination in candidateServers) {
+                        try {
+                            val redirectedUrl = embedUrl.newBuilder()
+                                .host(destination)
+                                .build()
+                                .toString()
 
-            val rulesServers = extractServerList(rulesServersRegex, deobfuscatedScript)
-
-            val destination = if (embedUrl.host in rulesServers) {
-                mainServers.randomOrNull()
-            } else {
-                dmcaServers.randomOrNull()
-            } ?: return emptyList()
-
-            val redirectedUrl = embedUrl.newBuilder()
-                .host(destination)
-                .build()
-                .toString()
-
-            doc = client.newCall(GET(getEmbedUrl(redirectedUrl), headers)).execute().asJsoup()
-        }
-
-        val scriptBody = doc.selectFirst("script:containsData(m3u8)")?.data()
-            ?.let { script ->
-                if (script.contains("eval(function(p,a,c")) {
-                    JsUnpacker.unpackAndCombine(script)
-                } else {
-                    script
+                            val redirectedRes = client.newCall(GET(getEmbedUrl(redirectedUrl), headers)).execute()
+                            if (redirectedRes.isSuccessful) {
+                                doc = redirectedRes.asJsoup()
+                                break
+                            }
+                        } catch (_: Exception) {
+                            // Continue trying other candidate servers on 503 / 522 / network errors
+                        }
+                    }
                 }
             }
-        val masterUrl = scriptBody?.let {
-            m3u8Regex.find(it)?.value
         }
-            ?: return emptyList()
+
+        val scriptBody = doc.select("script").mapNotNull { scriptEl ->
+            val data = scriptEl.data().ifBlank { scriptEl.html() }
+            when {
+                data.contains("eval(function(p,a,c") -> JsUnpacker.unpackAndCombine(data)
+                data.contains("m3u8") || data.contains("master") -> data
+                else -> null
+            }
+        }.firstOrNull { it.contains("m3u8") || it.contains(".txt") || it.contains("master") }
+
+        val masterUrl = scriptBody?.let {
+            m3u8Regex.find(it)?.value ?: fallbackM3u8Regex.find(it)?.value
+        } ?: return emptyList()
 
         val subtitleList = extractSubtitles(scriptBody)
 
-        return playlistUtils.extractFromHls(
-            playlistUrl = masterUrl,
-            referer = "https://${url.toHttpUrl().host}/",
-            videoNameGen = videoNameGen,
-            subtitleList = playlistUtils.fixSubtitles(subtitleList),
-        )
+        return try {
+            playlistUtils.extractFromHls(
+                playlistUrl = masterUrl,
+                referer = "https://${url.toHttpUrl().host}/",
+                videoNameGen = videoNameGen,
+                subtitleList = playlistUtils.fixSubtitles(subtitleList),
+            )
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun extractServerList(regex: Regex, script: String): List<String> = regex.find(script)?.groupValues?.get(1)
@@ -107,13 +132,15 @@ class StreamWishExtractor(private val client: OkHttpClient, private val headers:
         json.decodeFromString<List<TrackDto>>("[$fixedSubtitleStr]")
             .filter { it.kind.equals("captions", true) }
             .map { Track(it.file, it.label ?: "") }
-    } catch (e: SerializationException) {
+    } catch (_: SerializationException) {
         emptyList()
     }
 
     @Serializable
     private data class TrackDto(val file: String, val kind: String, val label: String? = null)
 
-    private val m3u8Regex = Regex("""https[^"]*m3u8[^"]*""")
+    private val m3u8Regex = Regex("""https?://[^"',\s\\]+\.(?:m3u8|txt)[^"',\s\\]*""")
+    private val fallbackM3u8Regex = Regex("""https?://[^"',\s\\]*m3u8[^"',\s\\]*""")
     private val fixTracksRegex = Regex("""(?<!["])(file|kind|label)(?!["])""")
 }
+

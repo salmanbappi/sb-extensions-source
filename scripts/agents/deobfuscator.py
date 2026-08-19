@@ -10,7 +10,6 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-
 @dataclass
 class DeobfuscationResult:
     engine: str
@@ -19,7 +18,6 @@ class DeobfuscationResult:
     success: bool
     generated_kotlin: Optional[str] = None
     metadata: Optional[dict] = None
-
 
 class DeanEdwardsSolver:
     """Unpacks Dean Edwards p.a.c.k.e.r JavaScript obfuscation."""
@@ -68,7 +66,6 @@ class DeanEdwardsSolver:
             return DeanEdwardsSolver.unpack(unpacked)
         return unpacked
 
-
 class PlayerJsSolver:
     """Decodes PlayerJS encoded video and subtitle playlist representations."""
 
@@ -103,7 +100,6 @@ class PlayerJsSolver:
             pass
 
         return cleaned
-
 
 class CipherSolver:
     """Implements cryptographic solvers for AES-CBC (OpenSSL EVP), RC4, XOR, and ROT."""
@@ -208,7 +204,6 @@ class CipherSolver:
         n = shift % len(items)
         return items[n:] + items[:n]
 
-
 class KotlinDeobfuscatorGenerator:
     """Generates production-grade, API v16 compliant Kotlin helper routines."""
 
@@ -295,7 +290,6 @@ class KotlinDeobfuscatorGenerator:
         }
     }
 """.strip()
-
 
 class DeobfuscatorAgent:
     """Coordinates detection, unpacking, cipher resolution, and Kotlin helper synthesis."""

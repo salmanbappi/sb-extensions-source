@@ -956,10 +956,10 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
 
             # 24. Suspend extractor called from non-suspend private helper function
             suspend_extractors = ["vidMolyExtractor", "voeExtractor", "filemoonExtractor", "luluExtractor", "streamWishExtractor", "vidGuardExtractor"]
-            for m in re.finditer(r'(?:private|protected|internal)?\s+fun\s+(\w+)\s*\([^)]*\)\s*(?::\s*List<Video>|\s*\{)', content):
+            for m in re.finditer(r'(?:override|suspend|private|protected|internal|open|\s)*\bfun\s+(\w+)\s*\([^)]*\)\s*(?::\s*List<Video>|\s*\{)', content):
                 fn_name = m.group(1)
                 full_match = m.group(0)
-                if "suspend" not in full_match and fn_name not in ["videoListParse", "popularAnimeParse", "latestUpdatesParse", "searchAnimeParse", "animeDetailsParse", "episodeListParse", "setupPreferenceScreen", "sortVideos"]:
+                if "suspend" not in full_match and fn_name not in ["getVideoList", "videoListParse", "popularAnimeParse", "latestUpdatesParse", "searchAnimeParse", "animeDetailsParse", "episodeListParse", "setupPreferenceScreen", "sortVideos"]:
                     start_pos = m.end()
                     fn_chunk = content[start_pos:start_pos + 1200]
                     for ext in suspend_extractors:
@@ -1228,642 +1228,576 @@ def doctor(repo_root: Path) -> bool:
         return False
 
 
+
+CLI_VERSION = "4.0.0"
+
+
+# ---------------------------------------------------------------------------
+# CLI State & Output Helpers
+# ---------------------------------------------------------------------------
+
+class CLIState:
+    """Carries global flags (JSON, verbose) through all command handlers."""
+
+    def __init__(self, json_mode: bool = False, verbose: bool = False):
+        self.json_mode = json_mode
+        self.verbose = verbose
+        self.repo_root = Path(__file__).resolve().parent.parent
+
+
+def output(state: CLIState, *lines: str, severity: str = "info") -> None:
+    """Print lines in human-readable mode only (suppressed in --json mode)."""
+    if state.json_mode:
+        return
+    prefix_map = {
+        "error": "❌",
+        "warn": "⚠️",
+        "success": "✅",
+        "info": "ℹ️",
+    }
+    prefix = prefix_map.get(severity, "")
+    for line in lines:
+        print(f"{prefix} {line}" if prefix else line)
+
+
+def output_json(state: CLIState, data, success: bool = True) -> None:
+    """Print structured JSON output and exit with appropriate code."""
+    if not state.json_mode:
+        return
+    payload = {"success": success, "data": data}
+    print(json.dumps(payload, indent=2, default=str))
+
+
+def vprint(state: CLIState, *lines: str) -> None:
+    """Verbose print — only shown when --verbose is set."""
+    if state.verbose:
+        for line in lines:
+            print(f"  [verbose] {line}")
+
+
+# ---------------------------------------------------------------------------
+# Reusable Argument Helpers
+# ---------------------------------------------------------------------------
+
+def add_target_args(parser, *, required: bool = False,
+                    help_text: str = "Target extension name (e.g. <module> or <lang>/<module>)") -> None:
+    """Add the standard --lang / --name / positional target arguments."""
+    parser.add_argument("target", nargs="?" if not required else 1, help=help_text)
+    parser.add_argument("--lang", help="Target extension lang")
+    parser.add_argument("--name", help="Target extension directory name")
+
+
+def parse_target(args, repo_root):
+    """Resolve (lang, name) from parsed target arguments."""
+    target = args.target
+    if isinstance(target, list):
+        target = target[0] if target else None
+    return resolve_extension_target(repo_root, target=target,
+                                    lang=getattr(args, "lang", None),
+                                    name=getattr(args, "name", None))
+
+
+# ---------------------------------------------------------------------------
+# Command Registry
+# ---------------------------------------------------------------------------
+
+class CommandRegistry:
+    """Central registry mapping command names to handlers with arg setup functions."""
+
+    def __init__(self):
+        self._commands = {}
+        self._categories = []
+
+    def register(self, name, handler, description, category="General"):
+        self._commands[name] = {
+            "handler": handler,
+            "description": description,
+            "category": category,
+        }
+        for cat_title, cat_cmds in self._categories:
+            if cat_title == category:
+                cat_cmds.append(name)
+                break
+        else:
+            self._categories.append((category, [name]))
+
+    def get(self, name):
+        return self._commands.get(name)
+
+    @property
+    def names(self):
+        return sorted(self._commands.keys())
+
+    @property
+    def categories(self):
+        result = []
+        for cat_title, cmd_names in self._categories:
+            result.append((cat_title, [
+                (n, self._commands[n]["description"]) for n in cmd_names
+            ]))
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Command Handler Wrappers
+# ---------------------------------------------------------------------------
+
+def cmd_doctor(state, args):
+    return doctor(state.repo_root)
+
+def cmd_list(state, args):
+    list_extensions(state.repo_root)
+    return True
+
+def cmd_clean(state, args):
+    return clean_workspace(state.repo_root)
+
+def cmd_doc(state, args):
+    return generate_doc(state.repo_root)
+
+def cmd_bump_version(state, args):
+    lang, name = parse_target(args, state.repo_root)
+    if not lang or not name:
+        print("Could not resolve target extension module.")
+        return False
+    return bump_version(state.repo_root, lang, name)
+
+def cmd_bump_theme(state, args):
+    mode = "all" if getattr(args, "all", False) else ("variants" if getattr(args, "variants", False) else "base")
+    return bump_theme(state.repo_root, args.theme_name, mode=mode)
+
+def cmd_bump_lib(state, args):
+    return bump_lib_dependents(state.repo_root, args.lib_name)
+
+def cmd_format(state, args):
+    lang, name = parse_target(args, state.repo_root)
+    return format_codebase(state.repo_root, lang, name, check_only=getattr(args, "check", False))
+
+def cmd_lint(state, args):
+    lang, name = parse_target(args, state.repo_root)
+    if getattr(args, "fix", False):
+        from scripts.ast_fixer import fix_codebase
+        fix_codebase(state.repo_root, lang, name)
+    return lint_codebase(state.repo_root, lang, name)
+
+def cmd_validate(state, args):
+    if getattr(args, "all", False):
+        lang, name = None, None
+    else:
+        lang, name = parse_target(args, state.repo_root)
+    if getattr(args, "fix", False):
+        from scripts.ast_fixer import fix_codebase
+        fix_codebase(state.repo_root, lang, name)
+        detect_script = state.repo_root / "scripts" / "detect_extractors.py"
+        if detect_script.exists():
+            d_cmd = [sys.executable, str(detect_script), "--fix"]
+            if lang and name:
+                d_cmd.extend(["--lang", lang, "--name", name])
+            d_res = subprocess.run(d_cmd, cwd=state.repo_root, capture_output=True, text=True, timeout=20)
+            if d_res.returncode != 0:
+                print(f"  detect_extractors exited with code {d_res.returncode}: {d_res.stderr.strip()}")
+    return validate_extensions(state.repo_root, lang, name)
+
+def cmd_info(state, args):
+    lang, name = parse_target(args, state.repo_root)
+    if not lang or not name:
+        print("Could not resolve target extension module.")
+        return False
+    return show_info(state.repo_root, lang, name)
+
+def cmd_preflight(state, args):
+    lang, name = parse_target(args, state.repo_root)
+    if not lang or not name:
+        print("Could not resolve target extension module.")
+        return False
+    return preflight_extension(state.repo_root, lang, name)
+
+def cmd_inspect_hosters(state, args):
+    lang, name = parse_target(args, state.repo_root)
+    if not lang or not name:
+        print("Could not resolve target extension module.")
+        return False
+    return inspect_hosters(state.repo_root, lang, name)
+
+def cmd_audit_all(state, args):
+    return audit_all(state.repo_root)
+
+def cmd_migrate_domain(state, args):
+    target = args.target
+    if isinstance(target, list):
+        target = target[0] if target else None
+    return migrate_domain(state.repo_root, target, args.new_domain,
+                          test_reachability=not getattr(args, "no_test", False),
+                          dry_run=getattr(args, "dry_run", False))
+
+def cmd_fetch_icon(state, args):
+    lang, name = parse_target(args, state.repo_root)
+    if not name:
+        print("Target extension name is required.")
+        return False
+    target_url = getattr(args, "url", None)
+    if not target_url:
+        target_src = state.repo_root / "src" / (lang or "en") / name
+        for kt in target_src.rglob("*.kt"):
+            src_text = kt.read_text(encoding="utf-8", errors="ignore")
+            m = re.search(r'(?:PREF_BASE_URL_DEFAULT|PREF_DOMAIN_DEFAULT|DOMAIN(?:_DEFAULT)?)\s*=\s*["\']([^"\']+)["\']', src_text)
+            if not m:
+                m = re.search(r'override\s+val\s+baseUrl\s*=\s*["\']([^"\']+)["\']', src_text)
+            if m:
+                target_url = m.group(1)
+                break
+    if not target_url:
+        print("Target website URL is required (specify --url or define baseUrl in extension source).")
+        return False
+    out_path = state.repo_root / "src" / (lang or "en") / name / "res" / "drawable" / "ic_launcher.png"
+    return fetch_icon(target_url, out_path)
+
+def cmd_list_extractors(state, args):
+    lib_dir = state.repo_root / "lib"
+    if not lib_dir.exists():
+        print("lib/ directory not found.")
+        return False
+    extractors = sorted([d.name for d in lib_dir.iterdir() if d.is_dir()])
+    print(f"Found {len(extractors)} pre-built extractor modules in lib/\n")
+    for i, ext in enumerate(extractors, 1):
+        print(f"  {i:2d}. {ext}")
+    print("\nSee .agents/skills/extractor-registry/SKILL.md for usage code snippets.")
+    return True
+
+def cmd_publish(state, args):
+    lang, name = parse_target(args, state.repo_root)
+    if not lang or not name:
+        print("Could not resolve target extension module.")
+        return False
+    return publish_extension(state.repo_root, lang, name,
+                            commit_msg=getattr(args, "message", None),
+                            no_bump=getattr(args, "no_bump", False))
+
+def cmd_create_theme(state, args):
+    from scripts.create_extension import generate_theme_scaffold
+    return generate_theme_scaffold(args.theme_name, state.repo_root)
+
+def cmd_fetch_skip_times(state, args):
+    script_path = state.repo_root / "scripts" / "fetch_metadata.py"
+    extra = []
+    positional = getattr(args, "target", None)
+    if isinstance(positional, list):
+        positional = positional[0] if positional else None
+    if positional and not str(positional).startswith("-"):
+        if not str(positional).isdigit():
+            print(f"fetch-skip-times: MAL ID must be a numeric value, got '{positional}'")
+            return False
+        extra = ["--mal-id", str(positional)]
+    extra.extend(getattr(args, "remaining", []) or [])
+    cmd = [sys.executable, str(script_path), "--aniskip"] + extra
+    result = subprocess.run(cmd, timeout=300)
+    return result.returncode == 0
+
+def cmd_cross_map_id(state, args):
+    script_path = state.repo_root / "scripts" / "fetch_metadata.py"
+    cmd = [sys.executable, str(script_path), "--cross-map"] + (getattr(args, "remaining", []) or [])
+    result = subprocess.run(cmd, timeout=300)
+    return result.returncode == 0
+
+def cmd_agent(state, args):
+    from scripts.agents import OrchestratorAgent, ReconSwarmAgent, DeobfuscatorAgent, AdversarialCriticAgent, CiGuardianAgent
+    import dataclasses
+    sub = args.agent_subcommand
+    if not sub:
+        print("agent requires a subcommand: pipeline, recon, deobfuscate, critique, heal")
+        return False
+    if sub == "pipeline":
+        orchestrator = OrchestratorAgent()
+        res = orchestrator.run_pipeline(args.url, name=getattr(args, "name", None), lang=getattr(args, "lang", "en"))
+        print(json.dumps(res, indent=2))
+        return res.get("status") == "SUCCESS"
+    elif sub == "recon":
+        swarm = ReconSwarmAgent()
+        res = swarm.explore_site(args.url)
+        print(json.dumps(res, indent=2))
+        return True
+    elif sub == "deobfuscate":
+        solver = DeobfuscatorAgent()
+        res = solver.solve(args.payload, key=getattr(args, "key", "") or None)
+        print(json.dumps(dataclasses.asdict(res), indent=2))
+        return res.success
+    elif sub == "critique":
+        critic = AdversarialCriticAgent()
+        target_path = Path(args.target)
+        code = target_path.read_text(encoding="utf-8") if target_path.exists() else args.target
+        report = critic.review(code)
+        print(json.dumps(dataclasses.asdict(report), indent=2, default=str))
+        return report.is_passing
+    elif sub == "heal":
+        guardian = CiGuardianAgent()
+        log_txt = Path(args.log_file).read_text(encoding="utf-8")
+        triage = guardian.triage_log(log_txt)
+        print(json.dumps(dataclasses.asdict(triage), indent=2, default=str))
+        return not triage.has_errors
+    return False
+
+def cmd_test_pipeline(state, args):
+    target = args.target
+    if target.startswith("http://") or target.startswith("https://"):
+        base_url = target
+    else:
+        target_lang, target_name = resolve_extension_target(state.repo_root, target)
+        found_base_url = None
+        search_dir = (state.repo_root / "src" / target_lang / target_name) if (target_lang and target_name) else (state.repo_root / "src")
+        if search_dir.exists():
+            for kt in search_dir.rglob("*.kt"):
+                content = kt.read_text(encoding="utf-8", errors="ignore")
+                m = re.search(r'(?:PREF_BASE_URL_DEFAULT|PREF_DOMAIN_DEFAULT|DOMAIN(?:_DEFAULT)?)\s*=\s*["\']([^"\']+)["\']', content)
+                if not m:
+                    m = re.search(r'override\s+val\s+baseUrl\s*=\s*["\']([^"\']+)["\']', content)
+                if m:
+                    found_base_url = m.group(1)
+                    break
+        if not found_base_url:
+            print(f"Could not resolve base URL for module: {target}")
+            return False
+        base_url = found_base_url
+    from scripts.test_pipeline import PipelineTester
+    tester = PipelineTester(base_url)
+    return tester.run(query=getattr(args, "query", None))
+
+
+# ---------------------------------------------------------------------------
+# Script-fallback commands (dispatched via subprocess to standalone scripts)
+# ---------------------------------------------------------------------------
+
+SCRIPT_FALLBACK = {
+    "create": "create_extension.py",
+    "fetch-metadata": "fetch_metadata.py",
+    "auto-maintain": "auto_maintain.py",
+    "detect-extractors": "detect_extractors.py",
+    "sync-lib": "sync_lib.py",
+    "verify-extractors": "verify_extractors.py",
+    "test-scraper": "test_scraper.py",
+    "test-extractor": "test_extractors.py",
+    "fix": "ast_fixer.py",
+    "probe-stream": "probe_stream.py",
+    "json-to-dto": "json_to_dto.py",
+    "deobfuscate": "deobfuscate.py",
+    "canary-monitor": "canary_monitor.py",
+    "test-filters": "test_filters.py",
+    "sandbox": "sandbox.py",
+    "status-update": "status_notifier.py",
+    "ai-selectors": "ai_scraper.py",
+    "auto-create": "auto_create.py",
+    "site-recon": "site_recon.py",
+}
+
+
+# ---------------------------------------------------------------------------
+# Main: Register all commands and dispatch
+# ---------------------------------------------------------------------------
+
+def _print_grouped_help(registry):
+    """Print the CLI help with commands grouped by category."""
+    print("Aniyomi AI Extension Engine Master CLI")
+    print(f"   Version: {CLI_VERSION}")
+    print()
+    print("Usage: python3 scripts/cli.py [global-options] <command> [args...]")
+    print()
+    print("Global Options:")
+    print("  --json           Output structured JSON for AI agent consumption")
+    print("  --verbose, -v    Enable verbose output for debugging")
+    print("  --version        Show CLI version")
+    print()
+    print("=" * 60)
+    print(f"Available Commands ({len(registry.names)} registered + {len(SCRIPT_FALLBACK)} scripts):")
+    print("=" * 60)
+    for cat_title, cmd_pairs in registry.categories:
+        print(f"\n{cat_title}:")
+        for cmd_name, cmd_desc in cmd_pairs:
+            print(f"  {cmd_name:24s} {cmd_desc}")
+    script_cmds = sorted(SCRIPT_FALLBACK.keys())
+    script_cmds = [c for c in script_cmds if not registry.get(c)]
+    if script_cmds:
+        print(f"\nScript Commands (delegated to standalone scripts):")
+        for cmd_name in script_cmds:
+            print(f"  {cmd_name:24s} -> scripts/{SCRIPT_FALLBACK[cmd_name]}")
+    print("\n" + "=" * 60)
+    print("Common Workflow Examples:")
+    print("  python3 scripts/cli.py doctor")
+    print("  python3 scripts/cli.py create --name AnimeFlix --lang en --baseUrl https://animeflix.live")
+    print("  python3 scripts/cli.py --json lint en/animeflix")
+    print("  python3 scripts/cli.py test-pipeline animestream --popular")
+    print("  python3 scripts/cli.py preflight animeflix")
+    print("  python3 scripts/cli.py publish animeflix -m 'fix episode parsing'")
+    print("  python3 scripts/cli.py --json info animeflix")
+    print("  python3 scripts/cli.py audit-all")
+
+
 def main():
     try:
         repo_root = Path(__file__).resolve().parent.parent
-        scripts_dir = repo_root / "scripts"
+        registry = CommandRegistry()
 
-        commands_info = {
-            "create": {
-                "script": "create_extension.py",
-                "desc": "Scaffold a new Aniyomi extension module (HTML, API, or Theme) with preferences, metadata, and extractors."
-            },
-            "create-theme": {
-                "script": None,
-                "desc": "Scaffold a brand new multi-source theme module in lib-multisrc/<theme_name>."
-            },
-            "doctor": {
-                "script": None,
-                "desc": "Diagnose developer environment (Python, Git, ImageMagick, Java/Gradle, Android SDK, lib/ health)."
-            },
-            "list": {
-                "script": None,
-                "desc": "List all installed extension modules with their language, directory, and version code."
-            },
-            "publish": {
-                "script": None,
-                "desc": "Validate, bump version code, git commit, and push an extension to GitHub in one automated command."
-            },
-            "validate": {
-                "script": None,
-                "desc": "Perform static analysis validation on extension modules without Gradle APK compilation."
-            },
-            "bump-version": {
-                "script": None,
-                "desc": "Increment extVersionCode or overrideVersionCode in build.gradle for an extension module."
-            },
-            "bump-theme": {
-                "script": None,
-                "desc": "Increment baseVersionCode in lib-multisrc/ or overrideVersionCode across theme variants."
-            },
-            "bump-lib": {
-                "script": None,
-                "desc": "Cascade version bumps to all extension modules depending on a shared extractor in lib/."
-            },
-            "migrate-domain": {
-                "script": None,
-                "desc": "Automate base URL domain migrations across Kotlin sources, update preferences, bump version, and test reachability."
-            },
-            "info": {
-                "script": None,
-                "desc": "Display detailed summary and dependency info for an extension module."
-            },
-            "fetch-icon": {
-                "script": None,
-                "desc": "Download website favicon and convert it into res/drawable/ic_launcher.png."
-            },
-            "fetch-metadata": {
-                "script": "fetch_metadata.py",
-                "desc": "Fetch and merge anime/movie episode metadata from external APIs (Jikan, AniList, Kitsu, TMDB)."
-            },
-            "auto-maintain": {
-                "script": "auto_maintain.py",
-                "desc": "Execute full automated maintenance (sync extractors, fix dependencies, run static validation)."
-            },
-            "detect-extractors": {
-                "script": "detect_extractors.py",
-                "desc": "Auto-detect required video extractors from embed URLs or extension codebase, and update build.gradle dependencies."
-            },
-            "sync-lib": {
-                "script": "sync_lib.py",
-                "desc": "Synchronize and update shared lib/ extractor modules from upstream repositories (Yuzono/Keiyoushi/Aniyomiorg)."
-            },
-            "verify-extractors": {
-                "script": "verify_extractors.py",
-                "desc": "Empirically test video extractors against live HTTP video playback behavior instead of relying blindly on upstream."
-            },
-            "test-scraper": {
-                "script": "test_scraper.py",
-                "desc": "Test live HTTP requests, Jsoup CSS selectors, regex patterns, or JSON API payloads locally without Gradle."
-            },
-            "test-extractor": {
-                "script": "test_extractors.py",
-                "desc": "Test video embed link extraction logic (DoodStream, StreamTape, FileMoon, MixDrop, VidSrc) locally."
-            },
-            "list-extractors": {
-                "script": None,
-                "desc": "List all 65 pre-built video extractor libraries available in the lib/ directory."
-            },
-            "clean": {
-                "script": None,
-                "desc": "Purge temporary build caches, pyc files, and scratch raw files."
-            },
-            "doc": {
-                "script": None,
-                "desc": "Generate up-to-date Markdown extension catalog table for repository documentation."
-            },
-            "lint": {
-                "script": None,
-                "desc": "Perform code quality inspection and scan for code smells across Kotlin source files."
-            },
-            "format": {
-                "script": None,
-                "desc": "Format Kotlin, Gradle, and XML files (strip trailing whitespace, normalize CRLF, ensure final newline)."
-            },
-            "audit-all": {
-                "script": None,
-                "desc": "Run full repository health audit (validation, linting, cache cleaning, and doc catalog sync)."
-            },
-            "test-pipeline": {
-                "script": "test_pipeline.py",
-                "desc": "Run full 5-stage automated scraper verification (Popular -> Details -> Episodes -> Hosters -> Video Streams)."
-            },
-            "fix": {
-                "script": "ast_fixer.py",
-                "desc": "Auto-remediate Kotlin AST code smells and API v16 model invariants automatically."
-            },
-            "probe-stream": {
-                "script": "probe_stream.py",
-                "desc": "Deep media inspector for HLS (M3U8), DASH, direct video streams, codecs, and subtitles."
-            },
-            "json-to-dto": {
-                "script": "json_to_dto.py",
-                "desc": "Convert JSON API responses, files, or HAR dumps to null-safe Kotlinx serialization DTOs."
-            },
-            "deobfuscate": {
-                "script": "deobfuscate.py",
-                "desc": "Reverse-engineer Dean Edwards, PlayerJS, CryptoJS AES, and Stego media payloads."
-            },
-            "agent": {
-                "script": None,
-                "desc": "Autonomous multi-agent swarms (pipeline, recon, deobfuscate, critique, heal)."
-            },
-            "canary-monitor": {
-                "script": "canary_monitor.py",
-                "desc": "Monitor health across all 65+ video extractors in lib/ and generate health matrices."
-            },
-            "test-filters": {
-                "script": "test_filters.py",
-                "desc": "Combinatorial search filter matrix fuzzer testing filter permutations against live endpoints."
-            },
-            "sandbox": {
-                "script": "sandbox.py",
-                "desc": "Zero-APK fast in-memory Kotlin runtime simulator for popular, search, and detail workflows."
-            },
-            "preflight": {
-                "script": None,
-                "desc": "One-shot master quality gate chaining format, fix, detect-extractors, lint, and validate."
-            },
-            "inspect-hosters": {
-                "script": None,
-                "desc": "Inspect & audit hoster folder architecture, server grouping, and stream quality sorting."
-            },
-            "test-extractors": {
-                "script": "test_extractors.py",
-                "desc": "Alias for test-extractor: Unit test and verify regexes, unpackers, and decoders for extractors."
-            },
-            "fetch-skip-times": {
-                "script": "fetch_metadata.py",
-                "desc": "Fetch intro (OP), outro (ED), and recap skip timestamps from AniSkip API."
-            },
-            "cross-map-id": {
-                "script": "fetch_metadata.py",
-                "desc": "Cross-map anime and movie IDs across MAL, AniList, IMDb, TMDB, TVDB, and SIMKL."
-            },
-            "site-recon": {
-                "script": "site_recon.py",
-                "desc": "Parallel full-site reconnaissance, CMS/theme fingerprinting, and auto-scaffold generator."
-            },
-            "ai-selectors": {
-                "script": "ai_scraper.py",
-                "desc": "AI-powered HTML reverse engineering, Jsoup CSS selector, and Kotlin parser generator."
-            },
-            "auto-create": {
-                "script": "auto_create.py",
-                "desc": "Autonomous 1-click extension synthesizer: Recon -> AI Selectors -> Kotlin -> Icon -> Validate."
-            },
-            "status-update": {
-                "script": "status_notifier.py",
-                "desc": "Post clean status update & AI review sentiment metrics to Discord #status-update channel."
-            }
-        }
+        # Register all commands with categories
+        registry.register("doctor", cmd_doctor, "Diagnose developer environment", category="Maintenance & Diagnostics")
+        registry.register("list", cmd_list, "List installed extensions", category="Maintenance & Diagnostics")
+        registry.register("info", cmd_info, "Show extension module info", category="Maintenance & Diagnostics")
+        registry.register("clean", cmd_clean, "Purge temporary build caches", category="Maintenance & Diagnostics")
+        registry.register("doc", cmd_doc, "Generate extension catalog documentation", category="Maintenance & Diagnostics")
+        registry.register("list-extractors", cmd_list_extractors, "List all pre-built extractor libraries", category="Maintenance & Diagnostics")
+        registry.register("create-theme", cmd_create_theme, "Scaffold a new multi-source theme", category="Scaffolding & DTOs")
+        registry.register("bump-version", cmd_bump_version, "Increment extVersionCode", category="Release & Versioning")
+        registry.register("bump-theme", cmd_bump_theme, "Increment theme version code", category="Release & Versioning")
+        registry.register("bump-lib", cmd_bump_lib, "Cascade version bumps to dependent modules", category="Release & Versioning")
+        registry.register("migrate-domain", cmd_migrate_domain, "Automate base URL domain migration", category="Release & Versioning")
+        registry.register("publish", cmd_publish, "Validate, bump, commit, and push", category="Release & Versioning")
+        registry.register("format", cmd_format, "Format Kotlin, Gradle, and XML files", category="Code Quality & Validation")
+        registry.register("lint", cmd_lint, "Scan for code smells and anti-patterns", category="Code Quality & Validation")
+        registry.register("validate", cmd_validate, "Static analysis validation", category="Code Quality & Validation")
+        registry.register("preflight", cmd_preflight, "One-shot master quality gate", category="Code Quality & Validation")
+        registry.register("inspect-hosters", cmd_inspect_hosters, "Inspect hoster folder architecture", category="Code Quality & Validation")
+        registry.register("audit-all", cmd_audit_all, "Run full repository health audit", category="Code Quality & Validation")
+        registry.register("fetch-icon", cmd_fetch_icon, "Fetch favicon and convert to launcher icon", category="Media & Stream Diagnostics")
+        registry.register("fetch-skip-times", cmd_fetch_skip_times, "Fetch AniSkip intro/outro/recap timestamps", category="Media & Stream Diagnostics")
+        registry.register("cross-map-id", cmd_cross_map_id, "Cross-map IDs across MAL, AniList, IMDb, TMDB, SIMKL", category="Media & Stream Diagnostics")
+        registry.register("agent", cmd_agent, "Autonomous multi-agent swarms", category="Multi-Agent Swarms")
+        registry.register("test-pipeline", cmd_test_pipeline, "Run full 5-stage scraper verification", category="Testing & Sandbox")
 
-        grouped_categories = [
-            ("🤖 Multi-Agent Swarms & Autonomous Workflows", [
-                ("agent", "Autonomous multi-agent swarms (pipeline, recon, deobfuscate, critique, heal)."),
-            ]),
-            ("🏗️  Scaffolding & DTOs", [
-                ("auto-create", "Autonomous 1-click synthesizer (Recon -> AI Selectors -> Kotlin -> Icon -> Validate)."),
-                ("site-recon", "Parallel full-site reconnaissance, CMS/theme fingerprinting, and scaffold advisor."),
-                ("ai-selectors", "AI-powered HTML reverse engineering, Jsoup CSS selector, and Kotlin parser generator."),
-                ("create", "Scaffold full extension boilerplate (HTML, API, Theme, Movie-Locker)."),
-                ("create-theme", "Scaffold a new multi-source theme in lib-multisrc/."),
-                ("json-to-dto", "Ingest JSON API responses or HAR files and generate v16 null-safe DTOs."),
-            ]),
-            ("🔬 Testing & Scraper Sandbox", [
-                ("test-scraper", "Test live HTTP requests, CSS selectors, regex, DevTools headers, and REPL."),
-                ("test-pipeline", "Run full 5-stage automated scraper verification (Popular -> Stream)."),
-                ("test-extractor", "Unit test video embed resolvers and unpackers (alias: test-extractors)."),
-                ("test-filters", "Combinatorial search filter matrix fuzzer."),
-                ("sandbox", "Zero-APK fast in-memory Kotlin runtime simulator."),
-            ]),
-            ("🛡️  Code Quality, Auto-Fix & Validation", [
-                ("preflight", "One-shot master quality gate chaining format, fix, deps, lint, and validate."),
-                ("validate", "Perform static analysis validation without Gradle APK build (supports --fix)."),
-                ("lint", "Scan for code smells, anti-patterns, and API invariants (supports --fix)."),
-                ("fix", "Auto-remediate Kotlin AST code smells and API v16 invariants."),
-                ("format", "Format Kotlin, Gradle, and XML files (strip whitespace, CRLF normalization)."),
-                ("inspect-hosters", "Inspect & audit hoster folder architecture and stream quality sorting."),
-            ]),
-            ("📡 Media & Stream Diagnostics", [
-                ("probe-stream", "Deep media inspector for HLS (.m3u8), DASH, direct streams, and codecs."),
-                ("deobfuscate", "Decode Dean Edwards, PlayerJS, CryptoJS AES, and Stego media payloads."),
-                ("fetch-metadata", "Fetch episode metadata from Jikan, AniList, Kitsu, TMDB, and TVMaze."),
-                ("fetch-skip-times", "Fetch AniSkip intro/outro/recap skip timestamps."),
-                ("cross-map-id", "Cross-map IDs across MAL, AniList, IMDb, TMDB, and SIMKL."),
-                ("fetch-icon", "Fetch website favicon and convert to 192x192 PNG launcher icon."),
-            ]),
-            ("🚀 Release & Versioning", [
-                ("publish", "Pre-flight auto-fix, format, validate, bump version, commit, and push."),
-                ("bump-version", "Increment extVersionCode in build.gradle."),
-                ("bump-theme", "Increment baseVersionCode in lib-multisrc."),
-                ("bump-lib", "Cascade version bumps to all modules depending on a lib."),
-                ("migrate-domain", "Automate base URL domain migration across sources."),
-                ("status-update", "Broadcast extension status, providers, audio, and sentiment to #status-update."),
-            ]),
-            ("🩺 Maintenance & Diagnostics", [
-                ("doctor", "Diagnose developer environment (Python, Git, Java, Android SDK)."),
-                ("audit-all", "Run master repository health audit across all modules."),
-                ("canary-monitor", "Monitor health across all 65+ video extractors in lib/."),
-                ("sync-lib", "Synchronize shared extractors with upstream repositories."),
-                ("verify-extractors", "Empirically test video extractors against live HTTP streams."),
-                ("auto-maintain", "Run automated maintenance (sync, fix dependencies, validate)."),
-                ("info", "Show detailed metadata for a single extension module."),
-                ("list", "List installed extension modules and version codes."),
-                ("list-extractors", "List all 65 pre-built video extractor libraries."),
-                ("doc", "Generate markdown extension catalog table."),
-                ("clean", "Purge temporary build caches, pyc files, and temporary artifacts."),
-            ]),
-        ]
-
-        epilog_lines = [f"Available Commands ({len(commands_info)} Total):", "=" * 60]
-        for cat_title, cmds in grouped_categories:
-            epilog_lines.append(f"\n{cat_title}:")
-            for c_name, c_desc in cmds:
-                epilog_lines.append(f"  {c_name:18s} {c_desc}")
-
-        epilog_lines.extend([
-            "\n" + "=" * 60,
-            "Common Workflow Examples:",
-            "  python3 scripts/cli.py doctor",
-            "  python3 scripts/cli.py create --name AnimeFlix --lang en --baseUrl https://animeflix.live",
-            "  python3 scripts/cli.py test-scraper animestream --popular",
-            "  python3 scripts/cli.py probe-stream 'https://example.com/master.m3u8' --deep",
-            "  python3 scripts/cli.py json-to-dto https://api.site.com/anime/1",
-            "  python3 scripts/cli.py validate <module> --fix",
-            "  python3 scripts/cli.py publish <module> -m 'fix episode parsing'",
-            "  python3 scripts/cli.py audit-all"
-        ])
-
+        # Build parser
         parser = argparse.ArgumentParser(
-            description="🚀 Aniyomi AI Extension Engine Master CLI",
+            prog="cli.py",
+            description="Aniyomi AI Extension Engine Master CLI",
             formatter_class=argparse.RawTextHelpFormatter,
-            epilog="\n".join(epilog_lines)
         )
 
-        parser.add_argument("command", choices=list(commands_info.keys()), help="Subcommand to run")
-        parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments passed to the subcommand")
+        parser.add_argument("--json", action="store_true", dest="json_mode",
+                            help="Output structured JSON for AI agent consumption")
+        parser.add_argument("--verbose", "-v", action="store_true",
+                            help="Enable verbose output for debugging")
+        parser.add_argument("--version", action="version", version=f"%(prog)s {CLI_VERSION}")
+
+        subparsers = parser.add_subparsers(dest="command", help="Subcommand to run")
+
+        subparsers.add_parser("doctor", help="Diagnose developer environment")
+        subparsers.add_parser("list", help="List installed extensions")
+        subparsers.add_parser("clean", help="Purge temporary build caches")
+        subparsers.add_parser("doc", help="Generate extension catalog documentation")
+        subparsers.add_parser("list-extractors", help="List all pre-built extractor libraries")
+        subparsers.add_parser("audit-all", help="Run full repository health audit")
+
+        ct_parser = subparsers.add_parser("create-theme", help="Scaffold a new multi-source theme")
+        ct_parser.add_argument("theme_name", help="Name of the new theme")
+
+        info_parser = subparsers.add_parser("info", help="Show detailed extension module info")
+        add_target_args(info_parser, required=True)
+
+        bv_parser = subparsers.add_parser("bump-version", help="Increment extVersionCode")
+        add_target_args(bv_parser, required=True)
+
+        bt_parser = subparsers.add_parser("bump-theme", help="Increment theme version code")
+        bt_parser.add_argument("theme_name", help="Theme package name")
+        bt_parser.add_argument("--base", action="store_true", help="Bump baseVersionCode (default)")
+        bt_parser.add_argument("--variants", action="store_true", help="Bump variant overrideVersionCodes")
+        bt_parser.add_argument("--all", action="store_true", help="Bump both base and variants")
+
+        bl_parser = subparsers.add_parser("bump-lib", help="Cascade version bumps to dependent modules")
+        bl_parser.add_argument("lib_name", help="Extractor library name in lib/")
+
+        md_parser = subparsers.add_parser("migrate-domain", help="Automate base URL domain migration")
+        md_parser.add_argument("target", help="Target extension module")
+        md_parser.add_argument("--new-domain", required=True, help="New base URL domain")
+        md_parser.add_argument("--no-test", action="store_true", help="Skip live HTTP reachability check")
+        md_parser.add_argument("--dry-run", action="store_true", help="Preview without writing to disk")
+
+        pub_parser = subparsers.add_parser("publish", help="Validate, bump, commit, and push")
+        add_target_args(pub_parser, required=True)
+        pub_parser.add_argument("-m", "--message", help="Commit message")
+        pub_parser.add_argument("--no-bump", action="store_true", help="Skip version bump")
+
+        fmt_parser = subparsers.add_parser("format", help="Format Kotlin, Gradle, and XML files")
+        add_target_args(fmt_parser)
+        fmt_parser.add_argument("--check", action="store_true", help="Check formatting without modifying files")
+
+        lint_parser = subparsers.add_parser("lint", help="Scan for code smells and anti-patterns")
+        add_target_args(lint_parser)
+        lint_parser.add_argument("--fix", action="store_true", help="Auto-fix AST smells before linting")
+
+        val_parser = subparsers.add_parser("validate", help="Static analysis validation")
+        add_target_args(val_parser)
+        val_parser.add_argument("--all", action="store_true", help="Validate all extensions")
+        val_parser.add_argument("--fix", action="store_true", help="Auto-fix AST smells and missing dependencies")
+
+        pf_parser = subparsers.add_parser("preflight", help="One-shot master quality gate")
+        add_target_args(pf_parser, required=True)
+
+        ih_parser = subparsers.add_parser("inspect-hosters", help="Inspect hoster folder architecture")
+        add_target_args(ih_parser, required=True)
+
+        fi_parser = subparsers.add_parser("fetch-icon", help="Fetch favicon and convert to launcher icon")
+        add_target_args(fi_parser)
+        fi_parser.add_argument("--url", help="Target website URL")
+
+        fst_parser = subparsers.add_parser("fetch-skip-times", help="Fetch AniSkip skip timestamps")
+        fst_parser.add_argument("target", nargs="?", help="MAL ID (numeric)")
+
+        subparsers.add_parser("cross-map-id", help="Cross-map IDs across MAL, AniList, IMDb, TMDB, SIMKL")
+
+        tp_parser = subparsers.add_parser("test-pipeline", help="Run full 5-stage scraper verification")
+        tp_parser.add_argument("target", help="Extension name or base URL")
+        tp_parser.add_argument("--query", "-q", help="Optional search query")
+
+        agent_parser = subparsers.add_parser("agent", help="Autonomous multi-agent swarms")
+        agent_subparsers = agent_parser.add_subparsers(dest="agent_subcommand", help="Agent subcommand")
+        pipe_p = agent_subparsers.add_parser("pipeline", help="Run full autonomous pipeline")
+        pipe_p.add_argument("url", help="Target website URL")
+        pipe_p.add_argument("--name", help="Extension name")
+        pipe_p.add_argument("--lang", default="en", help="Language code")
+        recon_p = agent_subparsers.add_parser("recon", help="Run deep reconnaissance")
+        recon_p.add_argument("url", help="Target website URL")
+        deobf_p = agent_subparsers.add_parser("deobfuscate", help="Solve obfuscated JS payload")
+        deobf_p.add_argument("payload", help="Encrypted/packed JS string")
+        deobf_p.add_argument("--engine", default="auto", choices=["auto", "packer", "playerjs", "aes", "rc4"])
+        deobf_p.add_argument("--key", default="", help="Cipher key")
+        crit_p = agent_subparsers.add_parser("critique", help="Run adversarial critique")
+        crit_p.add_argument("target", help="Module name or file path")
+        heal_p = agent_subparsers.add_parser("heal", help="Triage CI failure and apply AST patch")
+        heal_p.add_argument("log_file", help="Compiler build log file")
 
         if len(sys.argv) == 1:
-            parser.print_help()
+            _print_grouped_help(registry)
             sys.exit(0)
 
         args = parser.parse_args()
+
+        if not args.command:
+            _print_grouped_help(registry)
+            sys.exit(0)
+
         if args.command == "test-extractors":
             args.command = "test-extractor"
 
-        if args.command == "doctor":
-            success = doctor(repo_root)
+        cmd_info_entry = registry.get(args.command)
+        if cmd_info_entry and cmd_info_entry["handler"]:
+            state = CLIState(json_mode=args.json_mode, verbose=args.verbose)
+            success = cmd_info_entry["handler"](state, args)
             sys.exit(0 if success else 1)
 
-        if args.command == "create-theme":
-            theme_parser = argparse.ArgumentParser(prog="cli.py create-theme")
-            theme_parser.add_argument("theme_name", help="Name of the new theme (e.g. 'streamwish', 'dooplay')")
-            theme_args = theme_parser.parse_args(args.args)
-            from scripts.create_extension import generate_theme_scaffold
-            success = generate_theme_scaffold(theme_args.theme_name, repo_root)
-            sys.exit(0 if success else 1)
-
-        if args.command == "migrate-domain":
-            mig_parser = argparse.ArgumentParser(prog="cli.py migrate-domain")
-            mig_parser.add_argument("target", help="Target extension module (e.g. 'vegamovies' or 'en/vegamovies')")
-            mig_parser.add_argument("--new-domain", required=True, help="New base URL domain (e.g. 'https://newdomain.com')")
-            mig_parser.add_argument("--no-test", action="store_true", help="Skip live HTTP reachability check")
-            mig_parser.add_argument("--dry-run", action="store_true", help="Preview modifications without writing to disk")
-            mig_args = mig_parser.parse_args(args.args)
-            success = migrate_domain(repo_root, mig_args.target, mig_args.new_domain, test_reachability=not mig_args.no_test, dry_run=mig_args.dry_run)
-            sys.exit(0 if success else 1)
-
-        if args.command == "bump-theme":
-            bt_parser = argparse.ArgumentParser(prog="cli.py bump-theme")
-            bt_parser.add_argument("theme_name", help="Theme package name (e.g. 'anikototheme', 'dooplay')")
-            bt_parser.add_argument("--base", action="store_true", help="Bump baseVersionCode in lib-multisrc (default)")
-            bt_parser.add_argument("--variants", action="store_true", help="Bump overrideVersionCode for all theme variants")
-            bt_parser.add_argument("--all", action="store_true", help="Bump both baseVersionCode and all variant overrideVersionCodes")
-            bt_args = bt_parser.parse_args(args.args)
-            mode = "all" if bt_args.all else ("variants" if bt_args.variants else "base")
-            success = bump_theme(repo_root, bt_args.theme_name, mode=mode)
-            sys.exit(0 if success else 1)
-
-        if args.command == "bump-lib":
-            bl_parser = argparse.ArgumentParser(prog="cli.py bump-lib")
-            bl_parser.add_argument("lib_name", help="Extractor library name in lib/ (e.g. 'dood-extractor', 'playlist-utils')")
-            bl_args = bl_parser.parse_args(args.args)
-            success = bump_lib_dependents(repo_root, bl_args.lib_name)
-            sys.exit(0 if success else 1)
-
-        if args.command == "format":
-            fmt_parser = argparse.ArgumentParser(prog="cli.py format")
-            fmt_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
-            fmt_parser.add_argument("--lang", help="Target extension lang")
-            fmt_parser.add_argument("--name", help="Target extension directory name")
-            fmt_parser.add_argument("--check", action="store_true", help="Check formatting status without modifying files")
-            fmt_args = fmt_parser.parse_args(args.args)
-            lang, name = resolve_extension_target(repo_root, fmt_args.target, fmt_args.lang, fmt_args.name)
-            success = format_codebase(repo_root, lang, name, check_only=fmt_args.check)
-            sys.exit(0 if success else 1)
-
-        if args.command == "list":
-            list_extensions(repo_root)
-            sys.exit(0)
-
-        if args.command == "clean":
-            success = clean_workspace(repo_root)
-            sys.exit(0 if success else 1)
-
-        if args.command == "doc":
-            success = generate_doc(repo_root)
-            sys.exit(0 if success else 1)
-
-        if args.command == "lint":
-            lint_parser = argparse.ArgumentParser(prog="cli.py lint")
-            lint_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
-            lint_parser.add_argument("--lang", help="Target extension lang")
-            lint_parser.add_argument("--name", help="Target extension directory name")
-            lint_parser.add_argument("--fix", action="store_true", help="Auto-fix AST smells and v16 invariants before linting")
-            lint_args = lint_parser.parse_args(args.args)
-            lang, name = resolve_extension_target(repo_root, lint_args.target, lint_args.lang, lint_args.name)
-            if lint_args.fix:
-                from scripts.ast_fixer import fix_codebase
-                fix_codebase(repo_root, lang, name)
-            success = lint_codebase(repo_root, lang, name)
-            sys.exit(0 if success else 1)
-
-        if args.command == "preflight":
-            pf_parser = argparse.ArgumentParser(prog="cli.py preflight")
-            pf_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
-            pf_parser.add_argument("--lang", help="Target extension lang")
-            pf_parser.add_argument("--name", help="Target extension directory name")
-            pf_args = pf_parser.parse_args(args.args)
-            if not pf_args.target and not (pf_args.lang and pf_args.name):
-                pf_parser.print_help()
-                print("\n❌ Error: Target extension module is required (e.g. `cli.py preflight <module>`).")
+        script_name = SCRIPT_FALLBACK.get(args.command)
+        if script_name:
+            script_path = repo_root / "scripts" / script_name
+            if not script_path.exists():
+                print(f"Script not found: {script_path}")
                 sys.exit(1)
-            lang, name = resolve_extension_target(repo_root, pf_args.target, pf_args.lang, pf_args.name)
-            success = preflight_extension(repo_root, lang, name)
-            sys.exit(0 if success else 1)
-
-        if args.command == "inspect-hosters":
-            hoster_parser = argparse.ArgumentParser(prog="cli.py inspect-hosters")
-            hoster_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
-            hoster_parser.add_argument("--lang", help="Target extension lang")
-            hoster_parser.add_argument("--name", help="Target extension directory name")
-            hoster_args = hoster_parser.parse_args(args.args)
-            if not hoster_args.target and not (hoster_args.lang and hoster_args.name):
-                hoster_parser.print_help()
-                print("\n❌ Error: Target extension module is required (e.g. `cli.py inspect-hosters <module>`).")
-                sys.exit(1)
-            lang, name = resolve_extension_target(repo_root, hoster_args.target, hoster_args.lang, hoster_args.name)
-            success = inspect_hosters(repo_root, lang, name)
-            sys.exit(0 if success else 1)
-
-        if args.command == "audit-all":
-            success = audit_all(repo_root)
-            sys.exit(0 if success else 1)
-
-        if args.command == "list-extractors":
-            lib_dir = repo_root / "lib"
-            if not lib_dir.exists():
-                print("❌ lib/ directory not found.")
-                sys.exit(1)
-            extractors = sorted([d.name for d in lib_dir.iterdir() if d.is_dir()])
-            print(f"📦 Found {len(extractors)} pre-built extractor modules in lib/\n")
-            for i, ext in enumerate(extractors, 1):
-                print(f"  {i:2d}. {ext}")
-            print("\nSee .agents/skills/extractor-registry/SKILL.md for usage code snippets.")
-            sys.exit(0)
-
-        if args.command == "publish":
-            pub_parser = argparse.ArgumentParser(prog="cli.py publish")
-            pub_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
-            pub_parser.add_argument("--lang", help="Target extension lang")
-            pub_parser.add_argument("--name", help="Target extension directory name")
-            pub_parser.add_argument("-m", "--message", help="Commit message")
-            pub_parser.add_argument("--no-bump", action="store_true", help="Skip version bump if version code was already incremented")
-            pub_args = pub_parser.parse_args(args.args)
-            if not pub_args.target and not (pub_args.lang and pub_args.name):
-                pub_parser.print_help()
-                print("\n❌ Error: Target extension module is required (e.g. `cli.py publish <module>`).")
-                sys.exit(1)
-            lang, name = resolve_extension_target(repo_root, pub_args.target, pub_args.lang, pub_args.name)
-            success = publish_extension(repo_root, lang, name, pub_args.message, no_bump=pub_args.no_bump)
-            sys.exit(0 if success else 1)
-
-        if args.command == "validate":
-            val_parser = argparse.ArgumentParser(prog="cli.py validate")
-            val_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
-            val_parser.add_argument("--lang", help="Target extension lang")
-            val_parser.add_argument("--name", help="Target extension directory name")
-            val_parser.add_argument("--all", action="store_true", help="Validate all extensions")
-            val_parser.add_argument("--fix", action="store_true", help="Auto-fix AST smells and missing dependencies before validating")
-            val_args = val_parser.parse_args(args.args)
-            if val_args.all:
-                lang, name = None, None
-            else:
-                lang, name = resolve_extension_target(repo_root, val_args.target, val_args.lang, val_args.name)
-            if val_args.fix:
-                from scripts.ast_fixer import fix_codebase
-                fix_codebase(repo_root, lang, name)
-                detect_script = repo_root / "scripts" / "detect_extractors.py"
-                if detect_script.exists():
-                    d_cmd = [sys.executable, str(detect_script), "--fix"]
-                    if lang and name:
-                        d_cmd.extend(["--lang", lang, "--name", name])
-                    d_res = subprocess.run(d_cmd, cwd=repo_root, capture_output=True, text=True, timeout=20)
-                    if d_res.returncode != 0:
-                        print(f"  ⚠️  detect_extractors exited with code {d_res.returncode}: {d_res.stderr.strip()}")
-            success = validate_extensions(repo_root, lang, name)
-            sys.exit(0 if success else 1)
-
-        if args.command == "bump-version":
-            bump_parser = argparse.ArgumentParser(prog="cli.py bump-version")
-            bump_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
-            bump_parser.add_argument("--lang", help="Target extension lang")
-            bump_parser.add_argument("--name", help="Target extension directory name")
-            bump_args = bump_parser.parse_args(args.args)
-            if not bump_args.target and not (bump_args.lang and bump_args.name):
-                bump_parser.print_help()
-                print("\n❌ Error: Target extension module is required (e.g. `cli.py bump-version <module>`).")
-                sys.exit(1)
-            lang, name = resolve_extension_target(repo_root, bump_args.target, bump_args.lang, bump_args.name)
-            success = bump_version(repo_root, lang, name)
-            sys.exit(0 if success else 1)
-
-        if args.command == "test-pipeline":
-            pipe_parser = argparse.ArgumentParser(prog="cli.py test-pipeline")
-            pipe_parser.add_argument("target", help="Target extension name (e.g. 'zinkmovies' or 'vegamovies') or base URL")
-            pipe_parser.add_argument("--query", "-q", help="Optional search query to test search flow")
-            pipe_args = pipe_parser.parse_args(args.args)
-            from scripts.test_pipeline import PipelineTester
-            target = pipe_args.target
-            if target.startswith("http://") or target.startswith("https://"):
-                base_url = target
-            else:
-                found_base_url = None
-                for kt in repo_root.rglob("*.kt"):
-                    if kt.parent.name == target or target in kt.name.lower():
-                        content = kt.read_text(encoding="utf-8", errors="ignore")
-                        m = re.search(r'PREF_BASE_URL_DEFAULT\s*=\s*["\']([^"\']+)["\']', content)
-                        if not m:
-                            m = re.search(r'override\s+val\s+baseUrl\s*=\s*["\']([^"\']+)["\']', content)
-                        if m:
-                            found_base_url = m.group(1)
-                            break
-                if not found_base_url:
-                    print(f"❌ Could not resolve base URL for module: {target}")
-                    sys.exit(1)
-                base_url = found_base_url
-            tester = PipelineTester(base_url)
-            success = tester.run(query=pipe_args.query)
-            sys.exit(0 if success else 1)
-
-        if args.command == "info":
-            info_parser = argparse.ArgumentParser(prog="cli.py info")
-            info_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
-            info_parser.add_argument("--lang", help="Target extension lang")
-            info_parser.add_argument("--name", help="Target extension directory name")
-            info_args = info_parser.parse_args(args.args)
-            if not info_args.target and not (info_args.lang and info_args.name):
-                info_parser.print_help()
-                print("\n❌ Error: Target extension module is required (e.g. `cli.py info <module>`).")
-                sys.exit(1)
-            lang, name = resolve_extension_target(repo_root, info_args.target, info_args.lang, info_args.name)
-            success = show_info(repo_root, lang, name)
-            sys.exit(0 if success else 1)
-
-        if args.command == "fetch-icon":
-            fetch_parser = argparse.ArgumentParser(prog="cli.py fetch-icon")
-            fetch_parser.add_argument("--url", help="Target website URL")
-            fetch_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
-            fetch_parser.add_argument("--lang", help="Target extension lang")
-            fetch_parser.add_argument("--name", help="Target extension directory name")
-
-            icon_args = fetch_parser.parse_args(args.args)
-            lang, name = resolve_extension_target(repo_root, icon_args.target, icon_args.lang, icon_args.name)
-            if not name:
-                print("❌ Error: Target extension name is required (e.g. `cli.py fetch-icon <target>` or `cli.py fetch-icon --url <url> <target>`).")
-                sys.exit(1)
-
-            target_url = icon_args.url
-            if not target_url:
-                target_src = repo_root / "src" / (lang or "en") / name
-                for kt in target_src.rglob("*.kt"):
-                    src_text = kt.read_text(encoding="utf-8", errors="ignore")
-                    m = re.search(r'(?:PREF_BASE_URL_DEFAULT|PREF_DOMAIN_DEFAULT|DOMAIN(?:_DEFAULT)?)\s*=\s*["\']([^"\']+)["\']', src_text)
-                    if not m:
-                        m = re.search(r'override\s+val\s+baseUrl\s*=\s*["\']([^"\']+)["\']', src_text)
-                    if m:
-                        target_url = m.group(1)
-                        break
-
-            if not target_url:
-                print("❌ Error: Target website URL is required (specify --url <url> or define baseUrl in extension source).")
-                sys.exit(1)
-
-            out_path = repo_root / "src" / (lang or "en") / name / "res" / "drawable" / "ic_launcher.png"
-            success = fetch_icon(target_url, out_path)
-            sys.exit(0 if success else 1)
-
-        if args.command == "fetch-skip-times":
-            script_path = scripts_dir / "fetch_metadata.py"
-            # Support positional MAL ID: cli.py fetch-skip-times <id>
-            # F-05: validate that the positional arg is numeric before forwarding
-            extra = []
-            if args.args and not args.args[0].startswith("-"):
-                mal_id_raw = args.args[0]
-                if not mal_id_raw.isdigit():
-                    print(f"❌ fetch-skip-times: MAL ID must be a numeric value, got '{mal_id_raw}'")
-                    sys.exit(1)
-                extra = ["--mal-id", mal_id_raw] + args.args[1:]
-            else:
-                extra = args.args
-            cmd = [sys.executable, str(script_path), "--aniskip"] + extra
-            result = subprocess.run(cmd, timeout=300)  # F-12: network I/O timeout
-            sys.exit(result.returncode)
-
-        if args.command == "agent":
-            from scripts.agents import OrchestratorAgent, ReconSwarmAgent, DeobfuscatorAgent, AdversarialCriticAgent, CiGuardianAgent
-            agent_parser = argparse.ArgumentParser(prog="cli.py agent")
-            agent_subparsers = agent_parser.add_subparsers(dest="subcommand", help="Agent subcommand")
-
-            pipe_p = agent_subparsers.add_parser("pipeline", help="Run full autonomous multi-agent pipeline")
-            pipe_p.add_argument("url", help="Target website URL")
-            pipe_p.add_argument("--name", help="Extension name")
-            pipe_p.add_argument("--lang", default="en", help="Language code")
-
-            recon_p = agent_subparsers.add_parser("recon", help="Run deep reconnaissance and schema inference")
-            recon_p.add_argument("url", help="Target website URL")
-
-            deobf_p = agent_subparsers.add_parser("deobfuscate", help="Solve obfuscated JS/Player payload")
-            deobf_p.add_argument("payload", help="Encrypted / packed JS string")
-            deobf_p.add_argument("--engine", default="auto", choices=["auto", "packer", "playerjs", "aes", "rc4"])
-            deobf_p.add_argument("--key", default="", help="Cipher key")
-
-            crit_p = agent_subparsers.add_parser("critique", help="Run adversarial red team critique on extension code")
-            crit_p.add_argument("target", help="Module name or file path")
-
-            heal_p = agent_subparsers.add_parser("heal", help="Triage compiler / CI failure and apply AST patch")
-            heal_p.add_argument("log_file", help="Compiler build log file")
-            # Note: --file was removed (F-29) — it was parsed but never used in dispatch
-
-            agent_args = agent_parser.parse_args(args.args)
-            if not agent_args.subcommand:
-                agent_parser.print_help()
-                sys.exit(1)
-
-            if agent_args.subcommand == "pipeline":
-                orchestrator = OrchestratorAgent()
-                res = orchestrator.run_pipeline(agent_args.url, name=agent_args.name, lang=agent_args.lang)
-                print(json.dumps(res, indent=2))
-                sys.exit(0 if res.get("status") == "SUCCESS" else 1)
-
-            elif agent_args.subcommand == "recon":
-                swarm = ReconSwarmAgent()
-                res = swarm.explore_site(agent_args.url)
-                print(json.dumps(res, indent=2))
-                sys.exit(0)
-
-            elif agent_args.subcommand == "deobfuscate":
-                import dataclasses
-                solver = DeobfuscatorAgent()
-                res = solver.solve(agent_args.payload, key=agent_args.key or None)
-                print(json.dumps(dataclasses.asdict(res), indent=2))
-                sys.exit(0 if res.success else 1)
-
-            elif agent_args.subcommand == "critique":
-                import dataclasses
-                critic = AdversarialCriticAgent()
-                target_path = Path(agent_args.target)
-                code = target_path.read_text(encoding="utf-8") if target_path.exists() else agent_args.target
-                report = critic.review(code)
-                print(json.dumps(dataclasses.asdict(report), indent=2, default=str))
-                sys.exit(0 if report.is_passing else 1)
-
-            elif agent_args.subcommand == "heal":
-                import dataclasses
-                guardian = CiGuardianAgent()
-                log_txt = Path(agent_args.log_file).read_text(encoding="utf-8")
-                triage = guardian.triage_log(log_txt)
-                print(json.dumps(dataclasses.asdict(triage), indent=2, default=str))
-                sys.exit(0 if not triage.has_errors else 1)
-
-        if args.command == "cross-map-id":
-            script_path = scripts_dir / "fetch_metadata.py"
-            cmd = [sys.executable, str(script_path), "--cross-map"] + args.args
+            remaining = sys.argv[2:]
+            cmd = [sys.executable, str(script_path)] + remaining
             result = subprocess.run(cmd, timeout=300)
             sys.exit(result.returncode)
 
-        script_name = commands_info[args.command]["script"]
-        # F-01/F-16: Guard against None script — all None-script commands must have an
-        # explicit dispatch block above. If one is missing, fail fast with a clear message.
-        if script_name is None:
-            print(f"❌ No dispatch handler registered for command '{args.command}'. This is a bug — please add an explicit 'if args.command == \"{args.command}\"' block.")
-            sys.exit(1)
-        script_path = scripts_dir / script_name
-
-        if not script_path.exists():
-            print(f"❌ Script not found: {script_path}")
-            sys.exit(1)
-
-        cmd = [sys.executable, str(script_path)] + args.args
-        result = subprocess.run(cmd, timeout=300)  # F-13: prevent indefinite hang on network scripts
-        sys.exit(result.returncode)
+        print(f"No handler registered for command '{args.command}'.")
+        sys.exit(1)
 
     except KeyboardInterrupt:
-        print("\n🛑 Operation cancelled by user.")
+        print("\nOperation cancelled by user.")
         sys.exit(130)
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
+        print(f"\nUnexpected error: {e}")
         sys.exit(1)
 
 

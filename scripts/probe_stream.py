@@ -17,7 +17,6 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-
 class StreamProber:
     def __init__(self, headers: Optional[Dict[str, str]] = None, timeout: int = 8):
         self.headers = {
@@ -74,14 +73,14 @@ class StreamProber:
         if "#EXT-X-STREAM-INF" in m3u8_text:
             result["is_master"] = True
             result["media"] = []
-            
+
             for m in re.findall(r'#EXT-X-MEDIA:(.+)', m3u8_text):
                 attrs = {}
                 for match in re.finditer(r'([A-Z0-9\-]+)=(?:"([^"]*)"|([^,]*))', m):
                     k = match.group(1)
                     v = match.group(2) if match.group(2) is not None else match.group(3)
                     attrs[k] = v
-                
+
                 uri = attrs.get("URI")
                 result["media"].append({
                     "type": attrs.get("TYPE", "UNKNOWN"),
@@ -185,7 +184,7 @@ class StreamProber:
                             uri_path = urllib.parse.urlparse(a["url"]).path
                             uri_info = f"  URI: {uri_path} {check}"
                         print(f"     {default_flag} {a['language']}  — {a['name']} (GROUP: {a['group_id']}){uri_info}")
-                    
+
                     track_names = ", ".join([f'"{a["name"]}"' for a in audio_tracks])
                     print(f"\n  💡 Verify: extension's Video(audioTracks=...) should include [{track_names}]")
 
@@ -298,7 +297,6 @@ class StreamProber:
         except Exception:
             pass
 
-
     def detect_stego_offset(self, url: str) -> bool:
         """Probes stream header and scans for container sync markers to calculate stego payload offset."""
         print(f"\n🔍 Detecting Stego / Fake-Image Byte Offset: {url}")
@@ -372,7 +370,6 @@ class StreamProber:
             print(f"     First 64 bytes hex: {body[:64].hex()}")
             return False
 
-
 def main():
     parser = argparse.ArgumentParser(description="Deep Media Stream & ExoPlayer Compatibility Inspector")
     parser.add_argument("url", help="Target video stream URL (HLS .m3u8, DASH .mpd, or direct video)")
@@ -403,7 +400,6 @@ def main():
     else:
         success = prober.probe_stream(args.url, deep=args.deep, probe_segments=args.probe_segments)
     sys.exit(0 if success else 1)
-
 
 if __name__ == "__main__":
     main()

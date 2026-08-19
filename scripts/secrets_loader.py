@@ -18,7 +18,6 @@ from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-
 def get_secret(key: str, default: Optional[str] = None) -> Optional[str]:
     """Retrieves a secret from environment or untracked local files."""
     # 1. Environment Variable

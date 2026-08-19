@@ -30,7 +30,6 @@ from scripts.site_recon import SiteRecon
 from scripts.ai_scraper import call_groq, call_gemini, call_opencode
 from scripts.create_extension import generate_extension, generate_theme_scaffold, to_pascal_case, create_minimal_png
 
-
 def extract_ai_selectors_json(html_content: str) -> Dict[str, str]:
     """Uses Groq / Gemini to extract a strict JSON dictionary of CSS selectors."""
     prompt = f"""
@@ -67,7 +66,6 @@ HTML Snippet:
     except Exception:
         pass
     return {}
-
 
 def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en") -> bool:
     """Orchestrates autonomous extension creation."""
@@ -175,7 +173,6 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en")
     print("=" * 80 + "\n")
     return val_success
 
-
 def main():
     parser = argparse.ArgumentParser(description="Autonomous 1-Click Aniyomi Extension Synthesizer")
     parser.add_argument("url", help="Target anime/movie website URL (e.g. 'https://animeflix.live')")
@@ -185,7 +182,6 @@ def main():
 
     success = synthesize_extension(args.url, name=args.name, lang=args.lang)
     sys.exit(0 if success else 1)
-
 
 if __name__ == "__main__":
     main()

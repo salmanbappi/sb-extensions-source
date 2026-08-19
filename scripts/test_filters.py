@@ -14,7 +14,6 @@ from typing import Dict, List, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-
 class FilterFuzzer:
     def __init__(self, base_url: str, headers: Dict[str, str] = None):
         self.base_url = base_url.rstrip("/")
@@ -64,7 +63,6 @@ class FilterFuzzer:
             return e.code, 0
         except Exception:
             return 0, 0
-
 
 def main():
     parser = argparse.ArgumentParser(description="Combinatorial Search Filter Matrix Tester & Fuzzer")
@@ -136,7 +134,6 @@ def main():
             print(f"  {status_emoji} Filter [{f['display']} = {opt_name}] -> HTTP {status} ({length} bytes)")
 
     print("\n✅ Filter fuzz testing completed successfully.")
-
 
 if __name__ == "__main__":
     main()

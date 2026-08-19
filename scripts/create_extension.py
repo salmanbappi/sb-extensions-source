@@ -31,7 +31,6 @@ if str(REPO_ROOT) not in sys.path:
 if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-
 def create_minimal_png(filepath: Path, width=512, height=512):
     """Generates a valid minimal PNG file using Python standard library (zlib/struct)."""
     png_sig = b'\x89PNG\r\n\x1a\n'
@@ -53,7 +52,6 @@ def create_minimal_png(filepath: Path, width=512, height=512):
     with open(filepath, 'wb') as f:
         f.write(png_sig + ihdr_chunk + idat_chunk + iend_chunk)
 
-
 def to_pascal_case(name: str) -> str:
     words = re.findall(r'[a-zA-Z0-9]+', name)
     pascal = ''.join(w.capitalize() for w in words)
@@ -67,7 +65,6 @@ def to_pascal_case(name: str) -> str:
         pascal = digit_names.get(pascal[0], "Ext") + pascal[1:]
     return pascal
 
-
 def to_package_name(name: str) -> str:
     words = re.findall(r'[a-zA-Z0-9]+', name.lower())
     pkg = ''.join(words)
@@ -76,7 +73,6 @@ def to_package_name(name: str) -> str:
     if pkg[0].isdigit():
         pkg = "ext" + pkg
     return pkg
-
 
 def generate_build_gradle(
     ext_name: str,
@@ -121,7 +117,6 @@ dependencies {
 apply from: "$rootDir/common.gradle"
 {lib_deps}"""
 
-
 def generate_android_manifest() -> str:
     return """<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -151,7 +146,6 @@ def generate_android_manifest() -> str:
     </application>
 </manifest>
 """
-
 
 def generate_filters_kotlin_source(lang: str, pkg_name: str) -> str:
     return f"""package eu.kanade.tachiyomi.animeextension.{lang}.{pkg_name}
@@ -204,7 +198,6 @@ object Filters {{
     }}
 }}
 """
-
 
 def generate_html_kotlin_source(
     lang: str,
@@ -612,7 +605,6 @@ class {class_name} : Source() {{
 {sort_videos_block}{companion_block}}}
 """
 
-
 def generate_movie_locker_kotlin_source(
     lang: str,
     pkg_name: str,
@@ -1006,7 +998,6 @@ class {class_name} : Source() {{
 }}
 """
 
-
 def generate_api_kotlin_source(
     lang: str,
     pkg_name: str,
@@ -1171,7 +1162,6 @@ data class StreamDto(
     val url: String? = null
 )
 """
-
 
 def generate_theme_scaffold(theme_name: str, repo_root: Path) -> bool:
     """Scaffolds a new multi-source theme module under lib-multisrc/<theme_name>/."""
@@ -1340,7 +1330,6 @@ data class {theme_pascal}ItemDto(
     print(f"\n✨ Theme ':lib-multisrc:{theme_clean}' scaffolded successfully!")
     return True
 
-
 def interactive_wizard() -> dict:
     print("🪄 Aniyomi Extension Scaffolding Wizard (v16)\n" + "=" * 50)
     name = input("Extension display name (e.g. 'AnimePahe', 'HiAnime'): ").strip()
@@ -1406,7 +1395,6 @@ def interactive_wizard() -> dict:
         "nsfw": nsfw,
         "versionCode": 1
     }
-
 
 def generate_extension(
     ext_name: str,
@@ -1526,7 +1514,6 @@ class {class_name} : {theme_class}() {{
     print("\n✨ Extension created with 85-95% automated boilerplate!")
     return True
 
-
 def main():
     parser = argparse.ArgumentParser(description="Aniyomi Extension Generator CLI (Production Grade)")
     parser.add_argument("--name", help="Extension display name (e.g., 'AnimeFlix')")
@@ -1598,7 +1585,6 @@ def main():
         version_code=version_code
     )
     sys.exit(0 if success else 1)
-
 
 if __name__ == "__main__":
     main()

@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.abyssextractor.AbyssExtractor
 import eu.kanade.tachiyomi.lib.buzzheavierextractor.BuzzheavierExtractor
 import eu.kanade.tachiyomi.lib.byseextractor.ByseExtractor
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
@@ -482,8 +483,10 @@ class Desidubanime : Source() {
             url.contains("filemoon") ->
                 filemoonExtractor.videosFromUrl(url)
 
-            url.contains("streamwish") || url.contains("hanerix") || url.contains("wish") ->
-                streamWishExtractor.videosFromUrl(url, "StreamWish")
+            url.contains("streamwish") || url.contains("hanerix") || url.contains("wish") -> {
+                val wishVideos = streamWishExtractor.videosFromUrl(url, "StreamWish")
+                wishVideos.ifEmpty { vidHideExtractor.videosFromUrl(url) { "StreamWish - $it" } }
+            }
 
             url.contains("vidhide") || url.contains("streamhg") || url.contains("animezia") ->
                 vidHideExtractor.videosFromUrl(url) { "VidHide - $it" }

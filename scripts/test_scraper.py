@@ -37,7 +37,6 @@ try:
 except ImportError:
     pass
 
-
 # ==============================================================================
 # HTTP Client & Session Handler
 # ==============================================================================
@@ -140,7 +139,6 @@ class ScraperSession:
             duration = time.time() - start_time
             return 0, f"Network Error: {e}", {}, duration
 
-
 # ==============================================================================
 # HTML Parser (Tag, Class, ID selector simulator without external deps)
 # ==============================================================================
@@ -153,7 +151,6 @@ try:
     _HAS_BS4 = True
 except ImportError:
     _HAS_BS4 = False
-
 
 class SimpleSelectorParser(HTMLParser):
     """Lightweight HTML element extractor matching basic tag/class/id selectors.
@@ -197,7 +194,6 @@ class SimpleSelectorParser(HTMLParser):
         if self._current_match:
             self._current_match["text"] += data
 
-
 # ---------------------------------------------------------------------------
 # Stdlib node model (used when BS4 is absent)
 # ---------------------------------------------------------------------------
@@ -216,7 +212,6 @@ class _Node:
 
     def get_text(self) -> str:
         return self.text
-
 
 class _DOMBuilder(HTMLParser):
     """Builds a minimal DOM tree from HTML for the stdlib CSS engine."""
@@ -248,7 +243,6 @@ class _DOMBuilder(HTMLParser):
         if len(self._stack) > 1:
             self._stack[-1].text += data
 
-
 # ---------------------------------------------------------------------------
 # Token-level simple selector matcher
 # ---------------------------------------------------------------------------
@@ -259,7 +253,6 @@ _ATTR_RE = re.compile(
     r'\]'
 )
 _PSEUDO_NTH_RE = re.compile(r':nth-child\((\d+)\)', re.IGNORECASE)
-
 
 def _token_matches(node: "_Node", token: str) -> bool:
     """Return True if *node* matches a single simple CSS token.
@@ -361,14 +354,12 @@ def _token_matches(node: "_Node", token: str) -> bool:
 
     return True
 
-
 def _collect_text(node: "_Node") -> str:
     """Recursively collect all text from a node and its descendants."""
     parts = [node.text]
     for child in node.children:
         parts.append(_collect_text(child))
     return "".join(parts)
-
 
 def _stdlib_select(root: "_Node", selector: str) -> List[Dict[str, Any]]:
     """Evaluate a CSS selector against a DOM tree built by _DOMBuilder.
@@ -431,7 +422,6 @@ def _stdlib_select(root: "_Node", selector: str) -> List[Dict[str, Any]]:
         results.append({"tag": n.tag, "attrs": n.attrs, "text": _collect_text(n)})
     return results
 
-
 def select_elements(html: str, selector: str) -> List[Dict[str, Any]]:
     """Evaluate *selector* against *html* and return a list of element dicts.
 
@@ -482,7 +472,6 @@ def select_elements(html: str, selector: str) -> List[Dict[str, Any]]:
     builder.feed(html)
     return _stdlib_select(builder.root, sel)
 
-
 # ==============================================================================
 # DevTools Headers Converter
 # ==============================================================================
@@ -502,7 +491,6 @@ def parse_raw_devtools_headers(raw_text: str) -> Dict[str, str]:
             if k.lower() not in ["content-length", "host"]:
                 headers[k] = v
     return headers
-
 
 # ==============================================================================
 # Interactive REPL Session
@@ -598,13 +586,11 @@ def run_interactive_repl(session: ScraperSession, url: str, headers: Dict[str, s
         else:
             print(f"Unknown command: '{cmd}'. Type 'help' for command list.")
 
-
 # ==============================================================================
 # Extension Auto-Resolution & Inspection Helpers
 # ==============================================================================
 
 REPO_ROOT = Path(__file__).resolve().parent.parent if "__file__" in globals() else Path.cwd()
-
 
 def resolve_extension_target(repo_root: Path, target: Optional[str] = None, lang: Optional[str] = None, name: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """Helper to resolve (lang, name) from target positional argument (e.g. 'animestream' or 'en/animestream')."""
@@ -633,7 +619,6 @@ def resolve_extension_target(repo_root: Path, target: Optional[str] = None, lang
                 return lang_dir.name, resolved_name
 
     return resolved_lang, resolved_name
-
 
 def inspect_extension_module(repo_root: Path, lang: str, name: str) -> Tuple[Optional[str], Dict[str, str], Dict[str, str]]:
     """Extracts baseUrl, default headers, and endpoint request patterns from extension source files."""
@@ -697,7 +682,6 @@ def inspect_extension_module(repo_root: Path, lang: str, name: str) -> Tuple[Opt
             extracted_headers["Origin"] = base_url
 
     return base_url, extracted_headers, endpoints
-
 
 # ==============================================================================
 # CLI Entrypoint
@@ -880,7 +864,6 @@ def main():
 
     print("--- First 500 characters of Body ---")
     print(body[:500])
-
 
 if __name__ == "__main__":
     main()

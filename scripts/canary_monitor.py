@@ -13,7 +13,6 @@ from typing import Dict, List, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-
 def check_extractor_health(lib_dir: Path) -> List[Dict]:
     """Scans all extractor modules in lib/ and compiles health status."""
     results = []
@@ -45,7 +44,6 @@ def check_extractor_health(lib_dir: Path) -> List[Dict]:
 
     return results
 
-
 def export_health_markdown(results: List[Dict], output_file: Path):
     """Exports health status table to EXTRACTOR_HEALTH.md."""
     lines = [
@@ -67,7 +65,6 @@ def export_health_markdown(results: List[Dict], output_file: Path):
 
     output_file.write_text("\n".join(lines), encoding="utf-8")
     print(f"📊 Successfully updated health matrix -> {output_file.name}")
-
 
 def export_issue_template(results: List[Dict], output_file: Path):
     """Generates structured GitHub Issue templates for any incomplete/broken extractors."""
@@ -97,7 +94,6 @@ def export_issue_template(results: List[Dict], output_file: Path):
     output_file.write_text("\n".join(lines), encoding="utf-8")
     print(f"🚨 Issue template generated -> {output_file.name}")
 
-
 def main():
     parser = argparse.ArgumentParser(description="Continuous Extractor Health & Canary Monitor")
     parser.add_argument("--export", action="store_true", help="Export status table to EXTRACTOR_HEALTH.md")
@@ -123,7 +119,6 @@ def main():
     if args.export_issues:
         out_path = REPO_ROOT / "EXTRACTOR_ISSUES.md"
         export_issue_template(results, out_path)
-
 
 if __name__ == "__main__":
     main()
