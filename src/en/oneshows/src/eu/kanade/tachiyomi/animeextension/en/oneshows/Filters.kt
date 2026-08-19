@@ -11,32 +11,35 @@ object Filters {
         fun isDefault() = state == 0
     }
 
-    class TypeFilter : UriPartFilter(
-        "Type",
-        arrayOf(
-            Pair("TV Shows", "tv"),
-            Pair("Movies", "movie"),
-            Pair("Anime (TV)", "anime_tv"),
-            Pair("Anime (Movie)", "anime_movie"),
-        ),
-    )
+    class TypeFilter :
+        UriPartFilter(
+            "Type",
+            arrayOf(
+                Pair("TV Shows", "tv"),
+                Pair("Movies", "movie"),
+                Pair("Anime (TV)", "anime_tv"),
+                Pair("Anime (Movie)", "anime_movie"),
+            ),
+        )
 
-    class SortFilter : UriPartFilter(
-        "Sort By",
-        arrayOf(
-            Pair("Popularity Descending", "popularity.desc"),
-            Pair("Release Date Descending", "date.desc"),
-            Pair("Rating Descending", "vote_average.desc"),
-            Pair("Vote Count Descending", "vote_count.desc"),
-        ),
-    )
+    class SortFilter :
+        UriPartFilter(
+            "Sort By",
+            arrayOf(
+                Pair("Popularity Descending", "popularity.desc"),
+                Pair("Release Date Descending", "date.desc"),
+                Pair("Rating Descending", "vote_average.desc"),
+                Pair("Vote Count Descending", "vote_count.desc"),
+            ),
+        )
 
     class GenreCheckBox(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
 
-    class GenreFilter : AnimeFilter.Group<GenreCheckBox>(
-        "Genres",
-        GENRES.map { GenreCheckBox(it.first, it.second) },
-    ) {
+    class GenreFilter :
+        AnimeFilter.Group<GenreCheckBox>(
+            "Genres",
+            GENRES.map { GenreCheckBox(it.first, it.second) },
+        ) {
         fun getIncluded(): List<String> = state.filter { it.state }.map { it.id }
     }
 
