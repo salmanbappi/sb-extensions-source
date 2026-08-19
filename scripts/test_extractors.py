@@ -575,7 +575,15 @@ def main():
                 sys.path.insert(0, str(Path(__file__).parent))
                 from probe_stream import StreamProber
 
-            headers = {"Referer": url}
+            embed_host = urllib.parse.urlparse(url).netloc
+            headers = {
+                "Referer": url if url.startswith("http") else f"https://{embed_host}/",
+                "Origin": f"https://{embed_host}"
+            }
+            if "vidzee" in url:
+                headers["Referer"] = "https://player.vidzee.wtf/"
+                headers["Origin"] = "https://player.vidzee.wtf"
+
             prober = StreamProber(headers=headers)
             prober.probe_stream(stream_url, deep=args.probe, verify_play=args.play)
         else:

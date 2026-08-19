@@ -221,12 +221,17 @@ class StreamProber:
             elif body.startswith(b"\x1a\x45\xdf\xa3"):
                 print("  ✓ Valid Matroska/WebM container signature detected")
 
-        # Determine probe target URL (if master playlist, use top video variant for fast and direct ffprobe/ffmpeg decode)
+        # Determine probe target URL (if master playlist, use top video variant; if media playlist with segments, probe first segment for instant inspection)
         probe_target_url = url
-        if is_m3u8 and parsed.get("is_master") and parsed.get("variants"):
-            top_var = parsed["variants"][0].get("url")
-            if top_var:
-                probe_target_url = top_var
+        if is_m3u8:
+            if parsed.get("is_master") and parsed.get("variants"):
+                top_var = parsed["variants"][0].get("url")
+                if top_var:
+                    probe_target_url = top_var
+            elif not parsed.get("is_master") and parsed.get("segments"):
+                first_seg = parsed["segments"][0]
+                if first_seg:
+                    probe_target_url = first_seg
 
         # Run FFprobe / FFmpeg playability inspection if available
         if shutil.which("ffprobe"):
@@ -397,7 +402,6 @@ class StreamProber:
             header_args, _ = self._build_ffmpeg_headers()
             cmd = [
                 "ffmpeg", "-v", "error",
-                "-allowed_segment_extensions", "ALL",
                 *header_args,
                 "-t", str(duration_sec),
                 "-i", url,
