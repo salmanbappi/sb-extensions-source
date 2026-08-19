@@ -637,11 +637,11 @@ class Desidubanime : Source() {
         private const val PREF_SERVER_KEY = "pref_server"
         private const val PREF_SERVER_DEFAULT = "Byse"
         private val PREF_SERVER_ENTRIES = arrayOf(
-            "Auto (Recommended)",
+            "Auto (Recommended - Byse)",
             "Byse (FileMoon) [✅ Working]",
             "Buzzheavier [✅ Working]",
             "VidHide [✅ Working]",
-            "Abyss [⚠️ Experimental]",
+            "Abyss [❌ Broken - CDN Encrypted]",
             "StreamWish [❌ Dead/Expired]",
             "StreamTape [❌ Dead/DNS Down]",
             "DoodStream [❌ Blocked/Cloudflare]",
@@ -664,7 +664,7 @@ class Desidubanime : Source() {
             "Byse (FileMoon)",
             "Buzzheavier",
             "VidHide",
-            "Abyss",
+            "Abyss (Broken)",
             "StreamWish (Dead)",
             "StreamTape (Dead)",
             "DoodStream (Blocked)",
