@@ -184,7 +184,7 @@ class BasPlay :
             val currentSeasonAttr = doc.selectFirst("select#seasonSelect option[selected]")?.attr("value")
             val currentSeasonVal = currentSeasonAttr?.toIntOrNull() ?: 1
 
-            parseEpisodesFromDoc(doc, episodes, currentSeasonVal)
+            episodes.addAll(parseEpisodesFromDoc(doc, currentSeasonVal))
 
             val seasonOptions = doc.select("select#seasonSelect option")
             if (seasonOptions.size > 1) {
@@ -202,27 +202,28 @@ class BasPlay :
                 }
 
                 if (otherSeasons.isNotEmpty()) {
-                    withContext(Dispatchers.IO) {
+                    val otherEpisodes = withContext(Dispatchers.IO) {
                         otherSeasons.map { (url, sVal) ->
                             async {
                                 try {
                                     val seasonDoc = client.newCall(GET(url)).execute().asJsoup()
-                                    synchronized(episodes) {
-                                        parseEpisodesFromDoc(seasonDoc, episodes, sVal)
-                                    }
-                                } catch (e: Exception) {}
+                                    parseEpisodesFromDoc(seasonDoc, sVal)
+                                } catch (e: Exception) {
+                                    emptyList<SEpisode>()
+                                }
                             }
-                        }.awaitAll()
+                        }.awaitAll().flatten()
                     }
+                    episodes.addAll(otherEpisodes)
                 }
             }
             return episodes.distinctBy { it.url }.sortedByDescending { it.episode_number }
         }
     }
 
-    private fun parseEpisodesFromDoc(doc: Document, targetList: MutableList<SEpisode>, seasonVal: Int) {
+    private fun parseEpisodesFromDoc(doc: Document, seasonVal: Int): List<SEpisode> {
         val epItems = doc.select("a.ep-item")
-        epItems.forEachIndexed { index, element ->
+        return epItems.mapIndexedNotNull { index, element ->
             val epUrl = element.attr("data-src")
             val epNameRaw = element.selectFirst("div.text-sm")?.text() ?: element.text()
             val epNumAttr = element.attr("data-epnum").toFloatOrNull() ?: (index + 1).toFloat()
@@ -237,13 +238,13 @@ class BasPlay :
             }
 
             if (epUrl.isNotBlank()) {
-                targetList.add(
-                    SEpisode.create().apply {
-                        this.name = epNameRaw
-                        this.url = if (epUrl.startsWith("http") || epUrl.startsWith("/")) epUrl else "/$epUrl"
-                        this.episode_number = finalEpNum
-                    },
-                )
+                SEpisode.create().apply {
+                    this.name = epNameRaw
+                    this.url = if (epUrl.startsWith("http") || epUrl.startsWith("/")) epUrl else "/$epUrl"
+                    this.episode_number = finalEpNum
+                }
+            } else {
+                null
             }
         }
     }
