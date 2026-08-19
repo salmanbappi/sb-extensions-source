@@ -315,16 +315,16 @@ class Oneshows :
             } ?: emptyList()
             if (dynamicList.isNotEmpty()) {
                 val combined = (dynamicList + defaultHosters).distinctBy { it.hosterUrl }
-                sortHosters(combined)
+                orderHostersByPref(combined)
             } else {
-                sortHosters(defaultHosters)
+                orderHostersByPref(defaultHosters)
             }
         } catch (_: Exception) {
-            sortHosters(defaultHosters)
+            orderHostersByPref(defaultHosters)
         }
     }
 
-    private fun sortHosters(hosters: List<Hoster>): List<Hoster> {
+    private fun orderHostersByPref(hosters: List<Hoster>): List<Hoster> {
         val prefServer = preferences.getString(PREF_HOSTER_KEY, PREF_HOSTER_DEFAULT) ?: PREF_HOSTER_DEFAULT
         return hosters.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
     }
