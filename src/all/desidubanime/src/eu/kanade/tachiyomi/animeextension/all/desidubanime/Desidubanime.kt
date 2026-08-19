@@ -82,7 +82,8 @@ class Desidubanime : Source() {
     private val universalExtractor by lazy { UniversalExtractor(client) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val streamP2PExtractor by lazy { StreamP2PExtractor(client, headers) }
-    private val abyssExtractor by lazy { AbyssExtractor(client, playlistUtils) }
+    private val localProxy by lazy { LocalProxy(client) }
+    private val abyssExtractor by lazy { AbyssExtractor(client, playlistUtils, localProxy) }
     private val byseExtractor by lazy { ByseExtractor(client, playlistUtils) }
 
     // ============================== Popular ===============================
@@ -400,54 +401,82 @@ class Desidubanime : Source() {
 
                     val formBody = FormBody.Builder()
                         .add("sid", sid)
+                        .add("UserFavSite", "")
+                        .add("currentDomain", "[]")
                         .build()
 
-                    val helperRequest = Request.Builder()
-                        .url("$host/embedhelper.php")
-                        .post(formBody)
-                        .header("User-Agent", headers["User-Agent"] ?: "")
-                        .header("Referer", finalUrl)
-                        .header("X-Requested-With", "XMLHttpRequest")
+                    val helperHeaders = Headers.Builder()
+                        .set("User-Agent", headers["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .set("Referer", finalUrl)
+                        .set("Origin", host)
+                        .set("X-Requested-With", "XMLHttpRequest")
                         .build()
 
-                    val helperResponse = client.newCall(helperRequest).execute()
-                    val helperBody = helperResponse.body.string()
-                    helperResponse.close()
-
-                    val jsonObject = Json.parseToJsonElement(helperBody).jsonObject
-                    val siteUrls = jsonObject["siteUrls"]?.jsonObject ?: emptyMap()
-                    val siteFriendlyNames = jsonObject["siteFriendlyNames"]?.jsonObject ?: emptyMap()
-                    val mresultElement = jsonObject["mresult"]
-
-                    val mresultString = when {
-                        mresultElement == null -> null
-
-                        mresultElement is JsonPrimitive && mresultElement.isString -> {
-                            val base64Str = mresultElement.content
-                            try {
-                                String(Base64.decode(base64Str, Base64.DEFAULT), Charsets.UTF_8)
-                            } catch (e: Exception) {
-                                base64Str
+                    var helperBody = ""
+                    for (endpoint in listOf("/embedhelper2.php", "/embedhelper.php")) {
+                        try {
+                            val helperRequest = Request.Builder()
+                                .url("$host$endpoint")
+                                .post(formBody)
+                                .headers(helperHeaders)
+                                .build()
+                            val helperResponse = client.newCall(helperRequest).execute()
+                            if (helperResponse.isSuccessful) {
+                                helperBody = helperResponse.body.string()
+                                helperResponse.close()
+                                if (helperBody.isNotBlank() && !helperBody.contains("error")) {
+                                    break
+                                }
+                            } else {
+                                helperResponse.close()
                             }
-                        }
-
-                        else -> mresultElement.toString()
+                        } catch (_: Exception) {}
                     }
 
-                    if (!mresultString.isNullOrBlank()) {
-                        val mresultObject = Json.parseToJsonElement(mresultString).jsonObject
-                        for ((key, pathElement) in mresultObject) {
-                            val path = pathElement.jsonPrimitive.content.trimStart('/')
-                            val base = siteUrls[key]?.jsonPrimitive?.content?.trimEnd('/') ?: continue
-                            val fullUrl = "$base/$path"
-                            val friendlyName = siteFriendlyNames[key]?.jsonPrimitive?.content ?: key
+                    if (helperBody.isNotBlank()) {
+                        val jsonObject = Json.parseToJsonElement(helperBody).jsonObject
+                        val sourcesObj = jsonObject["sources"]?.jsonObject
+                        val siteUrls = jsonObject["siteUrls"]?.jsonObject ?: emptyMap()
+                        val siteFriendlyNames = jsonObject["siteFriendlyNames"]?.jsonObject ?: emptyMap()
+                        val mresultElement = jsonObject["mresult"]
 
-                            hosters.add(
-                                Hoster(
-                                    hosterName = friendlyName.replaceFirstChar { it.uppercase() },
-                                    hosterUrl = fullUrl,
-                                ),
-                            )
+                        val mresultString = when {
+                            mresultElement == null -> null
+                            mresultElement is JsonPrimitive && mresultElement.isString -> {
+                                val base64Str = mresultElement.content
+                                try {
+                                    String(Base64.decode(base64Str, Base64.DEFAULT), Charsets.UTF_8)
+                                } catch (_: Exception) {
+                                    base64Str
+                                }
+                            }
+                            else -> mresultElement.toString()
+                        }
+
+                        if (!mresultString.isNullOrBlank()) {
+                            val mresultObject = Json.parseToJsonElement(mresultString).jsonObject
+                            for ((key, pathElement) in mresultObject) {
+                                val path = pathElement.jsonPrimitive.content.trimStart('/')
+                                val srcInfo = sourcesObj?.get(key)?.jsonObject
+                                val base = srcInfo?.get("siteUrl")?.jsonPrimitive?.content?.trimEnd('/')
+                                    ?: siteUrls[key]?.jsonPrimitive?.content?.trimEnd('/')
+                                    ?: continue
+                                val fullUrl = if (base.endsWith("/#") || base.endsWith("#")) {
+                                    "$base$path"
+                                } else {
+                                    "$base/$path"
+                                }
+                                val friendlyName = srcInfo?.get("friendlyName")?.jsonPrimitive?.content
+                                    ?: siteFriendlyNames[key]?.jsonPrimitive?.content
+                                    ?: key
+
+                                hosters.add(
+                                    Hoster(
+                                        hosterName = friendlyName.replaceFirstChar { it.uppercase() },
+                                        hosterUrl = fullUrl,
+                                    ),
+                                )
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -598,9 +627,19 @@ class Desidubanime : Source() {
         private const val PREF_BASE_URL_DEFAULT = "https://www.desidubanime.me"
 
         private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "auto"
-        private val PREF_SERVER_ENTRIES = arrayOf("Auto", "Byse (FileMoon)", "StreamTape", "KrakenFiles", "StreamWish", "VidHide", "Buzzheavier", "DoodStream", "StreamP2P", "Abyss")
-        private val PREF_SERVER_VALUES = arrayOf("auto", "Byse", "StreamTape", "KrakenFiles", "StreamWish", "VidHide", "Buzzheavier", "DoodStream", "StreamP2P", "Abyss")
+        private const val PREF_SERVER_DEFAULT = "Byse"
+        private val PREF_SERVER_ENTRIES = arrayOf(
+            "Auto (Recommended)",
+            "Byse (FileMoon) [✅ Working]",
+            "Buzzheavier [✅ Working]",
+            "VidHide [✅ Working]",
+            "Abyss [⚠️ Experimental]",
+            "StreamWish [❌ Dead/Expired]",
+            "StreamTape [❌ Dead/DNS Down]",
+            "DoodStream [❌ Blocked/Cloudflare]",
+            "StreamP2P / RPMStream [❌ Dead/404]",
+        )
+        private val PREF_SERVER_VALUES = arrayOf("auto", "Byse", "Buzzheavier", "VidHide", "Abyss", "StreamWish", "StreamTape", "DoodStream", "StreamP2P")
 
         private const val PREF_AUDIO_KEY = "pref_audio"
         private const val PREF_AUDIO_DEFAULT = "auto"
@@ -613,8 +652,17 @@ class Desidubanime : Source() {
         private val PREF_QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
 
         private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
-        private val PREF_EXCLUDE_SERVER_ENTRIES = arrayOf("Byse", "StreamTape", "KrakenFiles", "StreamWish", "VidHide", "Buzzheavier", "DoodStream", "StreamP2P", "Abyss")
-        private val PREF_EXCLUDE_SERVER_VALUES = arrayOf("Byse", "StreamTape", "KrakenFiles", "StreamWish", "VidHide", "Buzzheavier", "DoodStream", "StreamP2P", "Abyss")
+        private val PREF_EXCLUDE_SERVER_ENTRIES = arrayOf(
+            "Byse (FileMoon)",
+            "Buzzheavier",
+            "VidHide",
+            "Abyss",
+            "StreamWish (Dead)",
+            "StreamTape (Dead)",
+            "DoodStream (Blocked)",
+            "StreamP2P / RPMStream (Dead)",
+        )
+        private val PREF_EXCLUDE_SERVER_VALUES = arrayOf("Byse", "Buzzheavier", "VidHide", "Abyss", "StreamWish", "StreamTape", "DoodStream", "StreamP2P")
 
         private const val PREF_EXCLUDE_AUDIO_KEY = "pref_exclude_audio"
 

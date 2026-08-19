@@ -17,6 +17,7 @@ import javax.crypto.spec.SecretKeySpec
 class AbyssExtractor(
     private val client: OkHttpClient,
     private val playlistUtils: PlaylistUtils,
+    private val localProxy: LocalProxy? = null,
 ) {
     private var prefix: String = ""
 
@@ -322,9 +323,11 @@ class AbyssExtractor(
                     val path = src.optString("path", "")
 
                     if (direct.isNotEmpty()) {
+                        val videoUrl = direct.replace("\\/", "/") + "?ext=.mp4"
+                        val proxiedUrl = localProxy?.getProxyUrl(videoUrl, streamHeaders) ?: videoUrl
                         videoList.add(
                             Video(
-                                videoUrl = "${direct.replace("\\/", "/")}?ext=.mp4",
+                                videoUrl = proxiedUrl,
                                 videoTitle = "${prefix}Abyss - $label (MP4)",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
@@ -336,9 +339,10 @@ class AbyssExtractor(
                     if (srcUrl.isNotEmpty() && path.isNotEmpty()) {
                         val normUrl = if (srcUrl.startsWith("http")) srcUrl else "https://$srcUrl"
                         val directUrl = "${normUrl.trimEnd('/')}/${path.trimStart('/')}"
+                        val proxiedUrl = localProxy?.getProxyUrl(directUrl, streamHeaders) ?: directUrl
                         videoList.add(
                             Video(
-                                videoUrl = directUrl,
+                                videoUrl = proxiedUrl,
                                 videoTitle = "${prefix}Abyss - $label (Direct)",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
@@ -362,9 +366,10 @@ class AbyssExtractor(
                             if (token != null) {
                                 val norm = if (domain.startsWith("http")) domain else "https://$domain"
                                 val finalUrl = "${norm.trimEnd('/')}/sora/$size/$token"
+                                val proxiedUrl = localProxy?.getProxyUrl(finalUrl, streamHeaders) ?: finalUrl
                                 videoList.add(
                                     Video(
-                                        videoUrl = finalUrl,
+                                        videoUrl = proxiedUrl,
                                         videoTitle = "${prefix}Abyss - $label (Sora)",
                                         headers = streamHeaders,
                                         subtitleTracks = subtitles,
