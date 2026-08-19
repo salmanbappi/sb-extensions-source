@@ -20,6 +20,7 @@ import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -218,7 +219,8 @@ class WatchAnimeWorld : Source() {
                     }
                     if (loadTitles && !meta.title.isNullOrBlank()) {
                         val seasonPrefix = if (name.startsWith("S")) name.substringBefore(" - ") + " - " else ""
-                        val epPad = if (num > 0) num.toString().padStart(2, '0') else episode.episode_number.toString()
+                        val epNumberStr = episode.episode_number.let { n -> if (n % 1.0F == 0.0F) n.toInt().toString() else n.toString() }
+                        val epPad = if (num > 0) num.toString().padStart(2, '0') else epNumberStr
                         name = "${seasonPrefix}Ep. $epPad - ${meta.title}"
                     }
                 }
@@ -517,7 +519,7 @@ class WatchAnimeWorld : Source() {
                 .build(),
         ).execute()
 
-        val zephyrData = json.decodeFromString<ZephyrResponse>(zephyrResponse.bodyString())
+        val zephyrData = zephyrResponse.parseAs<ZephyrResponse>()
         val streamUrl = zephyrData.videoSource ?: return emptyList()
 
         val subtitles = mutableListOf<Track>()

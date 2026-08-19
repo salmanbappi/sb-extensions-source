@@ -956,10 +956,10 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
 
             # 24. Suspend extractor called from non-suspend private helper function
             suspend_extractors = ["vidMolyExtractor", "voeExtractor", "filemoonExtractor", "luluExtractor", "streamWishExtractor", "vidGuardExtractor"]
-            for m in re.finditer(r'(?:private|protected|internal)?\s+fun\s+(\w+)\s*\([^)]*\)\s*(?::\s*List<Video>|\s*\{)', content):
+            for m in re.finditer(r'(?:override|suspend|private|protected|internal|open|\s)*\bfun\s+(\w+)\s*\([^)]*\)\s*(?::\s*List<Video>|\s*\{)', content):
                 fn_name = m.group(1)
                 full_match = m.group(0)
-                if "suspend" not in full_match and fn_name not in ["videoListParse", "popularAnimeParse", "latestUpdatesParse", "searchAnimeParse", "animeDetailsParse", "episodeListParse", "setupPreferenceScreen", "sortVideos"]:
+                if "suspend" not in full_match and fn_name not in ["getVideoList", "videoListParse", "popularAnimeParse", "latestUpdatesParse", "searchAnimeParse", "animeDetailsParse", "episodeListParse", "setupPreferenceScreen", "sortVideos"]:
                     start_pos = m.end()
                     fn_chunk = content[start_pos:start_pos + 1200]
                     for ext in suspend_extractors:
