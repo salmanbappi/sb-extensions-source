@@ -35,7 +35,9 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import kotlin.time.Duration.Companion.seconds
 
-class Oneshows : Source(), ConfigurableAnimeSource {
+class Oneshows :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "1Shows"
 
@@ -92,17 +94,21 @@ class Oneshows : Source(), ConfigurableAnimeSource {
                     is Filters.TypeFilter -> {
                         when (filter.toUriPart()) {
                             "movie" -> mediaType = "movie"
+
                             "anime_tv" -> {
                                 mediaType = "tv"
                                 genreIds.add("16")
                             }
+
                             "anime_movie" -> {
                                 mediaType = "movie"
                                 genreIds.add("16")
                             }
+
                             else -> mediaType = "tv"
                         }
                     }
+
                     is Filters.SortFilter -> {
                         val sortVal = filter.toUriPart()
                         sortBy = if (sortVal == "date.desc") {
@@ -111,9 +117,11 @@ class Oneshows : Source(), ConfigurableAnimeSource {
                             sortVal
                         }
                     }
+
                     is Filters.GenreFilter -> {
                         genreIds.addAll(filter.getIncluded())
                     }
+
                     else -> {}
                 }
             }
