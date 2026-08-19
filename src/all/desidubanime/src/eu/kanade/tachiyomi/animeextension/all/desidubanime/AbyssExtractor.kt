@@ -333,64 +333,6 @@ class AbyssExtractor(
                                 subtitleTracks = subtitles,
                             ),
                         )
-                        continue
-                    }
-
-                    if (srcUrl.isNotEmpty() && path.isNotEmpty()) {
-                        val normUrl = if (srcUrl.startsWith("http")) srcUrl else "https://$srcUrl"
-                        val directUrl = "${normUrl.trimEnd('/')}/${path.trimStart('/')}"
-                        val proxiedUrl = localProxy?.getProxyUrl(directUrl, streamHeaders) ?: directUrl
-                        videoList.add(
-                            Video(
-                                videoUrl = proxiedUrl,
-                                videoTitle = "${prefix}Abyss - $label (Direct)",
-                                headers = streamHeaders,
-                                subtitleTracks = subtitles,
-                            ),
-                        )
-                    }
-
-                    if (size.isNotEmpty() && resId.isNotEmpty() && sub.isNotEmpty() && domains != null) {
-                        var domain: String? = null
-                        for (j in 0 until domains.length()) {
-                            val d = domains.optString(j, "")
-                            if (d.isNotEmpty() && d.contains(sub)) {
-                                domain = d
-                                break
-                            }
-                        }
-
-                        if (domain != null) {
-                            val pathValue = "/mp4/$md5Id/$resId/$size?v=$slug"
-                            val token = buildSoraToken(pathValue, size)
-                            if (token != null) {
-                                val norm = if (domain.startsWith("http")) domain else "https://$domain"
-                                val finalUrl = "${norm.trimEnd('/')}/sora/$size/$token"
-                                val proxiedUrl = localProxy?.getProxyUrl(finalUrl, streamHeaders) ?: finalUrl
-                                videoList.add(
-                                    Video(
-                                        videoUrl = proxiedUrl,
-                                        videoTitle = "${prefix}Abyss - $label (Sora)",
-                                        headers = streamHeaders,
-                                        subtitleTracks = subtitles,
-                                    ),
-                                )
-
-                                val wsHost = norm.removePrefix("https://").removePrefix("http://").trimEnd('/')
-                                val wsUrl = "wss://$wsHost/future"
-                                val wsProxiedUrl = localProxy?.getVirtualWsPlaylistUrl(wsUrl, streamHeaders)
-                                if (wsProxiedUrl != null) {
-                                    videoList.add(
-                                        Video(
-                                            videoUrl = wsProxiedUrl,
-                                            videoTitle = "${prefix}Abyss - $label (Virtual HLS)",
-                                            headers = streamHeaders,
-                                            subtitleTracks = subtitles,
-                                        ),
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
             }
