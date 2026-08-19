@@ -275,22 +275,12 @@ class Oneshows :
                 Hoster(hosterName = "VidFast", hosterUrl = "https://vidfast.pro/movie/$id"),
                 Hoster(hosterName = "Vidzee (Direct HLS)", hosterUrl = "https://player.vidzee.wtf/embed/movie/$id"),
                 Hoster(hosterName = "VidLink", hosterUrl = "https://vidlink.pro/movie/$id"),
-                Hoster(hosterName = "VidRock", hosterUrl = "https://vidrock.ru/movie/$id"),
-                Hoster(hosterName = "Vidy", hosterUrl = "https://vidy.st/movie/$id"),
-                Hoster(hosterName = "Viduki (Main 1)", hosterUrl = "https://www.viduki.net/1/movie/$id"),
-                Hoster(hosterName = "Viduki (Multi-Language)", hosterUrl = "https://www.viduki.net/2/movie/$id"),
-                Hoster(hosterName = "Viduki (Premium)", hosterUrl = "https://www.viduki.net/4/movie/$id"),
             )
         } else {
             listOf(
                 Hoster(hosterName = "VidFast", hosterUrl = "https://vidfast.pro/tv/$id/$season/$ep"),
                 Hoster(hosterName = "Vidzee (Direct HLS)", hosterUrl = "https://player.vidzee.wtf/embed/tv/$id/$season/$ep"),
                 Hoster(hosterName = "VidLink", hosterUrl = "https://vidlink.pro/tv/$id/$season/$ep"),
-                Hoster(hosterName = "VidRock", hosterUrl = "https://vidrock.ru/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Vidy", hosterUrl = "https://vidy.st/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Viduki (Main 1)", hosterUrl = "https://www.viduki.net/1/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Viduki (Multi-Language)", hosterUrl = "https://www.viduki.net/2/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Viduki (Premium)", hosterUrl = "https://www.viduki.net/4/tv/$id/$season/$ep"),
             )
         }
     }
@@ -343,8 +333,8 @@ class Oneshows :
         screen.addListPreference(
             key = PREF_HOSTER_KEY,
             title = "Preferred Server",
-            entries = listOf("VidFast", "Vidzee", "VidLink", "VidRock", "Vidy", "Viduki"),
-            entryValues = listOf("VidFast", "Vidzee", "VidLink", "VidRock", "Vidy", "Viduki"),
+            entries = listOf("VidFast", "Vidzee", "VidLink"),
+            entryValues = listOf("VidFast", "Vidzee", "VidLink"),
             default = PREF_HOSTER_DEFAULT,
             summary = "%s",
         )
