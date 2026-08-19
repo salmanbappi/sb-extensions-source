@@ -466,8 +466,14 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
 
     # 3. Stage changes — only the extension directory to avoid committing unrelated
     #    in-progress changes in lib/, lib-multisrc/, or core/.
+    #    Also stage settings.gradle.kts if it was modified to register this extension.
     print("\n3️⃣ Staging git changes...")
     cmd_add = ["git", "add", str(ext_path)]
+    settings_file = repo_root / "settings.gradle.kts"
+    if settings_file.exists():
+        settings_diff = subprocess.run(["git", "diff", "--name-only", str(settings_file)], cwd=repo_root, capture_output=True, text=True)
+        if settings_file.name in settings_diff.stdout:
+            cmd_add.append(str(settings_file))
     subprocess.run(cmd_add, cwd=repo_root, check=True, timeout=30)
 
     git_env = os.environ.copy()

@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from zipfile import ZipFile
@@ -12,9 +13,16 @@ IS_NSFW_REGEX = re.compile(r"'tachiyomi.animeextension.nsfw' value='([^']+)'")
 APPLICATION_LABEL_REGEX = re.compile(r"^application-label:'([^']+)'", re.MULTILINE)
 APPLICATION_ICON_320_REGEX = re.compile(r"^application-icon-(?:320|480|640|240|160):'([^']+)'", re.MULTILINE)
 APPLICATION_ICON_FALLBACK_REGEX = re.compile(r"(?:application-icon(?:-\d+)?|icon)='([^']+)'")
-LANGUAGE_REGEX = re.compile(r"aniyomi-([^.]+)")
+sdk_root = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+ANDROID_BUILD_TOOLS = None
+if sdk_root and Path(sdk_root).is_dir():
+    build_tools_dir = Path(sdk_root) / "build-tools"
+    if build_tools_dir.is_dir():
+        tools_versions = sorted([d for d in build_tools_dir.iterdir() if d.is_dir()])
+        if tools_versions:
+            ANDROID_BUILD_TOOLS = tools_versions[-1]
 
-ANDROID_BUILD_TOOLS = sorted((Path(os.environ["ANDROID_HOME"]) / "build-tools").iterdir())[-1]
+AAPT_BIN = str(ANDROID_BUILD_TOOLS / "aapt") if ANDROID_BUILD_TOOLS else (shutil.which("aapt") or "aapt")
 REPO_DIR = Path("repo")
 REPO_APK_DIR = REPO_DIR / "apk"
 REPO_ICON_DIR = REPO_DIR / "icon"
@@ -36,7 +44,7 @@ if REPO_APK_DIR.is_dir():
     for apk in sorted(REPO_APK_DIR.glob("*.apk")):
         badging = subprocess.check_output(
             [
-                ANDROID_BUILD_TOOLS / "aapt",
+                AAPT_BIN,
                 "dump",
                 "--include-meta-data",
                 "badging",

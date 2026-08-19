@@ -218,6 +218,7 @@ jobs:
 
       - name: Purge cached index on jsDelivr
         run: |
+          sleep 5
           curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.json || true
           curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.min.json || true
           curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.html || true
