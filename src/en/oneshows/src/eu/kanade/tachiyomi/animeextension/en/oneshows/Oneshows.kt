@@ -440,7 +440,7 @@ class Oneshows :
                         )
                     }
                 } catch (_: Exception) {
-                    emptyList()
+                    emptyList<Video>()
                 }
             }
         }.awaitAll().flatten()
@@ -493,48 +493,48 @@ class Oneshows :
             }
         } catch (_: Exception) {}
 
-        val videos = try {
+        val serverMap: Map<String, VidrockServerDto?> = try {
             val apiReq = GET("https://vidrock.ru/api/$path", vidrockHeaders)
             val apiRes = client.newCall(apiReq).execute()
-            val serverMap = apiRes.parseAs<Map<String, VidrockServerDto?>>(json)
-
-            serverMap.mapNotNull { (serverName, serverDto) ->
-                if (serverDto == null || serverDto.url.isNullOrBlank()) return@mapNotNull null
-                async {
-                    try {
-                        val streamUrl = decryptVidrock(serverDto.url)
-                        if (streamUrl.isBlank()) return@async emptyList<Video>()
-                        val lang = serverDto.language ?: ""
-                        val langSuffix = if (lang.isNotBlank() && !lang.equals("English", true)) " [$lang]" else ""
-                        val prefix = "Vidrock ($serverName$langSuffix) - "
-
-                        if (streamUrl.contains(".m3u8", ignoreCase = true)) {
-                            playlistUtils.extractFromHls(
-                                playlistUrl = streamUrl,
-                                referer = "https://vidrock.ru/",
-                                masterHeaders = vidrockHeaders,
-                                videoHeaders = vidrockHeaders,
-                                videoNameGen = { q -> "$prefix$q" },
-                                subtitleList = subTracks,
-                            )
-                        } else {
-                            listOf(
-                                Video(
-                                    videoUrl = streamUrl,
-                                    videoTitle = "Vidrock ($serverName$langSuffix)",
-                                    headers = vidrockHeaders,
-                                    subtitleTracks = subTracks,
-                                ),
-                            )
-                        }
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-                }
-            }.awaitAll().flatten()
+            apiRes.parseAs<Map<String, VidrockServerDto?>>(json)
         } catch (_: Exception) {
-            emptyList()
+            emptyMap()
         }
+
+        val videos: List<Video> = serverMap.entries.mapNotNull { (serverName, serverDto) ->
+            if (serverDto == null || serverDto.url.isNullOrBlank()) return@mapNotNull null
+            async {
+                try {
+                    val streamUrl = decryptVidrock(serverDto.url)
+                    if (streamUrl.isBlank()) return@async emptyList<Video>()
+                    val lang = serverDto.language ?: ""
+                    val langSuffix = if (lang.isNotBlank() && !lang.equals("English", true)) " [$lang]" else ""
+                    val prefix = "Vidrock ($serverName$langSuffix) - "
+
+                    if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+                        playlistUtils.extractFromHls(
+                            playlistUrl = streamUrl,
+                            referer = "https://vidrock.ru/",
+                            masterHeaders = vidrockHeaders,
+                            videoHeaders = vidrockHeaders,
+                            videoNameGen = { q -> "$prefix$q" },
+                            subtitleList = subTracks,
+                        )
+                    } else {
+                        listOf(
+                            Video(
+                                videoUrl = streamUrl,
+                                videoTitle = "Vidrock ($serverName$langSuffix)",
+                                headers = vidrockHeaders,
+                                subtitleTracks = subTracks,
+                            ),
+                        )
+                    }
+                } catch (_: Exception) {
+                    emptyList<Video>()
+                }
+            }
+        }.awaitAll().flatten()
 
         m3u8Integration.processVideoList(videos).sort()
     }
