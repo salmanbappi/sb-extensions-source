@@ -497,9 +497,12 @@ class Desidubanime : Source() {
             excludedServers.none { exc -> h.hosterName.contains(exc, ignoreCase = true) }
         }
 
-        return filteredHosters.distinctBy { it.hosterUrl }.sortedByDescending {
-            it.hosterName.contains(prefServer, ignoreCase = true)
-        }
+        return filteredHosters.distinctBy { it.hosterUrl }.sortedWith(
+            compareByDescending<Hoster> {
+                if (prefServer != "auto") it.hosterName.contains(prefServer, ignoreCase = true)
+                else it.hosterName.contains("byse", ignoreCase = true)
+            }.thenByDescending { it.hosterName.contains("byse", ignoreCase = true) }
+        )
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
