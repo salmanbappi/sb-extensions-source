@@ -21,4 +21,5 @@ dependencies {
     implementation(project(":lib:vidguard-extractor"))
     implementation(project(":lib:vidmoly-extractor"))
     implementation(project(":lib:voe-extractor"))
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
 }
