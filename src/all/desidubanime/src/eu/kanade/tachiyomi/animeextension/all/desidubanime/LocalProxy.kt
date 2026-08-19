@@ -38,6 +38,46 @@ class LocalProxy(private val client: OkHttpClient) {
         }
     }
 
+    private val wsBuffers = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<Int, ByteArray>>()
+    private val wsCounters = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>()
+    private val wsActiveConnections = java.util.concurrent.ConcurrentHashMap<String, okhttp3.WebSocket>()
+
+    fun getVirtualWsPlaylistUrl(wsEndpoint: String, headers: Headers? = null): String {
+        val sessionId = java.util.UUID.randomUUID().toString().take(8)
+        val counter = java.util.concurrent.atomic.AtomicInteger(0)
+        val buffer = java.util.concurrent.ConcurrentHashMap<Int, ByteArray>()
+        wsCounters[sessionId] = counter
+        wsBuffers[sessionId] = buffer
+
+        val reqBuilder = Request.Builder().url(wsEndpoint)
+        headers?.let { reqBuilder.headers(it) }
+        val wsRequest = reqBuilder.build()
+
+        val ws = client.newWebSocket(
+            wsRequest,
+            object : okhttp3.WebSocketListener() {
+                override fun onMessage(webSocket: okhttp3.WebSocket, bytes: okio.ByteString) {
+                    val idx = counter.getAndIncrement()
+                    buffer[idx] = bytes.toByteArray()
+                    if (buffer.size > 30) {
+                        buffer.remove(idx - 30)
+                    }
+                }
+
+                override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                    wsActiveConnections.remove(sessionId)
+                }
+
+                override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: Response?) {
+                    wsActiveConnections.remove(sessionId)
+                }
+            },
+        )
+        wsActiveConnections[sessionId] = ws
+
+        return "http://127.0.0.1:$port/virtual-ws/$sessionId/playlist.m3u8"
+    }
+
     fun getProxyUrl(targetUrl: String, headers: Headers? = null): String {
         val encodedUrl = Base64.encodeToString(
             targetUrl.toByteArray(Charsets.UTF_8),
@@ -66,6 +106,11 @@ class LocalProxy(private val client: OkHttpClient) {
             val parts = firstLine.split(" ")
             if (parts.size < 2) return
             val path = parts[1]
+
+            if (path.startsWith("/virtual-ws/")) {
+                handleVirtualWsSocket(socket, path)
+                return
+            }
 
             if (!path.startsWith("/proxy")) {
                 sendError(socket, 404, "Not Found")
@@ -263,6 +308,58 @@ class LocalProxy(private val client: OkHttpClient) {
         }
 
         return data
+    }
+
+    private fun handleVirtualWsSocket(socket: Socket, path: String) {
+        val out = socket.getOutputStream()
+        try {
+            when {
+                path.endsWith("playlist.m3u8") -> {
+                    val sessionId = path.substringAfter("/virtual-ws/").substringBefore("/")
+                    serveVirtualPlaylist(out, sessionId)
+                }
+                path.contains("/segment/") -> {
+                    val sessionId = path.substringAfter("/virtual-ws/").substringBefore("/")
+                    val id = path.substringAfterLast("/").substringBefore(".ts").toIntOrNull() ?: 0
+                    serveVirtualSegment(out, sessionId, id)
+                }
+                else -> sendError(socket, 404, "Not Found")
+            }
+        } catch (_: Exception) {
+            try { sendError(socket, 500, "Virtual WS Error") } catch (_: Exception) {}
+        } finally {
+            try { socket.close() } catch (_: Exception) {}
+        }
+    }
+
+    private fun serveVirtualPlaylist(out: java.io.OutputStream, sessionId: String) {
+        val counter = wsCounters[sessionId]?.get() ?: 0
+        val startIdx = maxOf(0, counter - 5)
+        val sb = StringBuilder().apply {
+            append("#EXTM3U\n")
+            append("#EXT-X-VERSION:3\n")
+            append("#EXT-X-TARGETDURATION:6\n")
+            append("#EXT-X-MEDIA-SEQUENCE:$startIdx\n")
+            for (i in startIdx until counter) {
+                append("#EXTINF:4.0,\n")
+                append("http://127.0.0.1:$port/virtual-ws/$sessionId/segment/$i.ts\n")
+            }
+        }
+        val bytes = sb.toString().toByteArray(Charsets.UTF_8)
+        out.write("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray(Charsets.UTF_8))
+        out.write(bytes)
+        out.flush()
+    }
+
+    private fun serveVirtualSegment(out: java.io.OutputStream, sessionId: String, id: Int) {
+        val buffer = wsBuffers[sessionId]
+        val chunk = buffer?.get(id) ?: ByteArray(0)
+        out.write("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: ${chunk.size}\r\nConnection: close\r\n\r\n".toByteArray(Charsets.UTF_8))
+        if (chunk.isNotEmpty()) {
+            val stripped = stripImageHeader(chunk)
+            out.write(stripped)
+        }
+        out.flush()
     }
 
     private fun sendError(socket: Socket, code: Int, message: String) {
