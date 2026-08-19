@@ -375,6 +375,20 @@ class AbyssExtractor(
                                         subtitleTracks = subtitles,
                                     ),
                                 )
+
+                                val wsHost = norm.removePrefix("https://").removePrefix("http://").trimEnd('/')
+                                val wsUrl = "wss://$wsHost/future"
+                                val wsProxiedUrl = localProxy?.getVirtualWsPlaylistUrl(wsUrl, streamHeaders)
+                                if (wsProxiedUrl != null) {
+                                    videoList.add(
+                                        Video(
+                                            videoUrl = wsProxiedUrl,
+                                            videoTitle = "${prefix}Abyss - $label (Virtual HLS)",
+                                            headers = streamHeaders,
+                                            subtitleTracks = subtitles,
+                                        ),
+                                    )
+                                }
                             }
                         }
                     }
