@@ -8,8 +8,7 @@ import subprocess
 import sys
 from collections import deque # Add this import
 
-VERSION_STR = "VersionCode ="
-VERSION_REGEX = re.compile(f"{VERSION_STR} (\\d+)")
+VERSION_REGEX = re.compile(r"(?m)^(?![ \t]*//)(.*?(?:extVersionCode|overrideVersionCode|baseVersionCode)\s*=\s*)(\d+)")
 BUMPED_FILES: list[Path] = []
 
 def has_match(query: str, file: Path) -> tuple[Path, bool]:
@@ -17,6 +16,10 @@ def has_match(query: str, file: Path) -> tuple[Path, bool]:
         content = file.read_text(encoding="utf-8")
         if query.startswith(":"):
             pattern = rf"""project\(\s*['"]{re.escape(query)}['"]\s*\)"""
+            return (file, bool(re.search(pattern, content)))
+        if query.startswith("themePkg:"):
+            theme = query.split(":", 1)[1]
+            pattern = rf"""(?:ext\.)?themePkg\s*=\s*['"]{re.escape(theme)}['"]"""
             return (file, bool(re.search(pattern, content)))
         return (file, query in content)
     except Exception:
@@ -48,9 +51,10 @@ def find_files_with_match(query: str, include_multisrc: bool = True) -> list[Pat
         return [path for path, result in results if result]
 
 def replace_version(match: re.Match) -> str:
-    version = int(match[1])
+    prefix = match.group(1)
+    version = int(match.group(2))
     print(f"{version} -> {version + 1}")
-    return f"{VERSION_STR} {version + 1}"
+    return f"{prefix}{version + 1}"
 
 def bump_version(file: Path):
     BUMPED_FILES.append(file)
@@ -60,9 +64,10 @@ def bump_version(file: Path):
         # Move the cursor to the start again, to prevent writing at the end
         f.seek(0)
         f.write(text)
+        f.truncate()
 
 def bump_lib_multisrc(theme: str):
-    for file in find_files_with_match(f"themePkg = '{theme}'", include_multisrc=False):
+    for file in find_files_with_match(f"themePkg:{theme}", include_multisrc=False):
         bump_version(file)
 
 def commit_changes():
