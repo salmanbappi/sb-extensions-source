@@ -318,17 +318,23 @@ class LocalProxy(private val client: OkHttpClient) {
                     val sessionId = path.substringAfter("/virtual-ws/").substringBefore("/")
                     serveVirtualPlaylist(out, sessionId)
                 }
+
                 path.contains("/segment/") -> {
                     val sessionId = path.substringAfter("/virtual-ws/").substringBefore("/")
                     val id = path.substringAfterLast("/").substringBefore(".ts").toIntOrNull() ?: 0
                     serveVirtualSegment(out, sessionId, id)
                 }
+
                 else -> sendError(socket, 404, "Not Found")
             }
         } catch (_: Exception) {
-            try { sendError(socket, 500, "Virtual WS Error") } catch (_: Exception) {}
+            try {
+                sendError(socket, 500, "Virtual WS Error")
+            } catch (_: Exception) {}
         } finally {
-            try { socket.close() } catch (_: Exception) {}
+            try {
+                socket.close()
+            } catch (_: Exception) {}
         }
     }
 
