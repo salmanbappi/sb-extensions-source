@@ -6,16 +6,12 @@ lint, migrate domains, bump version, and manage individual and multi-source exte
 """
 
 import argparse
-import base64
-import json
+import importlib.util
 import os
 import re
 import shutil
 import subprocess
 import sys
-import urllib.parse
-import urllib.request
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 # Ensure repo root and scripts directory are in sys.path for cross-module imports
@@ -25,41 +21,74 @@ if str(REPO_ROOT) not in sys.path:
 if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+_EXTENSION_TARGET_CACHE: dict = {}
+
+
+def _iter_extension_gradles(src_dir: Path):
+    """Fast 2-tier directory generator yielding (lang, ext_name, gradle_path) without recursive rglob."""
+    if not src_dir.is_dir():
+        return
+    for lang_dir in src_dir.iterdir():
+        if lang_dir.is_dir() and not lang_dir.name.startswith("."):
+            for ext_dir in lang_dir.iterdir():
+                if ext_dir.is_dir() and not ext_dir.name.startswith("."):
+                    bg = ext_dir / "build.gradle"
+                    if bg.is_file():
+                        yield lang_dir.name, ext_dir.name, bg
+
 
 def resolve_extension_target(repo_root: Path, target: str = None, lang: str = None, name: str = None) -> tuple[str, str]:
-    """Helper to resolve (lang, name) from target positional argument (e.g. 'vegamovies' or 'en/vegamovies') or flags."""
+    """Helper to resolve (lang, name) with in-memory caching."""
+    cache_key = f"{target}:{lang}:{name}"
+    if cache_key in _EXTENSION_TARGET_CACHE:
+        return _EXTENSION_TARGET_CACHE[cache_key]
+
     src_dir = repo_root / "src"
 
     if target and "/" in target:
         parts = target.split("/", 1)
-        return parts[0], parts[1]
+        res = (parts[0], parts[1])
+        _EXTENSION_TARGET_CACHE[cache_key] = res
+        return res
 
     if lang and "/" in lang:
         parts = lang.split("/", 1)
-        return parts[0], parts[1]
+        res = (parts[0], parts[1])
+        _EXTENSION_TARGET_CACHE[cache_key] = res
+        return res
 
     if name and "/" in name:
         parts = name.split("/", 1)
-        return parts[0], parts[1]
+        res = (parts[0], parts[1])
+        _EXTENSION_TARGET_CACHE[cache_key] = res
+        return res
 
     resolved_name = name or target
     resolved_lang = lang
 
     if resolved_name:
         if resolved_lang and (src_dir / resolved_lang / resolved_name).exists():
-            return resolved_lang, resolved_name
+            res = (resolved_lang, resolved_name)
+            _EXTENSION_TARGET_CACHE[cache_key] = res
+            return res
         matches = []
         if src_dir.exists():
             for lang_dir in sorted(src_dir.iterdir()):
                 if lang_dir.is_dir() and (lang_dir / resolved_name).exists():
                     matches.append(lang_dir.name)
         if len(matches) == 1:
-            return matches[0], resolved_name
+            res = (matches[0], resolved_name)
+            _EXTENSION_TARGET_CACHE[cache_key] = res
+            return res
         elif len(matches) > 1:
             print(f"⚠️ Ambiguous target '{resolved_name}' found in multiple languages: {matches}. Defaulting to '{matches[0]}'. (Specify as '{matches[0]}/{resolved_name}' to avoid ambiguity)")
-            return matches[0], resolved_name
+            res = (matches[0], resolved_name)
+            _EXTENSION_TARGET_CACHE[cache_key] = res
+            return res
 
-    return resolved_lang, resolved_name
+    res = (resolved_lang, resolved_name)
+    _EXTENSION_TARGET_CACHE[cache_key] = res
+    return res
 
 
 def fetch_icon(url: str, output_path: Path):
@@ -174,13 +203,14 @@ def fetch_icon(url: str, output_path: Path):
     return True
 
 
-def bump_version(repo_root: Path, target_lang: str = None, target_name: str = None) -> bool:
-    """Increments extVersionCode or overrideVersionCode in build.gradle."""
-    lang, name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
-    if not lang or not name:
-        print("❌ Could not resolve target extension module.")
-        return False
+    # Fallback to direct write if convert fails
+    shutil.move(str(temp_raw), str(output_path))
+    print(f"✅ Saved raw launcher icon at: {output_path}")
+    return True
 
+
+def bump_version(repo_root: Path, lang: str, name: str) -> bool:
+    """Increments the extVersionCode or overrideVersionCode in build.gradle."""
     gradle_file = repo_root / "src" / lang / name / "build.gradle"
     if not gradle_file.exists():
         print(f"❌ build.gradle not found at {gradle_file}")
@@ -188,7 +218,7 @@ def bump_version(repo_root: Path, target_lang: str = None, target_name: str = No
 
     content = gradle_file.read_text(encoding="utf-8")
 
-    # Check extVersionCode — use multiline regex to exclude comment lines (// or #)
+    # Check extVersionCode — exclude comment lines
     m_ext = re.search(r"(?m)^(?![ \t]*//).*?extVersionCode\s*=\s*(\d+)", content)
     if m_ext:
         old_ver = int(m_ext.group(1))
@@ -237,14 +267,11 @@ def bump_theme(repo_root: Path, theme_name: str, mode: str = "base") -> bool:
     if mode in ("variants", "all"):
         src_dir = repo_root / "src"
         count = 0
-        if src_dir.exists():
-            for g_file in src_dir.rglob("build.gradle"):
-                g_txt = g_file.read_text(encoding="utf-8", errors="ignore")
-                if re.search(rf"themePkg\s*=\s*['\"]{re.escape(theme_clean)}['\"]", g_txt):
-                    ext_name = g_file.parent.name
-                    lang_name = g_file.parent.parent.name
-                    bump_version(repo_root, lang_name, ext_name)
-                    count += 1
+        for lang_name, ext_name, g_file in _iter_extension_gradles(src_dir):
+            g_txt = g_file.read_text(encoding="utf-8", errors="ignore")
+            if re.search(rf"themePkg\s*=\s*['\"]{re.escape(theme_clean)}['\"]", g_txt):
+                bump_version(repo_root, lang_name, ext_name)
+                count += 1
         print(f"✅ Bumped {count} variant module(s) for theme '{theme_clean}'.")
 
     return True
@@ -257,11 +284,9 @@ def bump_lib_dependents(repo_root: Path, lib_name: str) -> bool:
     src_dir = repo_root / "src"
 
     bumped = []
-    for g_file in src_dir.rglob("build.gradle"):
+    for lang_name, ext_name, g_file in _iter_extension_gradles(src_dir):
         txt = g_file.read_text(encoding="utf-8", errors="ignore")
         if dep_pattern in txt:
-            ext_name = g_file.parent.name
-            lang_name = g_file.parent.parent.name
             bump_version(repo_root, lang_name, ext_name)
             bumped.append(f"src/{lang_name}/{ext_name}")
 
@@ -508,6 +533,9 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
 
     langs_to_check = [target_lang] if target_lang else [d.name for d in src_dir.iterdir() if d.is_dir()]
 
+    import xml.etree.ElementTree as ET
+    existing_libs = {d.name for d in lib_dir.iterdir() if d.is_dir()} if lib_dir.exists() else set()
+
     for lang in sorted(langs_to_check):
         lang_dir = src_dir / lang
         if not lang_dir.exists():
@@ -544,7 +572,7 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                 # Check dangling :lib dependencies
                 lib_deps = re.findall(r"implementation\(project\(['\"]:lib:([^'\"]+)['\"]\)\)", gradle_txt)
                 for lib_dep in lib_deps:
-                    if not (lib_dir / lib_dep).exists():
+                    if lib_dep not in existing_libs:
                         issues.append(f"Dangling lib dependency ':lib:{lib_dep}' — lib/{lib_dep} directory does not exist")
 
             # 2. Check AndroidManifest.xml Deep XML Validation
@@ -633,25 +661,28 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
 
 
 def clean_workspace(repo_root: Path) -> bool:
-    """Removes temporary files, caches, and build artifacts."""
+    """Removes temporary files, caches, and build artifacts in a single filesystem walk."""
     print("🧹 Cleaning workspace cache & temporary build artifacts...")
     count = 0
-    for p in repo_root.rglob("__pycache__"):
-        if p.is_dir():
-            shutil.rmtree(p, ignore_errors=True)
-            count += 1
-    for p in repo_root.rglob("*.pyc"):
-        try:
-            p.unlink(missing_ok=True)
-            count += 1
-        except Exception:
-            pass
-    for p in repo_root.rglob("temp_favicon*"):
-        try:
-            p.unlink(missing_ok=True)
-            count += 1
-        except Exception:
-            pass
+    skip_dirs = {".git", ".gradle", "build", "node_modules", ".idea"}
+
+    for root, dirs, files in os.walk(repo_root, topdown=True):
+        dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+
+        for d in list(dirs):
+            if d == "__pycache__":
+                shutil.rmtree(os.path.join(root, d), ignore_errors=True)
+                dirs.remove(d)
+                count += 1
+
+        for f in files:
+            if f.endswith(".pyc") or f.startswith("temp_favicon"):
+                try:
+                    os.unlink(os.path.join(root, f))
+                    count += 1
+                except OSError:
+                    pass
+
     print(f"✅ Workspace cleaned! ({count} item(s) purged)")
     return True
 
@@ -1023,6 +1054,8 @@ def inspect_hosters(repo_root: Path, target_lang: str, target_name: str) -> bool
     print("  2. Do not duplicate the server name in the video quality title inside that folder.")
     print("  3. Include audio track tags next to the resolution (e.g. `1080p [Hindi]`, `720p [English]`).")
     print("  4. Provide a 'Preferred Server' ListPreference for custom user prioritization.")
+    return True
+
 
 def preflight_extension(repo_root: Path, target_lang: str, target_name: str) -> bool:
     """Chains the entire quality gate pipeline for a single extension before PR or release."""
@@ -1126,10 +1159,9 @@ def doctor(repo_root: Path) -> bool:
         "lxml": "lxml (fast HTML/XML parser)",
     }
     for mod, desc in opt_pkgs.items():
-        try:
-            __import__(mod)
+        if importlib.util.find_spec(mod) is not None:
             print(f"  ✅ Optional Package: {desc} is available")
-        except ImportError:
+        else:
             print(f"  ℹ️  Optional Package: {desc} not installed (some CLI commands may not work)")
 
     # 2. Git Version Control Check
@@ -1394,6 +1426,10 @@ def main():
             "status-update": {
                 "script": "status_notifier.py",
                 "desc": "Post clean status update & AI review sentiment metrics to Discord #status-update channel."
+            },
+            "everythingmoe": {
+                "script": "everythingmoe_scraper.py",
+                "desc": "Crawl anime streaming site directory, reviews, and mirrors from EverythingMoe."
             }
         }
 
@@ -1408,6 +1444,7 @@ def main():
                 ("create", "Scaffold full extension boilerplate (HTML, API, Theme, Movie-Locker)."),
                 ("create-theme", "Scaffold a new multi-source theme in lib-multisrc/."),
                 ("json-to-dto", "Ingest JSON API responses or HAR files and generate v16 null-safe DTOs."),
+                ("everythingmoe", "Crawl anime streaming site directory, reviews, and mirrors from EverythingMoe."),
             ]),
             ("🔬 Testing & Scraper Sandbox", [
                 ("test-scraper", "Test live HTTP requests, CSS selectors, regex, DevTools headers, and REPL."),
@@ -1679,7 +1716,8 @@ def main():
                 base_url = target
             else:
                 found_base_url = None
-                for kt in repo_root.rglob("*.kt"):
+                src_dir = repo_root / "src"
+                for kt in src_dir.rglob("*.kt"):
                     if kt.parent.name == target or target in kt.name.lower():
                         content = kt.read_text(encoding="utf-8", errors="ignore")
                         m = re.search(r'PREF_BASE_URL_DEFAULT\s*=\s*["\']([^"\']+)["\']', content)
@@ -1688,6 +1726,14 @@ def main():
                         if m:
                             found_base_url = m.group(1)
                             break
+                if not found_base_url:
+                    for bg in src_dir.rglob("build.gradle*"):
+                        if bg.parent.name == target or target in bg.parent.name.lower():
+                            bg_content = bg.read_text(encoding="utf-8", errors="ignore")
+                            m = re.search(r'baseUrl\s*=\s*["\'](https?://[^"\']+)["\']', bg_content)
+                            if m:
+                                found_base_url = m.group(1)
+                                break
                 if not found_base_url:
                     print(f"❌ Could not resolve base URL for module: {target}")
                     sys.exit(1)
@@ -1723,9 +1769,9 @@ def main():
                 print("❌ Error: Target extension name is required (e.g. `cli.py fetch-icon <target>` or `cli.py fetch-icon --url <url> <target>`).")
                 sys.exit(1)
 
+            target_src = repo_root / "src" / (lang or "en") / name
             target_url = icon_args.url
-            if not target_url:
-                target_src = repo_root / "src" / (lang or "en") / name
+            if not target_url and target_src.exists():
                 for kt in target_src.rglob("*.kt"):
                     src_text = kt.read_text(encoding="utf-8", errors="ignore")
                     m = re.search(r'(?:PREF_BASE_URL_DEFAULT|PREF_DOMAIN_DEFAULT|DOMAIN(?:_DEFAULT)?)\s*=\s*["\']([^"\']+)["\']', src_text)
@@ -1734,12 +1780,21 @@ def main():
                     if m:
                         target_url = m.group(1)
                         break
+                if not target_url:
+                    bg_file = target_src / "build.gradle"
+                    if not bg_file.exists():
+                        bg_file = target_src / "build.gradle.kts"
+                    if bg_file.exists():
+                        bg_content = bg_file.read_text(encoding="utf-8", errors="ignore")
+                        m = re.search(r'baseUrl\s*=\s*["\'](https?://[^"\']+)["\']', bg_content)
+                        if m:
+                            target_url = m.group(1)
 
             if not target_url:
                 print("❌ Error: Target website URL is required (specify --url <url> or define baseUrl in extension source).")
                 sys.exit(1)
 
-            out_path = repo_root / "src" / (lang or "en") / name / "res" / "drawable" / "ic_launcher.png"
+            out_path = target_src / "res" / "drawable" / "ic_launcher.png"
             success = fetch_icon(target_url, out_path)
             sys.exit(0 if success else 1)
 

@@ -13,7 +13,14 @@ VERSION_REGEX = re.compile(f"{VERSION_STR} (\\d+)")
 BUMPED_FILES: list[Path] = []
 
 def has_match(query: str, file: Path) -> tuple[Path, bool]:
-    return (file, query in file.read_text())
+    try:
+        content = file.read_text(encoding="utf-8")
+        if query.startswith(":"):
+            pattern = rf"""project\(\s*['"]{re.escape(query)}['"]\s*\)"""
+            return (file, bool(re.search(pattern, content)))
+        return (file, query in content)
+    except Exception:
+        return (file, False)
 
 def find_libs_with_match(query: str, lib_name_regex: re.Pattern) -> list[str]:
     files = Path("lib").glob("*/build.gradle.kts")
@@ -70,7 +77,16 @@ def commit_changes():
 
 if __name__ == "__main__" and len(sys.argv) > 2:
     # Regex to match the lib name in the path, like "unpacker" or "dood-extractor".
-    lib_name_extractor_regex = re.compile(r"lib/([a-z0-9-]+)/")
+    lib_name_extractor_regex = re.compile(r"(?:^|/)lib/([a-z0-9-]+)/")
+    multisrc_name_extractor_regex = re.compile(r"(?:^|/)lib-multisrc/([a-z0-9-]+)/")
+
+    # Initial bumping for direct multisrc theme changes
+    multisrc_themes = set()
+    for match_obj in filter(None, map(multisrc_name_extractor_regex.search, sys.argv[2:])):
+        multisrc_themes.add(match_obj.group(1))
+    for theme_name in multisrc_themes:
+        print(f"Initial multisrc theme for bumping: {theme_name}")
+        bump_lib_multisrc(theme_name)
 
     libs_to_discover_q = deque() # Queue for the discovery process
     all_libs_to_process = set() # Set of all unique library names found

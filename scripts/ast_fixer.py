@@ -13,6 +13,27 @@ from typing import Tuple, List
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+# Pre-compiled AST & Code-Smell Patterns
+RE_VIDEO_QUALITY = re.compile(r'\b(?:it|video)\.quality\b')
+RE_VIDEO_QUALITY_SUB = re.compile(r'(\b(?:it|video))\.(?:quality)\b')
+RE_VIDEO_CONSTRUCTOR = re.compile(r'\bVideo\s*\(')
+RE_GET_DETAILS = re.compile(r'override\s+suspend\s+fun\s+getAnimeDetails\s*\(\s*([a-zA-Z0-9_]+)\s*:\s*SAnime\s*\)\s*:\s*SAnime\s*\{')
+RE_DTO_CLASS = re.compile(r'(@(?:kotlinx\.serialization\.)?Serializable(?:\([^)]*\))?\s+(?:data\s+)?class\s+[A-Za-z0-9_]+(?:\s*<[^>]+>)?\s*\()')
+RE_BASEURL_ATTR = re.compile(r'(?:"\$baseUrl"|baseUrl)\s*\+\s*([a-zA-Z0-9_]+)\.attr\(["\']href["\']\)')
+RE_SORT_VIDEOS_FUNC = re.compile(r'(?:private\s+)?fun\s+sortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*:\s*List<Video>\s*\)\s*:\s*List<Video>')
+RE_SORT_VIDEOS_CALL = re.compile(r'(?<!fun\s)\bsortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*\)')
+RE_PLAYLIST_SUBTITLE = re.compile(r'(\bextractFromHls\s*\([^)]*)\bsubtitleTracks\s*=')
+RE_PLAYLIST_AUDIO = re.compile(r'(\bextractFromHls\s*\([^)]*)\baudioTracks\s*=')
+
+STATUS_REPLACEMENTS = [
+    (re.compile(r'\bSAnime\.NOT_YET_RELEASED\b'), 'SAnime.UNKNOWN'),
+    (re.compile(r'\bSAnime\.AIRING\b'), 'SAnime.ONGOING'),
+    (re.compile(r'\bSAnime\.RELEASING\b'), 'SAnime.ONGOING'),
+    (re.compile(r'\bSAnime\.FINISHED\b'), 'SAnime.COMPLETED'),
+    (re.compile(r'\bSAnime\.HIATUS\b'), 'SAnime.ON_HIATUS'),
+]
+
+
 def split_params_depth_aware(params_str: str) -> list[str]:
     """Splits parameter declarations by comma, respecting generic brackets and parentheses."""
     parts = []
@@ -59,23 +80,25 @@ class ExtensionAstFixer:
         fixes_applied = []
 
         # 1. Fix it.quality -> it.videoTitle
-        if re.search(r'\b(?:it|video)\.quality\b', content):
-            content = re.sub(r'(\b(?:it|video))\.(?:quality)\b', r'\1.videoTitle', content)
+        if RE_VIDEO_QUALITY.search(content):
+            content = RE_VIDEO_QUALITY_SUB.sub(r'\1.videoTitle', content)
             fixes_applied.append("Renamed `.quality` property to `.videoTitle` (v16)")
 
         # 2. Fix legacy positional Video(url, quality, ...) to named Video(videoUrl=, videoTitle=, ...)
         def migrate_video_constructors(text: str) -> Tuple[str, bool]:
+            if "Video(" not in text:
+                return text, False
             idx = 0
             changed = False
             result = []
             while idx < len(text):
-                m = re.search(r'\bVideo\s*\(', text[idx:])
+                m = RE_VIDEO_CONSTRUCTOR.search(text, idx)
                 if not m:
                     result.append(text[idx:])
                     break
 
-                start_call = idx + m.start()
-                open_paren = idx + m.end() - 1
+                start_call = m.start()
+                open_paren = m.end() - 1
                 result.append(text[idx:start_call])
 
                 # Find matching closing parenthesis
@@ -132,12 +155,8 @@ class ExtensionAstFixer:
 
         # 3. Ensure initialized = true in getAnimeDetails
         if "getAnimeDetails" in content and "initialized = true" not in content:
-            if re.search(r'getAnimeDetails\([^)]*\)\s*:\s*SAnime\s*\{', content):
-                content = re.sub(
-                    r'(override\s+suspend\s+fun\s+getAnimeDetails\s*\(\s*([a-zA-Z0-9_]+)\s*:\s*SAnime\s*\)\s*:\s*SAnime\s*\{)',
-                    r'\1\n        \2.initialized = true',
-                    content
-                )
+            if RE_GET_DETAILS.search(content):
+                content = RE_GET_DETAILS.sub(r'\1\n        \2.initialized = true', content)
                 fixes_applied.append("Injected `initialized = true` inside `getAnimeDetails`")
 
         # 4 & 5. Ensure @Serializable data class constructor fields have default = null fallbacks
@@ -229,44 +248,28 @@ class ExtensionAstFixer:
             fixes_applied.append("Migrated integer rating/votes/score DTO fields to `Double` (prevents decimal JsonDecodingException)")
 
         # 6. Fix string concatenation "$baseUrl" + attr("href") -> element.attr("abs:href")
-        if re.search(r'(?:"\$baseUrl"|baseUrl)\s*\+\s*([a-zA-Z0-9_]+)\.attr\(["\']href["\']\)', content):
-            content = re.sub(
-                r'(?:"\$baseUrl"|baseUrl)\s*\+\s*([a-zA-Z0-9_]+)\.attr\(["\']href["\']\)',
-                r'\1.attr("abs:href")',
-                content
-            )
+        if RE_BASEURL_ATTR.search(content):
+            content = RE_BASEURL_ATTR.sub(r'\1.attr("abs:href")', content)
             fixes_applied.append('Replaced `"$baseUrl" + attr("href")` with `attr("abs:href")`')
 
         # 7. Fix invalid SAnime status enum references
-        status_replacements = {
-            r'\bSAnime\.NOT_YET_RELEASED\b': 'SAnime.UNKNOWN',
-            r'\bSAnime\.AIRING\b': 'SAnime.ONGOING',
-            r'\bSAnime\.RELEASING\b': 'SAnime.ONGOING',
-            r'\bSAnime\.FINISHED\b': 'SAnime.COMPLETED',
-            r'\bSAnime\.HIATUS\b': 'SAnime.ON_HIATUS',
-        }
-        for pattern, replacement in status_replacements.items():
-            if re.search(pattern, content):
-                content = re.sub(pattern, replacement, content)
+        for pattern_re, replacement in STATUS_REPLACEMENTS:
+            if pattern_re.search(content):
+                content = pattern_re.sub(replacement, content)
                 fixes_applied.append(f"Corrected invalid SAnime status constant to `{replacement}` (v16)")
 
         # 8. Fix sortVideos method declaration to extension method
-        if re.search(r'(?:private\s+)?fun\s+sortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*:\s*List<Video>\s*\)\s*:\s*List<Video>', content):
-            content = re.sub(
-                r'(?:private\s+)?fun\s+sortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*:\s*List<Video>\s*\)\s*:\s*List<Video>',
-                r'override fun List<Video>.sortVideos(): List<Video>',
-                content
-            )
-            # Also replace calls like sortVideos(videos) -> videos.sortVideos()
-            content = re.sub(r'(?<!fun\s)\bsortVideos\s*\(\s*([a-zA-Z0-9_]+)\s*\)', r'\1.sortVideos()', content)
+        if RE_SORT_VIDEOS_FUNC.search(content):
+            content = RE_SORT_VIDEOS_FUNC.sub(r'override fun List<Video>.sortVideos(): List<Video>', content)
+            content = RE_SORT_VIDEOS_CALL.sub(r'\1.sortVideos()', content)
             fixes_applied.append("Migrated `sortVideos(videos)` function to `override fun List<Video>.sortVideos(): List<Video>` (v16)")
 
         # 9. Fix PlaylistUtils.extractFromHls parameter names (subtitleTracks -> subtitleList, audioTracks -> audioList)
-        if re.search(r'extractFromHls\s*\([^)]*\bsubtitleTracks\s*=', content):
-            content = re.sub(r'(\bextractFromHls\s*\([^)]*)\bsubtitleTracks\s*=', r'\1subtitleList =', content)
+        if RE_PLAYLIST_SUBTITLE.search(content):
+            content = RE_PLAYLIST_SUBTITLE.sub(r'\1subtitleList =', content)
             fixes_applied.append("Fixed `PlaylistUtils.extractFromHls` parameter `subtitleTracks` -> `subtitleList`")
-        if re.search(r'extractFromHls\s*\([^)]*\baudioTracks\s*=', content):
-            content = re.sub(r'(\bextractFromHls\s*\([^)]*)\baudioTracks\s*=', r'\1audioList =', content)
+        if RE_PLAYLIST_AUDIO.search(content):
+            content = RE_PLAYLIST_AUDIO.sub(r'\1audioList =', content)
             fixes_applied.append("Fixed `PlaylistUtils.extractFromHls` parameter `audioTracks` -> `audioList`")
 
         # 10. Normalize line endings and whitespace

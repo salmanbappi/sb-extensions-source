@@ -213,10 +213,15 @@ KNOWN_EXTRACTOR_PATTERNS = {
 }
 
 EXTRACTOR_REGISTRY = KNOWN_EXTRACTOR_PATTERNS
+_DISCOVERED_EXTRACTORS_CACHE: Optional[List[Dict]] = None
 
 
 def discover_all_extractors(repo_root: Path) -> List[Dict]:
-    """Dynamically scans the lib/ directory to discover all available extractor modules and their Kotlin metadata."""
+    """Dynamically scans the lib/ directory with in-memory caching to discover all available extractor modules."""
+    global _DISCOVERED_EXTRACTORS_CACHE
+    if _DISCOVERED_EXTRACTORS_CACHE is not None:
+        return _DISCOVERED_EXTRACTORS_CACHE
+
     lib_dir = repo_root / "lib"
     if not lib_dir.exists():
         return []
@@ -257,6 +262,7 @@ def discover_all_extractors(repo_root: Path) -> List[Dict]:
             "snippet": snippet
         })
 
+    _DISCOVERED_EXTRACTORS_CACHE = registry
     return registry
 
 

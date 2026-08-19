@@ -278,9 +278,10 @@ def main():
     if target.startswith("http://") or target.startswith("https://"):
         base_url = target
     else:
-        # Resolve module baseUrl from Kotlin source
+        # Resolve module baseUrl from Kotlin source or build.gradle
         found_base_url = None
-        for kt in REPO_ROOT.rglob("*.kt"):
+        src_dir = REPO_ROOT / "src"
+        for kt in src_dir.rglob("*.kt"):
             if kt.parent.name == target or target in kt.name.lower():
                 content = kt.read_text(encoding="utf-8", errors="ignore")
                 m = re.search(r'PREF_BASE_URL_DEFAULT\s*=\s*["\']([^"\']+)["\']', content)
@@ -289,6 +290,14 @@ def main():
                 if m:
                     found_base_url = m.group(1)
                     break
+        if not found_base_url:
+            for bg in src_dir.rglob("build.gradle*"):
+                if bg.parent.name == target or target in bg.parent.name.lower():
+                    bg_content = bg.read_text(encoding="utf-8", errors="ignore")
+                    m = re.search(r'baseUrl\s*=\s*["\'](https?://[^"\']+)["\']', bg_content)
+                    if m:
+                        found_base_url = m.group(1)
+                        break
         if not found_base_url:
             print(f"❌ Could not resolve base URL for module: {target}")
             sys.exit(1)

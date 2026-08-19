@@ -692,6 +692,16 @@ def inspect_extension_module(repo_root: Path, lang: str, name: str) -> Tuple[Opt
             ep = m_search.group(1)
             endpoints["search"] = ep if ep.startswith("http") or "$baseUrl" in ep else f"$baseUrl{ep if ep.startswith('/') else '/' + ep}"
 
+    if not base_url:
+        build_gradle = ext_dir / "build.gradle"
+        if not build_gradle.exists():
+            build_gradle = ext_dir / "build.gradle.kts"
+        if build_gradle.exists():
+            bg_content = build_gradle.read_text(encoding="utf-8", errors="ignore")
+            m_bg = re.search(r'baseUrl\s*=\s*["\'](https?://[^"\']+)["\']', bg_content)
+            if m_bg:
+                base_url = m_bg.group(1).rstrip("/")
+
     if base_url:
         if "Referer" not in extracted_headers:
             extracted_headers["Referer"] = f"{base_url}/"
