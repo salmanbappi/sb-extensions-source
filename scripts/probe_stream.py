@@ -305,6 +305,7 @@ class StreamProber:
             header_args, _ = self._build_ffmpeg_headers()
             cmd = [
                 "ffprobe", "-v", "error",
+                "-allowed_segment_extensions", "ALL",
                 *header_args,
                 "-show_entries", "format=duration,size,bit_rate,format_name:stream=index,codec_name,codec_type,width,height,channels,channel_layout,sample_rate,r_frame_rate:stream_tags=language,title",
                 "-of", "json",
@@ -396,8 +397,8 @@ class StreamProber:
             header_args, _ = self._build_ffmpeg_headers()
             cmd = [
                 "ffmpeg", "-v", "error",
+                "-allowed_segment_extensions", "ALL",
                 *header_args,
-                "-ss", "00:00:02",
                 "-t", str(duration_sec),
                 "-i", url,
                 "-f", "null",
