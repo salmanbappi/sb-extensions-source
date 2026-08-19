@@ -325,11 +325,13 @@ class AbyssExtractor(
 
                     val rawUrl = when {
                         direct.isNotEmpty() -> direct.replace("\\/", "/")
+
                         srcUrl.isNotEmpty() && path.isNotEmpty() -> {
                             val cleanSrc = srcUrl.trimEnd('/')
                             val cleanPath = path.trimStart('/')
                             "$cleanSrc/$cleanPath"
                         }
+
                         else -> ""
                     }
 
