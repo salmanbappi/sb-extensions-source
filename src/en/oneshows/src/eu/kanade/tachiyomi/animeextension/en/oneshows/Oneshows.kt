@@ -343,8 +343,8 @@ class Oneshows :
         screen.addListPreference(
             key = PREF_HOSTER_KEY,
             title = "Preferred Server",
-            entries = listOf("Vidzee", "VidLink", "VidFast", "Vidy", "Viduki", "VidRock"),
-            entryValues = listOf("Vidzee", "VidLink", "VidFast", "Vidy", "Viduki", "VidRock"),
+            entries = listOf("VidFast", "Vidzee", "VidLink", "VidRock", "Vidy", "Viduki"),
+            entryValues = listOf("VidFast", "Vidzee", "VidLink", "VidRock", "Vidy", "Viduki"),
             default = PREF_HOSTER_DEFAULT,
             summary = "%s",
         )
@@ -368,7 +368,7 @@ class Oneshows :
 
     companion object {
         private const val PREF_HOSTER_KEY = "preferred_hoster"
-        private const val PREF_HOSTER_DEFAULT = "Vidzee"
+        private const val PREF_HOSTER_DEFAULT = "VidFast"
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
