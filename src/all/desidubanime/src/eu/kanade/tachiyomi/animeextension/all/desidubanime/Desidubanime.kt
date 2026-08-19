@@ -482,8 +482,10 @@ class Desidubanime : Source() {
             url.contains("filemoon") ->
                 filemoonExtractor.videosFromUrl(url)
 
-            url.contains("streamwish") || url.contains("hanerix") || url.contains("wish") ->
-                streamWishExtractor.videosFromUrl(url, "StreamWish")
+            url.contains("streamwish") || url.contains("hanerix") || url.contains("wish") -> {
+                val wishVideos = streamWishExtractor.videosFromUrl(url, "StreamWish")
+                wishVideos.ifEmpty { vidHideExtractor.videosFromUrl(url) { "StreamWish - $it" } }
+            }
 
             url.contains("vidhide") || url.contains("streamhg") || url.contains("animezia") ->
                 vidHideExtractor.videosFromUrl(url) { "VidHide - $it" }

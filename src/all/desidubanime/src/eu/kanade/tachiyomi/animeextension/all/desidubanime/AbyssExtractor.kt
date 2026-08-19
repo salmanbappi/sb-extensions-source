@@ -31,7 +31,7 @@ class AbyssExtractor(
                 else -> targetUrl.substringAfterLast("/").substringBefore("?").substringBefore("#")
             }
             if (id.isNotEmpty() && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }) {
-                targetUrl = "https://abyssplayer.com/?v=$id"
+                targetUrl = "https://play.abyssplayer.com/$id"
             }
         }
 
@@ -99,7 +99,7 @@ class AbyssExtractor(
             return listOf(
                 Video(
                     videoUrl = legacyUrl,
-                    videoTitle = "Abyss - Video",
+                    videoTitle = "${prefix}Abyss - Video",
                     headers = Headers.Builder().add("Referer", finalReferer).build(),
                 ),
             )
@@ -118,39 +118,32 @@ class AbyssExtractor(
         }
 
         val latin1Str = rawBytes.toString(Charsets.ISO_8859_1)
-        try {
-            if (latin1Str.trim().startsWith("{")) {
-                return JSONObject(latin1Str)
-            }
-        } catch (_: Exception) {}
-
-        val decodedStr = latin1Str
         val payload = JSONObject()
 
-        Regex(""""slug"\s*:\s*"([^"]+)"""").find(decodedStr)?.let {
+        Regex(""""slug"\s*:\s*"([^"]+)"""").find(latin1Str)?.let {
             payload.put("slug", it.groupValues[1])
         }
-        Regex(""""md5_id"\s*:\s*(\d+)""").find(decodedStr)?.let {
+        Regex(""""md5_id"\s*:\s*(\d+)""").find(latin1Str)?.let {
             payload.put("md5_id", it.groupValues[1])
         }
-        Regex(""""user_id"\s*:\s*(\d+)""").find(decodedStr)?.let {
+        Regex(""""user_id"\s*:\s*(\d+)""").find(latin1Str)?.let {
             payload.put("user_id", it.groupValues[1])
         }
 
         val mediaMarker = "\"media\":\""
         val configMarker = "\",\"config\""
-        val mIdx = decodedStr.indexOf(mediaMarker)
-        val cIdx = decodedStr.indexOf(configMarker)
+        val mIdx = latin1Str.indexOf(mediaMarker)
+        val cIdx = latin1Str.indexOf(configMarker)
         if (mIdx >= 0 && cIdx > mIdx) {
-            val mediaEscaped = decodedStr.substring(mIdx + mediaMarker.length, cIdx)
+            val mediaEscaped = latin1Str.substring(mIdx + mediaMarker.length, cIdx)
             payload.put("media", decodeEscapedBinary(mediaEscaped))
         } else {
-            Regex(""""media"\s*:\s*"((?:\\.|[^"\\])*)"""").find(decodedStr)?.let {
+            Regex(""""media"\s*:\s*"((?:\\.|[^"\\])*)"""").find(latin1Str)?.let {
                 payload.put("media", decodeEscapedBinary(it.groupValues[1]))
             }
         }
 
-        Regex(""""isDownload"\s*:\s*(true|false)""").find(decodedStr)?.let {
+        Regex(""""isDownload"\s*:\s*(true|false)""").find(latin1Str)?.let {
             payload.put("isDownload", it.groupValues[1] == "true")
         }
 
@@ -161,16 +154,6 @@ class AbyssExtractor(
         if (escaped.isEmpty()) return ""
         val out = StringBuilder()
         var i = 0
-        val escMap = mapOf(
-            'n' to '\n',
-            'r' to '\r',
-            't' to '\t',
-            'b' to '\b',
-            'f' to '\u000c',
-            '\\' to '\\',
-            '"' to '"',
-            '/' to '/',
-        )
         while (i < escaped.length) {
             val ch = escaped[i]
             if (ch == '\\' && i + 1 < escaped.length) {
@@ -182,9 +165,28 @@ class AbyssExtractor(
                         i += 6
                         continue
                     } catch (_: Exception) {}
-                }
-                if (escMap.containsKey(nxt)) {
-                    out.append(escMap[nxt])
+                } else if (nxt == 'n') {
+                    out.append('\n')
+                    i += 2
+                    continue
+                } else if (nxt == 'r') {
+                    out.append('\r')
+                    i += 2
+                    continue
+                } else if (nxt == 't') {
+                    out.append('\t')
+                    i += 2
+                    continue
+                } else if (nxt == 'b') {
+                    out.append('\b')
+                    i += 2
+                    continue
+                } else if (nxt == 'f') {
+                    out.append('\u000c')
+                    i += 2
+                    continue
+                } else if (nxt == '\\' || nxt == '"' || nxt == '/') {
+                    out.append(nxt)
                     i += 2
                     continue
                 }
@@ -228,13 +230,6 @@ class AbyssExtractor(
         cipher.doFinal(dataBytes)
     } catch (_: Exception) {
         null
-    }
-
-    private fun buildSoraToken(pathValue: String, sizeValue: String): String? {
-        val transformed = aesCtrTransform(pathValue.toByteArray(Charsets.UTF_8), sizeValue) ?: return null
-        val first = Base64.encodeToString(transformed, Base64.NO_WRAP).replace("=", "")
-        val second = Base64.encodeToString(first.toByteArray(Charsets.UTF_8), Base64.NO_WRAP).replace("=", "")
-        return second
     }
 
     private fun extractFromMediaPayload(
@@ -302,7 +297,6 @@ class AbyssExtractor(
         val mp4 = mediaPayload.optJSONObject("mp4")
         if (mp4 != null) {
             val sources = mp4.optJSONArray("sources")
-            val domains = mp4.optJSONArray("domains")
             if (sources != null) {
                 val sourceList = mutableListOf<JSONObject>()
                 for (i in 0 until sources.length()) {
@@ -313,19 +307,16 @@ class AbyssExtractor(
 
                 for (src in sourceList) {
                     val label = src.optString("label", "Video")
-                    val size = src.optString("size", "")
-                    val resId = src.optString("res_id", "")
-                    val sub = src.optString("sub", "")
-
                     val direct = src.optString("file", "")
                     val srcUrl = src.optString("url", "")
                     val path = src.optString("path", "")
 
                     if (direct.isNotEmpty()) {
+                        val videoUrl = if (direct.startsWith("http")) direct.replace("\\/", "/") else "https://${direct.trimStart('/').replace("\\/", "/")}"
                         videoList.add(
                             Video(
-                                videoUrl = "${direct.replace("\\/", "/")}?ext=.mp4",
-                                videoTitle = "${prefix}Abyss - $label (MP4)",
+                                videoUrl = videoUrl,
+                                videoTitle = "${prefix}Abyss - $label",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
                             ),
@@ -335,43 +326,15 @@ class AbyssExtractor(
 
                     if (srcUrl.isNotEmpty() && path.isNotEmpty()) {
                         val normUrl = if (srcUrl.startsWith("http")) srcUrl else "https://$srcUrl"
-                        val directUrl = "${normUrl.trimEnd('/')}/${path.trimStart('/')}"
+                        val directUrl = "${normUrl.trimEnd('/')}/${path.trimStart('/')}".replace("\\/", "/")
                         videoList.add(
                             Video(
                                 videoUrl = directUrl,
-                                videoTitle = "${prefix}Abyss - $label (Direct)",
+                                videoTitle = "${prefix}Abyss - $label",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
                             ),
                         )
-                    }
-
-                    if (size.isNotEmpty() && resId.isNotEmpty() && sub.isNotEmpty() && domains != null) {
-                        var domain: String? = null
-                        for (j in 0 until domains.length()) {
-                            val d = domains.optString(j, "")
-                            if (d.isNotEmpty() && d.contains(sub)) {
-                                domain = d
-                                break
-                            }
-                        }
-
-                        if (domain != null) {
-                            val pathValue = "/mp4/$md5Id/$resId/$size?v=$slug"
-                            val token = buildSoraToken(pathValue, size)
-                            if (token != null) {
-                                val norm = if (domain.startsWith("http")) domain else "https://$domain"
-                                val finalUrl = "${norm.trimEnd('/')}/sora/$size/$token"
-                                videoList.add(
-                                    Video(
-                                        videoUrl = finalUrl,
-                                        videoTitle = "${prefix}Abyss - $label (Sora)",
-                                        headers = streamHeaders,
-                                        subtitleTracks = subtitles,
-                                    ),
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -428,3 +391,4 @@ class AbyssExtractor(
         private val idRegex = Regex("""['"]id['"]\s*:\s*['"]([^'"]+)['"]""")
     }
 }
+
