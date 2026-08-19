@@ -442,6 +442,7 @@ class Desidubanime : Source() {
 
                         val mresultString = when {
                             mresultElement == null -> null
+
                             mresultElement is JsonPrimitive && mresultElement.isString -> {
                                 val base64Str = mresultElement.content
                                 try {
@@ -450,6 +451,7 @@ class Desidubanime : Source() {
                                     base64Str
                                 }
                             }
+
                             else -> mresultElement.toString()
                         }
 
