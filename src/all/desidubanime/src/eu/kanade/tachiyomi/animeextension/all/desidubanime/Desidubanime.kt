@@ -14,12 +14,8 @@ import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.buzzheavierextractor.BuzzheavierExtractor
 import eu.kanade.tachiyomi.lib.byseextractor.ByseExtractor
-import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
-import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
-import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
-import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -72,19 +68,12 @@ class Desidubanime : Source() {
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
-    // Extractors
-    private val doodExtractor by lazy { DoodExtractor(client) }
-    private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
+    // Extractors (Working Only)
+    private val byseExtractor by lazy { ByseExtractor(client, playlistUtils) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
-    private val streamWishExtractor by lazy { StreamWishExtractor(client, headers) }
     private val vidHideExtractor by lazy { VidHideExtractor(client, headers) }
     private val buzzheavierExtractor by lazy { BuzzheavierExtractor(client, headers) }
-    private val universalExtractor by lazy { UniversalExtractor(client) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-    private val streamP2PExtractor by lazy { StreamP2PExtractor(client, headers) }
-    private val localProxy by lazy { LocalProxy(client) }
-    private val abyssExtractor by lazy { AbyssExtractor(client, playlistUtils, localProxy) }
-    private val byseExtractor by lazy { ByseExtractor(client, playlistUtils) }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -472,21 +461,28 @@ class Desidubanime : Source() {
                                     ?: siteFriendlyNames[key]?.jsonPrimitive?.content
                                     ?: key
 
-                                hosters.add(
-                                    Hoster(
-                                        hosterName = friendlyName.replaceFirstChar { it.uppercase() },
-                                        hosterUrl = fullUrl,
-                                    ),
-                                )
+                                val lowerKey = key.lowercase()
+                                val lowerUrl = fullUrl.lowercase()
+                                val isWorking = lowerKey.contains("byse") || lowerKey.contains("filemoon") ||
+                                    lowerKey.contains("buzzheavier") || lowerKey.contains("vidhide") ||
+                                    lowerUrl.contains("bysetayico") || lowerUrl.contains("filemoon") ||
+                                    lowerUrl.contains("buzzheavier") || lowerUrl.contains("vidhide") ||
+                                    lowerUrl.contains("streamhg") || lowerUrl.contains("animezia")
+
+                                if (isWorking) {
+                                    hosters.add(
+                                        Hoster(
+                                            hosterName = friendlyName.replaceFirstChar { it.uppercase() },
+                                            hosterUrl = fullUrl,
+                                        ),
+                                    )
+                                }
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    // Fallback to direct embed
-                    hosters.add(Hoster(hosterName = "Mirror", hosterUrl = embedUrl))
+                    // Ignore parsing error
                 }
-            } else {
-                hosters.add(Hoster(hosterName = "Player", hosterUrl = embedUrl))
             }
         }
 
@@ -510,7 +506,6 @@ class Desidubanime : Source() {
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val url = hoster.hosterUrl
-        val embedHeaders = headers.newBuilder().set("Referer", "$baseUrl/").build()
 
         val videos = when {
             url.contains("bysetayico") || url.contains("byse") ->
@@ -519,26 +514,11 @@ class Desidubanime : Source() {
             url.contains("filemoon") ->
                 filemoonExtractor.videosFromUrl(url)
 
-            url.contains("streamwish") || url.contains("hanerix") || url.contains("wish") ->
-                streamWishExtractor.videosFromUrl(url, "StreamWish")
-
             url.contains("vidhide") || url.contains("streamhg") || url.contains("animezia") ->
                 vidHideExtractor.videosFromUrl(url) { "VidHide - $it" }
 
-            url.contains("streamtape") ->
-                streamtapeExtractor.videoFromUrl(url)?.let { listOf(it) } ?: emptyList()
-
-            url.contains("dood") ->
-                doodExtractor.videosFromUrl(url)
-
             url.contains("buzzheavier") ->
                 buzzheavierExtractor.videosFromUrl(url, "Buzzheavier - ")
-
-            url.contains("strp2p") || url.contains("rpmstream") || url.contains("upns") ->
-                streamP2PExtractor.videosFromUrl(url, hoster.hosterName)
-
-            url.contains("abyss") ->
-                abyssExtractor.videosFromUrl(url)
 
             url.endsWith(".m3u8") || url.contains(".m3u8?") ->
                 playlistUtils.extractFromHls(
@@ -547,8 +527,7 @@ class Desidubanime : Source() {
                     videoNameGen = { quality -> quality },
                 )
 
-            else ->
-                universalExtractor.videosFromUrl(url, embedHeaders)
+            else -> emptyList()
         }
 
         val excludedAudio = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
@@ -638,16 +617,11 @@ class Desidubanime : Source() {
         private const val PREF_SERVER_DEFAULT = "Byse"
         private val PREF_SERVER_ENTRIES = arrayOf(
             "Auto (Recommended - Byse)",
-            "Byse (FileMoon) [✅ Working]",
-            "Buzzheavier [✅ Working]",
-            "VidHide [✅ Working]",
-            "Abyss [❌ Broken - CDN Encrypted]",
-            "StreamWish [❌ Dead/Expired]",
-            "StreamTape [❌ Dead/DNS Down]",
-            "DoodStream [❌ Blocked/Cloudflare]",
-            "StreamP2P / RPMStream [❌ Dead/404]",
+            "Byse (FileMoon) [1080p + 5 Audio Tracks]",
+            "Buzzheavier [Direct MP4]",
+            "VidHide [HLS]",
         )
-        private val PREF_SERVER_VALUES = arrayOf("auto", "Byse", "Buzzheavier", "VidHide", "Abyss", "StreamWish", "StreamTape", "DoodStream", "StreamP2P")
+        private val PREF_SERVER_VALUES = arrayOf("auto", "Byse", "Buzzheavier", "VidHide")
 
         private const val PREF_AUDIO_KEY = "pref_audio"
         private const val PREF_AUDIO_DEFAULT = "auto"
@@ -664,153 +638,12 @@ class Desidubanime : Source() {
             "Byse (FileMoon)",
             "Buzzheavier",
             "VidHide",
-            "Abyss (Broken)",
-            "StreamWish (Dead)",
-            "StreamTape (Dead)",
-            "DoodStream (Blocked)",
-            "StreamP2P / RPMStream (Dead)",
         )
-        private val PREF_EXCLUDE_SERVER_VALUES = arrayOf("Byse", "Buzzheavier", "VidHide", "Abyss", "StreamWish", "StreamTape", "DoodStream", "StreamP2P")
+        private val PREF_EXCLUDE_SERVER_VALUES = arrayOf("Byse", "Buzzheavier", "VidHide")
 
         private const val PREF_EXCLUDE_AUDIO_KEY = "pref_exclude_audio"
 
         private val EPISODE_NUMBER_REGEX = Regex("""(?:Episode|Ep\.?)\s*(\d+)""", RegexOption.IGNORE_CASE)
         private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-    }
-
-    class StreamP2PExtractor(private val client: OkHttpClient, private val headers: Headers) {
-        fun videosFromUrl(url: String, prefix: String = "StreamP2P"): List<Video> {
-            val strmp2Id = url.substringAfterLast("embed/").substringAfterLast("/").substringBefore("?").substringBefore("#")
-            val apiHost = "https://cloudy.p2pplay.pro"
-            val apiUrl = "$apiHost/api/v1/video?id=$strmp2Id&w=1920&h=1080&r=pro.iqsmartgames.com"
-
-            val reqHeaders = headers.newBuilder()
-                .set("Referer", "https://clswine.strp2p.com/")
-                .set("Origin", "https://clswine.strp2p.com")
-                .build()
-
-            val response = client.newCall(GET(apiUrl, reqHeaders)).execute()
-            if (response.code != 200) {
-                response.close()
-                return emptyList()
-            }
-            val encryptedHex = response.body.string().trim()
-            response.close()
-
-            val decryptedJson = tryDecrypt(encryptedHex) ?: return emptyList()
-            val jsonObject = Json.parseToJsonElement(decryptedJson).jsonObject
-            val streamingConfigStr = jsonObject["streamingConfig"]?.jsonPrimitive?.content ?: return emptyList()
-            val streamingConfig = Json.parseToJsonElement(streamingConfigStr).jsonObject
-            val order = streamingConfig["order"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
-            val adjust = streamingConfig["adjust"]?.jsonObject ?: emptyMap()
-
-            val videoList = mutableListOf<Video>()
-
-            fun addVideo(streamPath: String, hostName: String, params: Map<String, String>) {
-                val base = if (streamPath.startsWith("//")) {
-                    "https:$streamPath"
-                } else if (streamPath.startsWith("http")) {
-                    streamPath
-                } else {
-                    "$apiHost/${streamPath.trimStart('/')}"
-                }
-
-                val builder = base.toHttpUrlOrNull()?.newBuilder() ?: return
-                params.forEach { (k, v) ->
-                    builder.setQueryParameter(k, v)
-                }
-                val finalUrl = builder.build().toString()
-
-                val subtitleTracks = mutableListOf<Track>()
-                jsonObject["subtitle"]?.jsonObject?.forEach { (lang, subPathElement) ->
-                    val subPath = subPathElement.jsonPrimitive.content.substringBefore("#")
-                    val subUrl = if (subPath.startsWith("http")) subPath else "$apiHost/${subPath.trimStart('/')}"
-                    subtitleTracks.add(Track(subUrl, lang))
-                }
-
-                videoList.add(
-                    Video(
-                        videoUrl = finalUrl,
-                        videoTitle = "$prefix - $hostName",
-                        headers = reqHeaders,
-                        subtitleTracks = subtitleTracks,
-                    ),
-                )
-            }
-
-            order.forEach { host ->
-                val hostConfig = adjust[host]?.jsonObject
-                val disabled = hostConfig?.get("disabled")?.jsonPrimitive?.booleanOrNull ?: false
-                if (disabled) return@forEach
-
-                val rawParams = hostConfig?.get("params")
-                val params = mutableMapOf<String, String>()
-                if (rawParams != null && rawParams is JsonObject) {
-                    rawParams.forEach { (k, v) ->
-                        params[k] = v.jsonPrimitive.content
-                    }
-                }
-
-                when (host) {
-                    "Cloudflare" -> {
-                        val cfPath = jsonObject["cf"]?.jsonPrimitive?.contentOrNull
-                        if (!cfPath.isNullOrBlank()) {
-                            addVideo(cfPath, "Cloudflare", params)
-                        }
-                    }
-
-                    "Tiktok" -> {
-                        val tiktokPath = jsonObject["hlsVideoTiktok"]?.jsonPrimitive?.contentOrNull
-                        if (!tiktokPath.isNullOrBlank()) {
-                            addVideo(tiktokPath, "Tiktok", params)
-                        }
-                    }
-
-                    "Google" -> {
-                        val googlePath = jsonObject["hlsVideoGoogle"]?.jsonPrimitive?.contentOrNull
-                        if (!googlePath.isNullOrBlank()) {
-                            addVideo(googlePath, "Google", params)
-                        }
-                    }
-
-                    "In-House" -> {
-                        val sourcePath = jsonObject["source"]?.jsonPrimitive?.contentOrNull
-                        if (!sourcePath.isNullOrBlank()) {
-                            addVideo(sourcePath, "In-House", params)
-                        }
-                    }
-                }
-            }
-
-            return videoList
-        }
-
-        private fun tryDecrypt(encryptedHex: String): String? {
-            val key = "kiemtienmua911ca".toByteArray(Charsets.UTF_8)
-            val ivs = listOf("1234567890oiuytr", "0123456789abcdef")
-
-            for (ivStr in ivs) {
-                try {
-                    val iv = ivStr.toByteArray(Charsets.UTF_8)
-                    val cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
-                    val keySpec = javax.crypto.spec.SecretKeySpec(key, "AES")
-                    val ivSpec = javax.crypto.spec.IvParameterSpec(iv)
-                    cipher.init(javax.crypto.Cipher.DECRYPT_MODE, keySpec, ivSpec)
-
-                    val encryptedBytes = encryptedHex.chunked(2)
-                        .map { it.toInt(16).toByte() }
-                        .toByteArray()
-
-                    val decryptedBytes = cipher.doFinal(encryptedBytes)
-                    val decrypted = String(decryptedBytes, Charsets.UTF_8)
-                    if (decrypted.contains("streamingConfig")) {
-                        return decrypted
-                    }
-                } catch (e: Exception) {
-                    // ignore
-                }
-            }
-            return null
-        }
     }
 }
