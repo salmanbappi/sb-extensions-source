@@ -173,12 +173,15 @@ class M3u8HttpServer(
     ): Map<String, String> {
         val extractedHeaders = mutableMapOf<String, String>()
 
-        session.getHeaders()?.forEach { (key, value) ->
-            when (key.lowercase()) {
-                "user-agent", "referer", "origin", "accept", "accept-language",
-                "accept-encoding", "connection", "cache-control", "pragma",
-                -> {
-                    extractedHeaders[key.lowercase()] = value
+        val rawHeaders: Map<String, String>? = session.headers
+        if (rawHeaders != null) {
+            for ((key, value) in rawHeaders) {
+                when (key.lowercase()) {
+                    "user-agent", "referer", "origin", "accept", "accept-language",
+                    "accept-encoding", "connection", "cache-control", "pragma",
+                    -> {
+                        extractedHeaders[key.lowercase()] = value
+                    }
                 }
             }
         }
