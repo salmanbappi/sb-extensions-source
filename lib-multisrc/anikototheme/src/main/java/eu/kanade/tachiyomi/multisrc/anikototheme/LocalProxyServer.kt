@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.multisrc.anikototheme
 
 import android.util.Log
 import eu.kanade.tachiyomi.animesource.model.Track
+import keiyoushi.utils.toHex
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -325,7 +326,7 @@ class LocalProxyServer(
             val isTsSync = firstByte == 0x47.toByte()
             logi("STRIPPED: $cacheKey ${segBytes.size}→$servedSize bytes, first=0x${String.format("%02x", firstByte)}, tsSync=$isTsSync")
             if (!isTsSync && servedSize > 0) {
-                val hexStr = segBytes.copyOfRange(offset, min(offset + 8, segBytes.size)).joinToString("") { String.format("%02x", it) }
+                val hexStr = segBytes.copyOfRange(offset, min(offset + 8, segBytes.size)).toHex()
                 logw("WARNING: segment $cacheKey doesn't start with 0x47! First 8 bytes: $hexStr")
             }
             cacheSegment(cacheKey, segBytes, offset)

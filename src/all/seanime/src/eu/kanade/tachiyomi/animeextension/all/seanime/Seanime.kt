@@ -19,6 +19,7 @@ import extensions.utils.Source
 import extensions.utils.delegate
 import extensions.utils.parseAs
 import extensions.utils.toRequestBody
+import keiyoushi.utils.toHex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -383,7 +384,7 @@ class Seanime :
 
     private fun sha256(input: String): String {
         val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }
+        return bytes.toHex()
     }
 
     private fun parseSeasonNumber(title: String): Double {
