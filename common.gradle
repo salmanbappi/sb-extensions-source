@@ -100,6 +100,8 @@ android {
 
     packaging {
         resources.excludes.add("kotlin-tooling-metadata.json")
+        resources.pickFirsts.add("META-INF/nanohttpd/default-mimetypes.properties")
+        resources.excludes.add("META-INF/nanohttpd/**")
     }
 
     compileOptions {
