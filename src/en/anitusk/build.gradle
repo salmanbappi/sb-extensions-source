@@ -1,7 +1,7 @@
 ext {
     extName = 'Anitummy'
     extClass = '.Anitusk'
-    extVersionCode = 25
+    extVersionCode = 26
 }
 
 apply from: "$rootDir/common.gradle"

@@ -1,7 +1,7 @@
 ext {
     extName = 'Lunar'
     extClass = '.Lunar'
-    extVersionCode = 12
+    extVersionCode = 13
     isNsfw = false
 }
 
