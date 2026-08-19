@@ -321,18 +321,61 @@ class AbyssExtractor(
                     val direct = src.optString("file", "")
                     val srcUrl = src.optString("url", "")
                     val path = src.optString("path", "")
+                    val qualityNum = label.filter { it.isDigit() }.toIntOrNull()
 
-                    if (direct.isNotEmpty()) {
-                        val videoUrl = direct.replace("\\/", "/") + "?ext=.mp4"
-                        val proxiedUrl = localProxy?.getProxyUrl(videoUrl, streamHeaders) ?: videoUrl
+                    val rawUrl = when {
+                        direct.isNotEmpty() -> direct.replace("\\/", "/")
+                        srcUrl.isNotEmpty() && path.isNotEmpty() -> {
+                            val cleanSrc = srcUrl.trimEnd('/')
+                            val cleanPath = path.trimStart('/')
+                            "$cleanSrc/$cleanPath"
+                        }
+                        else -> ""
+                    }
+
+                    if (rawUrl.isNotEmpty()) {
+                        val norm = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else "https://$rawUrl"
+                        val finalUrl = norm.replace("https://https://", "https://").replace("http://https://", "https://")
+                        val proxiedUrl = localProxy?.getProxyUrl(finalUrl, streamHeaders) ?: finalUrl
                         videoList.add(
                             Video(
                                 videoUrl = proxiedUrl,
-                                videoTitle = "${prefix}Abyss - $label (MP4)",
+                                videoTitle = "${prefix}Abyss - $label",
                                 headers = streamHeaders,
                                 subtitleTracks = subtitles,
+                                resolution = qualityNum,
                             ),
                         )
+                    }
+
+                    if (size.isNotEmpty() && resId.isNotEmpty() && sub.isNotEmpty() && domains != null) {
+                        var domain: String? = null
+                        for (j in 0 until domains.length()) {
+                            val d = domains.optString(j, "")
+                            if (d.isNotEmpty() && d.contains(sub)) {
+                                domain = d
+                                break
+                            }
+                        }
+
+                        if (domain != null) {
+                            val pathValue = "/mp4/$md5Id/$resId/$size?v=$slug"
+                            val token = buildSoraToken(pathValue, size)
+                            if (token != null) {
+                                val domNorm = if (domain.startsWith("http://") || domain.startsWith("https://")) domain else "https://$domain"
+                                val soraUrl = "${domNorm.trimEnd('/')}/sora/$size/$token"
+                                val proxiedSora = localProxy?.getProxyUrl(soraUrl, streamHeaders) ?: soraUrl
+                                videoList.add(
+                                    Video(
+                                        videoUrl = proxiedSora,
+                                        videoTitle = "${prefix}Abyss - $label (Sora)",
+                                        headers = streamHeaders,
+                                        subtitleTracks = subtitles,
+                                        resolution = qualityNum,
+                                    ),
+                                )
+                            }
+                        }
                     }
                 }
             }
