@@ -232,7 +232,10 @@ class Oneshows :
                 Hoster(hosterName = "Vidzee (Direct HLS)", hosterUrl = "https://player.vidzee.wtf/embed/movie/$id"),
                 Hoster(hosterName = "VidLink", hosterUrl = "https://vidlink.pro/movie/$id"),
                 Hoster(hosterName = "VidFast", hosterUrl = "https://vidfast.pro/movie/$id"),
-                Hoster(hosterName = "Viduki", hosterUrl = "https://www.viduki.net/1/movie/$id"),
+                Hoster(hosterName = "Vidy", hosterUrl = "https://vidy.st/movie/$id"),
+                Hoster(hosterName = "Viduki (Main 1)", hosterUrl = "https://www.viduki.net/1/movie/$id"),
+                Hoster(hosterName = "Viduki (Multi-Language)", hosterUrl = "https://www.viduki.net/2/movie/$id"),
+                Hoster(hosterName = "Viduki (Premium)", hosterUrl = "https://www.viduki.net/4/movie/$id"),
                 Hoster(hosterName = "VidRock", hosterUrl = "https://vidrock.ru/movie/$id"),
             )
         } else {
@@ -240,7 +243,10 @@ class Oneshows :
                 Hoster(hosterName = "Vidzee (Direct HLS)", hosterUrl = "https://player.vidzee.wtf/embed/tv/$id/$season/$ep"),
                 Hoster(hosterName = "VidLink", hosterUrl = "https://vidlink.pro/tv/$id/$season/$ep"),
                 Hoster(hosterName = "VidFast", hosterUrl = "https://vidfast.pro/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Viduki", hosterUrl = "https://www.viduki.net/1/tv/$id/$season/$ep"),
+                Hoster(hosterName = "Vidy", hosterUrl = "https://vidy.st/tv/$id/$season/$ep"),
+                Hoster(hosterName = "Viduki (Main 1)", hosterUrl = "https://www.viduki.net/1/tv/$id/$season/$ep"),
+                Hoster(hosterName = "Viduki (Multi-Language)", hosterUrl = "https://www.viduki.net/2/tv/$id/$season/$ep"),
+                Hoster(hosterName = "Viduki (Premium)", hosterUrl = "https://www.viduki.net/4/tv/$id/$season/$ep"),
                 Hoster(hosterName = "VidRock", hosterUrl = "https://vidrock.ru/tv/$id/$season/$ep"),
             )
         }
