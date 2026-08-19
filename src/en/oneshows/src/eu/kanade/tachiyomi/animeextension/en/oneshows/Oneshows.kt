@@ -6,7 +6,6 @@ import android.net.Uri
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -66,7 +65,6 @@ class Oneshows :
 
     private val universalExtractor by lazy { UniversalExtractor(client) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -445,7 +443,7 @@ class Oneshows :
             }
         }.awaitAll().flatten()
 
-        m3u8Integration.processVideoList(videos).sort()
+        videos.sort()
     }
 
     // ============================ Provider: Vidrock ========================
@@ -536,7 +534,7 @@ class Oneshows :
             emptyList()
         }
 
-        m3u8Integration.processVideoList(videos).sort()
+        videos.sort()
     }
 
     // ============================ Provider: VidFast ========================
@@ -589,7 +587,7 @@ class Oneshows :
                     subtitleTracks = (v.subtitleTracks + subTracks).distinctBy { it.url },
                 )
             }
-            m3u8Integration.processVideoList(mappedVideos).sort()
+            mappedVideos.sort()
         } catch (_: Exception) {
             emptyList()
         }
@@ -623,7 +621,7 @@ class Oneshows :
                     subtitleTracks = v.subtitleTracks,
                 )
             }
-            m3u8Integration.processVideoList(mappedVideos).sort()
+            mappedVideos.sort()
         } catch (_: Exception) {
             emptyList()
         }
