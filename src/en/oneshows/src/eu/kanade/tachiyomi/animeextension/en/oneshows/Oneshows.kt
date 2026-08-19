@@ -150,13 +150,17 @@ class Oneshows :
         val id = anime.url.substringAfterLast("/").substringBefore("?")
         val endpoint = if (isMovie) "$baseUrl/api/movie/$id" else "$baseUrl/api/tv/$id"
 
-        val response = client.newCall(GET(endpoint, headers)).execute()
-        return if (isMovie) {
-            val details = response.parseAs<MovieDetailsDto>(json)
-            details.toSAnime(anime.url)
-        } else {
-            val details = response.parseAs<TvDetailsDto>(json)
-            details.toSAnime(anime.url)
+        return try {
+            val response = client.newCall(GET(endpoint, headers)).execute()
+            if (isMovie) {
+                val details = response.parseAs<MovieDetailsDto>(json)
+                details.toSAnime(anime.url)
+            } else {
+                val details = response.parseAs<TvDetailsDto>(json)
+                details.toSAnime(anime.url)
+            }
+        } catch (_: Exception) {
+            anime
         }.apply {
             initialized = true
         }
@@ -170,46 +174,82 @@ class Oneshows :
         if (isMovie) {
             return listOf(
                 SEpisode.create().apply {
-                    name = "Movie"
+                    name = "Full Movie"
+                    episode_number = 1.0f
+                    url = if (anime.url.startsWith("/")) anime.url else "/movie/$id"
+                },
+            )
+        }
+
+        val episodeList = mutableListOf<SEpisode>()
+        try {
+            val tvResponse = client.newCall(GET("$baseUrl/api/tv/$id", headers)).execute()
+            val tvDetails = tvResponse.parseAs<TvDetailsDto>(json)
+            val seasons = tvDetails.seasons ?: emptyList()
+            val validSeasons = seasons.filter {
+                val sNum = it.season_number ?: 0
+                sNum > 0 && (it.episode_count ?: 0) > 0
+            }.ifEmpty {
+                seasons.filter { (it.episode_count ?: 0) > 0 }
+            }
+
+            for (season in validSeasons) {
+                val seasonNum = season.season_number ?: 1
+                val count = season.episode_count ?: 1
+                var loadedFromApi = false
+
+                try {
+                    val seasonRes = client.newCall(GET("$baseUrl/api/tv/$id/season/$seasonNum", headers)).execute()
+                    val seasonDetails = seasonRes.parseAs<SeasonDetailsDto>(json)
+                    val eps = seasonDetails.episodes ?: emptyList()
+                    if (eps.isNotEmpty()) {
+                        eps.forEach { ep ->
+                            val epNum = ep.episode_number ?: 1
+                            episodeList.add(
+                                SEpisode.create().apply {
+                                    name = "S$seasonNum E$epNum - ${ep.name ?: "Episode $epNum"}"
+                                    episode_number = epNum.toFloat()
+                                    date_upload = parseDate(ep.air_date)
+                                    url = "/tv/$id?season=$seasonNum&episode=$epNum"
+                                    scanlator = "Season $seasonNum"
+                                },
+                            )
+                        }
+                        loadedFromApi = true
+                    }
+                } catch (_: Exception) {}
+
+                if (!loadedFromApi && count > 0) {
+                    for (epNum in 1..count) {
+                        episodeList.add(
+                            SEpisode.create().apply {
+                                name = "S$seasonNum E$epNum - Episode $epNum"
+                                episode_number = epNum.toFloat()
+                                url = "/tv/$id?season=$seasonNum&episode=$epNum"
+                                scanlator = "Season $seasonNum"
+                            },
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            return listOf(
+                SEpisode.create().apply {
+                    name = "Full Movie / Episode 1"
                     episode_number = 1.0f
                     url = "/movie/$id"
                 },
             )
         }
 
-        val tvResponse = client.newCall(GET("$baseUrl/api/tv/$id", headers)).execute()
-        val tvDetails = tvResponse.parseAs<TvDetailsDto>(json)
-        val validSeasons = (tvDetails.seasons ?: emptyList()).filter {
-            val sNum = it.season_number ?: 0
-            sNum > 0 && (it.episode_count ?: 0) > 0
-        }
-
-        val episodeList = mutableListOf<SEpisode>()
-        coroutineScope {
-            val seasonDeferreds = validSeasons.map { season ->
-                async(Dispatchers.IO) {
-                    val seasonNum = season.season_number ?: 1
-                    try {
-                        val seasonRes = client.newCall(GET("$baseUrl/api/tv/$id/season/$seasonNum", headers)).execute()
-                        val seasonDetails = seasonRes.parseAs<SeasonDetailsDto>(json)
-                        (seasonDetails.episodes ?: emptyList()).map { ep ->
-                            val epNum = ep.episode_number ?: 1
-                            SEpisode.create().apply {
-                                name = "S$seasonNum E$epNum - ${ep.name ?: "Episode $epNum"}"
-                                episode_number = epNum.toFloat()
-                                date_upload = parseDate(ep.air_date)
-                                url = "/tv/$id?season=$seasonNum&episode=$epNum"
-                                scanlator = "Season $seasonNum"
-                            }
-                        }
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-                }
-            }
-            seasonDeferreds.awaitAll().forEach {
-                episodeList.addAll(it)
-            }
+        if (episodeList.isEmpty()) {
+            episodeList.add(
+                SEpisode.create().apply {
+                    name = "Episode 1"
+                    episode_number = 1.0f
+                    url = "/tv/$id?season=1&episode=1"
+                },
+            )
         }
 
         return episodeList.reversed()
@@ -342,14 +382,13 @@ data class MediaItemDto(
     fun toSAnime(): SAnime? {
         val itemId = id ?: return null
         val itemTitle = title ?: name ?: return null
-        val type = media_type ?: if (first_air_date != null) "tv" else "movie"
+        val type = media_type?.lowercase() ?: if (first_air_date != null || name != null) "tv" else "movie"
         return SAnime.create().apply {
             this.title = itemTitle
             this.url = "/$type/$itemId"
             this.thumbnail_url = poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
             this.description = overview
             this.status = SAnime.UNKNOWN
-            this.fetch_type = FetchType.Episodes
         }
     }
 }
