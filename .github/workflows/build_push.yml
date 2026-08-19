@@ -15,26 +15,27 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 env:
-  CI_CHUNK_SIZE: 65
+  CI_CHUNK_SIZE: 128
   IS_PR_CHECK: false
 
 jobs:
   prepare:
     name: Prepare job
     runs-on: 'ubuntu-24.04'
+    timeout-minutes: 15
     outputs:
       latestCommitMessage: ${{ steps.set-env.outputs.LATEST_COMMIT_MESSAGE }}
       matrix: ${{ steps.generate-matrices.outputs.matrix }}
       delete: ${{ steps.generate-matrices.outputs.delete }}
     steps:
       - name: Checkout ${{ github.ref_name }} branch
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.2.2
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -42,58 +43,40 @@ jobs:
       - name: Set env
         id: set-env
         run: |
-          echo "LATEST_COMMIT_MESSAGE<<{delimiter}
-          $(git log -1 --pretty=%B)
-
-          Built on commit: $(git log -1 --pretty=%H)
-          {delimiter}" >> $GITHUB_OUTPUT
+          DELIMITER="$(openssl rand -hex 16)"
+          echo "LATEST_COMMIT_MESSAGE<<$DELIMITER" >> "$GITHUB_OUTPUT"
+          git log -1 --pretty=%B >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "Built on commit: $(git log -1 --pretty=%H)" >> "$GITHUB_OUTPUT"
+          echo "$DELIMITER" >> "$GITHUB_OUTPUT"
 
       - name: Find lib changes
         id: modified-libs
         uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
         with:
-          files: lib/
-          files_ignore: lib/**.md
+          files: |
+            lib/
+            lib-multisrc/
+          files_ignore: |
+            lib/**.md
+            lib-multisrc/**.md
           files_separator: " "
           safe_output: false
 
         # This step is going to commit, but this will not trigger another workflow.
         # If any changes to lib/ caused on master branch, bump the extensions that uses the modified lib.
-        # If any changes caused by the merge commit, skip this step because versions should already pumped with that merge.
-        # But that should be avoided because our own extensions may not be bumped.
       - name: Bump extensions that uses a modified lib
         if: steps.modified-libs.outputs.any_changed == 'true'
         env:
           COMMIT_MESSAGE: ${{ steps.set-env.outputs.LATEST_COMMIT_MESSAGE }}
+          CHANGED_FILES: ${{ steps.modified-libs.outputs.all_changed_files }}
         run: |
           latest_commit_author=$(git log -1 --pretty=%an)
           git config --local user.name "github-actions[bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           chmod +x ./.github/scripts/bump-versions.py
-          ./.github/scripts/bump-versions.py "$COMMIT_MESSAGE" ${{ steps.modified-libs.outputs.all_changed_files }}
+          ./.github/scripts/bump-versions.py "$COMMIT_MESSAGE" $CHANGED_FILES
           git push
-
-      - name: Set up Java
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
-        with:
-          java-version: 17
-          distribution: temurin
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-        with:
-          cache-read-only: true
-
-      - name: Run Spotless Apply
-        run: ./gradlew spotlessApply --continue || true
-
-      - name: Commit and push changes
-        if: github.repository == 'salmanbappi/sb-extensions-source'
-        uses: EndBug/add-and-commit@v10
-        with:
-          default_author: github_actions
-          message: 'Apply Spotless formatting'
-          commit: '--no-verify'
 
       - name: Get last successful CI commit
         id: last_successful_ci_commit
@@ -104,18 +87,19 @@ jobs:
       - id: generate-matrices
         name: Create output matrices
         run: |
-          python ./.github/scripts/generate-build-matrices.py ${{ steps.last_successful_ci_commit.outputs.base }} Release
+          python ./.github/scripts/generate-build-matrices.py "${{ steps.last_successful_ci_commit.outputs.base || github.event.before || 'HEAD~1' }}" Release
 
   build:
     name: Build extensions (${{ matrix.chunk.number }})
     needs: prepare
     runs-on: 'ubuntu-24.04'
+    timeout-minutes: 60
     if: ${{ toJson(fromJson(needs.prepare.outputs.matrix).chunk) != '[]' }}
     strategy:
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout ${{ github.ref_name }} branch
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.2.2
         with:
           ref: ${{ github.ref_name }}
 
@@ -146,7 +130,6 @@ jobs:
           KAISVA: ${{ secrets.KAISVA }}
           TMDB_API: ${{ secrets.TMDB_API }}
         run: |
-          ./gradlew spotlessApply --continue || true
           ./gradlew $(echo '${{ toJson(matrix.chunk.modules) }}' | jq -r 'join(" ")')
 
       - name: Upload APKs (${{ matrix.chunk.number }})
@@ -154,19 +137,27 @@ jobs:
         if: github.repository == 'salmanbappi/sb-extensions-source'
         with:
           name: "individual-apks-${{ matrix.chunk.number }}"
-          path: "**/*.apk"
+          path: "src/**/build/outputs/apk/**/*.apk"
           retention-days: 1
+          compression-level: 0
 
       - name: Clean up CI files
-        run: rm signingkey.jks
+        if: always()
+        run: rm -f signingkey.jks
 
   publish:
     name: Publish extension repo
     needs: [prepare, build]
-    if: github.repository == 'salmanbappi/sb-extensions-source'
+    if: |
+      github.repository == 'salmanbappi/sb-extensions-source' &&
+      !failure() &&
+      !cancelled() &&
+      (toJson(fromJson(needs.prepare.outputs.matrix).chunk) != '[]' || toJson(fromJson(needs.prepare.outputs.delete)) != '[]')
     runs-on: 'ubuntu-24.04'
+    timeout-minutes: 15
     steps:
       - name: Download APK artifacts
+        if: ${{ toJson(fromJson(needs.prepare.outputs.matrix).chunk) != '[]' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ~/apk-artifacts
@@ -178,7 +169,7 @@ jobs:
           distribution: temurin
 
       - name: Checkout ${{ github.ref_name }} branch
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.2.2
         with:
           ref: ${{ github.ref_name }}
           path: ${{ github.ref_name }}
@@ -187,11 +178,16 @@ jobs:
         run: |
           cd ${{ github.ref_name }}
           python ./.github/scripts/move-built-apks.py
-          java -jar ./.github/scripts/Inspector.jar "repo/apk" "output.json" "tmp"
-          python ./.github/scripts/create-repo.py
+          if ls repo/apk/*.apk 1> /dev/null 2>&1; then
+            java -jar ./.github/scripts/Inspector.jar "repo/apk" "output.json" "tmp"
+            python ./.github/scripts/create-repo.py
+          else
+            mkdir -p repo/apk repo/icon
+            echo "[]" > repo/index.min.json
+          fi
 
       - name: Checkout repo branch
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.2.2
         with:
           repository: salmanbappi/extensions-repo
           token: ${{ secrets.BOT_PAT }}
@@ -199,15 +195,11 @@ jobs:
           path: repo
 
       - name: Merge repo
+        env:
+          DELETED_MODULES: ${{ needs.prepare.outputs.delete }}
         run: |
           cd repo
-          python ../${{ github.ref_name }}/.github/scripts/merge-repo.py '${{ needs.prepare.outputs.delete }}' '${{ github.ref_name }}/repo'
-
-      - name: Deploy repo
-        uses: EndBug/add-and-commit@v10
-        with:
-          message: "${{ needs.prepare.outputs.latestCommitMessage }}"
-          cwd: "./repo"
+          python ../${{ github.ref_name }}/.github/scripts/merge-repo.py "$DELETED_MODULES" '${{ github.ref_name }}/repo'
 
       - name: Sync repo
         env:
@@ -226,8 +218,12 @@ jobs:
 
       - name: Purge cached index on jsDelivr
         run: |
-          curl https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.min.json
-          curl https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.min.json
+          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.json || true
+          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.min.json || true
+          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.html || true
+          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.json || true
+          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.min.json || true
+          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.html || true
 
       - name: Create GitHub Release
         working-directory: ${{ github.ref_name }}
@@ -235,9 +231,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if ls repo/apk/*.apk 1> /dev/null 2>&1; then
-            gh release create "r-${{ github.run_number }}" repo/apk/*.apk --title "Release r-${{ github.run_number }}" --notes "Release for run ${{ github.run_number }}"
+            gh release create "r-${{ github.run_number }}" repo/apk/*.apk --title "Release r-${{ github.run_number }}" --notes "Release for run ${{ github.run_number }}" --clobber
           else
             echo "No APKs found to release"
           fi
-
-
