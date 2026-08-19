@@ -143,4 +143,3 @@ class StreamWishExtractor(private val client: OkHttpClient, private val headers:
     private val fallbackM3u8Regex = Regex("""https?://[^"',\s\\]*m3u8[^"',\s\\]*""")
     private val fixTracksRegex = Regex("""(?<!["])(file|kind|label)(?!["])""")
 }
-
