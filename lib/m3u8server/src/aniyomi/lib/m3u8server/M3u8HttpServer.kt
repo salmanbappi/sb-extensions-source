@@ -171,27 +171,27 @@ class M3u8HttpServer(
         fallbackReferer: String? = null,
         fallbackUserAgent: String? = null,
     ): Map<String, String> {
-        val headers = mutableMapOf<String, String>()
+        val extractedHeaders = mutableMapOf<String, String>()
 
-        session.headers.forEach { (key, value) ->
+        session.getHeaders()?.forEach { (key, value) ->
             when (key.lowercase()) {
                 "user-agent", "referer", "origin", "accept", "accept-language",
                 "accept-encoding", "connection", "cache-control", "pragma",
                 -> {
-                    headers[key.lowercase()] = value
+                    extractedHeaders[key.lowercase()] = value
                 }
             }
         }
 
         if (!fallbackUserAgent.isNullOrBlank()) {
-            headers["user-agent"] = fallbackUserAgent
+            extractedHeaders["user-agent"] = fallbackUserAgent
         }
         if (!fallbackReferer.isNullOrBlank()) {
-            headers["referer"] = fallbackReferer
+            extractedHeaders["referer"] = fallbackReferer
         }
 
-        Log.d(tag, "Extracted headers (referer=${headers["referer"]?.take(80) ?: "none"}, ua=${headers["user-agent"]?.take(40) ?: "none"})")
-        return headers
+        Log.d(tag, "Extracted headers (referer=${extractedHeaders["referer"]?.take(80) ?: "none"}, ua=${extractedHeaders["user-agent"]?.take(40) ?: "none"})")
+        return extractedHeaders
     }
 
     private class UpstreamStatusException(
