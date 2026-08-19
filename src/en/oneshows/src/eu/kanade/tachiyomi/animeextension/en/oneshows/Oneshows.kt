@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
+import extensions.utils.addListPreference
 import extensions.utils.getPreferencesLazy
 import extensions.utils.parseAs
 import kotlinx.coroutines.Dispatchers
@@ -260,13 +261,13 @@ class Oneshows :
             .build()
 
         return try {
-            universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
+            universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName).sort()
         } catch (_: Exception) {
             emptyList()
         }
     }
 
-    override fun List<Video>.sort(): List<Video> {
+    private fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)
         val hoster = preferences.getString(PREF_HOSTER_KEY, PREF_HOSTER_DEFAULT)
 
@@ -278,23 +279,23 @@ class Oneshows :
 
     // ============================= Preferences ============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        ListPreference(screen.context).apply {
-            key = PREF_HOSTER_KEY
-            title = "Preferred Server"
-            entries = arrayOf("Vidzee", "VidLink", "VidFast", "Viduki", "VidRock")
-            entryValues = arrayOf("Vidzee", "VidLink", "VidFast", "Viduki", "VidRock")
-            default = PREF_HOSTER_DEFAULT
-            summary = "%s"
-        }.also(screen::addPreference)
+        screen.addListPreference(
+            key = PREF_HOSTER_KEY,
+            title = "Preferred Server",
+            entries = listOf("Vidzee", "VidLink", "VidFast", "Vidy", "Viduki", "VidRock"),
+            entryValues = listOf("Vidzee", "VidLink", "VidFast", "Vidy", "Viduki", "VidRock"),
+            default = PREF_HOSTER_DEFAULT,
+            summary = "%s",
+        )
 
-        ListPreference(screen.context).apply {
-            key = PREF_QUALITY_KEY
-            title = "Preferred Quality"
-            entries = arrayOf("1080p", "720p", "480p", "360p", "Auto")
-            entryValues = arrayOf("1080", "720", "480", "360", "Auto")
-            default = PREF_QUALITY_DEFAULT
-            summary = "%s"
-        }.also(screen::addPreference)
+        screen.addListPreference(
+            key = PREF_QUALITY_KEY,
+            title = "Preferred Quality",
+            entries = listOf("1080p", "720p", "480p", "360p", "Auto"),
+            entryValues = listOf("1080", "720", "480", "360", "Auto"),
+            default = PREF_QUALITY_DEFAULT,
+            summary = "%s",
+        )
     }
 
     private fun parseDate(dateStr: String?): Long {
