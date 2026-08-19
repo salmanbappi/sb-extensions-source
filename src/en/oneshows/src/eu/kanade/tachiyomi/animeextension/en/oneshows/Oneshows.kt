@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.net.Uri
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -60,6 +61,7 @@ class Oneshows :
 
     private val universalExtractor by lazy { UniversalExtractor(client) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -270,25 +272,25 @@ class Oneshows :
 
         return if (isMovie) {
             listOf(
+                Hoster(hosterName = "VidFast", hosterUrl = "https://vidfast.pro/movie/$id"),
                 Hoster(hosterName = "Vidzee (Direct HLS)", hosterUrl = "https://player.vidzee.wtf/embed/movie/$id"),
                 Hoster(hosterName = "VidLink", hosterUrl = "https://vidlink.pro/movie/$id"),
-                Hoster(hosterName = "VidFast", hosterUrl = "https://vidfast.pro/movie/$id"),
+                Hoster(hosterName = "VidRock", hosterUrl = "https://vidrock.ru/movie/$id"),
                 Hoster(hosterName = "Vidy", hosterUrl = "https://vidy.st/movie/$id"),
                 Hoster(hosterName = "Viduki (Main 1)", hosterUrl = "https://www.viduki.net/1/movie/$id"),
                 Hoster(hosterName = "Viduki (Multi-Language)", hosterUrl = "https://www.viduki.net/2/movie/$id"),
                 Hoster(hosterName = "Viduki (Premium)", hosterUrl = "https://www.viduki.net/4/movie/$id"),
-                Hoster(hosterName = "VidRock", hosterUrl = "https://vidrock.ru/movie/$id"),
             )
         } else {
             listOf(
+                Hoster(hosterName = "VidFast", hosterUrl = "https://vidfast.pro/tv/$id/$season/$ep"),
                 Hoster(hosterName = "Vidzee (Direct HLS)", hosterUrl = "https://player.vidzee.wtf/embed/tv/$id/$season/$ep"),
                 Hoster(hosterName = "VidLink", hosterUrl = "https://vidlink.pro/tv/$id/$season/$ep"),
-                Hoster(hosterName = "VidFast", hosterUrl = "https://vidfast.pro/tv/$id/$season/$ep"),
+                Hoster(hosterName = "VidRock", hosterUrl = "https://vidrock.ru/tv/$id/$season/$ep"),
                 Hoster(hosterName = "Vidy", hosterUrl = "https://vidy.st/tv/$id/$season/$ep"),
                 Hoster(hosterName = "Viduki (Main 1)", hosterUrl = "https://www.viduki.net/1/tv/$id/$season/$ep"),
                 Hoster(hosterName = "Viduki (Multi-Language)", hosterUrl = "https://www.viduki.net/2/tv/$id/$season/$ep"),
                 Hoster(hosterName = "Viduki (Premium)", hosterUrl = "https://www.viduki.net/4/tv/$id/$season/$ep"),
-                Hoster(hosterName = "VidRock", hosterUrl = "https://vidrock.ru/tv/$id/$season/$ep"),
             )
         }
     }
@@ -311,7 +313,7 @@ class Oneshows :
 
         return try {
             val videos = universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
-            videos.map { v ->
+            val mappedVideos = videos.map { v ->
                 Video(
                     videoUrl = v.videoUrl,
                     videoTitle = v.videoTitle,
@@ -319,7 +321,8 @@ class Oneshows :
                     audioTracks = v.audioTracks,
                     subtitleTracks = v.subtitleTracks,
                 )
-            }.sort()
+            }
+            m3u8Integration.processVideoList(mappedVideos).sort()
         } catch (_: Exception) {
             emptyList()
         }
