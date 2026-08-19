@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -271,7 +272,7 @@ class Movix : Source() {
                 val deferredEpisodes = tv.seasons
                     .filter { (it.season_number ?: 0) > 0 }
                     .map { season ->
-                        async {
+                        async(Dispatchers.IO) {
                             semaphore.withPermit {
                                 try {
                                     val seasonUrl = "$baseUrl/api/tmdb/tv/${tv.id}/season/${season.season_number}"
@@ -332,7 +333,7 @@ class Movix : Source() {
 
         val results = coroutineScope {
             servers.map { server ->
-                async {
+                async(Dispatchers.IO) {
                     try {
                         val request = GET(
                             if (isTv) {
@@ -375,7 +376,7 @@ class Movix : Source() {
         fun addExtraction(url: String, label: String) {
             val absUrl = absoluteUrl(url)
             if (absUrl.isNotBlank() && seenUrls.add(absUrl)) {
-                deferredVideos.add(async { extractVideos(absUrl, label) })
+                deferredVideos.add(async(Dispatchers.IO) { extractVideos(absUrl, label) })
             }
         }
 
