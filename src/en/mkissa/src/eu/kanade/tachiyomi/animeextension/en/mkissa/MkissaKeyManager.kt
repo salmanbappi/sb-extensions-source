@@ -57,7 +57,8 @@ class MkissaKeyManager(
 
             val handshake = handshake() ?: throw Exception(MATERIAL_ERROR)
 
-            val partB = runCatching { Base64.decode(handshake.bootstrap.partB, Base64.DEFAULT) }
+            val partBStr = handshake.bootstrap.partB ?: throw Exception(MATERIAL_ERROR)
+            val partB = runCatching { Base64.decode(partBStr, Base64.DEFAULT) }
                 .getOrElse { throw Exception(MATERIAL_ERROR) }
             require(partB.size >= 32) { MATERIAL_ERROR }
 
@@ -68,7 +69,7 @@ class MkissaKeyManager(
             val now = System.currentTimeMillis()
             Material(
                 key = MkissaCrypto.deriveKey(handshake.mask, partB),
-                epoch = handshake.bootstrap.epoch,
+                epoch = handshake.bootstrap.epoch ?: 0L,
                 buildId = handshake.build.buildId,
                 expiresAt = now + MATERIAL_TTL_MS,
                 fetchedAt = now,
