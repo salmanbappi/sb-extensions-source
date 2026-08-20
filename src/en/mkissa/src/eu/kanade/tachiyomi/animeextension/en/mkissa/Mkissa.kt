@@ -1,10 +1,10 @@
 package eu.kanade.tachiyomi.animeextension.en.mkissa
 
 import android.content.SharedPreferences
-import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animeextension.en.mkissa.EpisodeResult.DataEpisode.Episode.SourceUrl
 import eu.kanade.tachiyomi.animeextension.en.mkissa.extractors.MkissaExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -19,34 +19,32 @@ import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 import eu.kanade.tachiyomi.lib.streamlareextractor.StreamlareExtractor
 import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import extensions.utils.Source
+import keiyoushi.utils.appendGraphQLParams
 import keiyoushi.utils.bodyString
+import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.graphQLPost
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.toJsonBody
 import keiyoushi.utils.toJsonString
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
-import java.security.MessageDigest
-import javax.crypto.Cipher
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
 class Mkissa : Source() {
 
     override val name = "MKissa"
+
+    override val id = 4709139914729853090L
 
     override val baseUrl by lazy { "${preferences.siteUrl}/anime" }
 
@@ -56,39 +54,42 @@ class Mkissa : Source() {
 
     override val supportsLatest = true
 
+    override val migration: SharedPreferences.() -> Unit = {
+        if (getString(PREF_SITE_DOMAIN_KEY, null) == LEGACY_SITE_DOMAIN) {
+            edit().putString(PREF_SITE_DOMAIN_KEY, PREF_SITE_DOMAIN_DEFAULT).apply()
+        }
+        if (getString(PREF_DOMAIN_KEY, null) == LEGACY_API_DOMAIN) {
+            edit().putString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT).apply()
+        }
+    }
+
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
 
     override fun popularAnimeRequest(page: Int): Request {
-        val data = buildJsonObject {
-            putJsonObject("variables") {
-                put("type", "anime")
-                put("size", PAGE_SIZE)
-                put("dateRange", 7)
-                put("page", page)
-            }
-            put("query", POPULAR_QUERY)
+        val variables = buildJsonObject {
+            put("type", "anime")
+            put("size", PAGE_SIZE)
+            put("dateRange", 7)
+            put("page", page)
         }
-        return buildPost(data)
+        return buildPost(POPULAR_QUERY, variables)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val parsed = response.parseAs<PopularResult>()
 
-        val animeList = (parsed.data?.queryPopular?.recommendations ?: emptyList()).mapNotNull {
-            val card = it.anyCard ?: return@mapNotNull null
-            val cardName = card.name ?: return@mapNotNull null
-            val cardId = card.id ?: return@mapNotNull null
+        val animeList = parsed.data.queryPopular.recommendations.mapNotNull { it.anyCard }.map { card ->
             SAnime.create().apply {
                 title = when (preferences.titleStyle) {
                     "romaji" -> card.name
                     "eng" -> card.englishName
                     else -> card.nativeName
-                } ?: cardName
+                } ?: card.name
                 thumbnail_url = card.thumbnail?.let(::thumbnailUrl)
-                url = "$cardId<&sep>${card.slugTime ?: ""}<&sep>${cardName.slugify()}"
+                url = "${card.id}<&sep>${card.slugTime ?: ""}<&sep>${card.name.slugify()}"
             }
         }
 
@@ -98,20 +99,17 @@ class Mkissa : Source() {
     // =============================== Latest ===============================
 
     override fun latestUpdatesRequest(page: Int): Request {
-        val data = buildJsonObject {
-            putJsonObject("variables") {
-                putJsonObject("search") {
-                    put("allowAdult", true)
-                    put("allowUnknown", true)
-                }
-                put("limit", PAGE_SIZE)
-                put("page", page)
-                put("translationType", preferences.subPref)
-                put("countryOrigin", "ALL")
+        val variables = buildJsonObject {
+            putJsonObject("search") {
+                put("allowAdult", true)
+                put("allowUnknown", true)
             }
-            put("query", SEARCH_QUERY)
+            put("limit", PAGE_SIZE)
+            put("page", page)
+            put("translationType", preferences.subPref)
+            put("countryOrigin", "ALL")
         }
-        return buildPost(data)
+        return buildPost(SEARCH_QUERY, variables)
     }
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseAnime(response)
@@ -121,29 +119,26 @@ class Mkissa : Source() {
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val filterParams = MkissaFilters.getSearchParameters(filters)
 
-        val data = buildJsonObject {
-            putJsonObject("variables") {
-                putJsonObject("search") {
-                    if (query.isNotBlank()) put("query", query)
-                    put("allowAdult", true)
-                    put("allowUnknown", true)
-                    filterParams.sortBy.takeIf { it != "Recent" && it.isNotBlank() }?.let { put("sortBy", it) }
-                    filterParams.season.takeIf { it != "all" && it.isNotBlank() }?.let { put("season", it) }
-                    filterParams.releaseYear.toIntOrNull()?.let { put("year", it) }
-                    if (filterParams.genres != "all" && filterParams.genres.isNotBlank()) {
-                        put("genres", filterParams.genres.parseAs<JsonElement>())
-                        put("excludeGenres", buildJsonArray { })
-                    }
-                    if (filterParams.types != "all" && filterParams.types.isNotBlank()) put("types", filterParams.types.parseAs<JsonElement>())
+        val variables = buildJsonObject {
+            putJsonObject("search") {
+                if (query.isNotBlank()) put("query", query)
+                put("allowAdult", true)
+                put("allowUnknown", true)
+                filterParams.sortBy.takeIf { it != "Recent" && it.isNotBlank() }?.let { put("sortBy", it) }
+                filterParams.season.takeIf { it != "all" && it.isNotBlank() }?.let { put("season", it) }
+                filterParams.releaseYear.toIntOrNull()?.let { put("year", it) }
+                if (filterParams.genres != "all" && filterParams.genres.isNotBlank()) {
+                    put("genres", filterParams.genres.parseAs<JsonElement>())
+                    put("excludeGenres", buildJsonArray { })
                 }
-                put("limit", PAGE_SIZE)
-                put("page", page)
-                put("translationType", preferences.subPref)
-                put("countryOrigin", filterParams.origin)
+                if (filterParams.types != "all" && filterParams.types.isNotBlank()) put("types", filterParams.types.parseAs<JsonElement>())
             }
-            put("query", SEARCH_QUERY)
+            put("limit", PAGE_SIZE)
+            put("page", page)
+            put("translationType", preferences.subPref)
+            put("countryOrigin", filterParams.origin)
         }
-        return buildPost(data)
+        return buildPost(SEARCH_QUERY, variables)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = parseAnime(response)
@@ -155,13 +150,10 @@ class Mkissa : Source() {
     // =========================== Anime Details ============================
 
     override fun animeDetailsRequest(anime: SAnime): Request {
-        val data = buildJsonObject {
-            putJsonObject("variables") {
-                put("_id", anime.url.split("<&sep>").first())
-            }
-            put("query", DETAILS_QUERY)
+        val variables = buildJsonObject {
+            put("_id", anime.url.split("<&sep>").first())
         }
-        return buildPost(data)
+        return buildPost(DETAILS_QUERY, variables)
     }
 
     override fun getAnimeUrl(anime: SAnime): String {
@@ -171,22 +163,22 @@ class Mkissa : Source() {
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val show = response.parseAs<DetailsResult>().data?.show
+        val show = response.parseAs<DetailsResult>().data.show
 
         return SAnime.create().apply {
-            genre = show?.genres?.joinToString()
-            status = parseStatus(show?.status)
-            author = show?.studios?.firstOrNull()
+            genre = show.genres?.joinToString()
+            status = parseStatus(show.status)
+            author = show.studios?.firstOrNull()
             description = buildString {
                 append(
                     Jsoup.parseBodyFragment(
-                        show?.description?.replace("<br>", "br2n") ?: "",
+                        show.description?.replace("<br>", "br2n") ?: "",
                     ).text().replace("br2n", "\n"),
                 )
                 append("\n\n")
-                append("Type: ${show?.type ?: "Unknown"}")
-                append("\nAired: ${show?.season?.quarter ?: "-"} ${show?.season?.year ?: "-"}")
-                append("\nScore: ${show?.score ?: "-"}★")
+                append("Type: ${show.type ?: "Unknown"}")
+                append("\nAired: ${show.season?.quarter ?: "-"} ${show.season?.year ?: "-"}")
+                append("\nScore: ${show.score ?: "-"}★")
             }
             initialized = true
         }
@@ -195,13 +187,10 @@ class Mkissa : Source() {
     // ============================== Episodes ==============================
 
     override fun episodeListRequest(anime: SAnime): Request {
-        val data = buildJsonObject {
-            putJsonObject("variables") {
-                put("_id", anime.url.split("<&sep>").first())
-            }
-            put("query", EPISODES_QUERY)
+        val variables = buildJsonObject {
+            put("_id", anime.url.split("<&sep>").first())
         }
-        return buildPost(data)
+        return buildPost(EPISODES_QUERY, variables)
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
@@ -209,12 +198,12 @@ class Mkissa : Source() {
         val medias = response.parseAs<SeriesResult>()
 
         val episodesDetail = if (subPref == "sub") {
-            medias.data?.show?.availableEpisodesDetail?.sub
+            medias.data.show.availableEpisodesDetail.sub
         } else {
-            medias.data?.show?.availableEpisodesDetail?.dub
+            medias.data.show.availableEpisodesDetail.dub
         } ?: emptyList()
 
-        val showId = medias.data?.show?.id ?: ""
+        val showId = medias.data.show.id
 
         return episodesDetail.map { ep ->
             val numName = ep.toIntOrNull() ?: (ep.toFloatOrNull() ?: "1")
@@ -233,19 +222,21 @@ class Mkissa : Source() {
         }
     }
 
-    override fun getEpisodeUrl(episode: SEpisode): String {
-        return runCatching {
-            val variables = episode.url.parseAs<JsonObject>()["variables"]!!.jsonObject
-            val showId = variables["showId"]?.jsonPrimitive?.content ?: ""
-            val ep = variables["episodeString"]?.jsonPrimitive?.content ?: ""
-            val subPref = variables["translationType"]?.jsonPrimitive?.content ?: "sub"
-            "${preferences.siteUrl}/bangumi/$showId/$ep/$subPref"
-        }.getOrDefault(preferences.siteUrl)
-    }
-
     // ============================ Video Links =============================
 
-    override fun videoListRequest(episode: SEpisode): Request {
+    private val keyManager by lazy {
+        MkissaKeyManager(client, headers, preferences, preferences.siteUrl, apiUrl)
+    }
+
+    override fun videoListRequest(episode: SEpisode): Request = throw UnsupportedOperationException()
+
+    // videoListRequest no longer yields a usable URL, so point "Open in WebView" at the watch page.
+    override fun getEpisodeUrl(episode: SEpisode): String {
+        val vars = episode.url.parseAs<EpisodeVariables>().variables
+        return "${preferences.siteUrl}/anime/${vars.showId}/p-${vars.episodeString}-${vars.translationType}"
+    }
+
+    private fun videoListRequest(episode: SEpisode, material: MkissaKeyManager.Material): Request {
         val variables = episode.url.parseAs<JsonObject>()["variables"]!!.jsonObject
 
         val extensions = buildJsonObject {
@@ -253,24 +244,25 @@ class Mkissa : Source() {
                 put("version", 1)
                 put("sha256Hash", STREAM_HASH)
             }
+            put("k", ANIME_LANE)
+            put("aaReq", keyManager.aaReq(material))
         }
 
-        val url = apiUrl.toHttpUrl().newBuilder().apply {
-            addPathSegment("api")
-            addQueryParameter("variables", variables.toJsonString())
-            addQueryParameter("extensions", extensions.toJsonString())
-        }.build().toString()
+        // The text goes out next to the hash so the server can register the query itself rather
+        // than having to already know it; see STREAM_QUERY.
+        val url = apiUrl.toHttpUrl().newBuilder()
+            .addPathSegment("api")
+            .appendGraphQLParams(
+                query = STREAM_QUERY,
+                variables = variables,
+                extensions = extensions,
+            )
+            .build()
 
-        return GET(url, headers)
-    }
+        // The build the token was minted for; the server rejects a mismatch with AA_CRYPTO_BUILD_MISMATCH.
+        val streamHeaders = headers.newBuilder().set("x-build-id", material.buildId).build()
 
-    private fun videoListPostRequest(episode: SEpisode): Request {
-        val variables = episode.url.parseAs<JsonObject>()["variables"]!!.jsonObject
-        val data = buildJsonObject {
-            put("variables", variables)
-            put("query", STREAM_QUERY)
-        }
-        return buildPost(data)
+        return GET(url, streamHeaders)
     }
 
     private val mkissaExtractor by lazy { MkissaExtractor(client, headers) }
@@ -283,67 +275,25 @@ class Mkissa : Source() {
     private val streamwishExtractor by lazy { StreamWishExtractor(client, headers) }
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val responseBody = runCatching {
-            client.newCall(videoListRequest(episode)).awaitSuccess().bodyString()
-        }.getOrNull() ?: runCatching {
-            client.newCall(videoListPostRequest(episode)).awaitSuccess().bodyString()
-        }.getOrDefault("")
-
-        // 1. Check for encrypted response (tobeparsed present)
-        val tobeparsed = runCatching {
-            responseBody.parseAs<EncryptedEpisodeResult>().data?.tobeparsed
-        }.getOrNull()
-
-        // 2. If encrypted, decrypt directly; otherwise parse plain text
-        var sourceUrls = if (!tobeparsed.isNullOrBlank()) {
-            decryptTobeparsed(tobeparsed).parseAs<DecryptedEpisodeResult>().episode?.sourceUrls
-        } else {
-            responseBody.parseAs<EpisodeResult>().data?.episode?.sourceUrls
-        } ?: emptyList()
-
-        if (sourceUrls.isEmpty()) {
-            val fallbackBody = runCatching {
-                client.newCall(videoListPostRequest(episode)).awaitSuccess().bodyString()
-            }.getOrDefault("")
-
-            val fbTobeparsed = runCatching {
-                fallbackBody.parseAs<EncryptedEpisodeResult>().data?.tobeparsed
-            }.getOrNull()
-
-            sourceUrls = if (!fbTobeparsed.isNullOrBlank()) {
-                decryptTobeparsed(fbTobeparsed).parseAs<DecryptedEpisodeResult>().episode?.sourceUrls
-            } else {
-                fallbackBody.parseAs<EpisodeResult>().data?.episode?.sourceUrls
-            } ?: emptyList()
-        }
+        val sourceUrls = fetchSourceUrls(episode)
 
         val hosterSelection = preferences.getHosters
         val altHosterSelection = preferences.getAltHosters
 
-        // Mapping of alternative hosters
-        val mappings = listOf(
-            "vidstreaming" to listOf("vidstreaming", "https://gogo", "playgo1.cc", "playtaku", "vidcloud"),
-            "doodstream" to listOf("dood"),
-            "okru" to listOf("ok.ru", "okru"),
-            "mp4upload" to listOf("mp4upload.com"),
-            "streamlare" to listOf("streamlare.com"),
-            "filemoon" to listOf("filemoon", "moonplayer"),
-            "streamwish" to listOf("wish"),
-        )
-
         val serverList = mutableListOf<Server>()
         sourceUrls.forEach { video ->
-            val rawSourceUrl = video.sourceUrl ?: return@forEach
-            val videoUrl = rawSourceUrl.decryptSource()
+            val videoUrl = video.sourceUrl.decryptSource()
+            val sourceName = video.sourceName.lowercase()
 
-            val matchingMapping = mappings.firstOrNull { (altHoster, urlMatches) ->
-                altHosterSelection.contains(altHoster) && videoUrl.containsAny(urlMatches)
+            val matchingMapping = HOSTER_MAPPINGS.firstOrNull { (altHoster, urlMatches) ->
+                // Fm-Hls lives in the Hoster selection (lowercased); the rest are Alternative Hosts.
+                (hosterSelection.contains(altHoster.lowercase()) || altHosterSelection.contains(altHoster)) &&
+                    videoUrl.containsAny(urlMatches)
             }
 
             when {
-                videoUrl.startsWith("/apivtwo/") && INTERNAL_HOSTER_NAMES.any {
-                    Regex("""\b${it.lowercase()}\b""").find(video.sourceName?.lowercase() ?: "") != null &&
-                        hosterSelection.contains(it.lowercase())
+                videoUrl.startsWith("/apivtwo/") && INTERNAL_HOSTER_MATCHERS.any { (name, pattern) ->
+                    hosterSelection.contains(name) && pattern.containsMatchIn(sourceName)
                 } ->
                     Server(videoUrl, "internal ${video.sourceName}", video.priority)
                         .let(serverList::add)
@@ -358,12 +308,7 @@ class Mkissa : Source() {
             }
         }
 
-        // Fetch iframe endpoint
-        val iframeEndpoint = runCatching {
-            client.newCall(GET("${preferences.siteUrl}/getVersion")).awaitSuccess()
-                .parseAs<MkissaExtractor.VersionResponse>()
-                .episodeIframeHead ?: FALLBACK_PLAYER_DOMAIN
-        }.getOrDefault(FALLBACK_PLAYER_DOMAIN)
+        val iframeEndpoint = PLAYER_DOMAIN
 
         return serverList.parallelCatchingFlatMap { server ->
             val sName = server.sourceName
@@ -373,10 +318,13 @@ class Mkissa : Source() {
                 }
 
                 sName.startsWith("player@") -> {
+                    // These Yt sources live on the site's CDN (tools.fast4speed.rsvp), which is
+                    // Cloudflare-gated: it streams with a legacy allanime.day Referer and 403s on
+                    // any mkissa one. `set` replaces the base mkissa Referer instead of appending,
+                    // while keeping the client's configured headers (user agent, etc.).
                     val videoHeaders = headers.newBuilder().apply {
                         add("Accept", "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5")
-                        add("Host", server.sourceUrl.toHttpUrl().host)
-                        add("Referer", "$iframeEndpoint/")
+                        set("Referer", "$PLAYER_DOMAIN/")
                     }.build()
 
                     Video(
@@ -406,8 +354,8 @@ class Mkissa : Source() {
                     streamlareExtractor.videosFromUrl(server.sourceUrl)
                 }
 
-                sName == "filemoon" -> {
-                    filemoonExtractor.videosFromUrl(server.sourceUrl, prefix = "Filemoon:")
+                sName == "Fm-Hls" -> {
+                    filemoonExtractor.videosFromUrl(server.sourceUrl, prefix = "Fm-Hls:")
                 }
 
                 sName == "streamwish" -> {
@@ -435,7 +383,7 @@ class Mkissa : Source() {
         val parsedChunks = try {
             hexPayload.chunked(2).map { it.toInt(16) }
         } catch (_: NumberFormatException) {
-            return this
+            return this // Fail fast and return the original string instead of a corrupted decryption
         }
 
         if (keyType == null) {
@@ -455,30 +403,35 @@ class Mkissa : Source() {
         val quality = preferences.quality
         val subPref = preferences.subPref
 
+        // Reversed comparator, not reversed list: keeps the sort stable, so equal-key entries stay
+        // in extractor order (highest bitrate first).
         return pList.sortedWith(
-            compareBy(
+            compareBy<Pair<Video, Float>>(
                 { if (prefServer == "site_default") it.second else it.first.videoTitle.contains(prefServer, true) },
                 { it.first.videoTitle.contains(quality, true) },
                 { it.first.videoTitle.contains(subPref, true) },
-            ),
-        ).reversed()
-            .map { t -> t.first }
+                { it.first.videoTitle.resolution() },
+            ).reversed(),
+        ).map { t -> t.first }
     }
 
-    private fun buildPost(dataObject: JsonObject): Request {
-        val payload = dataObject.toJsonString().toJsonBody()
+    // First match, not the largest: names can end in a bitrate ("Ak - 1080 5 mb/s").
+    private fun String.resolution(): Int = RESOLUTION_REGEX.find(this)?.value?.toIntOrNull() ?: 0
 
-        val postHeaders = headers.newBuilder().apply {
+    private val postHeaders by lazy {
+        headers.newBuilder().apply {
             add("Accept", "*/*")
-            add("Content-Length", payload.contentLength().toString())
-            add("Content-Type", payload.contentType().toString())
-            add("Host", apiUrl.toHttpUrl().host)
             add("Origin", GRAPHQL_ORIGIN)
             add("Referer", "$GRAPHQL_ORIGIN/")
         }.build()
-
-        return POST("$apiUrl/api", headers = postHeaders, body = payload)
     }
+
+    private fun buildPost(query: String, variables: JsonObject): Request = graphQLPost(
+        url = "$apiUrl/api",
+        headers = postHeaders,
+        query = query,
+        variables = variables,
+    )
 
     data class Server(
         val sourceUrl: String,
@@ -500,19 +453,15 @@ class Mkissa : Source() {
     private fun parseAnime(response: Response): AnimesPage {
         val parsed = response.parseAs<SearchResult>()
 
-        val animeList = (parsed.data?.shows?.edges ?: emptyList()).mapNotNull { ani ->
-            val name = ani.name ?: return@mapNotNull null
-            val id = ani.id ?: return@mapNotNull null
+        val animeList = parsed.data.shows.edges.map { ani ->
             SAnime.create().apply {
-                title = (
-                    when (preferences.titleStyle) {
-                        "romaji" -> ani.name
-                        "eng" -> ani.englishName
-                        else -> ani.nativeName
-                    } ?: name
-                )
+                title = when (preferences.titleStyle) {
+                    "romaji" -> ani.name
+                    "eng" -> ani.englishName
+                    else -> ani.nativeName
+                } ?: ani.name
                 thumbnail_url = ani.thumbnail?.let(::thumbnailUrl)
-                url = "$id<&sep>${ani.slugTime ?: ""}<&sep>${name.slugify()}"
+                url = "${ani.id}<&sep>${ani.slugTime ?: ""}<&sep>${ani.name.slugify()}"
             }
         }
 
@@ -527,29 +476,96 @@ class Mkissa : Source() {
 
     private fun String.containsAny(keywords: List<String>): Boolean = keywords.any { this.contains(it) }
 
-    private fun decryptTobeparsed(base64Payload: String): String {
-        val blob = Base64.decode(base64Payload, Base64.DEFAULT)
-        if (blob.size < 13) return ""
-        val versionByte = blob[0].toInt() and 0xFF
-        val iv = blob.sliceArray(1 until 13)
-        val encryptedData = blob.sliceArray(13 until blob.size)
+    private suspend fun fetchSourceUrls(episode: SEpisode): List<SourceUrl> {
+        val encryptionChangedError = Exception("MKissa changed its stream encryption; update the extension")
+        var lastError: Throwable? = null
+        var buildHealed = false
 
-        val keyBytes = MessageDigest.getInstance(DECRYPT_KEY_ALGO)
-            .digest("${DECRYPT_SECRET}:v$versionByte".toByteArray(Charsets.UTF_8))
+        repeat(MAX_KEY_ATTEMPTS) { attempt ->
+            // Obtaining material can itself fail transiently; letting that escape would spend the
+            // whole retry budget on the first attempt.
+            val material = runCatching { keyManager.material(forceRefresh = attempt > 0) }
+                .getOrElse {
+                    lastError = it
+                    return@repeat
+                }
 
-        val cipher = Cipher.getInstance(DECRYPT_CIPHER_ALGO)
-        val gcmSpec = GCMParameterSpec(DECRYPT_TAG_LENGTH, iv)
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, DECRYPT_KEY_TYPE), gcmSpec)
+            // Keep the real request error so it's surfaced instead of the generic crypto message.
+            val responseBody = runCatching {
+                client.newCall(videoListRequest(episode, material)).awaitSuccess().bodyString()
+            }.getOrElse {
+                lastError = it
+                null
+            }
 
-        return String(cipher.doFinal(encryptedData), Charsets.UTF_8)
+            if (responseBody != null) {
+                val tobeparsed = runCatching {
+                    responseBody.parseAs<EncryptedEpisodeResult>().data.tobeparsed
+                }.getOrNull()
+
+                // NEED_CAPTCHA and the rate limiter answer 200 with a null episode and no payload,
+                // which the branches below read as an empty episode or a changed format. Retrying
+                // only deepens the block, and the generic message sends people chasing an extension
+                // update that does not exist.
+                if (tobeparsed.isNullOrBlank()) {
+                    keyManager.apiErrorMessage(responseBody)?.let { throw Exception(it) }
+                }
+
+                when {
+                    !tobeparsed.isNullOrBlank() -> {
+                        runCatching { keyManager.decrypt(tobeparsed, material)?.parseAs<DecryptedEpisodeResult>() }
+                            .getOrNull()
+                            ?.let { return it.episode?.sourceUrls.orEmpty() }
+                    }
+                    // No payload and no crypto error: an older, unencrypted show.
+                    !keyManager.isCryptoError(responseBody) -> {
+                        runCatching { responseBody.parseAs<EpisodeResult>().data.episode?.sourceUrls.orEmpty() }
+                            .getOrNull()
+                            ?.let { return it }
+                    }
+                }
+
+                // A response that yields no usable sources means the stream format changed,
+                // not a network fault; record it so the surfaced error reflects this attempt.
+                lastError = encryptionChangedError
+
+                // The bootstrap accepted this build but the streams API did not, so only a rescrape
+                // can help; force one on the next attempt.
+                if (attempt >= 1 && !buildHealed && keyManager.isCryptoError(responseBody)) {
+                    keyManager.invalidateBuild()
+                    buildHealed = true
+                }
+            }
+            keyManager.invalidate()
+        }
+
+        throw lastError ?: encryptionChangedError
     }
 
     companion object {
         private const val PAGE_SIZE = 26
-        private const val GRAPHQL_ORIGIN = "https://mkissa.to"
+        private const val GRAPHQL_ORIGIN = "https://youtu-chan.com"
         private val INTERNAL_HOSTER_NAMES = arrayOf(
             "Default", "Ac", "Ak", "Kir", "Rab", "Luf-mp4",
             "Si-Hls", "S-mp4", "Ac-Hls", "Uv-mp4", "Pn-Hls",
+        )
+
+        // Compiled once: the source-name match used to run through a freshly built Regex for every
+        // internal hoster, for every source, on every episode.
+        private val INTERNAL_HOSTER_MATCHERS = INTERNAL_HOSTER_NAMES.map {
+            it.lowercase() to Regex("""\b${Regex.escape(it.lowercase())}\b""")
+        }
+
+        private val HOSTER_MAPPINGS = listOf(
+            "vidstreaming" to listOf("vidstreaming", "https://gogo", "playgo1.cc", "playtaku", "vidcloud"),
+            "doodstream" to listOf("dood"),
+            "okru" to listOf("ok.ru", "okru"),
+            "mp4upload" to listOf("mp4upload.com"),
+            "streamlare" to listOf("streamlare.com"),
+            // Fm-Hls is Filemoon; the embed domain rotates (bysekoze.com is current), so match the
+            // legacy filemoon domains too.
+            "Fm-Hls" to listOf("bysekoze.com", "fastmoon", "filemoon", "moonplayer"),
+            "streamwish" to listOf("wish"),
         )
 
         private val ALT_HOSTER_NAMES = arrayOf(
@@ -559,7 +575,6 @@ class Mkissa : Source() {
             "mp4upload",
             "streamlare",
             "doodstream",
-            "filemoon",
             "streamwish",
         )
 
@@ -569,10 +584,14 @@ class Mkissa : Source() {
         private const val PREF_SITE_DOMAIN_KEY = "preferred_site_domain"
         private const val PREF_SITE_DOMAIN_DEFAULT = "https://mkissa.to"
 
+        private const val LEGACY_SITE_DOMAIN = "https://allmanga.to"
+
         private const val PREF_DOMAIN_KEY = "preferred_domain"
         private const val PREF_DOMAIN_DEFAULT = "https://api.mkissa.net"
+        private const val LEGACY_API_DOMAIN = "https://api.allanime.day"
 
-        private const val FALLBACK_PLAYER_DOMAIN = "https://blog.allanime.day"
+        // The site's default iframe host, for the legacy internal/player servers.
+        private const val PLAYER_DOMAIN = "https://allanime.day"
 
         private const val PREF_SERVER_KEY = "preferred_server"
         private val PREF_SERVER_ENTRIES = arrayOf("Site Default") +
@@ -586,10 +605,11 @@ class Mkissa : Source() {
         private const val PREF_SERVER_DEFAULT = "site_default"
 
         private const val PREF_HOSTER_KEY = "hoster_selection"
+        private val PREF_HOSTER_ENTRIES = INTERNAL_HOSTER_NAMES + arrayOf("Fm-Hls (Filemoon)")
         private val PREF_HOSTER_ENTRY_VALUES = INTERNAL_HOSTER_NAMES.map {
             it.lowercase()
-        }.toTypedArray()
-        private val PREF_HOSTER_DEFAULT = setOf("default", "ac", "ak", "kir", "luf-mp4", "si-hls", "s-mp4", "ac-hls")
+        }.toTypedArray() + arrayOf("fm-hls")
+        private val PREF_HOSTER_DEFAULT = setOf("default", "ac", "ak", "kir", "luf-mp4", "si-hls", "s-mp4", "ac-hls", "fm-hls")
 
         private const val PREF_ALT_HOSTER_KEY = "alt_hoster_selection"
 
@@ -615,11 +635,10 @@ class Mkissa : Source() {
         private const val PREF_SUB_KEY = "preferred_sub"
         private const val PREF_SUB_DEFAULT = "sub"
 
-        private const val DECRYPT_SECRET = "Xot36i3lK3"
-        private const val DECRYPT_TAG_LENGTH = 128
-        private const val DECRYPT_KEY_ALGO = "SHA-256"
-        private const val DECRYPT_KEY_TYPE = "AES"
-        private const val DECRYPT_CIPHER_ALGO = "AES/GCM/NoPadding"
+        // How many key attempts fetchSourceUrls will try before giving up.
+        private const val MAX_KEY_ATTEMPTS = 2
+
+        private val RESOLUTION_REGEX = Regex("""\b\d{3,4}\b""")
 
         // XOR keys indexed by source-URL prefix type: '--'=3  '#-'=2  '##'=1  '-#'=4  '#'=0
         private val XOR_KEYS = arrayOf(
@@ -670,7 +689,7 @@ class Mkissa : Source() {
         MultiSelectListPreference(screen.context).apply {
             key = PREF_HOSTER_KEY
             title = "Enable/Disable Hosts"
-            entries = INTERNAL_HOSTER_NAMES
+            entries = PREF_HOSTER_ENTRIES
             entryValues = PREF_HOSTER_ENTRY_VALUES
             setDefaultValue(PREF_HOSTER_DEFAULT)
         }.also(screen::addPreference)
