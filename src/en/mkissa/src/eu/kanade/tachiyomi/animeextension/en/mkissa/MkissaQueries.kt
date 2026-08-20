@@ -4,7 +4,26 @@ fun buildQuery(queryAction: () -> String): String = queryAction()
     .trimIndent()
     .replace("%", "$")
 
-const val STREAM_HASH = "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec"
+const val STREAM_HASH = "ca735f1436927eaf7abb05d1589bb93c43cf606d87eecc2030357c1aad8fb455"
+
+val STREAM_QUERY = buildQuery {
+    """
+        query(
+            %showId: String!
+            %translationType: VaildTranslationTypeEnumType!
+            %episodeString: String!
+        ) {
+            episode(
+                showId: %showId
+                translationType: %translationType
+                episodeString: %episodeString
+            ) {
+                episodeString
+                sourceUrls
+            }
+        }
+    """
+}
 
 val POPULAR_QUERY: String = buildQuery {
     """

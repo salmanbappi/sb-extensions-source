@@ -32,6 +32,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -229,7 +230,17 @@ class Mkissa : Source() {
                     }
                 }.toJsonString()
             }
-        }.reversed()
+        }
+    }
+
+    override fun getEpisodeUrl(episode: SEpisode): String {
+        return runCatching {
+            val variables = episode.url.parseAs<JsonObject>()["variables"]!!.jsonObject
+            val showId = variables["showId"]?.jsonPrimitive?.content ?: ""
+            val ep = variables["episodeString"]?.jsonPrimitive?.content ?: ""
+            val subPref = variables["translationType"]?.jsonPrimitive?.content ?: "sub"
+            "${preferences.siteUrl}/bangumi/$showId/$ep/$subPref"
+        }.getOrDefault(preferences.siteUrl)
     }
 
     // ============================ Video Links =============================
@@ -253,6 +264,15 @@ class Mkissa : Source() {
         return GET(url, headers)
     }
 
+    private fun videoListPostRequest(episode: SEpisode): Request {
+        val variables = episode.url.parseAs<JsonObject>()["variables"]!!.jsonObject
+        val data = buildJsonObject {
+            put("variables", variables)
+            put("query", STREAM_QUERY)
+        }
+        return buildPost(data)
+    }
+
     private val mkissaExtractor by lazy { MkissaExtractor(client, headers) }
     private val gogoStreamExtractor by lazy { GogoStreamExtractor(client) }
     private val doodExtractor by lazy { DoodExtractor(client) }
@@ -263,8 +283,11 @@ class Mkissa : Source() {
     private val streamwishExtractor by lazy { StreamWishExtractor(client, headers) }
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val responseBody = client.newCall(videoListRequest(episode))
-            .awaitSuccess().bodyString()
+        val responseBody = runCatching {
+            client.newCall(videoListRequest(episode)).awaitSuccess().bodyString()
+        }.getOrNull() ?: runCatching {
+            client.newCall(videoListPostRequest(episode)).awaitSuccess().bodyString()
+        }.getOrDefault("")
 
         // 1. Check for encrypted response (tobeparsed present)
         val tobeparsed = runCatching {
@@ -272,11 +295,27 @@ class Mkissa : Source() {
         }.getOrNull()
 
         // 2. If encrypted, decrypt directly; otherwise parse plain text
-        val sourceUrls = if (!tobeparsed.isNullOrBlank()) {
+        var sourceUrls = if (!tobeparsed.isNullOrBlank()) {
             decryptTobeparsed(tobeparsed).parseAs<DecryptedEpisodeResult>().episode?.sourceUrls
         } else {
             responseBody.parseAs<EpisodeResult>().data?.episode?.sourceUrls
         } ?: emptyList()
+
+        if (sourceUrls.isEmpty()) {
+            val fallbackBody = runCatching {
+                client.newCall(videoListPostRequest(episode)).awaitSuccess().bodyString()
+            }.getOrDefault("")
+
+            val fbTobeparsed = runCatching {
+                fallbackBody.parseAs<EncryptedEpisodeResult>().data?.tobeparsed
+            }.getOrNull()
+
+            sourceUrls = if (!fbTobeparsed.isNullOrBlank()) {
+                decryptTobeparsed(fbTobeparsed).parseAs<DecryptedEpisodeResult>().episode?.sourceUrls
+            } else {
+                fallbackBody.parseAs<EpisodeResult>().data?.episode?.sourceUrls
+            } ?: emptyList()
+        }
 
         val hosterSelection = preferences.getHosters
         val altHosterSelection = preferences.getAltHosters
