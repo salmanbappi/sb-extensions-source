@@ -81,15 +81,17 @@ class Mkissa : Source() {
     override fun popularAnimeParse(response: Response): AnimesPage {
         val parsed = response.parseAs<PopularResult>()
 
-        val animeList = parsed.data.queryPopular.recommendations.mapNotNull { it.anyCard }.map { card ->
+        val animeList = (parsed.data?.queryPopular?.recommendations ?: emptyList()).mapNotNull { it.anyCard }.mapNotNull { card ->
+            val cardId = card.id ?: return@mapNotNull null
+            val cardName = card.name ?: return@mapNotNull null
             SAnime.create().apply {
                 title = when (preferences.titleStyle) {
                     "romaji" -> card.name
                     "eng" -> card.englishName
                     else -> card.nativeName
-                } ?: card.name
+                } ?: cardName
                 thumbnail_url = card.thumbnail?.let(::thumbnailUrl)
-                url = "${card.id}<&sep>${card.slugTime ?: ""}<&sep>${card.name.slugify()}"
+                url = "$cardId<&sep>${card.slugTime ?: ""}<&sep>${cardName.slugify()}"
             }
         }
 
@@ -163,22 +165,22 @@ class Mkissa : Source() {
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val show = response.parseAs<DetailsResult>().data.show
+        val show = response.parseAs<DetailsResult>().data?.show
 
         return SAnime.create().apply {
-            genre = show.genres?.joinToString()
-            status = parseStatus(show.status)
-            author = show.studios?.firstOrNull()
+            genre = show?.genres?.joinToString()
+            status = parseStatus(show?.status)
+            author = show?.studios?.firstOrNull()
             description = buildString {
                 append(
                     Jsoup.parseBodyFragment(
-                        show.description?.replace("<br>", "br2n") ?: "",
+                        show?.description?.replace("<br>", "br2n") ?: "",
                     ).text().replace("br2n", "\n"),
                 )
                 append("\n\n")
-                append("Type: ${show.type ?: "Unknown"}")
-                append("\nAired: ${show.season?.quarter ?: "-"} ${show.season?.year ?: "-"}")
-                append("\nScore: ${show.score ?: "-"}★")
+                append("Type: ${show?.type ?: "Unknown"}")
+                append("\nAired: ${show?.season?.quarter ?: "-"} ${show?.season?.year ?: "-"}")
+                append("\nScore: ${show?.score ?: "-"}★")
             }
             initialized = true
         }
@@ -198,12 +200,12 @@ class Mkissa : Source() {
         val medias = response.parseAs<SeriesResult>()
 
         val episodesDetail = if (subPref == "sub") {
-            medias.data.show.availableEpisodesDetail.sub
+            medias.data?.show?.availableEpisodesDetail?.sub
         } else {
-            medias.data.show.availableEpisodesDetail.dub
+            medias.data?.show?.availableEpisodesDetail?.dub
         } ?: emptyList()
 
-        val showId = medias.data.show.id
+        val showId = medias.data?.show?.id ?: ""
 
         return episodesDetail.map { ep ->
             val numName = ep.toIntOrNull() ?: (ep.toFloatOrNull() ?: "1")
@@ -233,7 +235,7 @@ class Mkissa : Source() {
     // videoListRequest no longer yields a usable URL, so point "Open in WebView" at the watch page.
     override fun getEpisodeUrl(episode: SEpisode): String {
         val vars = episode.url.parseAs<EpisodeVariables>().variables
-        return "${preferences.siteUrl}/anime/${vars.showId}/p-${vars.episodeString}-${vars.translationType}"
+        return "${preferences.siteUrl}/anime/${vars?.showId ?: ""}/p-${vars?.episodeString ?: ""}-${vars?.translationType ?: ""}"
     }
 
     private fun videoListRequest(episode: SEpisode, material: MkissaKeyManager.Material): Request {
@@ -282,8 +284,10 @@ class Mkissa : Source() {
 
         val serverList = mutableListOf<Server>()
         sourceUrls.forEach { video ->
-            val videoUrl = video.sourceUrl.decryptSource()
-            val sourceName = video.sourceName.lowercase()
+            val rawSourceUrl = video.sourceUrl ?: return@forEach
+            val videoUrl = rawSourceUrl.decryptSource()
+            val rawSourceName = video.sourceName ?: ""
+            val sourceName = rawSourceName.lowercase()
 
             val matchingMapping = HOSTER_MAPPINGS.firstOrNull { (altHoster, urlMatches) ->
                 // Fm-Hls lives in the Hoster selection (lowercased); the rest are Alternative Hosts.
@@ -295,11 +299,11 @@ class Mkissa : Source() {
                 videoUrl.startsWith("/apivtwo/") && INTERNAL_HOSTER_MATCHERS.any { (name, pattern) ->
                     hosterSelection.contains(name) && pattern.containsMatchIn(sourceName)
                 } ->
-                    Server(videoUrl, "internal ${video.sourceName}", video.priority)
+                    Server(videoUrl, "internal $rawSourceName", video.priority)
                         .let(serverList::add)
 
                 altHosterSelection.contains("player") && video.type == "player" ->
-                    Server(videoUrl, "player@${video.sourceName}", video.priority)
+                    Server(videoUrl, "player@$rawSourceName", video.priority)
                         .let(serverList::add)
 
                 matchingMapping != null ->
@@ -453,15 +457,17 @@ class Mkissa : Source() {
     private fun parseAnime(response: Response): AnimesPage {
         val parsed = response.parseAs<SearchResult>()
 
-        val animeList = parsed.data.shows.edges.map { ani ->
+        val animeList = (parsed.data?.shows?.edges ?: emptyList()).mapNotNull { ani ->
+            val aniId = ani.id ?: return@mapNotNull null
+            val aniName = ani.name ?: return@mapNotNull null
             SAnime.create().apply {
                 title = when (preferences.titleStyle) {
                     "romaji" -> ani.name
                     "eng" -> ani.englishName
                     else -> ani.nativeName
-                } ?: ani.name
+                } ?: aniName
                 thumbnail_url = ani.thumbnail?.let(::thumbnailUrl)
-                url = "${ani.id}<&sep>${ani.slugTime ?: ""}<&sep>${ani.name.slugify()}"
+                url = "$aniId<&sep>${ani.slugTime ?: ""}<&sep>${aniName.slugify()}"
             }
         }
 
