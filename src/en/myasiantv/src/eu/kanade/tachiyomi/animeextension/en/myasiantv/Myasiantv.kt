@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.myasiantv
 
+import android.util.Base64
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -7,6 +8,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
@@ -20,8 +22,12 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
+import java.net.URLDecoder
 import java.text.SimpleDateFormat
 import java.util.Locale
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
@@ -29,6 +35,7 @@ import kotlin.time.Duration.Companion.seconds
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONObject
 
 class Myasiantv : Source() {
 
@@ -211,7 +218,7 @@ class Myasiantv : Source() {
                     date_upload = parseEpisodeDate(timeText)
                 }
             }
-        }.reversed()
+        }
     }
 
     private fun parseEpisodeDate(dateStr: String): Long {
@@ -289,6 +296,12 @@ class Myasiantv : Source() {
         val videoList = mutableListOf<Video>()
 
         val extracted = when {
+            embedUrl.contains("megaplay.su") ->
+                extractMegaplay(embedUrl)
+            embedUrl.contains("megavid.buzz") ->
+                extractMegavid(embedUrl)
+            embedUrl.contains("vidb.top") || embedUrl.contains("vidbasic.top") ->
+                extractVidb(embedUrl)
             embedUrl.contains("dood") || embedUrl.contains("ds2play") || embedUrl.contains("doodstream") ->
                 doodExtractor.videosFromUrl(embedUrl)
             embedUrl.contains("streamtape") ->
@@ -304,7 +317,7 @@ class Myasiantv : Source() {
             embedUrl.endsWith(".m3u8") || embedUrl.contains(".m3u8?") ->
                 playlistUtils.extractFromHls(embedUrl, referer = "$baseUrl/", videoNameGen = { it })
             else ->
-                universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = "")
+                extractGenericOrUniversal(embedUrl, embedHeaders)
         }
 
         videoList.addAll(
@@ -320,6 +333,132 @@ class Myasiantv : Source() {
         )
 
         return videoList.sortVideos()
+    }
+
+    private fun extractMegaplay(url: String): List<Video> {
+        return runCatching {
+            val resp = client.newCall(GET(url, headers.newBuilder().set("Referer", "$baseUrl/").build())).execute()
+            val body = resp.body.string()
+            val m3u8Url = Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""").find(body)?.groupValues?.get(1)
+                ?: return emptyList()
+            val hlsHeaders = headers.newBuilder().set("Referer", "https://megaplay.su/").build()
+            playlistUtils.extractFromHls(m3u8Url, customHlsHeaders = hlsHeaders, videoNameGen = { it })
+        }.getOrDefault(emptyList())
+    }
+
+    private fun extractMegavid(url: String): List<Video> {
+        return runCatching {
+            val id = url.substringAfter("/kisskh/").substringBefore("/")
+            val apiUrl = "https://megavid.buzz/kisskh/$id/source"
+            val req = GET(apiUrl, headers.newBuilder().set("Referer", url).build())
+            val res = client.newCall(req).execute().body.string()
+            val json = JSONObject(res)
+            val source = json.optString("source")
+            if (source.isNullOrBlank()) return emptyList()
+
+            val tracks = mutableListOf<Track>()
+            val tracksArr = json.optJSONArray("tracks")
+            if (tracksArr != null) {
+                for (i in 0 until tracksArr.length()) {
+                    val tObj = tracksArr.getJSONObject(i)
+                    val f = tObj.optString("file")
+                    val l = tObj.optString("label", "Sub")
+                    if (f.isNotBlank()) {
+                        tracks.add(Track(url = f, lang = l))
+                    }
+                }
+            }
+
+            val hlsHeaders = headers.newBuilder().set("Referer", url).build()
+            playlistUtils.extractFromHls(
+                source,
+                customHlsHeaders = hlsHeaders,
+                subtitleList = tracks,
+                videoNameGen = { it },
+            )
+        }.getOrDefault(emptyList())
+    }
+
+    private fun extractVidb(url: String): List<Video> {
+        return runCatching {
+            var targetUrl = url
+            if (!targetUrl.contains("3rdplayer.html")) {
+                val resp = client.newCall(GET(targetUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())).execute()
+                val body = resp.body.string()
+                val iframeSrc = Regex("""<iframe[^>]+src=["']([^"']+)["']""").find(body)?.groupValues?.get(1)
+                if (!iframeSrc.isNullOrBlank()) {
+                    targetUrl = if (iframeSrc.startsWith("http")) iframeSrc else {
+                        val base = targetUrl.substringBefore("/embed/")
+                        "$base$iframeSrc"
+                    }
+                }
+            }
+
+            val resp = client.newCall(GET(targetUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())).execute()
+            val html = resp.body.string()
+            val keyParam = Regex("""key=([^&"']+)""").find(targetUrl)?.groupValues?.get(1)?.let {
+                URLDecoder.decode(it, "UTF-8")
+            }
+            val dataVal = Regex("""data-name=["']crypto["']\s+data-value=["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+                ?: keyParam ?: return emptyList()
+
+            val decryptedM3u8 = decryptVidb(dataVal) ?: return emptyList()
+            val subParam = Regex("""sub=([^&"']+)""").find(targetUrl)?.groupValues?.get(1)?.let {
+                URLDecoder.decode(it, "UTF-8")
+            }
+            val subList = mutableListOf<Track>()
+            if (!subParam.isNullOrBlank()) {
+                decryptVidb(subParam)?.let { subUrl ->
+                    if (subUrl.startsWith("http")) {
+                        subList.add(Track(url = subUrl, lang = "English"))
+                    }
+                }
+            }
+
+            val hlsHeaders = headers.newBuilder().set("Referer", "https://vidb.top/").build()
+            playlistUtils.extractFromHls(
+                decryptedM3u8,
+                customHlsHeaders = hlsHeaders,
+                subtitleList = subList,
+                videoNameGen = { it },
+            )
+        }.getOrDefault(emptyList())
+    }
+
+    private fun extractGenericOrUniversal(embedUrl: String, embedHeaders: okhttp3.Headers): List<Video> {
+        return runCatching {
+            val resp = client.newCall(GET(embedUrl, embedHeaders)).execute()
+            val html = resp.body.string()
+            val innerIframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""").find(html)?.groupValues?.get(1)
+            if (!innerIframe.isNullOrBlank() && innerIframe != embedUrl) {
+                val fullInner = if (innerIframe.startsWith("http")) innerIframe else "$baseUrl$innerIframe"
+                when {
+                    fullInner.contains("megaplay.su") -> return extractMegaplay(fullInner)
+                    fullInner.contains("megavid.buzz") -> return extractMegavid(fullInner)
+                    fullInner.contains("vidb.top") || fullInner.contains("vidbasic.top") -> return extractVidb(fullInner)
+                }
+            }
+            val directM3u8 = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""").find(html)?.groupValues?.get(1)
+            if (!directM3u8.isNullOrBlank()) {
+                return playlistUtils.extractFromHls(directM3u8, referer = embedUrl, videoNameGen = { it })
+            }
+            universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = "")
+        }.getOrDefault(emptyList())
+    }
+
+    private fun decryptVidb(cipherTextB64: String): String? {
+        return runCatching {
+            val keyBytes = "94588293375053432799222445521289".toByteArray(Charsets.UTF_8)
+            val ivBytes = "5259228356829423".toByteArray(Charsets.UTF_8)
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(keyBytes, "AES"),
+                IvParameterSpec(ivBytes),
+            )
+            val decoded = Base64.decode(cipherTextB64, Base64.DEFAULT)
+            String(cipher.doFinal(decoded), Charsets.UTF_8)
+        }.getOrNull()
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
