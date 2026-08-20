@@ -77,15 +77,17 @@ class Mkissa : Source() {
         val parsed = response.parseAs<PopularResult>()
 
         val animeList = (parsed.data?.queryPopular?.recommendations ?: emptyList()).mapNotNull {
-            if (it.anyCard == null) return@mapNotNull null
+            val card = it.anyCard ?: return@mapNotNull null
+            val cardName = card.name ?: return@mapNotNull null
+            val cardId = card.id ?: return@mapNotNull null
             SAnime.create().apply {
                 title = when (preferences.titleStyle) {
-                    "romaji" -> it.anyCard.name
-                    "eng" -> it.anyCard.englishName
-                    else -> it.anyCard.nativeName
-                } ?: it.anyCard.name
-                thumbnail_url = it.anyCard.thumbnail?.let(::thumbnailUrl)
-                url = "${it.anyCard.id}<&sep>${it.anyCard.slugTime ?: ""}<&sep>${it.anyCard.name.slugify()}"
+                    "romaji" -> card.name
+                    "eng" -> card.englishName
+                    else -> card.nativeName
+                } ?: cardName
+                thumbnail_url = card.thumbnail?.let(::thumbnailUrl)
+                url = "$cardId<&sep>${card.slugTime ?: ""}<&sep>${cardName.slugify()}"
             }
         }
 
@@ -459,17 +461,19 @@ class Mkissa : Source() {
     private fun parseAnime(response: Response): AnimesPage {
         val parsed = response.parseAs<SearchResult>()
 
-        val animeList = (parsed.data?.shows?.edges ?: emptyList()).map { ani ->
+        val animeList = (parsed.data?.shows?.edges ?: emptyList()).mapNotNull { ani ->
+            val name = ani.name ?: return@mapNotNull null
+            val id = ani.id ?: return@mapNotNull null
             SAnime.create().apply {
                 title = (
                     when (preferences.titleStyle) {
                         "romaji" -> ani.name
                         "eng" -> ani.englishName
                         else -> ani.nativeName
-                    } ?: ani.name
+                    } ?: name
                 )
                 thumbnail_url = ani.thumbnail?.let(::thumbnailUrl)
-                url = "${ani.id}<&sep>${ani.slugTime ?: ""}<&sep>${ani.name.slugify()}"
+                url = "$id<&sep>${ani.slugTime ?: ""}<&sep>${name.slugify()}"
             }
         }
 
