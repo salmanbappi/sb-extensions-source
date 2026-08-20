@@ -428,9 +428,7 @@ class Animostream : Source() {
             key = PREF_QUALITY_KEY,
             default = PREF_QUALITY_DEFAULT,
             title = "Preferred Quality",
-          summary = "%s",
-             summary = "%s",
-             summary = "%s",
+            summary = "%s",
             entries = listOf("1080p", "720p", "480p"),
             entryValues = listOf("1080p", "720p", "480p"),
         )
