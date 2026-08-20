@@ -342,7 +342,7 @@ class Myasiantv : Source() {
             val resp = client.newCall(GET(url, headers.newBuilder().set("Referer", "$baseUrl/").build())).execute()
             val body = resp.body.string()
             val m3u8Url = Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""").find(body)?.groupValues?.get(1)
-                ?: return emptyList()
+                ?: return@runCatching emptyList()
             playlistUtils.extractFromHls(
                 playlistUrl = m3u8Url,
                 referer = "https://megaplay.su/",
@@ -359,7 +359,7 @@ class Myasiantv : Source() {
             val res = client.newCall(req).execute().body.string()
             val json = JSONObject(res)
             val source = json.optString("source")
-            if (source.isNullOrBlank()) return emptyList()
+            if (source.isNullOrBlank()) return@runCatching emptyList()
 
             val tracks = mutableListOf<Track>()
             val tracksArr = json.optJSONArray("tracks")
@@ -404,9 +404,9 @@ class Myasiantv : Source() {
                 URLDecoder.decode(it, "UTF-8")
             }
             val dataVal = Regex("""data-name=["']crypto["']\s+data-value=["']([^"']+)["']""").find(html)?.groupValues?.get(1)
-                ?: keyParam ?: return emptyList()
+                ?: keyParam ?: return@runCatching emptyList()
 
-            val decryptedM3u8 = decryptVidb(dataVal) ?: return emptyList()
+            val decryptedM3u8 = decryptVidb(dataVal) ?: return@runCatching emptyList()
             val subParam = Regex("""sub=([^&"']+)""").find(targetUrl)?.groupValues?.get(1)?.let {
                 URLDecoder.decode(it, "UTF-8")
             }
@@ -434,10 +434,10 @@ class Myasiantv : Source() {
                 ?: url.trimEnd('/').substringAfterLast('/')
             if (id.isNotBlank() && id.all { it.isDigit() }) {
                 val bridgeUrl = "https://megavid.buzz/kisskh/$id"
-                val videos = extractMegavid(bridgeUrl)
-                if (videos.isNotEmpty()) return videos
+                extractMegavid(bridgeUrl)
+            } else {
+                emptyList()
             }
-            emptyList()
         }.getOrDefault(emptyList())
     }
 
@@ -448,17 +448,22 @@ class Myasiantv : Source() {
             val innerIframe = Regex("""<iframe[^>]+src=["']([^"']+)["']""").find(html)?.groupValues?.get(1)
             if (!innerIframe.isNullOrBlank() && innerIframe != embedUrl) {
                 val fullInner = if (innerIframe.startsWith("http")) innerIframe else "$baseUrl$innerIframe"
-                when {
-                    fullInner.contains("megaplay.su") -> return extractMegaplay(fullInner)
-                    fullInner.contains("megavid.buzz") -> return extractMegavid(fullInner)
-                    fullInner.contains("vidb.top") || fullInner.contains("vidbasic.top") -> return extractVidb(fullInner)
+                val nestedVideos = when {
+                    fullInner.contains("megaplay.su") -> extractMegaplay(fullInner)
+                    fullInner.contains("megavid.buzz") -> extractMegavid(fullInner)
+                    fullInner.contains("vidb.top") || fullInner.contains("vidbasic.top") -> extractVidb(fullInner)
+                    else -> emptyList()
+                }
+                if (nestedVideos.isNotEmpty()) {
+                    return@runCatching nestedVideos
                 }
             }
             val directM3u8 = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""").find(html)?.groupValues?.get(1)
             if (!directM3u8.isNullOrBlank()) {
-                return playlistUtils.extractFromHls(directM3u8, referer = embedUrl, videoNameGen = { it })
+                playlistUtils.extractFromHls(directM3u8, referer = embedUrl, videoNameGen = { it })
+            } else {
+                universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = "")
             }
-            universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = "")
         }.getOrDefault(emptyList())
     }
 
