@@ -419,16 +419,18 @@ class Animostream : Source() {
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addBaseUrlPreference(
-            default = PREF_BASE_URL_DEFAULT,
-            key = PREF_BASE_URL_KEY,
+            preferences = preferences,
+            defaultUrl = PREF_BASE_URL_DEFAULT,
             title = "Base URL",
+            key = PREF_BASE_URL_KEY,
         )
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
-            title = "Preferred Quality",
             default = PREF_QUALITY_DEFAULT,
-            entries = arrayOf("1080p", "720p", "480p"),
-            entryValues = arrayOf("1080p", "720p", "480p"),
+            title = "Preferred Quality",
+            summary = "%s",
+            entries = listOf("1080p", "720p", "480p"),
+            entryValues = listOf("1080p", "720p", "480p"),
         )
     }
 
