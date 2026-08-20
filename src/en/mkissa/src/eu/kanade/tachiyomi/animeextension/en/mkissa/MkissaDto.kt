@@ -105,8 +105,7 @@ data class SeriesResult(
             @Serializable
             data class AvailableEps(
     val sub: List<String>? = null,
-    val dub: List<String>? = null,
-    val raw: List<String>? = null
+    val dub: List<String>? = null
 )
         }
     }
@@ -149,3 +148,52 @@ data class EncryptedEpisodeResult(
 data class DecryptedEpisodeResult(
     val episode: EpisodeResult.DataEpisode.Episode? = null
 )
+
+// GraphQL error envelope. The streams API returns `AA_CRYPTO_*` codes (e.g.
+// AA_CRYPTO_STALE when the epoch has rotated) instead of an encrypted payload.
+@Serializable
+class AaApiError(
+    val errors: List<GraphQlError>? = null
+) {
+    @Serializable
+    class GraphQlError(
+    val message: String? = null,
+    val extensions: Extensions? = null
+) {
+        @Serializable
+        class Extensions(
+    val code: String? = null
+)
+    }
+}
+
+// Response of `/client-crypto/v1/bootstrap`. `k` echoes back the content lane the partB is
+// scoped to; a mismatch means the server answered for a different lane than we asked for.
+@Serializable
+class AaCryptoBootstrap(
+    val epoch: Long? = null,
+    val partB: String? = null,
+    val k: String? = null
+)
+
+@Serializable
+class AaReqPayload(
+    private val v: Int? = null,
+    private val ts: Long? = null,
+    private val epoch: Long? = null,
+    private val buildId: String? = null,
+    private val qh: String? = null,
+    private val k: String? = null
+)
+
+@Serializable
+class EpisodeVariables(
+    val variables: Variables? = null
+) {
+    @Serializable
+    class Variables(
+    val showId: String? = null,
+    val translationType: String? = null,
+    val episodeString: String? = null
+)
+}

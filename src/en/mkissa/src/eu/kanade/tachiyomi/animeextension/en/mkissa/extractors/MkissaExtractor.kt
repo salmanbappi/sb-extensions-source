@@ -17,18 +17,24 @@ class MkissaExtractor(private val client: OkHttpClient, private val headers: Hea
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
+    companion object {
+        // The DASH CDN 403s any request with a Referer, and an unset header set makes the player
+        // fall back to the source's, which has one.
+        private val DASH_HEADERS = Headers.headersOf("Accept", "*/*")
+    }
+
     private fun bytesIntoHumanReadable(bytes: Long): String {
         val kilobyte: Long = 1000
         val megabyte = kilobyte * 1000
         val gigabyte = megabyte * 1000
         val terabyte = gigabyte * 1000
         return when {
-            bytes in 0 until kilobyte -> "$bytes b/s"
-            bytes in kilobyte until megabyte -> "${bytes / kilobyte} kb/s"
-            bytes in megabyte until gigabyte -> "${bytes / megabyte} mb/s"
-            bytes in gigabyte until terabyte -> "${bytes / gigabyte} gb/s"
-            bytes >= terabyte -> "${bytes / terabyte} tb/s"
-            else -> "$bytes bits/s"
+            bytes < 0 -> "$bytes bits/s"
+            bytes < kilobyte -> "$bytes b/s"
+            bytes < megabyte -> "${bytes / kilobyte} kb/s"
+            bytes < gigabyte -> String.format(Locale.US, "%.2f mb/s", bytes.toDouble() / megabyte)
+            bytes < terabyte -> String.format(Locale.US, "%.2f gb/s", bytes.toDouble() / gigabyte)
+            else -> String.format(Locale.US, "%.2f tb/s", bytes.toDouble() / terabyte)
         }
     }
 
@@ -38,34 +44,31 @@ class MkissaExtractor(private val client: OkHttpClient, private val headers: Hea
         ).awaitSuccess()
             .parseAs<VideoLink>()
 
-        return (linkJson.links ?: emptyList()).parallelCatchingFlatMap { link ->
-            val subtitles = link.subtitles?.mapNotNull { sub ->
-                val subSrc = sub.src ?: return@mapNotNull null
+        return linkJson.links.parallelCatchingFlatMap { link ->
+            val subtitles = link.subtitles?.map { sub ->
                 val label = sub.label?.let { " - $it" } ?: ""
-                Track(url = subSrc, lang = Locale(sub.lang ?: "en").displayLanguage + label)
+                Track(url = sub.src, lang = Locale(sub.lang).displayLanguage + label)
             }.orEmpty()
 
             when {
                 link.mp4 == true -> {
-                    val linkUrl = link.link ?: return@parallelCatchingFlatMap emptyList()
                     Video(
-                        videoUrl = linkUrl,
+                        videoUrl = link.link,
                         videoTitle = "Original ($name - ${link.resolutionStr})",
                         subtitleTracks = subtitles,
                     ).let(::listOf)
                 }
 
                 link.hls == true -> {
-                    val linkUrl = link.link ?: return@parallelCatchingFlatMap emptyList()
                     val masterHeaders = headers.newBuilder()
                         .add("Accept", "*/*")
-                        .add("Host", linkUrl.toHttpUrl().host)
+                        .add("Host", link.link.toHttpUrl().host)
                         .add("Origin", endPoint)
                         .add("Referer", "$endPoint/")
                         .build()
 
                     playlistUtils.extractFromHls(
-                        playlistUrl = linkUrl,
+                        playlistUrl = link.link,
                         masterHeaders = masterHeaders,
                         videoHeaders = masterHeaders,
                         videoNameGen = { quality -> "$quality ($name - ${link.resolutionStr})" },
@@ -75,21 +78,20 @@ class MkissaExtractor(private val client: OkHttpClient, private val headers: Hea
 
                 link.crIframe == true -> {
                     link.portData?.streams?.parallelCatchingFlatMap {
-                        val streamUrl = it.url ?: return@parallelCatchingFlatMap emptyList()
                         when (it.format) {
                             "adaptive_dash" ->
                                 Video(
-                                    videoUrl = streamUrl,
-                                    videoTitle = "Original (AC - Dash${if (it.hardsub_lang.isNullOrEmpty()) "" else " - Hardsub: ${it.hardsub_lang}"})",
+                                    videoUrl = it.url,
+                                    videoTitle = "Original (AC - Dash${if (it.hardsub_lang.isEmpty()) "" else " - Hardsub: ${it.hardsub_lang}"})",
                                     subtitleTracks = subtitles,
                                 ).let(::listOf)
 
                             "adaptive_hls" ->
                                 playlistUtils.extractFromHls(
-                                    playlistUrl = streamUrl,
+                                    playlistUrl = it.url,
                                     masterHeaders = headers,
                                     videoHeaders = headers,
-                                    videoNameGen = { quality -> "$quality (AC - HLS${if (it.hardsub_lang.isNullOrEmpty()) "" else " - Hardsub: ${it.hardsub_lang}"})" },
+                                    videoNameGen = { quality -> "$quality (AC - HLS${if (it.hardsub_lang.isEmpty()) "" else " - Hardsub: ${it.hardsub_lang}"})" },
                                     subtitleList = subtitles,
                                 )
 
@@ -99,16 +101,15 @@ class MkissaExtractor(private val client: OkHttpClient, private val headers: Hea
                 }
 
                 link.dash == true -> {
-                    val audioList = link.rawUrls?.audios?.mapNotNull {
-                        val audioUrl = it.url ?: return@mapNotNull null
-                        Track(url = audioUrl, lang = bytesIntoHumanReadable(it.bandwidth ?: 0L))
+                    val audioList = link.rawUrls?.audios?.map {
+                        Track(url = it.url, lang = bytesIntoHumanReadable(it.bandwidth))
                     }.orEmpty()
 
-                    link.rawUrls?.vids?.mapNotNull {
-                        val vidUrl = it.url ?: return@mapNotNull null
+                    link.rawUrls?.vids?.map {
                         Video(
-                            videoUrl = vidUrl,
-                            videoTitle = "$name - ${it.height} ${bytesIntoHumanReadable(it.bandwidth ?: 0L)}",
+                            videoUrl = it.url,
+                            videoTitle = "$name - ${it.height} ${bytesIntoHumanReadable(it.bandwidth)}",
+                            headers = DASH_HEADERS,
                             audioTracks = audioList,
                             subtitleTracks = subtitles,
                         )
@@ -121,57 +122,57 @@ class MkissaExtractor(private val client: OkHttpClient, private val headers: Hea
     }
 
     @Serializable
-    data class VersionResponse(
-        val episodeIframeHead: String? = null,
-    )
-
-    @Serializable
     data class VideoLink(
-        val links: List<Link>? = null,
-    ) {
+    val links: List<Link>? = null
+) {
         @Serializable
         data class Link(
-            val link: String? = null,
-            val hls: Boolean? = null,
-            val mp4: Boolean? = null,
-            val dash: Boolean? = null,
-            val crIframe: Boolean? = null,
-            val resolutionStr: String? = null,
-            val subtitles: List<Subtitles>? = null,
-            val rawUrls: RawUrl? = null,
-            val portData: Stream? = null,
-        ) {
+    val link: String? = null,
+    val hls: Boolean? = null,
+    val mp4: Boolean? = null,
+    val dash: Boolean? = null,
+    val crIframe: Boolean? = null,
+    val resolutionStr: String? = null,
+    val subtitles: List<Subtitles>? = null,
+    val rawUrls: RawUrl? = null,
+    val portData: Stream? = null
+) {
             @Serializable
             data class Subtitles(
-                val src: String? = null,
-                val label: String? = null,
-                val lang: String? = null,
-                val default: String? = null,
-            )
+    val lang: String? = null,
+    val src: String? = null,
+    val label: String? = null
+)
 
             @Serializable
             data class RawUrl(
-                val vids: List<MediaItem>? = null,
-                val audios: List<MediaItem>? = null,
-            ) {
+    val audios: List<Audio>? = null,
+    val vids: List<Vid>? = null
+) {
                 @Serializable
-                data class MediaItem(
-                    val url: String? = null,
-                    val height: Int? = null,
-                    val bandwidth: Long? = null,
-                )
+                data class Audio(
+    val bandwidth: Long? = null,
+    val url: String? = null
+)
+
+                @Serializable
+                data class Vid(
+    val bandwidth: Long? = null,
+    val height: Int? = null,
+    val url: String? = null
+)
             }
 
             @Serializable
             data class Stream(
-                val streams: List<StreamItem>? = null,
-            ) {
+    val streams: List<StreamData>? = null
+) {
                 @Serializable
-                data class StreamItem(
-                    val format: String? = null,
-                    val url: String? = null,
-                    val hardsub_lang: String? = null,
-                )
+                data class StreamData(
+    val format: String? = null,
+    val url: String? = null,
+    val hardsub_lang: String? = null
+)
             }
         }
     }
