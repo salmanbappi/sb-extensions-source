@@ -341,8 +341,11 @@ class Myasiantv : Source() {
             val body = resp.body.string()
             val m3u8Url = Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""").find(body)?.groupValues?.get(1)
                 ?: return emptyList()
-            val hlsHeaders = headers.newBuilder().set("Referer", "https://megaplay.su/").build()
-            playlistUtils.extractFromHls(m3u8Url, customHlsHeaders = hlsHeaders, videoNameGen = { it })
+            playlistUtils.extractFromHls(
+                playlistUrl = m3u8Url,
+                referer = "https://megaplay.su/",
+                videoNameGen = { it },
+            )
         }.getOrDefault(emptyList())
     }
 
@@ -369,10 +372,9 @@ class Myasiantv : Source() {
                 }
             }
 
-            val hlsHeaders = headers.newBuilder().set("Referer", url).build()
             playlistUtils.extractFromHls(
-                source,
-                customHlsHeaders = hlsHeaders,
+                playlistUrl = source,
+                referer = url,
                 subtitleList = tracks,
                 videoNameGen = { it },
             )
@@ -415,10 +417,9 @@ class Myasiantv : Source() {
                 }
             }
 
-            val hlsHeaders = headers.newBuilder().set("Referer", "https://vidb.top/").build()
             playlistUtils.extractFromHls(
-                decryptedM3u8,
-                customHlsHeaders = hlsHeaders,
+                playlistUrl = decryptedM3u8,
+                referer = "https://vidb.top/",
                 subtitleList = subList,
                 videoNameGen = { it },
             )
