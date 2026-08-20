@@ -27,6 +27,7 @@ import keiyoushi.utils.addListPreference
 import kotlin.time.Duration.Companion.seconds
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
 
@@ -337,7 +338,7 @@ class Animostream : Source() {
                             if (link.isNotBlank()) {
                                 val hosterName = mapHosterName(srv, link)
                                 if (hosterName !in excludedServers) {
-                                    hosters.add(Hoster(name = hosterName, url = link))
+                                    hosters.add(Hoster(hosterName = hosterName, hosterUrl = link))
                                 }
                             }
                         }
@@ -353,7 +354,7 @@ class Animostream : Source() {
                 if (link.isNotBlank()) {
                     val hosterName = mapHosterName(varName, link)
                     if (hosterName !in excludedServers && hosters.none { it.hosterUrl == link }) {
-                        hosters.add(Hoster(name = hosterName, url = link))
+                        hosters.add(Hoster(hosterName = hosterName, hosterUrl = link))
                     }
                 }
             }
@@ -398,7 +399,7 @@ class Animostream : Source() {
                 filemoonExtractor.videosFromUrl(url, prefix = "FileMoon - ")
             }
             else -> {
-                universalExtractor.extractVideos(url, headers)
+                universalExtractor.videosFromUrl(url, headers)
             }
         }
 
@@ -407,7 +408,7 @@ class Animostream : Source() {
 
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-        return videos.sortedWith(
+        return this.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(quality) }
                 .thenByDescending { it.videoTitle.contains("1080p") }
                 .thenByDescending { it.videoTitle.contains("720p") }
@@ -417,14 +418,12 @@ class Animostream : Source() {
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        addBaseUrlPreference(
-            screen = screen,
+        screen.addBaseUrlPreference(
             default = PREF_BASE_URL_DEFAULT,
             key = PREF_BASE_URL_KEY,
             title = "Base URL",
         )
-        addListPreference(
-            screen = screen,
+        screen.addListPreference(
             key = PREF_QUALITY_KEY,
             title = "Preferred Quality",
             default = PREF_QUALITY_DEFAULT,
