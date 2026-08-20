@@ -500,7 +500,7 @@ class Mkissa : Source() {
 
             if (responseBody != null) {
                 val tobeparsed = runCatching {
-                    responseBody.parseAs<EncryptedEpisodeResult>().data.tobeparsed
+                    responseBody.parseAs<EncryptedEpisodeResult>().data?.tobeparsed
                 }.getOrNull()
 
                 // NEED_CAPTCHA and the rate limiter answer 200 with a null episode and no payload,
@@ -519,7 +519,7 @@ class Mkissa : Source() {
                     }
                     // No payload and no crypto error: an older, unencrypted show.
                     !keyManager.isCryptoError(responseBody) -> {
-                        runCatching { responseBody.parseAs<EpisodeResult>().data.episode?.sourceUrls.orEmpty() }
+                        runCatching { responseBody.parseAs<EpisodeResult>().data?.episode?.sourceUrls.orEmpty() }
                             .getOrNull()
                             ?.let { return it }
                     }
