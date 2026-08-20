@@ -302,6 +302,8 @@ class Myasiantv : Source() {
                 extractMegavid(embedUrl)
             embedUrl.contains("vidb.top") || embedUrl.contains("vidbasic.top") ->
                 extractVidb(embedUrl)
+            embedUrl.contains("vidbasic.live") || embedUrl.contains("/stream/s-1/") ->
+                extractVidbasicLive(embedUrl)
             embedUrl.contains("dood") || embedUrl.contains("ds2play") || embedUrl.contains("doodstream") ->
                 doodExtractor.videosFromUrl(embedUrl)
             embedUrl.contains("streamtape") ->
@@ -423,6 +425,19 @@ class Myasiantv : Source() {
                 subtitleList = subList,
                 videoNameGen = { it },
             )
+        }.getOrDefault(emptyList())
+    }
+
+    private fun extractVidbasicLive(url: String): List<Video> {
+        return runCatching {
+            val id = Regex("""/stream/(?:s-\d+/)?(\d+)""").find(url)?.groupValues?.get(1)
+                ?: url.trimEnd('/').substringAfterLast('/')
+            if (id.isNotBlank() && id.all { it.isDigit() }) {
+                val bridgeUrl = "https://megavid.buzz/kisskh/$id"
+                val videos = extractMegavid(bridgeUrl)
+                if (videos.isNotEmpty()) return videos
+            }
+            emptyList()
         }.getOrDefault(emptyList())
     }
 
