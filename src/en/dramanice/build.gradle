@@ -1,0 +1,20 @@
+ext {
+    extName = 'Dramanice'
+    extClass = '.Dramanice'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:unpacker"))
+    implementation(project(":lib:cryptoaes"))
+    implementation(project(":lib:dood-extractor"))
+    implementation(project(":lib:filemoon-extractor"))
+    implementation(project(":lib:mixdrop-extractor"))
+    implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:streamtape-extractor"))
+    implementation(project(":lib:universal-extractor"))
+    implementation(project(":lib:vidmoly-extractor"))
+}
