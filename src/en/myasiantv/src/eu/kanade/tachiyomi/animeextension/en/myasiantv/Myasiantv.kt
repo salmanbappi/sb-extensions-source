@@ -298,7 +298,7 @@ class Myasiantv : Source() {
         val extracted = when {
             embedUrl.contains("megaplay.su") ->
                 extractMegaplay(embedUrl)
-            embedUrl.contains("megavid.buzz") ->
+            embedUrl.contains("megavid.buzz") || embedUrl.contains("/kisskh/") || embedUrl.contains("kissasian") ->
                 extractMegavid(embedUrl)
             embedUrl.contains("vidb.top") || embedUrl.contains("vidbasic.top") ->
                 extractVidb(embedUrl)
@@ -353,9 +353,10 @@ class Myasiantv : Source() {
 
     private fun extractMegavid(url: String): List<Video> {
         return runCatching {
-            val id = url.substringAfter("/kisskh/").substringBefore("/")
+            val id = Regex("""/kisskh/(\d+)""").find(url)?.groupValues?.get(1)
+                ?: url.substringAfter("/kisskh/").substringBefore("/")
             val apiUrl = "https://megavid.buzz/kisskh/$id/source"
-            val req = GET(apiUrl, headers.newBuilder().set("Referer", url).build())
+            val req = GET(apiUrl, headers.newBuilder().set("Referer", "https://megavid.buzz/kisskh/$id").build())
             val res = client.newCall(req).execute().body.string()
             val json = JSONObject(res)
             val source = json.optString("source")
@@ -376,7 +377,7 @@ class Myasiantv : Source() {
 
             playlistUtils.extractFromHls(
                 playlistUrl = source,
-                referer = url,
+                referer = "https://megavid.buzz/",
                 subtitleList = tracks,
                 videoNameGen = { it },
             )
