@@ -730,17 +730,15 @@ class MovieBox : Source() {
     private val JsonElement?.str get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
     private val JsonElement?.bool get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false
 
-    private fun escapeJson(value: String): String {
-        return buildString {
-            value.forEach { c ->
-                when (c) {
-                    '"' -> append("\\\"")
-                    '\\' -> append("\\\\")
-                    '\n' -> append("\\n")
-                    '\r' -> append("\\r")
-                    '\t' -> append("\\t")
-                    else -> append(c)
-                }
+    private fun escapeJson(value: String): String = buildString {
+        value.forEach { c ->
+            when (c) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> append(c)
             }
         }
     }
