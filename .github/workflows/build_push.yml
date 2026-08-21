@@ -35,7 +35,7 @@ jobs:
       delete: ${{ steps.generate-matrices.outputs.delete }}
     steps:
       - name: Checkout ${{ github.ref_name }} branch
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -120,7 +120,7 @@ jobs:
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout ${{ github.ref_name }} branch
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
         with:
           ref: ${{ github.ref_name }}
 
@@ -190,7 +190,7 @@ jobs:
           distribution: temurin
 
       - name: Checkout ${{ github.ref_name }} branch
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
         with:
           ref: ${{ github.ref_name }}
           path: ${{ github.ref_name }}
@@ -208,7 +208,7 @@ jobs:
           fi
 
       - name: Checkout repo branch
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
         with:
           repository: salmanbappi/extensions-repo
           token: ${{ secrets.BOT_PAT }}
