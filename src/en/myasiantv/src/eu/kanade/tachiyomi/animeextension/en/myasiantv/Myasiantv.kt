@@ -192,25 +192,29 @@ class Myasiantv : Source() {
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         var doc = client.newCall(GET("$baseUrl${anime.url}", headers)).execute().asJsoup()
-        var epElements = doc.select("ul.list-episode-item-2.all-episode li a, ul.all-episode li a, ul.list-episode-item-2 li a")
+        var epElements = doc.select("ul.all-episode li, ul.list-episode-item-2.all-episode li")
 
         if (epElements.isEmpty()) {
             val categoryLink = doc.selectFirst("div.category a, div.block.watch-drama div.category a")?.attr("href")
             if (!categoryLink.isNullOrBlank()) {
-                doc = client.newCall(GET(categoryLink, headers)).execute().asJsoup()
-                epElements = doc.select("ul.list-episode-item-2.all-episode li a, ul.all-episode li a, ul.list-episode-item-2 li a")
+                val fullCat = if (categoryLink.startsWith("http")) categoryLink else "$baseUrl$categoryLink"
+                doc = client.newCall(GET(fullCat, headers)).execute().asJsoup()
+                epElements = doc.select("ul.all-episode li, ul.list-episode-item-2.all-episode li")
             }
         }
 
         val total = epElements.size
-        return epElements.mapIndexed { idx, element ->
+        val episodes = epElements.mapNotNull { element ->
+            val link = element.selectFirst("a[href]") ?: return@mapNotNull null
+            val href = link.attr("href").trim()
+            if (href.isBlank()) return@mapNotNull null
+
             SEpisode.create().apply {
-                val href = element.attr("href")
-                setUrlWithoutDomain(href.ifBlank { "${anime.url}#ep=${total - idx}" })
-                val titleText = element.selectFirst("h3.title, .title")?.text() ?: element.text()
-                name = titleText.trim().ifBlank { "Episode ${total - idx}" }
+                setUrlWithoutDomain(href)
+                val titleText = element.selectFirst("h3.title, .title")?.text() ?: link.text()
+                name = titleText.trim().ifBlank { "Episode" }
                 episode_number = Regex("""Episode\s+(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
-                    .find(name)?.groupValues?.get(1)?.toFloatOrNull() ?: (total - idx).toFloat()
+                    .find(name)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
 
                 scanlator = element.selectFirst("span.type")?.text() ?: "SUB"
                 val timeText = element.selectFirst("span.time")?.text() ?: ""
@@ -219,6 +223,8 @@ class Myasiantv : Source() {
                 }
             }
         }
+
+        return episodes.sortedByDescending { it.episode_number }
     }
 
     private fun parseEpisodeDate(dateStr: String): Long {
@@ -259,7 +265,8 @@ class Myasiantv : Source() {
 
     // ============================ Video Links =============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val doc = client.newCall(GET("$baseUrl${episode.url}", headers)).execute().asJsoup()
+        val epUrl = if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}"
+        val doc = client.newCall(GET(epUrl, headers)).execute().asJsoup()
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
 
         val hosters = mutableListOf<Hoster>()
@@ -267,7 +274,8 @@ class Myasiantv : Source() {
 
         if (serverElements.isNotEmpty()) {
             serverElements.forEach { li ->
-                val videoUrl = li.attr("data-video").trim()
+                val rawUrl = li.attr("data-video").trim()
+                val videoUrl = if (rawUrl.startsWith("//")) "https:$rawUrl" else rawUrl
                 val sName = li.ownText().trim().ifBlank {
                     li.text().replace("Choose this server", "", ignoreCase = true).trim()
                 }.ifBlank { "Server" }
@@ -278,7 +286,8 @@ class Myasiantv : Source() {
             }
         } else {
             doc.select("div.watch_video iframe, iframe[src]").forEachIndexed { idx, iframe ->
-                val videoUrl = iframe.attr("src").trim()
+                val rawUrl = iframe.attr("src").trim()
+                val videoUrl = if (rawUrl.startsWith("//")) "https:$rawUrl" else rawUrl
                 val sName = "Server ${idx + 1}"
                 if (videoUrl.isNotBlank() && sName !in excludedServers) {
                     hosters.add(Hoster(hosterName = sName, hosterUrl = videoUrl))
