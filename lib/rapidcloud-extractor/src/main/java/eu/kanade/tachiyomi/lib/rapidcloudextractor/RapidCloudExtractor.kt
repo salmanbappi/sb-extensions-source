@@ -3,11 +3,11 @@ package eu.kanade.tachiyomi.lib.rapidcloudextractor
 import android.content.SharedPreferences
 import android.util.Base64
 import android.util.Log
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.cryptoaes.CryptoAES
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.lib.cryptoaes.CryptoAES
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -151,6 +151,8 @@ class RapidCloudExtractor(
     private fun getVideoDto(url: String): List<VideoDto> {
         val type = if (url.contains("rapid-cloud")) 0 else 1
 
+        val keyType = SOURCES_KEY[type]
+
         val id = url.substringAfter(SOURCES_SPLITTER[type], "")
             .substringBefore("?", "")
             .ifEmpty { throw Exception("Failed to extract ID from URL") }
@@ -166,38 +168,50 @@ class RapidCloudExtractor(
 
         val data = json.decodeFromString<SourceResponseDto>(srcRes)
 
-        return data.sources.map { source ->
+        return data.sources.mapNotNull { source ->
             val encoded = source.file
 
             val m3u8: String = if (!data.encrypted || ".m3u8" in encoded) {
                 encoded
             } else {
-                // tryDecrypting(ciphered, keyType)
-                decryptWithNewKey(encoded)
+                decryptWithNewKey(encoded) ?: run {
+                    Log.w("RapidCloudExtractor", "Skipping encrypted source — decryption keys unavailable")
+                    return@mapNotNull null
+                }
             }
 
             VideoDto(m3u8, data.tracks)
         }
     }
 
-    private fun decryptWithNewKey(ciphered: String): String {
-        val newKey = requestNewKey()
+    private fun decryptWithNewKey(ciphered: String): String? {
+        val newKey = requestNewKeyOrNull() ?: return null
         return decryptOpenSSL(ciphered, newKey).also {
             Log.i("RapidCloudExtractor", "Decrypted URL with new key: $it")
         }
     }
 
-    private fun requestNewKey(): String = client.newCall(GET("https://raw.githubusercontent.com/yogesh-hacker/MegacloudKeys/refs/heads/main/keys.json"))
-        .execute()
-        .use { response ->
-            if (!response.isSuccessful) throw IllegalStateException("Failed to fetch keys.json")
-            val jsonStr = response.body.string()
-            if (jsonStr.isEmpty()) throw IllegalStateException("keys.json is empty")
-            val key = json.decodeFromString<Map<String, String>>(jsonStr)["mega"]
-                ?: throw IllegalStateException("Rapid key not found in keys.json")
-            Log.i("RapidCloudExtractor", "Using Rapid Key: $key")
-            key
-        }
+    private fun requestNewKeyOrNull(): String? = try {
+        client.newCall(GET("https://raw.githubusercontent.com/yogesh-hacker/MegacloudKeys/refs/heads/main/keys.json"))
+            .execute()
+            .use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("RapidCloudExtractor", "keys.json fetch failed: HTTP ${response.code}")
+                    return@use null
+                }
+                val jsonStr = response.body.string()
+                if (jsonStr.isEmpty()) {
+                    Log.w("RapidCloudExtractor", "keys.json is empty")
+                    return@use null
+                }
+                json.decodeFromString<Map<String, String>>(jsonStr)["mega"]?.also {
+                    Log.i("RapidCloudExtractor", "Using Rapid Key: $it")
+                }
+            }
+    } catch (e: Exception) {
+        Log.w("RapidCloudExtractor", "requestNewKey failed: ${e.message}")
+        null
+    }
 
     private fun decryptOpenSSL(encBase64: String, password: String): String {
         try {
@@ -221,11 +235,11 @@ class RapidCloudExtractor(
 
     private fun opensslKeyIv(password: ByteArray, salt: ByteArray, keyLen: Int = 32, ivLen: Int = 16): Pair<ByteArray, ByteArray> {
         var d = ByteArray(0)
-        var di = ByteArray(0)
+        var digest = ByteArray(0)
         while (d.size < keyLen + ivLen) {
             val md = MessageDigest.getInstance("MD5")
-            di = md.digest(di + password + salt)
-            d += di
+            digest = md.digest(digest + password + salt)
+            d += digest
         }
         return Pair(d.copyOfRange(0, keyLen), d.copyOfRange(keyLen, keyLen + ivLen))
     }

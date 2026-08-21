@@ -12,3 +12,6 @@ gen
 generated-src/
 .kotlin
 .history
+__pycache__/
+*.pyc
+scratch/
