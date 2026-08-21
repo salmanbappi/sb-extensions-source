@@ -60,15 +60,15 @@ class MovieBox : Source() {
     }
 
     private val apiHosts = listOf(
-        "https://apig.inmoviebox.com",
-        "https://api.inmoviebox.com",
-        "https://api-in.inmoviebox.com",
         "https://api3.aoneroom.com",
         "https://api6.aoneroom.com",
         "https://api5.aoneroom.com",
         "https://api4.aoneroom.com",
         "https://api7.aoneroom.com",
         "https://api4sg.aoneroom.com",
+        "https://apig.inmoviebox.com",
+        "https://api.inmoviebox.com",
+        "https://api-in.inmoviebox.com",
         "https://netfilm.world",
         "https://h5-api.aoneroom.com",
     )
@@ -287,23 +287,32 @@ class MovieBox : Source() {
     }
 
     // Popular
+    // Uses the discovery/filter endpoint (paged, ~1M catalog) instead of the
+    // ranking list, whose fixed ~52 entries made the catalogue stop scrolling
+    // after three pages. Same request shape as the default browse filters.
     override fun popularAnimeRequest(page: Int): Request {
         val host = getPreferredHost()
-        val path = if (isMobileApi(host)) "/wefeed-mobile-bff/tab/ranking-list" else "/wefeed-h5api-bff/ranking-list/content"
-        val url = "$host$path?tabId=0&categoryType=4516404531735022304&page=$page&perPage=20"
-        return GET(url, getApiHeaders(url))
+        val path = if (isMobileApi(host)) "/wefeed-mobile-bff/subject-api/list" else "/wefeed-h5api-bff/subject/filter"
+        val url = "$host$path"
+        val bodyData = JsonObject(
+            mutableMapOf(
+                "page" to kotlinx.serialization.json.JsonPrimitive(page),
+                "perPage" to kotlinx.serialization.json.JsonPrimitive(20),
+                "keyword" to kotlinx.serialization.json.JsonPrimitive(""),
+                "sort" to kotlinx.serialization.json.JsonPrimitive("ForYou"),
+                "channelId" to kotlinx.serialization.json.JsonPrimitive("0"),
+                "classify" to kotlinx.serialization.json.JsonPrimitive("All"),
+                "genre" to kotlinx.serialization.json.JsonPrimitive("All"),
+                "year" to kotlinx.serialization.json.JsonPrimitive("All"),
+                "country" to kotlinx.serialization.json.JsonPrimitive("All"),
+            ),
+        ).toString()
+        val body = bodyData.toRequestBody("application/json; charset=utf-8".toMediaType())
+        return POST(url, getApiHeaders(url, "POST", bodyData), body)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val body = response.body.string()
-        val jsonRes = if (!body.trim().startsWith("{")) {
-            val url = response.request.url.toString()
-            val path = "/" + url.substringAfter(".com/").substringAfter(".world/")
-            safeGetJsonWithHeaders(path)?.first
-        } else {
-            json.parseToJsonElement(body)
-        }
-        val data = jsonRes?.obj?.get("data")?.obj ?: return AnimesPage(emptyList(), false)
+        val data = parseDataObject(response) ?: return AnimesPage(emptyList(), false)
         return parseSubjectListPage(data)
     }
 
@@ -316,7 +325,7 @@ class MovieBox : Source() {
         if (query.isNotBlank()) {
             val path = if (isMobile) "/wefeed-mobile-bff/subject-api/search/v2" else "/wefeed-h5api-bff/subject/search"
             val url = "$host$path"
-            val bodyData = """{"page":$page,"perPage":20,"keyword":"$query"}"""
+            val bodyData = """{"page":$page,"perPage":20,"keyword":"${escapeJson(query)}"}"""
             val body = bodyData.toRequestBody("application/json; charset=utf-8".toMediaType())
             return POST(url, getApiHeaders(url, "POST", bodyData), body)
         }
@@ -330,7 +339,7 @@ class MovieBox : Source() {
             return GET(url, getApiHeaders(url))
         }
 
-        // 3. Official Discovery Filters
+        // 3. Discovery Filters
         val typeFilter = filters.find { it is TypeFilter } as? TypeFilter
         val languageFilter = filters.find { it is LanguageFilter } as? LanguageFilter
         val genreFilter = filters.find { it is GenreFilter } as? GenreFilter
@@ -359,24 +368,36 @@ class MovieBox : Source() {
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val body = response.body.string()
-        val jsonRes = if (!body.trim().startsWith("{")) {
-            val url = response.request.url.toString()
-            val path = "/" + url.substringAfter(".com/").substringAfter(".world/")
-            val requestBody = response.request.body
-            if (requestBody != null) {
-                val buffer = Buffer()
-                requestBody.writeTo(buffer)
-                val bodyData = buffer.readUtf8()
-                safeGetJsonWithHeaders(path, isPost = true, bodyData = bodyData)?.first
-            } else {
-                safeGetJsonWithHeaders(path)?.first
-            }
-        } else {
-            json.parseToJsonElement(body)
-        }
-        val data = jsonRes?.obj?.get("data")?.obj ?: return AnimesPage(emptyList(), false)
+        val data = parseDataObject(response) ?: return AnimesPage(emptyList(), false)
         return parseSubjectListPage(data)
+    }
+
+    /**
+     * Extracts the response's "data" object, transparently retrying through the
+     * other API hosts when the preferred one answered with something that is
+     * not JSON (e.g. a Cloudflare interstitial or an error page). Returns null
+     * when nothing usable came back so callers can return an empty page.
+     */
+    private fun parseDataObject(response: Response): JsonObject? {
+        val body = response.body.string().trim()
+        if (body.startsWith("{")) {
+            return runCatching { json.parseToJsonElement(body) }
+                .getOrNull()
+                ?.obj
+                ?.get("data")
+                ?.obj
+        }
+
+        val url = response.request.url.toString()
+        val path = "/" + url.substringAfter(".com/").substringAfter(".world/")
+        return if (response.request.body != null) {
+            val buffer = Buffer()
+            response.request.body!!.writeTo(buffer)
+            val bodyData = buffer.readUtf8()
+            safeGetJsonWithHeaders(path, isPost = true, bodyData = bodyData)?.first?.obj?.get("data")?.obj
+        } else {
+            safeGetJsonWithHeaders(path)?.first?.obj?.get("data")?.obj
+        }
     }
 
     // Details
@@ -692,11 +713,14 @@ class MovieBox : Source() {
         }
         val pager = data["pager"]?.obj
         val currentPage = pager?.get("page")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1
+        val perPage = pager?.get("perPage")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 20
         val totalCount = pager?.get("totalCount")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
-        val hasMore = (animes.isNotEmpty()) && (
-            (totalCount > (currentPage * 20)) ||
-                (pager?.get("hasMore")?.jsonPrimitive?.booleanOrNull == true) ||
-                (pager?.get("nextPage")?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.let { it > currentPage && it != 0 } ?: false)
+        val nextPage = pager?.get("nextPage")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: currentPage
+        val hasMore = animes.isNotEmpty() && (
+            pager?.get("hasMore")?.jsonPrimitive?.booleanOrNull == true ||
+                animes.size >= perPage ||
+                totalCount > currentPage * perPage ||
+                nextPage > currentPage
             )
         return AnimesPage(animes, hasMore)
     }
@@ -705,6 +729,21 @@ class MovieBox : Source() {
     private val JsonElement?.arr get() = this as? JsonArray
     private val JsonElement?.str get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
     private val JsonElement?.bool get() = (this as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false
+
+    private fun escapeJson(value: String): String {
+        return buildString {
+            value.forEach { c ->
+                when (c) {
+                    '"' -> append("\\\"")
+                    '\\' -> append("\\\\")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> append(c)
+                }
+            }
+        }
+    }
 
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
@@ -800,7 +839,7 @@ class MovieBox : Source() {
         AnimeFilter.Select<String>(
             "Genre",
             arrayOf(
-                "All", "Action", "Adventure", "Animation", "Biography", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Film-Noir", "Game-Show", "History", "Horror", "Music", "Musical", "Mystery", "News", "Reality-TV", "Romance", "Sci-Fi", "Short", "Sport", "Talk-Show", "Thriller", "War", "Western", "Other",
+                "All", "Action", "Adventure", "Animation", "Anime", "Biography", "Bollywood", "Comedy", "Crime", "Documentary", "Drama", "Family", "Fantasy", "Film-Noir", "Game-Show", "History", "Horror", "Music", "Musical", "Mystery", "News", "Nollywood", "Reality-TV", "Romance", "Sci-Fi", "Sci-Fi & Fantasy", "Short", "Sport", "Talk-Show", "Thriller", "War", "Western", "Other",
             ),
         ) {
         fun toId() = if (state == 0) "All" else values[state]
@@ -869,30 +908,30 @@ class MovieBox : Source() {
     companion object {
         private const val PREF_HOST_KEY = "api_host"
         private const val PREF_HOST_TITLE = "API Host"
-        private const val PREF_HOST_DEFAULT = "https://apig.inmoviebox.com"
+        private const val PREF_HOST_DEFAULT = "https://api3.aoneroom.com"
         private val PREF_HOST_ENTRIES = arrayOf(
-            "Official Global Gateway (apig.inmoviebox.com)",
-            "Official Primary (api.inmoviebox.com)",
-            "Official India Node (api-in.inmoviebox.com)",
-            "Legacy Cluster 1 (api3.aoneroom.com)",
-            "Legacy Cluster 2 (api6.aoneroom.com)",
-            "Legacy Cluster 3 (api5.aoneroom.com)",
-            "Legacy Cluster 4 (api4.aoneroom.com)",
-            "Legacy Cluster 5 (api7.aoneroom.com)",
-            "Legacy Singapore (api4sg.aoneroom.com)",
-            "Mirror (Netfilm)",
-            "H5 API",
+            "api3.aoneroom.com",
+            "api6.aoneroom.com",
+            "api5.aoneroom.com",
+            "api4.aoneroom.com",
+            "api7.aoneroom.com",
+            "api4sg.aoneroom.com",
+            "apig.inmoviebox.com",
+            "api.inmoviebox.com",
+            "api-in.inmoviebox.com",
+            "netfilm.world",
+            "h5-api.aoneroom.com",
         )
         private val PREF_HOST_VALUES = arrayOf(
-            "https://apig.inmoviebox.com",
-            "https://api.inmoviebox.com",
-            "https://api-in.inmoviebox.com",
             "https://api3.aoneroom.com",
             "https://api6.aoneroom.com",
             "https://api5.aoneroom.com",
             "https://api4.aoneroom.com",
             "https://api7.aoneroom.com",
             "https://api4sg.aoneroom.com",
+            "https://apig.inmoviebox.com",
+            "https://api.inmoviebox.com",
+            "https://api-in.inmoviebox.com",
             "https://netfilm.world",
             "https://h5-api.aoneroom.com",
         )
