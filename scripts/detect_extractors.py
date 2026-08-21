@@ -18,7 +18,6 @@ if str(REPO_ROOT) not in sys.path:
 if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-
 EXTRACTOR_TRANSITIVE_DEPS: dict[str, list[str]] = {
     "amazon-extractor": ["playlist-utils"],
     "chillx-extractor": ["cryptoaes", "playlist-utils"],
@@ -215,7 +214,6 @@ KNOWN_EXTRACTOR_PATTERNS = {
 EXTRACTOR_REGISTRY = KNOWN_EXTRACTOR_PATTERNS
 _DISCOVERED_EXTRACTORS_CACHE: Optional[List[Dict]] = None
 
-
 def discover_all_extractors(repo_root: Path) -> List[Dict]:
     """Dynamically scans the lib/ directory with in-memory caching to discover all available extractor modules."""
     global _DISCOVERED_EXTRACTORS_CACHE
@@ -264,7 +262,6 @@ def discover_all_extractors(repo_root: Path) -> List[Dict]:
 
     _DISCOVERED_EXTRACTORS_CACHE = registry
     return registry
-
 
 def inject_extractor_into_source(kt_file: Path, extractors: list[dict], dry_run: bool = False) -> bool:
     """Injects missing Kotlin imports and lazy declarations for extractors into a Kotlin source file."""
@@ -322,7 +319,6 @@ def inject_extractor_into_source(kt_file: Path, extractors: list[dict], dry_run:
         return True
     return False
 
-
 def extract_urls_from_dom_or_text(text: str) -> List[str]:
     """Extracts candidate video URLs from HTML iframes, player configs, or raw text."""
     urls = set()
@@ -336,7 +332,6 @@ def extract_urls_from_dom_or_text(text: str) -> List[str]:
     for m in re.finditer(r'https?://[a-zA-Z0-9_.\-]+(?::\d+)?/[^\s"\'<>]+', text):
         urls.add(m.group(0))
     return sorted(urls)
-
 
 def scan_text_for_extractors(text: str, registry: List[Dict]) -> List[Dict]:
     """Matches text, HTML, or code against the extractor registry."""
@@ -356,7 +351,6 @@ def scan_text_for_extractors(text: str, registry: List[Dict]) -> List[Dict]:
                 seen.add(ext["module"])
 
     return matched
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -439,11 +433,11 @@ def main():
         for m in matches:
             mod_name = m['module']
             mod_pattern = f":lib:{mod_name}"
-            
+
             if mod_pattern not in gradle_content and mod_name not in already_injected:
                 deps_to_inject.append((m['dependency'], True, mod_name))
                 already_injected.add(mod_name)
-                
+
             transitive_deps = EXTRACTOR_TRANSITIVE_DEPS.get(mod_name, [])
             for t_dep in transitive_deps:
                 t_pattern = f":lib:{t_dep}"
@@ -507,7 +501,6 @@ def main():
                     main_kt = kt
                     break
             inject_extractor_into_source(main_kt, matches, dry_run=args.dry_run)
-
 
 if __name__ == "__main__":
     main()

@@ -57,8 +57,11 @@ EXTRACTOR_SIGNATURES = {
     "HubCloud": (re.compile(r'https?://(?:www\.)?(?:hubcloud|fastcloud|drivehub)\.[a-z0-9]+', re.I), ":lib:hubcloud-extractor"),
     "GDFlix": (re.compile(r'https?://(?:www\.)?gdflix\.[a-z0-9]+', re.I), ":lib:gdflix-extractor"),
     "FilePress": (re.compile(r'https?://(?:www\.)?filepress\.[a-z0-9]+', re.I), ":lib:filepress-extractor"),
+    "Megaplay": (re.compile(r'https?://(?:www\.)?megaplay\.(?:su|buzz|cc)', re.I), ":lib:playlist-utils"),
+    "Megavid": (re.compile(r'https?://(?:www\.)?megavid\.(?:buzz|cc)', re.I), ":lib:playlist-utils"),
+    "Vidbasic": (re.compile(r'https?://(?:www\.)?(?:vidb|vidbasic)\.(?:top|live|cc)', re.I), ":lib:playlist-utils"),
+    "Universal": (re.compile(r'(?:vidbasic\.live|3rdplayer\.html|player-container)', re.I), ":lib:universal-extractor"),
 }
-
 
 def fetch_url(url: str, timeout: int = 8, headers: Optional[Dict[str, str]] = None) -> Tuple[int, str, Dict[str, str], float]:
     """Fetches a URL and returns (status_code, content, headers, latency_ms)."""
@@ -90,7 +93,6 @@ def fetch_url(url: str, timeout: int = 8, headers: Optional[Dict[str, str]] = No
     except Exception as e:
         latency = (time.time() - start_t) * 1000
         return 0, str(e), {}, latency
-
 
 class SiteRecon:
     def __init__(self, base_url: str):
@@ -391,7 +393,6 @@ class SiteRecon:
             "scaffold_command": scaffold_cmd.replace(" \\\n  ", " "),
         }
 
-
 def main():
     parser = argparse.ArgumentParser(description="High-Speed Automated Site Reconnaissance & Fingerprinting Engine")
     parser.add_argument("url", help="Target website URL (e.g. 'https://vegamoviess.you')")
@@ -430,7 +431,6 @@ def main():
 
     if args.json:
         print(json.dumps(report, indent=2))
-
 
 if __name__ == "__main__":
     main()

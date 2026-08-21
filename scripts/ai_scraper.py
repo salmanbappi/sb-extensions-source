@@ -36,7 +36,6 @@ DEFAULT_GEMINI_KEY = get_secret("GEMINI_API_KEY", "")
 DEFAULT_GROQ_KEY = get_secret("GROQ_API_KEY", "")
 DEFAULT_OPENCODE_KEY = get_secret("OPENCODE_API_KEY", "")
 
-
 def call_groq(prompt: str, api_key: str = DEFAULT_GROQ_KEY, model: str = "llama-3.3-70b-versatile") -> Optional[str]:
     """Calls Groq Cloud API with ultra-low latency."""
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -65,7 +64,6 @@ def call_groq(prompt: str, api_key: str = DEFAULT_GROQ_KEY, model: str = "llama-
         print(f"  [!] Groq API Error: {e}", file=sys.stderr)
         return None
 
-
 def call_gemini(prompt: str, api_key: str = DEFAULT_GEMINI_KEY, model: str = "gemini-flash-latest") -> Optional[str]:
     """Calls Google Gemini API."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
@@ -88,7 +86,6 @@ def call_gemini(prompt: str, api_key: str = DEFAULT_GEMINI_KEY, model: str = "ge
     except Exception as e:
         print(f"  [!] Gemini API Error: {e}", file=sys.stderr)
         return None
-
 
 def call_opencode(prompt: str, api_key: str = DEFAULT_OPENCODE_KEY, model: str = "deepseek-v4-flash-free") -> Optional[str]:
     """Calls OpenCode Zen AI Gateway."""
@@ -118,7 +115,6 @@ def call_opencode(prompt: str, api_key: str = DEFAULT_OPENCODE_KEY, model: str =
         print(f"  [!] OpenCode Zen Error: {e}", file=sys.stderr)
         return None
 
-
 def generate_selectors(target_html_or_url: str, provider: str = "auto") -> str:
     """Fetches HTML (if URL) and generates Jsoup CSS selectors & Kotlin code."""
     html_content = target_html_or_url
@@ -135,9 +131,12 @@ Given the following website HTML snippet, analyze the DOM structure and extract:
 1. CSS Selector for the Anime / Movie Cards in popular/latest listing (e.g. `div.film-item`)
 2. CSS Selector for Title, Link (href), and Poster Image (src / data-src)
 3. CSS Selector for Details (synopsis, genres, status)
-4. CSS Selector for Episode items (episode list, episode title, link)
-5. Generate the complete, clean Kotlin Jsoup parsing snippet for an Aniyomi extension using:
-   `doc.select("...").map {{ SAnime.create().apply {{ ... }} }}`
+4. CSS Selector for Episode items strictly within the main series episode list (CRITICAL: AVOID matching sidebar/recent episode widgets like ul.list-episode-item-2 or latest updates)
+5. Generate the complete, clean Kotlin Jsoup parsing snippet for an Aniyomi extension API v16 using:
+   - `doc.select("...").map {{ SAnime.create().apply {{ ... }} }}`
+   - Dynamic descending sort: `episodes.sortedByDescending {{ it.episode_number }}`
+   - Verified library signatures: `PlaylistUtils.extractFromHls(playlistUrl, referer = ..., subtitleList = ..., videoNameGen = ...)`
+   - Verified named Video constructor: `Video(videoUrl = ..., videoTitle = ..., headers = ...)`
 
 HTML Snippet:
 ```html
@@ -177,7 +176,6 @@ HTML Snippet:
     output.append("=" * 80)
     return "\n".join(output)
 
-
 def main():
     parser = argparse.ArgumentParser(description="AI-Powered HTML Reverse Engineering & Selector Generation Engine")
     parser.add_argument("target", help="HTML snippet, file path, or live website URL")
@@ -189,7 +187,6 @@ def main():
         content = Path(args.target).read_text(encoding="utf-8", errors="ignore")
 
     print(generate_selectors(content, provider=args.provider))
-
 
 if __name__ == "__main__":
     main()

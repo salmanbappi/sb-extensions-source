@@ -10,7 +10,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-
 class ErrorCategory(str, Enum):
     MODEL_V16_MISMATCH = "MODEL_V16_MISMATCH"
     NULLABILITY_MISMATCH = "NULLABILITY_MISMATCH"
@@ -19,7 +18,6 @@ class ErrorCategory(str, Enum):
     MISSING_PARAMETER = "MISSING_PARAMETER"
     SERIALIZATION_ERROR = "SERIALIZATION_ERROR"
     UNKNOWN = "UNKNOWN"
-
 
 @dataclass
 class CompilerError:
@@ -30,7 +28,6 @@ class CompilerError:
     category: ErrorCategory
     raw_line: str
 
-
 @dataclass
 class PatchSuggestion:
     file_path: str
@@ -38,7 +35,6 @@ class PatchSuggestion:
     line_number: Optional[int] = None
     original_snippet: Optional[str] = None
     replacement_snippet: Optional[str] = None
-
 
 @dataclass
 class LogTriageResult:
@@ -48,7 +44,6 @@ class LogTriageResult:
     categorized: Dict[ErrorCategory, List[CompilerError]] = field(default_factory=dict)
     patch_suggestions: List[PatchSuggestion] = field(default_factory=list)
     summary: str = ""
-
 
 class CompilerLogParser:
     """Parses raw Kotlin compiler log outputs and Gradle CI logs into structured diagnostics."""
@@ -102,7 +97,6 @@ class CompilerLogParser:
                     )
                 )
         return errors
-
 
 class AstAutoPatcher:
     """Applies AST-aware code fixes based on compiler diagnostics and v16 invariants."""
@@ -210,7 +204,6 @@ class AstAutoPatcher:
         modified = re.sub(r'\bVideo\s*\(([^)]+)\)', fix_video_call, modified)
 
         return modified, applied_fixes
-
 
 class CiGuardianAgent:
     """Guardian agent overseeing CI logs, triaging compiler diagnostics, and auto-patching."""

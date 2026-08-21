@@ -34,13 +34,11 @@ except ImportError:
 BOT_TOKEN = get_secret("DISCORD_BOT_TOKEN", os.environ.get("DISCORD_BOT_TOKEN", ""))
 STATUS_UPDATE_CHANNEL_ID = os.environ.get("DISCORD_STATUS_CHANNEL_ID", "1517517856231919687")  # #status-update
 
-
 def make_clean_bar(positive_pct: int, total_blocks: int = 10) -> str:
     """Generates a clean unicode progress bar without emojis."""
     pos_blocks = round((positive_pct / 100) * total_blocks)
     neg_blocks = total_blocks - pos_blocks
     return "■" * pos_blocks + "□" * neg_blocks
-
 
 def format_status_update(
     title: str,
@@ -59,12 +57,12 @@ def format_status_update(
     """Formats extension status update into clean plaintext Discord Markdown without emojis."""
     negative_sentiment = 100 - positive_sentiment
     bar = make_clean_bar(positive_sentiment, 10)
-    
+
     audio_str = " | ".join([f"`{lang}`" for lang in audio_languages]) if audio_languages else "`Standard Sub/Dub`"
     provider_str = ", ".join(providers) if providers else "Direct Stream / HLS"
     changes_str = "\n".join([f"- {c}" for c in changelog]) if changelog else "- Initial Release under API v16 standard"
     feedback_str = "\n".join([f"> *\"{r}\"*" for r in review_highlights]) if review_highlights else "> *\"High streaming reliability and responsive navigation.\"*"
-    
+
     message = (
         f"### [{action_type.upper()}] {title} `{version}`\n"
         f"**URL**: <{site_url}>\n"
@@ -78,18 +76,17 @@ def format_status_update(
     )
     return message
 
-
 def send_message(content: str, channel_id: str = STATUS_UPDATE_CHANNEL_ID, token: str = BOT_TOKEN) -> bool:
     """Sends payload directly to Discord channel via Bot REST API."""
     url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     payload = json.dumps({"content": content}).encode("utf-8")
-    
+
     headers = {
         "Authorization": f"Bot {token}",
         "Content-Type": "application/json",
         "User-Agent": "DiscordBot (https://discord.com, 1.0)"
     }
-    
+
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req) as resp:
@@ -101,12 +98,11 @@ def send_message(content: str, channel_id: str = STATUS_UPDATE_CHANNEL_ID, token
         print(f"Error sending message: {e}")
         return False
 
-
 def inspect_extension(repo_root: Path, target: str) -> Dict[str, Any]:
     """Auto-inspects an extension module directory to extract metadata, providers, audio, and version."""
     src_dir = repo_root / "src"
     matched_dir = None
-    
+
     # Try direct path
     if (src_dir / target).is_dir():
         matched_dir = src_dir / target
@@ -205,7 +201,6 @@ def inspect_extension(repo_root: Path, target: str) -> Dict[str, Any]:
 
     return info
 
-
 def generate_status_update(
     repo_root: Path,
     target: Optional[str] = None,
@@ -223,7 +218,7 @@ def generate_status_update(
     dry_run: bool = False
 ) -> Tuple[bool, str]:
     """Generates status update and dispatches to Discord #status-update channel."""
-    
+
     inspected = {}
     if target:
         inspected = inspect_extension(repo_root, target)
@@ -238,7 +233,7 @@ def generate_status_update(
     final_library = library_size or inspected.get("library_size", "Large (10,000+)")
     final_providers = providers or inspected.get("providers", ["Native HLS", "Direct Stream"])
     final_reliability = reliability or inspected.get("reliability_score", 95)
-    
+
     # Handle changes / changelog
     if changes:
         final_changes = changes
@@ -296,7 +291,6 @@ def generate_status_update(
         print(f"Failed to send status update to Discord channel {channel_id}.")
     return success, formatted_text
 
-
 def main():
     parser = argparse.ArgumentParser(description="SB Extensions - Status Update Notifier")
     parser.add_argument("target", nargs="?", help="Target extension module name (e.g. animesalt, hianime)")
@@ -318,7 +312,7 @@ def main():
 
     audio_list = [a.strip() for a in args.audio.split(",")] if args.audio else None
     prov_list = [p.strip() for p in args.providers.split(",")] if args.providers else None
-    
+
     success, _ = generate_status_update(
         repo_root=repo_root,
         target=args.target,
@@ -336,7 +330,6 @@ def main():
         dry_run=args.dry_run
     )
     sys.exit(0 if success else 1)
-
 
 if __name__ == "__main__":
     main()

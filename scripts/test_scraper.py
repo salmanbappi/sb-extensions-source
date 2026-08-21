@@ -37,7 +37,6 @@ try:
 except ImportError:
     pass
 
-
 # ==============================================================================
 # HTTP Client & Session Handler
 # ==============================================================================
@@ -128,6 +127,13 @@ class ScraperSession:
                     print("\n⚠️ [Notice] Cloudflare Bot Protection Challenge Detected!")
                     print("  💡 Tip: Pass session cookies with `-c 'cf_clearance=...'` or headers with `-H 'User-Agent: ...'`")
                     print("  💡 Or add `:lib:cloudflare-interceptor` in your extension build.gradle.\n")
+                elif "AA_CRYPTO" in body or "NEED_CAPTCHA" in body:
+                    print("\n🛡️ [Notice] Dynamic API Crypto / Token Challenge Detected!")
+                    if "AA_CRYPTO_MISSING" in body:
+                        print("  ❌ AA_CRYPTO_MISSING: The backend requires an `aaReq` signed token / bootstrap key derivation.")
+                    elif "NEED_CAPTCHA" in body:
+                        print("  ❌ NEED_CAPTCHA: The API is rate-limiting this network or requiring a Turnstile captcha solver.")
+                    print("  💡 Tip: Integrate dynamic key management (e.g., MkissaKeyManager / MkissaBundle) or WebView challenge interception.\n")
 
                 return status, body, resp_headers, duration
         except urllib.error.HTTPError as e:
@@ -139,7 +145,6 @@ class ScraperSession:
         except (urllib.error.URLError, TimeoutError, ConnectionResetError, ssl.SSLError, OSError) as e:
             duration = time.time() - start_time
             return 0, f"Network Error: {e}", {}, duration
-
 
 # ==============================================================================
 # HTML Parser (Tag, Class, ID selector simulator without external deps)
@@ -153,7 +158,6 @@ try:
     _HAS_BS4 = True
 except ImportError:
     _HAS_BS4 = False
-
 
 class SimpleSelectorParser(HTMLParser):
     """Lightweight HTML element extractor matching basic tag/class/id selectors.
@@ -197,7 +201,6 @@ class SimpleSelectorParser(HTMLParser):
         if self._current_match:
             self._current_match["text"] += data
 
-
 # ---------------------------------------------------------------------------
 # Stdlib node model (used when BS4 is absent)
 # ---------------------------------------------------------------------------
@@ -216,7 +219,6 @@ class _Node:
 
     def get_text(self) -> str:
         return self.text
-
 
 class _DOMBuilder(HTMLParser):
     """Builds a minimal DOM tree from HTML for the stdlib CSS engine."""
@@ -248,7 +250,6 @@ class _DOMBuilder(HTMLParser):
         if len(self._stack) > 1:
             self._stack[-1].text += data
 
-
 # ---------------------------------------------------------------------------
 # Token-level simple selector matcher
 # ---------------------------------------------------------------------------
@@ -259,7 +260,6 @@ _ATTR_RE = re.compile(
     r'\]'
 )
 _PSEUDO_NTH_RE = re.compile(r':nth-child\((\d+)\)', re.IGNORECASE)
-
 
 def _token_matches(node: "_Node", token: str) -> bool:
     """Return True if *node* matches a single simple CSS token.
@@ -361,14 +361,12 @@ def _token_matches(node: "_Node", token: str) -> bool:
 
     return True
 
-
 def _collect_text(node: "_Node") -> str:
     """Recursively collect all text from a node and its descendants."""
     parts = [node.text]
     for child in node.children:
         parts.append(_collect_text(child))
     return "".join(parts)
-
 
 def _stdlib_select(root: "_Node", selector: str) -> List[Dict[str, Any]]:
     """Evaluate a CSS selector against a DOM tree built by _DOMBuilder.
@@ -431,7 +429,6 @@ def _stdlib_select(root: "_Node", selector: str) -> List[Dict[str, Any]]:
         results.append({"tag": n.tag, "attrs": n.attrs, "text": _collect_text(n)})
     return results
 
-
 def select_elements(html: str, selector: str) -> List[Dict[str, Any]]:
     """Evaluate *selector* against *html* and return a list of element dicts.
 
@@ -482,7 +479,6 @@ def select_elements(html: str, selector: str) -> List[Dict[str, Any]]:
     builder.feed(html)
     return _stdlib_select(builder.root, sel)
 
-
 # ==============================================================================
 # DevTools Headers Converter
 # ==============================================================================
@@ -502,7 +498,6 @@ def parse_raw_devtools_headers(raw_text: str) -> Dict[str, str]:
             if k.lower() not in ["content-length", "host"]:
                 headers[k] = v
     return headers
-
 
 # ==============================================================================
 # Interactive REPL Session
@@ -598,13 +593,11 @@ def run_interactive_repl(session: ScraperSession, url: str, headers: Dict[str, s
         else:
             print(f"Unknown command: '{cmd}'. Type 'help' for command list.")
 
-
 # ==============================================================================
 # Extension Auto-Resolution & Inspection Helpers
 # ==============================================================================
 
 REPO_ROOT = Path(__file__).resolve().parent.parent if "__file__" in globals() else Path.cwd()
-
 
 def resolve_extension_target(repo_root: Path, target: Optional[str] = None, lang: Optional[str] = None, name: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """Helper to resolve (lang, name) from target positional argument (e.g. 'animestream' or 'en/animestream')."""
@@ -633,7 +626,6 @@ def resolve_extension_target(repo_root: Path, target: Optional[str] = None, lang
                 return lang_dir.name, resolved_name
 
     return resolved_lang, resolved_name
-
 
 def inspect_extension_module(repo_root: Path, lang: str, name: str) -> Tuple[Optional[str], Dict[str, str], Dict[str, str]]:
     """Extracts baseUrl, default headers, and endpoint request patterns from extension source files."""
@@ -669,28 +661,31 @@ def inspect_extension_module(repo_root: Path, lang: str, name: str) -> Tuple[Opt
             extracted_headers["Origin"] = m_origin.group(1)
 
         # Extract popularAnimeRequest / getPopularAnime
-        m_pop = re.search(r'(?:fun\s+popularAnimeRequest|override\s+suspend\s+fun\s+getPopularAnime)[^{=]*[={][^}]*?GET\s*\(\s*["\']([^"\']+)["\']', content)
+        m_pop = re.search(r'(?:fun\s+popularAnimeRequest|override\s+suspend\s+fun\s+getPopularAnime)[^{=]*[={][\s\S]*?(?:GET\s*\(\s*(?:if\s*\([^)]*\)\s*)?["\']([^"\']+)["\']|["\'](\$baseUrl[^"\']*)["\']|["\'](https?://[^"\']*)["\'])', content)
         if not m_pop:
-            m_pop = re.search(r'GET\s*\(\s*["\']([^"\']*(?:popular|trending|movies)[^"\']*)["\']', content, re.IGNORECASE)
+            m_pop = re.search(r'GET\s*\(\s*["\']([^"\']*(?:popular|trending|movies|\$baseUrl)[^"\']*)["\']', content, re.IGNORECASE)
         if m_pop:
-            ep = m_pop.group(1)
-            endpoints["popular"] = ep if ep.startswith("http") or "$baseUrl" in ep else f"$baseUrl{ep if ep.startswith('/') else '/' + ep}"
+            ep = m_pop.group(1) or m_pop.group(2) or m_pop.group(3)
+            if ep:
+                endpoints["popular"] = ep if ep.startswith("http") or "$baseUrl" in ep else f"$baseUrl{ep if ep.startswith('/') else '/' + ep}"
 
         # Extract latestUpdatesRequest / getLatestUpdates
-        m_latest = re.search(r'(?:fun\s+latestUpdatesRequest|override\s+suspend\s+fun\s+getLatestUpdates)[^{=]*[={][^}]*?GET\s*\(\s*["\']([^"\']+)["\']', content)
+        m_latest = re.search(r'(?:fun\s+latestUpdatesRequest|override\s+suspend\s+fun\s+getLatestUpdates)[^{=]*[={][\s\S]*?(?:GET\s*\(\s*(?:if\s*\([^)]*\)\s*)?["\']([^"\']+)["\']|["\'](\$baseUrl[^"\']*)["\']|["\'](https?://[^"\']*)["\'])', content)
         if not m_latest:
-            m_latest = re.search(r'GET\s*\(\s*["\']([^"\']*(?:latest|recent|updates)[^"\']*)["\']', content, re.IGNORECASE)
+            m_latest = re.search(r'GET\s*\(\s*["\']([^"\']*(?:latest|recent|updates|\$baseUrl)[^"\']*)["\']', content, re.IGNORECASE)
         if m_latest:
-            ep = m_latest.group(1)
-            endpoints["latest"] = ep if ep.startswith("http") or "$baseUrl" in ep else f"$baseUrl{ep if ep.startswith('/') else '/' + ep}"
+            ep = m_latest.group(1) or m_latest.group(2) or m_latest.group(3)
+            if ep:
+                endpoints["latest"] = ep if ep.startswith("http") or "$baseUrl" in ep else f"$baseUrl{ep if ep.startswith('/') else '/' + ep}"
 
         # Extract searchAnimeRequest / getSearchAnime base url
-        m_search = re.search(r'(?:fun\s+searchAnimeRequest|override\s+suspend\s+fun\s+getSearchAnime)[^{=]*[={][^}]*?GET\s*\(\s*["\']([^"\']+)["\']', content)
+        m_search = re.search(r'(?:fun\s+searchAnimeRequest|override\s+suspend\s+fun\s+getSearchAnime)[^{=]*[={][\s\S]*?(?:GET\s*\(\s*["\']([^"\']+)["\']|["\'](\$baseUrl[^"\']*(?:search|\?)[^"\']*)["\'])', content)
         if not m_search:
             m_search = re.search(r'GET\s*\(\s*["\']([^"\']*(?:search|\?s=|\?q=)[^"\']*)["\']', content, re.IGNORECASE)
         if m_search:
-            ep = m_search.group(1)
-            endpoints["search"] = ep if ep.startswith("http") or "$baseUrl" in ep else f"$baseUrl{ep if ep.startswith('/') else '/' + ep}"
+            ep = m_search.group(1) or m_search.group(2)
+            if ep:
+                endpoints["search"] = ep if ep.startswith("http") or "$baseUrl" in ep else f"$baseUrl{ep if ep.startswith('/') else '/' + ep}"
 
     if not base_url:
         build_gradle = ext_dir / "build.gradle"
@@ -709,7 +704,6 @@ def inspect_extension_module(repo_root: Path, lang: str, name: str) -> Tuple[Opt
             extracted_headers["Origin"] = base_url
 
     return base_url, extracted_headers, endpoints
-
 
 # ==============================================================================
 # CLI Entrypoint
@@ -764,17 +758,22 @@ def main():
 
                     # Resolve shortcut endpoints
                     if args.popular:
-                        raw_pattern = endpoints.get("popular", f"{base_url}/api/v1/videos/popular?limit=20&page=$page")
+                        raw_pattern = endpoints.get("popular", f"{base_url}/")
                         target_url = raw_pattern.replace("$baseUrl", base_url).replace("$page", str(args.page))
                         print(f"🌟 Testing Popular Anime endpoint: {target_url}")
                     elif args.latest:
-                        raw_pattern = endpoints.get("latest", f"{base_url}/api/v1/videos/new?limit=20&page=$page")
+                        raw_pattern = endpoints.get("latest", f"{base_url}/")
                         target_url = raw_pattern.replace("$baseUrl", base_url).replace("$page", str(args.page))
                         print(f"⚡ Testing Latest Updates endpoint: {target_url}")
                     elif args.search:
-                        raw_pattern = endpoints.get("search", f"{base_url}/api/v1/search")
-                        sep = "&" if "?" in raw_pattern else "?"
-                        target_url = f"{raw_pattern.replace('$baseUrl', base_url)}{sep}query={urllib.parse.quote(args.search)}&page={args.page}"
+                        raw_pattern = endpoints.get("search", f"{base_url}/search")
+                        clean_pattern = raw_pattern.replace("$baseUrl", base_url)
+                        query_enc = urllib.parse.quote(args.search)
+                        if any(k in clean_pattern for k in ["${query.trim()}", "${query}", "$query", "$search", "%s"]):
+                            target_url = clean_pattern.replace("${query.trim()}", query_enc).replace("${query}", query_enc).replace("$query", query_enc).replace("$search", query_enc).replace("%s", query_enc)
+                        else:
+                            sep = "&" if "?" in clean_pattern else "?"
+                            target_url = f"{clean_pattern}{sep}q={query_enc}"
                         print(f"🔎 Testing Search Anime endpoint ({args.search}): {target_url}")
                     elif not target_url:
                         target_url = base_url
@@ -892,7 +891,6 @@ def main():
 
     print("--- First 500 characters of Body ---")
     print(body[:500])
-
 
 if __name__ == "__main__":
     main()

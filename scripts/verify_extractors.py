@@ -23,7 +23,6 @@ LIVE_TEST_SAMPLES = {
     "vidhide-extractor": "https://vidhide.com/e/example"
 }
 
-
 def test_live_stream_url(stream_url: str, referer: Optional[str] = None) -> Tuple[bool, int, str]:
     """Sends HEAD/GET request to verify if extracted video stream URL is alive and playable."""
     headers = {"User-Agent": USER_AGENT}
@@ -45,7 +44,6 @@ def test_live_stream_url(stream_url: str, referer: Optional[str] = None) -> Tupl
                 return resp.status in (200, 206), resp.status, content_type
         except Exception as e:
             return False, 0, str(e)
-
 
 def verify_extractor_module(module_name: str, live_url: Optional[str] = None) -> bool:
     """Empirically tests extractor against live website behavior."""
@@ -87,7 +85,6 @@ def verify_extractor_module(module_name: str, live_url: Optional[str] = None) ->
         print(f"  ⚠️ No direct video streams found in raw response. Obfuscation solver required.")
         return True
 
-
 def main():
     parser = argparse.ArgumentParser(description="Empirical Live Extractor Verification Engine")
     parser.add_argument("--module", help="Specific extractor module to verify (e.g., dood-extractor)")
@@ -115,7 +112,6 @@ def main():
 
         print(f"\nSummary: {passed}/{total} extractor module(s) verified against live behavior.")
         sys.exit(0 if passed == total else 1)
-
 
 if __name__ == "__main__":
     main()

@@ -37,7 +37,6 @@ from typing import Any, Dict, List, Optional
 BASE_URL = "https://everythingmoe.com"
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
-
 def safe_int(val: Any, default: int = 0) -> int:
     """Safely convert any value to int without raising exceptions."""
     try:
@@ -46,7 +45,6 @@ def safe_int(val: Any, default: int = 0) -> int:
         return int(val)
     except (ValueError, TypeError):
         return default
-
 
 def fetch(url: str, timeout: int = 25) -> str:
     """GET a page with a browser UA. Enforces http/https scheme and raises on non-200."""
@@ -61,10 +59,8 @@ def fetch(url: str, timeout: int = 25) -> str:
             raise RuntimeError(f"HTTP {resp.status} for {url}")
         return body
 
-
 def extract_hrefs(html: str) -> List[str]:
     return re.findall(r'href="([^"]+)"', html)
-
 
 def extract_site_data(html: str) -> Optional[Dict[str, Any]]:
     """Parse the `var siteData = {...}` JSON blob embedded in /s/<slug> pages."""
@@ -79,11 +75,9 @@ def extract_site_data(html: str) -> Optional[Dict[str, Any]]:
     except (ValueError, json.JSONDecodeError):
         return None
 
-
 def get_meta_description(html: str) -> Optional[str]:
     m = re.search(r'<meta\s+name="description"\s+content="([^"]+)"', html, re.IGNORECASE)
     return m.group(1).strip() if m else None
-
 
 def fetch_json(url: str, timeout: int = 20) -> Optional[Any]:
     """Fetch and parse JSON from an API endpoint safely."""
@@ -94,18 +88,15 @@ def fetch_json(url: str, timeout: int = 20) -> Optional[Any]:
         print(f"  [!] Failed to fetch {url}: {e}")
         return None
 
-
 def fetch_main_cache() -> Dict[str, Any]:
     """Fetch the master /data/cache/main.json containing pros, cons, info, and mirrors for 912 sites."""
     res = fetch_json(f"{BASE_URL}/data/cache/main.json")
     return res if isinstance(res, dict) else {}
 
-
 def fetch_thread_counts() -> Dict[str, int]:
     """Fetch global review and comment thread counts from /comments/threadcount.json."""
     res = fetch_json(f"{BASE_URL}/comments/threadcount.json")
     return res if isinstance(res, dict) else {}
-
 
 def parse_site_page(slug: str, html: str, cache_entry: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Extract structured data from one /s/<slug> page, augmented with /data/cache/main.json."""
@@ -221,7 +212,6 @@ def parse_site_page(slug: str, html: str, cache_entry: Optional[Dict[str, Any]] 
         "reviews": cleaned_reviews,
     }
 
-
 def scrape_site_pages(slugs: List[str], main_cache: Optional[Dict[str, Any]] = None, parallel: int = 2, delay: float = 0.3) -> List[Dict[str, Any]]:
     """Fetch every /s/<slug> page (rate-limited, optionally parallel)."""
     cache = main_cache or {}
@@ -257,7 +247,6 @@ def scrape_site_pages(slugs: List[str], main_cache: Optional[Dict[str, Any]] = N
     order = {slug: i for i, slug in enumerate(slugs)}
     results.sort(key=lambda e: order.get(e.get("slug"), 0))
     return results
-
 
 def scrape(limit: Optional[int] = None) -> Dict[str, Any]:
     print(f"🔍 Scraping {BASE_URL} ...")
@@ -345,7 +334,6 @@ def scrape(limit: Optional[int] = None) -> Dict[str, Any]:
     }
     return result
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Automatic scraper for everythingmoe.com")
     parser.add_argument("--limit", type=int, default=None, help="Only scrape the first N directory entries")
@@ -387,7 +375,6 @@ def main() -> int:
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from .recon_swarm import SchemaField
 
-
 @dataclass
 class SynthesizerConfig:
     pkg_name: str
@@ -23,7 +22,6 @@ class SynthesizerConfig:
     custom_headers: Dict[str, str] = field(default_factory=dict)
     helper_code: List[str] = field(default_factory=list)
 
-
 @dataclass
 class SynthesizedExtension:
     pkg_name: str
@@ -32,7 +30,6 @@ class SynthesizedExtension:
     dto_code: str
     full_combined_code: str
     config: SynthesizerConfig
-
 
 class DtoGenerator:
     """Generates robust, null-safe Kotlinx Serialization DTO models with `= null` fallbacks."""
@@ -61,7 +58,6 @@ class DtoGenerator:
         for class_name, fields in schemas.items():
             classes.append(cls.generate_dto_class(class_name, fields))
         return "\n\n".join(classes)
-
 
 class SourceClassGenerator:
     """Generates the main Source class implementing Aniyomi API v16 specifications."""
@@ -237,7 +233,6 @@ class {config.class_name} : Source(), ConfigurableAnimeSource {{
 {dtos_code}
 """.strip()
         return code
-
 
 class KotlinSynthesizerAgent:
     """Autonomous Kotlin Code Synthesizer adhering strictly to API v16 invariants."""

@@ -30,7 +30,6 @@ from scripts.site_recon import SiteRecon
 from scripts.ai_scraper import call_groq, call_gemini, call_opencode
 from scripts.create_extension import generate_extension, generate_theme_scaffold, to_pascal_case, create_minimal_png
 
-
 def extract_ai_selectors_json(html_content: str) -> Dict[str, str]:
     """Uses Groq / Gemini to extract a strict JSON dictionary of CSS selectors."""
     prompt = f"""
@@ -44,8 +43,8 @@ Output ONLY a raw valid JSON object with these EXACT keys:
   "detailsSynopsisSelector": "CSS selector for description/synopsis (e.g. div.synopsis, .description)",
   "detailsGenreSelector": "CSS selector for genres (e.g. .genres a, .tags a)",
   "detailsStatusSelector": "CSS selector for status (e.g. .status, span.status-tag)",
-  "episodeSelector": "CSS selector for episode list items (e.g. div.episodes a, ul.episode-list li a)",
-  "episodeNameSelector": "CSS selector for episode title or number (e.g. a, span.ep-name)",
+  "episodeSelector": "CSS selector for episode list items STRICTLY within the main series episode list (CRITICAL: AVOID matching sidebar/recent episode widgets like ul.list-episode-item-2) (e.g. ul.all-episode li, div.episodes-list li)",
+  "episodeNameSelector": "CSS selector for episode title or number (e.g. h3.title, span.ep-name, a)",
   "episodeLinkSelector": "CSS selector for episode watch URL (e.g. a[href], a)"
 }}
 
@@ -67,7 +66,6 @@ HTML Snippet:
     except Exception:
         pass
     return {}
-
 
 def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en") -> bool:
     """Orchestrates autonomous extension creation."""
@@ -175,7 +173,6 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en")
     print("=" * 80 + "\n")
     return val_success
 
-
 def main():
     parser = argparse.ArgumentParser(description="Autonomous 1-Click Aniyomi Extension Synthesizer")
     parser.add_argument("url", help="Target anime/movie website URL (e.g. 'https://animeflix.live')")
@@ -185,7 +182,6 @@ def main():
 
     success = synthesize_extension(args.url, name=args.name, lang=args.lang)
     sys.exit(0 if success else 1)
-
 
 if __name__ == "__main__":
     main()

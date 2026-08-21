@@ -6,12 +6,15 @@ lint, migrate domains, bump version, and manage individual and multi-source exte
 """
 
 import argparse
+import base64
 import importlib.util
 import os
 import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 # Ensure repo root and scripts directory are in sys.path for cross-module imports
@@ -22,7 +25,6 @@ if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 _EXTENSION_TARGET_CACHE: dict = {}
-
 
 def _iter_extension_gradles(src_dir: Path):
     """Fast 2-tier directory generator yielding (lang, ext_name, gradle_path) without recursive rglob."""
@@ -35,7 +37,6 @@ def _iter_extension_gradles(src_dir: Path):
                     bg = ext_dir / "build.gradle"
                     if bg.is_file():
                         yield lang_dir.name, ext_dir.name, bg
-
 
 def resolve_extension_target(repo_root: Path, target: str = None, lang: str = None, name: str = None) -> tuple[str, str]:
     """Helper to resolve (lang, name) with in-memory caching."""
@@ -90,50 +91,98 @@ def resolve_extension_target(repo_root: Path, target: str = None, lang: str = No
     _EXTENSION_TARGET_CACHE[cache_key] = res
     return res
 
-
-def fetch_icon(url: str, output_path: Path):
-    """Fetches favicon from target URL and converts it to 192x192 PNG launcher icon."""
-    print(f"🔍 Fetching favicon from: {url}")
+def fetch_icon(url: str, output_path: Path) -> bool:
+    """Fetches high-resolution brand logo or favicon from target URL and converts it to 192x192 PNG launcher icons across all Android res densities."""
+    print(f"🔍 Fetching official brand icon/favicon from: {url}")
     domain = url.split("//")[-1].split("/")[0]
     base_url = f"https://{domain}"
 
-    fav_candidates = [
-        f"{base_url}/favicon.ico",
-        f"{base_url}/favicon.png",
+    high_res_candidates: list[str] = []
+    standard_candidates: list[str] = [
         f"{base_url}/apple-touch-icon.png",
         f"{base_url}/apple-touch-icon-precomposed.png",
+        f"{base_url}/favicon.png",
+        f"{base_url}/favicon.ico",
     ]
 
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+        with urllib.request.urlopen(req, timeout=7) as resp:
             html = resp.read().decode('utf-8', errors='ignore')
-        matches = re.finditer(r'<link\b(?=[^>]*?\brel=[\"\'](?:shortcut )?icon[\"\'])[^>]*?\bhref=(?:\"([^\"]+)\"|\'([^\']+)\')', html, re.IGNORECASE)
+
+        # 1. Discover WordPress / CMS responsive uploaded icons (e.g. cropped-*-192x192.png, *-180x180.png)
+        for m in re.finditer(r'(?:href|src)=["\']([^"\']+(?:192x192|180x180|144x144|96x96|favicon|logo|icon)[^"\']*)["\']', html, re.IGNORECASE):
+            raw_url = m.group(1).strip()
+            if raw_url.startswith("data:image/svg+xml;base64,PHN2Zy") or not raw_url:
+                continue
+            full_u = raw_url if raw_url.startswith("http") else (f"https:{raw_url}" if raw_url.startswith("//") else f"{base_url}{raw_url if raw_url.startswith('/') else '/' + raw_url}")
+            if "192x192" in full_u or "180x180" in full_u or "apple-touch-icon" in full_u:
+                high_res_candidates.insert(0, full_u)
+            elif full_u not in high_res_candidates:
+                high_res_candidates.append(full_u)
+
+        # 2. Discover header brand logos & emblems (<header> img, img.logo, etc.)
+        for m in re.finditer(r'<img\b[^>]*?\bsrc=(?:\"([^\"]+)\"|\'([^\']+)\')[^>]*>', html, re.IGNORECASE):
+            tag = m.group(0)
+            img_src = m.group(1) or m.group(2)
+            if not img_src or img_src.startswith("data:image/svg+xml;base64,PHN2Zy"):
+                continue
+            if any(k in tag.lower() for k in ["logo", "brand", "header", "brand-logo", "site-logo", "custom-logo"]):
+                full_img = img_src if img_src.startswith("http") else (f"https:{img_src}" if img_src.startswith("//") else f"{base_url}{img_src if img_src.startswith('/') else '/' + img_src}")
+                if full_img not in high_res_candidates:
+                    high_res_candidates.append(full_img)
+
+        # 3. Discover high-res Apple Touch Icons & SVG / PNG icons in <link>
+        matches = re.finditer(r'<link\b[^>]*?\brel=[\"\']([^\"\']+)[\"\'][^>]*?\bhref=(?:\"([^\"]+)\"|\'([^\']+)\')', html, re.IGNORECASE)
         for m in matches:
-            icon = m.group(1) or m.group(2)
+            rel = m.group(1).lower()
+            icon = m.group(2) or m.group(3)
             if not icon:
                 continue
-            if icon.startswith("data:"):
-                fav_candidates.insert(0, icon)
-            elif icon.startswith("//"):
-                fav_candidates.insert(0, f"https:{icon}")
-            elif icon.startswith("/"):
-                fav_candidates.insert(0, f"{base_url}{icon}")
-            elif icon.startswith("http"):
-                fav_candidates.insert(0, icon)
-            else:
-                fav_candidates.insert(0, f"{base_url}/{icon}")
-    except Exception as e:
-        print(f"  [!] Notice: HTML favicon extraction skipped ({e})")
+            full_icon = icon if icon.startswith("http") or icon.startswith("data:") else (f"https:{icon}" if icon.startswith("//") else f"{base_url}{icon if icon.startswith('/') else '/' + icon}")
+            if "apple-touch-icon" in rel:
+                high_res_candidates.insert(0, full_icon)
+            elif "icon" in rel:
+                if ".svg" in icon or ".png" in icon or "sizes=" in m.group(0):
+                    high_res_candidates.append(full_icon)
+                else:
+                    standard_candidates.insert(0, full_icon)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_raw = output_path.parent / "temp_favicon.raw"
-    temp_file = None
+        # 4. Discover OpenGraph image as fallback
+        og_match = re.search(r'<meta\b[^>]*?\bproperty=[\"\'](?:og:image|twitter:image)[\"\'][^>]*?\bcontent=(?:\"([^\"]+)\"|\'([^\']+)\')', html, re.IGNORECASE)
+        if og_match:
+            og_img = og_match.group(1) or og_match.group(2)
+            if og_img and og_img.startswith("http"):
+                high_res_candidates.append(og_img)
+
+    except Exception as e:
+        print(f"  [!] Notice: HTML icon discovery skipped ({e})")
+
+    fav_candidates = high_res_candidates + standard_candidates
+
+    res_dir = output_path.parent if output_path.parent.name == "res" else output_path.parent.parent
+    if not res_dir.exists():
+        res_dir = output_path.parent
+
+    destinations = [
+        output_path,
+        res_dir / "drawable" / "icon.png",
+        res_dir / "drawable" / "ic_launcher.png",
+        res_dir / "drawable-xxhdpi" / "icon.png",
+        res_dir / "drawable-xxhdpi" / "ic_launcher.png",
+        res_dir / "mipmap-mdpi" / "ic_launcher.png",
+        res_dir / "mipmap-hdpi" / "ic_launcher.png",
+        res_dir / "mipmap-xhdpi" / "ic_launcher.png",
+        res_dir / "mipmap-xxhdpi" / "ic_launcher.png",
+        res_dir / "mipmap-xxxhdpi" / "ic_launcher.png",
+    ]
+
+    temp_file: Path | None = None
     success = False
 
     for fav_url in fav_candidates:
         try:
-            print(f"  -> Trying: {fav_url[:80]}{'...' if len(fav_url) > 80 else ''}")
+            print(f"  -> Trying: {fav_url[:85]}{'...' if len(fav_url) > 85 else ''}")
             if fav_url.startswith("data:"):
                 if "base64," in fav_url:
                     b64_data = fav_url.split("base64,", 1)[1]
@@ -143,15 +192,16 @@ def fetch_icon(url: str, output_path: Path):
                     raw_bytes = urllib.parse.unquote(data_part).encode("utf-8")
                 ext = ".svg" if "svg" in fav_url else ".png"
                 temp_file = output_path.parent / f"temp_favicon{ext}"
+                temp_file.parent.mkdir(parents=True, exist_ok=True)
                 with open(temp_file, "wb") as f:
                     f.write(raw_bytes)
                 success = True
                 break
             else:
                 req = urllib.request.Request(fav_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-                with urllib.request.urlopen(req, timeout=4) as response:
+                with urllib.request.urlopen(req, timeout=5) as response:
                     content = response.read()
-                    if len(content) > 50:
+                    if len(content) > 100:
                         if b"<svg" in content[:200] or ".svg" in fav_url:
                             ext = ".svg"
                         elif ".ico" in fav_url:
@@ -159,6 +209,7 @@ def fetch_icon(url: str, output_path: Path):
                         else:
                             ext = ".png"
                         temp_file = output_path.parent / f"temp_favicon{ext}"
+                        temp_file.parent.mkdir(parents=True, exist_ok=True)
                         with open(temp_file, "wb") as f:
                             f.write(content)
                         success = True
@@ -167,47 +218,94 @@ def fetch_icon(url: str, output_path: Path):
             continue
 
     if not success or not temp_file or not temp_file.exists():
-        print("❌ Could not download favicon from target site.")
+        print("❌ Could not download icon from target site, creating fallback minimal icons.")
+        from scripts.create_extension import create_minimal_png
+        for dest in destinations:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            create_minimal_png(dest, 192, 192)
         return False
 
-    conv = shutil.which("convert") or shutil.which("magick")
-    destinations = [output_path]
-    xxhdpi_path = output_path.parent.parent / "drawable-xxhdpi" / "icon.png"
-    if xxhdpi_path.parent.exists() or (output_path.parent.parent / "drawable-xxhdpi").exists():
-        xxhdpi_path.parent.mkdir(parents=True, exist_ok=True)
-        destinations.append(xxhdpi_path)
+    conv = shutil.which("magick") or shutil.which("convert")
+    ff = shutil.which("ffmpeg")
 
     if conv:
         try:
+            id_cmd = ["identify", "-format", "%w %h", str(temp_file) + ("[0]" if temp_file.suffix == ".ico" else "")]
+            id_res = subprocess.run(id_cmd, capture_output=True, text=True, timeout=5)
+            w, h = 0, 0
+            if id_res.returncode == 0 and id_res.stdout.strip():
+                try:
+                    w, h = map(int, id_res.stdout.strip().split()[:2])
+                except Exception:
+                    pass
+
             input_spec = str(temp_file) if temp_file.suffix != ".ico" else f"{temp_file}[0]"
+
             for dest in destinations:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                cmd = [conv, "-background", "none", "-density", "300", input_spec, "-resize", "192x192", str(dest)]
+                if w > 0 and h > 0 and w > 1.3 * h:
+                    crop_w = int(h * 1.1)
+                    cmd = [
+                        conv, input_spec,
+                        "-crop", f"{crop_w}x{h}+0+0",
+                        "-trim",
+                        "-resize", "150x150",
+                        "-gravity", "center",
+                        "-background", "#0d1322",
+                        "-extent", "192x192",
+                        str(dest)
+                    ]
+                else:
+                    cmd = [
+                        conv, "-background", "none", "-density", "300",
+                        input_spec,
+                        "-resize", "192x192",
+                        "-gravity", "center",
+                        "-extent", "192x192",
+                        str(dest)
+                    ]
                 subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+
             if temp_file.exists():
                 temp_file.unlink()
-            print(f"✅ Successfully created 192x192 launcher icon: {output_path}")
+            print(f"✅ Successfully created high-res 192x192 launcher icons across all densities for: {output_path}")
             return True
         except Exception as e:
-            print(f"⚠️ ImageMagick convert failed: {e}")
+            print(f"⚠️ ImageMagick processing error ({e}), trying ffmpeg fallback...")
 
-    # Fallback to pure Python minimal PNG generator if convert fails
+    if ff and temp_file.suffix != ".ico":
+        try:
+            for dest in destinations:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                cmd = [ff, "-y", "-i", str(temp_file), "-vf", "scale=192:192:force_original_aspect_ratio=decrease,pad=192:192:(ow-iw)/2:(oh-ih)/2:color=black@0", str(dest)]
+                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+            if temp_file.exists():
+                temp_file.unlink()
+            print(f"✅ Successfully converted 192x192 launcher icons using ffmpeg.")
+            return True
+        except Exception:
+            pass
+
+    # Direct copy or fallback
+    try:
+        raw_bytes = temp_file.read_bytes()
+        for dest in destinations:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(raw_bytes)
+        if temp_file.exists():
+            temp_file.unlink()
+        print(f"✅ Deployed launcher icons to all resource directories.")
+        return True
+    except Exception:
+        pass
+
     from scripts.create_extension import create_minimal_png
     for dest in destinations:
         dest.parent.mkdir(parents=True, exist_ok=True)
         create_minimal_png(dest, 192, 192)
     if temp_file and temp_file.exists():
         temp_file.unlink()
-    print(f"⚠️  ImageMagick unavailable — generated a blank placeholder 192x192 PNG at {output_path}.")
-    print("   Replace it with the real favicon manually for production use.")
     return True
-
-
-    # Fallback to direct write if convert fails
-    shutil.move(str(temp_raw), str(output_path))
-    print(f"✅ Saved raw launcher icon at: {output_path}")
-    return True
-
 
 def bump_version(repo_root: Path, lang: str, name: str) -> bool:
     """Increments the extVersionCode or overrideVersionCode in build.gradle."""
@@ -240,7 +338,6 @@ def bump_version(repo_root: Path, lang: str, name: str) -> bool:
 
     print(f"❌ No version code found to bump in {gradle_file}")
     return False
-
 
 def bump_theme(repo_root: Path, theme_name: str, mode: str = "base") -> bool:
     """Bumps theme baseVersionCode in lib-multisrc/ or variant overrideVersionCode in src/."""
@@ -276,7 +373,6 @@ def bump_theme(repo_root: Path, theme_name: str, mode: str = "base") -> bool:
 
     return True
 
-
 def bump_lib_dependents(repo_root: Path, lib_name: str) -> bool:
     """Cascades version bumps to all extension modules that depend on :lib:<lib_name>."""
     clean_lib = lib_name.replace("lib:", "").replace(":", "").strip()
@@ -295,7 +391,6 @@ def bump_lib_dependents(repo_root: Path, lib_name: str) -> bool:
     else:
         print(f"ℹ️ No extension modules found directly depending on :lib:{clean_lib}.")
     return True
-
 
 def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachability: bool = True, dry_run: bool = False) -> bool:
     """Automates base URL domain migrations, updates preference defaults, bumps version, and checks live connectivity."""
@@ -372,7 +467,6 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
     print(f"\n🎉 Domain migration {finish_verb} for src/{lang}/{name} ({updated_files} file(s) affected).")
     return True
 
-
 def show_info(repo_root: Path, target_lang: str = None, target_name: str = None) -> bool:
     """Displays detailed summary of an extension module."""
     lang, name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
@@ -409,7 +503,6 @@ def show_info(repo_root: Path, target_lang: str = None, target_name: str = None)
     print(f"  • Kotlin Source Files ({len(kt_files)}): {', '.join(f.name for f in kt_files)}")
     return True
 
-
 def list_extensions(repo_root: Path):
     """Lists all available extensions with language, version code, and path."""
     src_dir = repo_root / "src"
@@ -434,8 +527,32 @@ def list_extensions(repo_root: Path):
                 print(f"  • {m.name:25s} (v{ver}) -> src/{lang_dir.name}/{m.name}")
     print(f"\nTotal: {total} extension module(s) installed.")
 
+def get_changed_extensions(repo_root: Path) -> List[Tuple[str, str]]:
+    """Discovers extensions modified in git working tree, index, or HEAD commit."""
+    changed = set()
+    # 1. Uncommitted changes in working tree / index
+    res = subprocess.run(["git", "status", "--porcelain"], cwd=repo_root, capture_output=True, text=True)
+    if res.returncode == 0 and res.stdout:
+        for line in res.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                path_str = parts[-1]
+                m = re.match(r"src/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)/", path_str)
+                if m:
+                    changed.add((m.group(1), m.group(2)))
 
-def publish_extension(repo_root: Path, target_lang: str = None, target_name: str = None, commit_msg: str = None, no_bump: bool = False) -> bool:
+    # 2. If nothing uncommitted, check last commit (HEAD~1..HEAD)
+    if not changed:
+        res = subprocess.run(["git", "diff", "--name-only", "HEAD~1", "HEAD"], cwd=repo_root, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout:
+            for path_str in res.stdout.splitlines():
+                m = re.match(r"src/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)/", path_str)
+                if m:
+                    changed.add((m.group(1), m.group(2)))
+
+    return sorted(list(changed))
+
+def publish_extension(repo_root: Path, target_lang: str = None, target_name: str = None, commit_msg: str = None, no_bump: bool = False, watch: bool = False) -> bool:
     """Validates extension, formats files, bumps version code, stages git files, commits, and pushes to remote GitHub repository."""
     lang, name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
     if not lang or not name:
@@ -517,8 +634,17 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
             return False
 
     print("\n🎉 Extension successfully published to GitHub!")
-    return True
 
+    # 6. Stream remote CI if requested
+    if watch:
+        try:
+            from ci_monitor import watch_ci
+            print("\n6️⃣ Streaming remote GitHub Actions CI progress...")
+            watch_ci()
+        except ImportError:
+            pass
+
+    return True
 
 def validate_extensions(repo_root: Path, target_lang: str = None, target_name: str = None) -> bool:
     """Performs rigorous static analysis validation on extension modules without building APKs."""
@@ -665,7 +791,6 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
     print(f"\nSummary: {valid_count} extension module(s) passed static validation. {issue_count} module(s) had issues.")
     return issue_count == 0
 
-
 def clean_workspace(repo_root: Path) -> bool:
     """Removes temporary files, caches, and build artifacts in a single filesystem walk."""
     print("🧹 Cleaning workspace cache & temporary build artifacts...")
@@ -692,7 +817,6 @@ def clean_workspace(repo_root: Path) -> bool:
     print(f"✅ Workspace cleaned! ({count} item(s) purged)")
     return True
 
-
 def generate_doc(repo_root: Path) -> bool:
     """Generates an up-to-date markdown catalog table of all extension modules."""
     src_dir = repo_root / "src"
@@ -716,7 +840,6 @@ def generate_doc(repo_root: Path) -> bool:
     for lang, name, folder, ver in extensions:
         print(f"| `{lang}` | {name} | `src/{lang}/{folder}` | `{ver}` |")
     return True
-
 
 def format_codebase(repo_root: Path, target_lang: str = None, target_name: str = None, check_only: bool = False) -> bool:
     """Formats Kotlin, Gradle, and XML files by stripping trailing whitespace, normalizing CRLF to LF,
@@ -784,7 +907,6 @@ def format_codebase(repo_root: Path, target_lang: str = None, target_name: str =
     else:
         print(f"\n🎉 Formatting complete: {modified_count} of {checked_count} file(s) updated.")
         return True
-
 
 def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = None) -> bool:
     """Scans Kotlin code for code smells, blocking calls, anti-patterns, companion object placement, and DTO null-safety."""
@@ -1003,6 +1125,27 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
             if re.search(r'universalExtractor\s*\.\s*toVideoList\s*\(', joined_content) or re.search(r'UniversalExtractor\s*\([^)]*\)\s*\.\s*toVideoList\s*\(', joined_content):
                 file_warnings.append("UniversalExtractor method mismatch: '.toVideoList()' does not exist — use '.videosFromUrl(origRequestUrl, origRequestHeader, ...)'")
 
+            # 27. Const 'val' initializer containing string interpolation / template expressions
+            _warn_on_joined(
+                logical_lines, file_warnings,
+                r'\bconst\s+val\s+[a-zA-Z0-9_]+\s*=\s*(?:"""[^"\\]*(?:\$[a-zA-Z0-9_{])[^"]*"""|"[^"\n\\]*(?:\$[a-zA-Z0-9_{])[^"\n]*")',
+                "Const 'val' initializer must be a constant value — string interpolation ($var) is illegal in 'const val'. Use 'val' instead.",
+            )
+
+            # 28. Nullable DTO property access without safe call
+            if re.search(r'parseAs<[A-Za-z0-9_]+>\(\)\.[a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)*\.[a-zA-Z0-9_]+', joined_content):
+                if re.search(r'parseAs<[A-Za-z0-9_]+>\(\)\.data\.[a-zA-Z0-9_]+', joined_content):
+                    file_warnings.append("Dangerous direct dot-access on `.parseAs<T>().data` — use safe calls `?.data?.` or `.orEmpty()` to prevent Kotlin compilation errors on nullable DTO fields")
+
+            # 29. Shared Library Mutation / Isolation Warning
+            if "package eu.kanade.tachiyomi.animeextension" in content and "lib." in content:
+                if re.search(r'class\s+\w+\s*:\s*(?:AbyssExtractor|StreamWishExtractor|DoodExtractor|FilemoonExtractor|VidHideExtractor)\b', content):
+                    file_warnings.append("Subclassing shared lib extractor — if site requires customized extractor logic, copy it locally into the extension package instead of mutating shared lib/ classes (Library Isolation Rule)")
+
+            # 30. LocalProxy Loopback Address Binding
+            if "class LocalProxy" in content:
+                if "127.0.0.1" not in content and "localhost" in content:
+                    file_warnings.append("LocalProxy uses 'localhost' — use explicit loopback '127.0.0.1' for reliable Android localhost binding")
 
             if file_warnings:
                 for w in file_warnings:
@@ -1014,7 +1157,6 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
     else:
         print(f"\nSummary: {warnings} lint warning(s) found.")
     return warnings == 0
-
 
 def inspect_hosters(repo_root: Path, target_lang: str, target_name: str) -> bool:
     """Inspects and audits hoster folder architecture, server grouping, and stream quality sorting."""
@@ -1061,7 +1203,6 @@ def inspect_hosters(repo_root: Path, target_lang: str, target_name: str) -> bool
     print("  3. Include audio track tags next to the resolution (e.g. `1080p [Hindi]`, `720p [English]`).")
     print("  4. Provide a 'Preferred Server' ListPreference for custom user prioritization.")
     return True
-
 
 def preflight_extension(repo_root: Path, target_lang: str, target_name: str) -> bool:
     """Chains the entire quality gate pipeline for a single extension before PR or release."""
@@ -1111,7 +1252,6 @@ def preflight_extension(repo_root: Path, target_lang: str, target_name: str) -> 
         print(f"❌ Pre-Flight Check FAILED for {mod_path}. Resolve the issues reported above.")
     return success
 
-
 def audit_all(repo_root: Path) -> bool:
     """Runs a full repository audit: static validation, code linting, workspace cleaning, and catalog doc generation."""
     print("🛡️ Running Master Repository Audit & Health Check...\n" + "=" * 60)
@@ -1137,7 +1277,6 @@ def audit_all(repo_root: Path) -> bool:
     else:
         print("⚠️ Master Repository Audit Completed with Warnings/Issues.")
     return success
-
 
 def doctor(repo_root: Path) -> bool:
     """Diagnoses developer environment: Python, Git, ImageMagick, Java/Gradle, Android SDK, and lib/ health."""
@@ -1254,7 +1393,6 @@ def doctor(repo_root: Path) -> bool:
         print(f"⚠️ Doctor Diagnosis: Found {errors} error(s) and {warnings} warning(s).")
         return False
 
-
 def main():
     try:
         repo_root = Path(__file__).resolve().parent.parent
@@ -1324,6 +1462,10 @@ def main():
             "sync-lib": {
                 "script": "sync_lib.py",
                 "desc": "Synchronize and update shared lib/ extractor modules from upstream repositories (Yuzono/Keiyoushi/Aniyomiorg)."
+            },
+            "sync-ext": {
+                "script": "sync_ext.py",
+                "desc": "Synchronize extension sources and diffs from upstream repositories (Yuzono/Keiyoushi/Aniyomiorg)."
             },
             "verify-extractors": {
                 "script": "verify_extractors.py",
@@ -1436,6 +1578,26 @@ def main():
             "everythingmoe": {
                 "script": "everythingmoe_scraper.py",
                 "desc": "Crawl anime streaming site directory, reviews, and mirrors from EverythingMoe."
+            },
+            "ci-status": {
+                "script": "ci_monitor.py",
+                "desc": "Check remote GitHub Actions CI workflow run status, logs, and Kotlin compilation errors."
+            },
+            "ci-watch": {
+                "script": "ci_monitor.py",
+                "desc": "Stream and watch remote GitHub Actions CI workflow progress in real-time until completion."
+            },
+            "vendor": {
+                "script": "vendor_extractor.py",
+                "desc": "Vendor an isolated copy of an extractor from lib/ into an extension package without shared lib mutations."
+            },
+            "sync-vendor": {
+                "script": "vendor_extractor.py",
+                "desc": "Scan and sync managed vendored extractor copies across extension packages."
+            },
+            "hash-query": {
+                "script": None,
+                "desc": "Calculate SHA-256 Apollo Persisted Query (APQ) dynamic hash and Kotlin snippet."
             }
         }
 
@@ -1460,8 +1622,8 @@ def main():
                 ("sandbox", "Zero-APK fast in-memory Kotlin runtime simulator."),
             ]),
             ("🛡️  Code Quality, Auto-Fix & Validation", [
-                ("preflight", "One-shot master quality gate chaining format, fix, deps, lint, and validate."),
-                ("validate", "Perform static analysis validation without Gradle APK build (supports --fix)."),
+                ("preflight", "One-shot master quality gate chaining format, fix, deps, lint, and validate (supports --changed)."),
+                ("validate", "Perform static analysis validation without Gradle APK build (supports --fix, --changed)."),
                 ("lint", "Scan for code smells, anti-patterns, and API invariants (supports --fix)."),
                 ("fix", "Auto-remediate Kotlin AST code smells and API v16 invariants."),
                 ("format", "Format Kotlin, Gradle, and XML files (strip whitespace, CRLF normalization)."),
@@ -1470,13 +1632,16 @@ def main():
             ("📡 Media & Stream Diagnostics", [
                 ("probe-stream", "Deep media inspector for HLS (.m3u8), audio/subtitles, and real FFmpeg playback (--play)."),
                 ("deobfuscate", "Decode Dean Edwards, PlayerJS, CryptoJS AES, and Stego media payloads."),
+                ("hash-query", "Generate Apollo Persisted Query SHA-256 hash & Kotlin snippet."),
                 ("fetch-metadata", "Fetch episode metadata from Jikan, AniList, Kitsu, TMDB, and TVMaze."),
                 ("fetch-skip-times", "Fetch AniSkip intro/outro/recap skip timestamps."),
                 ("cross-map-id", "Cross-map IDs across MAL, AniList, IMDb, TMDB, and SIMKL."),
                 ("fetch-icon", "Fetch website favicon and convert to 192x192 PNG launcher icon."),
             ]),
             ("🚀 Release & Versioning", [
-                ("publish", "Full master preflight, format, validate, bump version, commit, and push."),
+                ("publish", "Full master preflight, format, validate, bump version, commit, and push (supports --watch)."),
+                ("ci-status", "Check remote GitHub Actions CI workflow status & compiler logs."),
+                ("ci-watch", "Watch and stream remote GitHub Actions CI build until completion."),
                 ("bump-version", "Increment extVersionCode in build.gradle."),
                 ("bump-theme", "Increment baseVersionCode in lib-multisrc."),
                 ("bump-lib", "Cascade version bumps to all modules depending on a lib."),
@@ -1488,12 +1653,15 @@ def main():
                 ("audit-all", "Run master repository health audit across all modules."),
                 ("canary-monitor", "Monitor health across all 65+ video extractors in lib/."),
                 ("sync-lib", "Synchronize shared extractors with upstream repositories."),
+                ("sync-ext", "Synchronize extension sources with upstream repositories (Yuzono/Keiyoushi)."),
                 ("verify-extractors", "Empirically test video extractors against live HTTP streams."),
                 ("auto-maintain", "Run automated maintenance (sync, fix dependencies, validate)."),
                 ("info", "Show detailed metadata for a single extension module."),
                 ("list", "List installed extension modules and version codes."),
                 ("list-extractors", "List all 65 pre-built video extractor libraries."),
                 ("doc", "Generate markdown extension catalog table."),
+                ("vendor", "Vendor an isolated copy of an extractor from lib/ into an extension."),
+                ("sync-vendor", "Scan and sync managed vendored extractor copies across extensions."),
                 ("clean", "Purge temporary build caches, pyc files, and temporary artifacts."),
             ]),
         ]
@@ -1616,10 +1784,22 @@ def main():
             pf_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
             pf_parser.add_argument("--lang", help="Target extension lang")
             pf_parser.add_argument("--name", help="Target extension directory name")
+            pf_parser.add_argument("--changed", action="store_true", help="Run preflight across all extensions modified in git status")
             pf_args = pf_parser.parse_args(args.args)
+            if pf_args.changed:
+                changed = get_changed_extensions(repo_root)
+                if not changed:
+                    print("✨ No modified extensions detected in git working tree.")
+                    sys.exit(0)
+                print(f"🚀 Running preflight on {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
+                all_ok = True
+                for l, n in changed:
+                    if not preflight_extension(repo_root, l, n):
+                        all_ok = False
+                sys.exit(0 if all_ok else 1)
             if not pf_args.target and not (pf_args.lang and pf_args.name):
                 pf_parser.print_help()
-                print("\n❌ Error: Target extension module is required (e.g. `cli.py preflight <module>`).")
+                print("\n❌ Error: Target extension module or --changed is required (e.g. `cli.py preflight <module>` or `cli.py preflight --changed`).")
                 sys.exit(1)
             lang, name = resolve_extension_target(repo_root, pf_args.target, pf_args.lang, pf_args.name)
             success = preflight_extension(repo_root, lang, name)
@@ -1655,6 +1835,27 @@ def main():
             print("\nSee .agents/skills/extractor-registry/SKILL.md for usage code snippets.")
             sys.exit(0)
 
+        if args.command == "vendor":
+            vendor_parser = argparse.ArgumentParser(prog="cli.py vendor")
+            vendor_parser.add_argument("extractor", help="Name of extractor in lib/ (e.g. 'dood-extractor', 'abyss-extractor')")
+            vendor_parser.add_argument("target", help="Target extension module (e.g. 'animesalt' or 'en/animesalt')")
+            vendor_args = vendor_parser.parse_args(args.args)
+            from scripts.vendor_extractor import vendor_extractor
+            lang, name = resolve_extension_target(repo_root, vendor_args.target, None, None)
+            success = vendor_extractor(repo_root, vendor_args.extractor, lang, name)
+            sys.exit(0 if success else 1)
+
+        if args.command == "sync-vendor":
+            sync_parser = argparse.ArgumentParser(prog="cli.py sync-vendor")
+            sync_parser.add_argument("target", nargs="?", help="Optional target extension module")
+            sync_args = sync_parser.parse_args(args.args)
+            from scripts.vendor_extractor import sync_vendored_extractors
+            lang, name = None, None
+            if sync_args.target:
+                lang, name = resolve_extension_target(repo_root, sync_args.target, None, None)
+            success = sync_vendored_extractors(repo_root, lang, name)
+            sys.exit(0 if success else 1)
+
         if args.command == "publish":
             pub_parser = argparse.ArgumentParser(prog="cli.py publish")
             pub_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
@@ -1662,13 +1863,14 @@ def main():
             pub_parser.add_argument("--name", help="Target extension directory name")
             pub_parser.add_argument("-m", "--message", help="Commit message")
             pub_parser.add_argument("--no-bump", action="store_true", help="Skip version bump if version code was already incremented")
+            pub_parser.add_argument("--watch", action="store_true", help="Stream and monitor remote GitHub Actions CI workflow after pushing")
             pub_args = pub_parser.parse_args(args.args)
             if not pub_args.target and not (pub_args.lang and pub_args.name):
                 pub_parser.print_help()
                 print("\n❌ Error: Target extension module is required (e.g. `cli.py publish <module>`).")
                 sys.exit(1)
             lang, name = resolve_extension_target(repo_root, pub_args.target, pub_args.lang, pub_args.name)
-            success = publish_extension(repo_root, lang, name, pub_args.message, no_bump=pub_args.no_bump)
+            success = publish_extension(repo_root, lang, name, pub_args.message, no_bump=pub_args.no_bump, watch=pub_args.watch)
             sys.exit(0 if success else 1)
 
         if args.command == "validate":
@@ -1677,9 +1879,21 @@ def main():
             val_parser.add_argument("--lang", help="Target extension lang")
             val_parser.add_argument("--name", help="Target extension directory name")
             val_parser.add_argument("--all", action="store_true", help="Validate all extensions")
+            val_parser.add_argument("--changed", action="store_true", help="Validate all extensions modified in git status")
             val_parser.add_argument("--fix", action="store_true", help="Auto-fix AST smells and missing dependencies before validating")
             val_args = val_parser.parse_args(args.args)
-            if val_args.all:
+            if val_args.changed:
+                changed = get_changed_extensions(repo_root)
+                if not changed:
+                    print("✨ No modified extensions detected in git working tree.")
+                    sys.exit(0)
+                print(f"🔎 Validating {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
+                all_ok = True
+                for l, n in changed:
+                    if not validate_extensions(repo_root, l, n):
+                        all_ok = False
+                sys.exit(0 if all_ok else 1)
+            elif val_args.all:
                 lang, name = None, None
             else:
                 lang, name = resolve_extension_target(repo_root, val_args.target, val_args.lang, val_args.name)
@@ -1696,6 +1910,39 @@ def main():
                         print(f"  ⚠️  detect_extractors exited with code {d_res.returncode}: {d_res.stderr.strip()}")
             success = validate_extensions(repo_root, lang, name)
             sys.exit(0 if success else 1)
+
+        if args.command in ("ci-status", "ci-watch"):
+            ci_parser = argparse.ArgumentParser(prog=f"cli.py {args.command}")
+            ci_parser.add_argument("run_id", nargs="?", help="Specific GitHub Actions run ID (default: latest)")
+            ci_parser.add_argument("--watch", action="store_true", default=(args.command == "ci-watch"), help="Stream progress until the workflow completes")
+            ci_parser.add_argument("--timeout", type=int, default=360, help="Max watch duration in seconds (default: 360)")
+            ci_args = ci_parser.parse_args(args.args)
+            from scripts.ci_monitor import watch_ci, show_ci_status
+            if ci_args.watch:
+                success = watch_ci(run_id=ci_args.run_id, timeout=ci_args.timeout)
+                sys.exit(0 if success else 1)
+            else:
+                show_ci_status(run_id=ci_args.run_id)
+                sys.exit(0)
+
+        if args.command == "hash-query":
+            hq_parser = argparse.ArgumentParser(prog="cli.py hash-query")
+            hq_parser.add_argument("query", help="GraphQL query string or path to query file")
+            hq_args = hq_parser.parse_args(args.args)
+            q_text = hq_args.query
+            q_path = Path(hq_args.query)
+            if q_path.exists() and q_path.is_file():
+                q_text = q_path.read_text(encoding="utf-8")
+            import hashlib
+            clean_query = q_text.strip()
+            sha = hashlib.sha256(clean_query.encode("utf-8")).hexdigest()
+            print("✨ Apollo Persisted Query (APQ) Dynamic Hash:\n" + "=" * 50)
+            print(f"  • SHA-256 Hash: {sha}")
+            print(f"  • Query Length: {len(clean_query)} chars\n")
+            print("Kotlin Snippet:")
+            print(f'val STREAM_QUERY = """\n{clean_query}\n""".trimIndent()')
+            print(f'val STREAM_HASH: String = "{sha}" // MkissaCrypto.sha256Hex(STREAM_QUERY)')
+            sys.exit(0)
 
         if args.command == "bump-version":
             bump_parser = argparse.ArgumentParser(prog="cli.py bump-version")
@@ -1915,7 +2162,6 @@ def main():
     except Exception as e:
         print(f"\n❌ Unexpected error: {e}")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

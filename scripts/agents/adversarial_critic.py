@@ -10,12 +10,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-
 class FindingSeverity(str, Enum):
     BLOCKER = "BLOCKER"
     WARNING = "WARNING"
     INFO = "INFO"
-
 
 @dataclass
 class CriticFinding:
@@ -24,7 +22,6 @@ class CriticFinding:
     severity: FindingSeverity
     line_number: Optional[int] = None
     suggested_fix: Optional[str] = None
-
 
 @dataclass
 class CriticReport:
@@ -38,7 +35,6 @@ class CriticReport:
     @property
     def total_findings(self) -> int:
         return len(self.blockers) + len(self.warnings) + len(self.infos)
-
 
 class CodeSmellDetector:
     """Detects anti-patterns and API v16 violations in Kotlin source code."""
@@ -171,7 +167,6 @@ class CodeSmellDetector:
 
         return findings
 
-
 class FuzzingAudit:
     """Fuzzes JSON payloads against DTO rules to detect deserialization vulnerabilities."""
 
@@ -205,7 +200,6 @@ class FuzzingAudit:
 
         check_field_types(sample_json)
         return findings
-
 
 class AstAuditor:
     """Performs deep AST-like structural evaluation of synthesized Kotlin code."""
@@ -242,7 +236,6 @@ class AstAuditor:
             infos=infos,
             summary=summary,
         )
-
 
 class AdversarialCriticAgent:
     """Adversarial Critic agent for micro-debates and AST compliance validation."""

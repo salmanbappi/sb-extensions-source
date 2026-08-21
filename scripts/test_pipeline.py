@@ -30,12 +30,10 @@ from typing import Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-
 def print_stage(num: int, title: str):
     print(f"\n{'='*60}")
     print(f"📍 Stage {num}: {title}")
     print(f"{'='*60}")
-
 
 class PipelineTester:
     def __init__(self, base_url: str, headers: Dict[str, str] = None):
@@ -267,7 +265,6 @@ class PipelineTester:
         print(f"{'='*60}")
         return True
 
-
 def main():
     parser = argparse.ArgumentParser(description="Aniyomi 5-Stage Full-Pipeline Scraper Verification Runner")
     parser.add_argument("target", help="Target module name (e.g. 'zinkmovies', 'vegamovies') or base URL")
@@ -306,7 +303,6 @@ def main():
     tester = PipelineTester(base_url)
     success = tester.run(query=args.query)
     sys.exit(0 if success else 1)
-
 
 if __name__ == "__main__":
     main()

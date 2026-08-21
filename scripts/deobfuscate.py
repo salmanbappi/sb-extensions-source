@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
-
 class DeanEdwardsUnpacker:
     """Unpacks Dean Edwards p.a.c.k.e.r JavaScript obfuscation."""
 
@@ -63,7 +62,6 @@ class DeanEdwardsUnpacker:
             return DeanEdwardsUnpacker.unpack(unpacked)
         return unpacked
 
-
 class CryptoAesHelper:
     """Derives OpenSSL AES key/IV and decrypts Salted__ payloads."""
 
@@ -101,7 +99,6 @@ class CryptoAesHelper:
         except Exception as e:
             return f"Error: {e}"
 
-
 class PlayerJsDecoder:
     """Decodes PlayerJS encoded video and subtitle playlists."""
 
@@ -138,6 +135,48 @@ class PlayerJsDecoder:
 
         return cleaned
 
+class BundleSeedDecoder:
+    """Recovers buildId and rotated string table seeds from obfuscated Webpack/SvelteKit/Vite bundles."""
+
+    @staticmethod
+    def fold_arithmetic(expr: str) -> int:
+        """Folds stacked unary arithmetic expressions like '2935+-1459*2'."""
+        total = 0
+        terms = re.findall(r"[-+]*[^-+]+", expr.replace(" ", ""))
+        for term in terms:
+            sign = 1
+            body = term
+            while body.startswith(("+", "-")):
+                if body.startswith("-"):
+                    sign = -sign
+                body = body[1:]
+            value = 1
+            for factor in body.split("*"):
+                try:
+                    value *= int(factor)
+                except ValueError:
+                    return 0
+            total += sign * value
+        return total
+
+    @staticmethod
+    def decode(js: str) -> Optional[str]:
+        """Extracts buildId and candidate mask seeds from live bundle."""
+        build_id_m = re.search(r'!==\s*["\']string["\']\s*\?\s*["\'](\d+)["\']\s*:\s*["\']["\']', js)
+        build_id = build_id_m.group(1) if build_id_m else "Unknown"
+
+        # Detect string tables
+        tables = re.findall(r"function\s+([$A-Za-z0-9_]+)\(\)\s*\{\s*(?:const|let|var)\s+[$A-Za-z0-9_]+\s*=\s*\[", js)
+        calls = re.findall(r"([$A-Za-z0-9_]+)\(\s*(-?\d+)\s*(?:,\s*(-?\d+)\s*)?\)", js)
+
+        if build_id != "Unknown" or tables:
+            return (
+                f"Bundle Build ID: {build_id}\n"
+                f"String Tables Detected: {len(tables)} ({', '.join(tables[:5])})\n"
+                f"Decoder Invocations: {len(calls)} call sites\n"
+                f"Pattern: SvelteKit/Vite Obfuscated String Rotation (Use MkissaBundle / MkissaCrypto style solver)"
+            )
+        return None
 
 def deobfuscate_auto(content: str) -> list[tuple[str, str]]:
     """Attempts automatic deobfuscation across multiple techniques."""
@@ -154,7 +193,13 @@ def deobfuscate_auto(content: str) -> list[tuple[str, str]]:
         if pjs != content:
             results.append(("PlayerJS Decoder", pjs))
 
-    # 3. Base64 / Hex Sniffing
+    # 3. SvelteKit / Webpack Bundle Obfuscation
+    if "!==\"string\"" in content or "!=='string'" in content or re.search(r"function\s+[$A-Za-z0-9_]+\(\)\s*\{\s*(?:const|let|var)", content):
+        bundle_info = BundleSeedDecoder.decode(content)
+        if bundle_info:
+            results.append(("Bundle Seed & String Table Decoder", bundle_info))
+
+    # 4. Base64 / Hex Sniffing
     if len(content) > 16 and re.match(r'^[A-Za-z0-9+/=]+$', content):
         try:
             b64_dec = base64.b64decode(content).decode("utf-8", errors="ignore")
@@ -164,7 +209,6 @@ def deobfuscate_auto(content: str) -> list[tuple[str, str]]:
             pass
 
     return results
-
 
 def main():
     parser = argparse.ArgumentParser(description="Universal Media Deobfuscation Workbench")
@@ -211,7 +255,6 @@ def main():
     else:
         print("❌ No matching automatic deobfuscator found for this payload.")
         print("💡 Try specifying explicit engine: --engine {packer|playerjs|aes}")
-
 
 if __name__ == "__main__":
     main()

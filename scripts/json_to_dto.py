@@ -12,7 +12,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
-
 KOTLIN_RESERVED_KEYWORDS = {
     "as", "break", "class", "continue", "do", "else", "false", "for", "fun",
     "if", "in", "interface", "is", "null", "object", "package", "return",
@@ -21,7 +20,6 @@ KOTLIN_RESERVED_KEYWORDS = {
     "dynamic", "file", "get", "init", "param", "property", "receiver",
     "set", "setparam", "where"
 }
-
 
 def to_camel_case(name: str) -> str:
     """Converts snake_case or kebab-case into camelCase and sanitizes Kotlin keywords."""
@@ -39,7 +37,6 @@ def to_camel_case(name: str) -> str:
         result = f"{result}Value"
     return result
 
-
 def to_pascal_case(name: str) -> str:
     """Converts snake_case or words into PascalCase."""
     clean = re.sub(r'[^a-zA-Z0-9_]', '_', name)
@@ -53,12 +50,10 @@ def to_pascal_case(name: str) -> str:
         result += "Dto"
     return result
 
-
 INVARIANT_NOUNS = {
     "series", "species", "news", "status", "release", "releases",
     "canvas", "address", "actress", "bonus", "virus", "bus", "corpus"
 }
-
 
 def singularize(name: str) -> str:
     """Safely singularizes a property name for list inner types."""
@@ -74,7 +69,6 @@ def singularize(name: str) -> str:
     if name.endswith("s") and len(name) > 3 and not name.endswith(("ss", "us", "is", "as", "os")):
         return name[:-1]
     return name
-
 
 class JsonToDtoConverter:
     def __init__(self, root_class_name: str = "ApiResponseDto"):
@@ -169,7 +163,6 @@ class JsonToDtoConverter:
 
         return "\n".join(output_lines)
 
-
 def parse_har(har_content: str) -> List[Dict[str, Any]]:
     """Extracts JSON endpoints from a HAR network export."""
     har = json.loads(har_content)
@@ -195,7 +188,6 @@ def parse_har(har_content: str) -> List[Dict[str, Any]]:
             except Exception:
                 pass
     return results
-
 
 def main():
     parser = argparse.ArgumentParser(description="JSON to Kotlinx Serialization DTO Generator & HAR Parser")
@@ -261,7 +253,6 @@ def main():
         print("Generated Kotlinx Serialization Models (v16 Null-Safe):")
         print("=" * 60)
         print(kotlin_code)
-
 
 if __name__ == "__main__":
     main()

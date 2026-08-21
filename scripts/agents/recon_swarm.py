@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import parse_qs, urlparse
 
-
 @dataclass
 class NetworkEntry:
     url: str
@@ -22,7 +21,6 @@ class NetworkEntry:
     response_text: Optional[str] = None
     content_type: str = ""
 
-
 @dataclass
 class DiscoveredRoute:
     path: str
@@ -30,7 +28,6 @@ class DiscoveredRoute:
     params: List[str] = field(default_factory=list)
     sample_values: Dict[str, Any] = field(default_factory=dict)
     headers: Dict[str, str] = field(default_factory=dict)
-
 
 @dataclass
 class SchemaField:
@@ -40,7 +37,6 @@ class SchemaField:
     default_value: Optional[str] = "null"
     json_key: Optional[str] = None
     nested_schema: Optional[Dict[str, Any]] = None
-
 
 @dataclass
 class SiteMap:
@@ -53,7 +49,6 @@ class SiteMap:
     auth_tokens: Dict[str, str] = field(default_factory=dict)
     cookies: Dict[str, str] = field(default_factory=dict)
     required_headers: Dict[str, str] = field(default_factory=dict)
-
 
 class HarAnalyzer:
     """Analyzes HAR (HTTP Archive) data to extract media streams, APIs, and auth headers."""
@@ -174,7 +169,6 @@ class HarAnalyzer:
 
         return tokens, cookies, headers
 
-
 class RouteExplorer:
     """Explores routes, pagination schemes, search parameters, and filters from HTML/JS text."""
 
@@ -248,7 +242,6 @@ class RouteExplorer:
                 unique_map[key] = r
 
         return list(unique_map.values())
-
 
 class SchemaInferer:
     """Infers null-safe Kotlin types from JSON payloads."""
@@ -331,7 +324,6 @@ class SchemaInferer:
             schemas.update(nested_schemas)
 
         return schemas
-
 
 class ReconSwarmAgent:
     """Autonomous reconnaissance swarm synthesizing network traces and site structure."""
