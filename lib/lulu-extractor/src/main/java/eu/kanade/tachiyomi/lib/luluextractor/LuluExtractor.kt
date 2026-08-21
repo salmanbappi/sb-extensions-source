@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.lib.luluextractor
 
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.unpacker.autoUnpacker
 import eu.kanade.tachiyomi.network.GET
-import keiyoushi.lib.autoUnpacker
 import keiyoushi.utils.bodyString
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
