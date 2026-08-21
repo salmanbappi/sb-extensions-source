@@ -2,17 +2,17 @@ package eu.kanade.tachiyomi.lib.megacloudextractor
 
 import android.util.Log
 import aniyomi.lib.m3u8server.M3u8Integration
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import java.net.URLEncoder
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import uy.kohesive.injekt.injectLazy
-import java.net.URLEncoder
 
 // Thanks to https://github.com/yogesh-hacker/MediaVanced/
 // Keys fetched from https://github.com/yogesh-hacker/MegacloudKeys/
