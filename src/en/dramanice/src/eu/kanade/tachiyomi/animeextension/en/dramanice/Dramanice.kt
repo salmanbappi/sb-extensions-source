@@ -421,7 +421,7 @@ class Dramanice :
             .toByteArray()
     }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         val server = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
 
@@ -440,7 +440,7 @@ class Dramanice :
             title = "Preferred Quality"
             entries = arrayOf("1080p", "720p", "480p", "360p")
             entryValues = arrayOf("1080", "720", "480", "360")
-            default = PREF_QUALITY_DEFAULT
+            setDefaultValue(PREF_QUALITY_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
                 preferences.edit().putString(PREF_QUALITY_KEY, newValue as String).commit()
@@ -452,7 +452,7 @@ class Dramanice :
             title = "Preferred Server"
             entries = arrayOf("Dramanice Fast", "Dramanice HD", "Dramanice Standard", "Vidmoly", "Streamtape", "MixDrop")
             entryValues = arrayOf("Fast", "HD", "Standard", "Vidmoly", "Streamtape", "MixDrop")
-            default = PREF_SERVER_DEFAULT
+            setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
                 preferences.edit().putString(PREF_SERVER_KEY, newValue as String).commit()
@@ -464,7 +464,7 @@ class Dramanice :
             title = "Exclude Video Servers"
             entries = arrayOf("Dramanice - Fast Server", "Dramanice - HD Server", "Dramanice - Standard Server", "KissKH - Vidmoly", "KissKH - Streamtape", "KissKH - MixDrop")
             entryValues = arrayOf("Dramanice - Fast Server", "Dramanice - HD Server", "Dramanice - Standard Server", "KissKH - Vidmoly", "KissKH - Streamtape", "KissKH - MixDrop")
-            default = emptySet<String>()
+            setDefaultValue(emptySet<String>())
             setOnPreferenceChangeListener { _, newValue ->
                 @Suppress("UNCHECKED_CAST")
                 preferences.edit().putStringSet(PREF_EXCLUDE_SERVERS_KEY, newValue as Set<String>).commit()
