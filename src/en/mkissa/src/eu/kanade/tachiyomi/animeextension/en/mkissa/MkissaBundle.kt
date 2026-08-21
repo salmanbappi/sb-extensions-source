@@ -102,7 +102,9 @@ object MkissaBundle {
         while (i < js.length) {
             when (val c = js[i]) {
                 ']' -> return items
+
                 ',', ' ' -> i++
+
                 '"', '\'' -> {
                     val sb = StringBuilder()
                     i++
@@ -119,6 +121,7 @@ object MkissaBundle {
                     i++
                     items.add(sb.toString())
                 }
+
                 else -> return null
             }
         }
