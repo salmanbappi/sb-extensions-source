@@ -161,10 +161,11 @@ class CloudflareInterceptor(
      *
      * **Timeout:** [SOLVE_TIMEOUT_MS] per attempt. The polling script exits
      * early as soon as `cf_clearance` appears, so most solves complete in ~5s
-     * for managed challenges and ~8-15s for Turnstile.
-     */
+    fun resolveWithWebView(originalRequest: Request, client: OkHttpClient): Request =
+        resolveWithWebView(originalRequest, originalRequest.url)
+
     @SuppressLint("SetJavaScriptEnabled")
-    private fun resolveWithWebView(originalRequest: Request, url: HttpUrl): Request {
+    fun resolveWithWebView(originalRequest: Request, url: HttpUrl = originalRequest.url): Request {
         val completionLatch = CountDownLatch(1)
         val jsInterface = CloudflareJSInterface(completionLatch)
 
