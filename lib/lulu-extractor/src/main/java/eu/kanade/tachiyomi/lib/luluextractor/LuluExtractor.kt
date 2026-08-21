@@ -2,12 +2,12 @@ package eu.kanade.tachiyomi.lib.luluextractor
 
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
-import java.util.regex.Pattern
 import keiyoushi.lib.autoUnpacker
 import keiyoushi.utils.bodyString
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import java.util.regex.Pattern
 
 class LuluExtractor(private val client: OkHttpClient, headers: Headers) {
 
@@ -49,6 +49,7 @@ class LuluExtractor(private val client: OkHttpClient, headers: Headers) {
                     .takeIf { it.find() }
                     ?.group(1)
             }
+
             else -> {
                 Pattern.compile("sources: \\[\\{file:\"(https?://[^\"]+)\"")
                     .matcher(html)

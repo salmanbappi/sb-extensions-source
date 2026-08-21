@@ -4,12 +4,11 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
-import keiyoushi.utils.commonEmptyHeaders
 import keiyoushi.utils.useAsJsoup
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 
-class OkruExtractor(private val client: OkHttpClient, private val headers: Headers = commonEmptyHeaders) {
+class OkruExtractor(private val client: OkHttpClient, private val headers: Headers = Headers.EMPTY) {
     private val playlistUtils by lazy { PlaylistUtils(client) }
 
     private fun fixQuality(quality: String): String {
