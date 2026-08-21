@@ -149,6 +149,9 @@ class CloudflareInterceptor(
         }
     }
 
+    fun resolveWithWebView(originalRequest: Request, client: OkHttpClient): Request =
+        resolveWithWebView(originalRequest, originalRequest.url)
+
     /**
      * Launches a WebView on the main thread, loads the challenged URL, polls
      * for `cf_clearance` in the WebView's cookie jar, and returns a request
@@ -161,9 +164,8 @@ class CloudflareInterceptor(
      *
      * **Timeout:** [SOLVE_TIMEOUT_MS] per attempt. The polling script exits
      * early as soon as `cf_clearance` appears, so most solves complete in ~5s
-    fun resolveWithWebView(originalRequest: Request, client: OkHttpClient): Request =
-        resolveWithWebView(originalRequest, originalRequest.url)
-
+     * for managed challenges and ~8-15s for Turnstile.
+     */
     @SuppressLint("SetJavaScriptEnabled")
     fun resolveWithWebView(originalRequest: Request, url: HttpUrl = originalRequest.url): Request {
         val completionLatch = CountDownLatch(1)
