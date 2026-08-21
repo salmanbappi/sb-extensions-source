@@ -149,8 +149,7 @@ class CloudflareInterceptor(
         }
     }
 
-    fun resolveWithWebView(originalRequest: Request, client: OkHttpClient): Request =
-        resolveWithWebView(originalRequest, originalRequest.url)
+    fun resolveWithWebView(originalRequest: Request, client: OkHttpClient): Request = resolveWithWebView(originalRequest, originalRequest.url)
 
     /**
      * Launches a WebView on the main thread, loads the challenged URL, polls
