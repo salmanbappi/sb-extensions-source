@@ -21,15 +21,15 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
-import java.util.concurrent.ConcurrentHashMap
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.seconds
 
 class Animostream : Source() {
 
@@ -363,16 +363,14 @@ class Animostream : Source() {
         return hosters
     }
 
-    private fun mapHosterName(keyOrVar: String, url: String): String {
-        return when {
-            keyOrVar.contains("abyss", ignoreCase = true) || url.contains("abyss") -> "Abyss"
-            url.contains("embedseek") -> "EmbedSeek"
-            keyOrVar.contains("earnvids", ignoreCase = true) || url.contains("morencius") || url.contains("streamwish") -> "StreamWish"
-            keyOrVar.contains("streamtape", ignoreCase = true) || url.contains("streamtape") -> "StreamTape"
-            url.contains("dood") -> "DoodStream"
-            url.contains("filemoon") -> "FileMoon"
-            else -> keyOrVar.removeSuffix("Link").replaceFirstChar { it.uppercase() }
-        }
+    private fun mapHosterName(keyOrVar: String, url: String): String = when {
+        keyOrVar.contains("abyss", ignoreCase = true) || url.contains("abyss") -> "Abyss"
+        url.contains("embedseek") -> "EmbedSeek"
+        keyOrVar.contains("earnvids", ignoreCase = true) || url.contains("morencius") || url.contains("streamwish") -> "StreamWish"
+        keyOrVar.contains("streamtape", ignoreCase = true) || url.contains("streamtape") -> "StreamTape"
+        url.contains("dood") -> "DoodStream"
+        url.contains("filemoon") -> "FileMoon"
+        else -> keyOrVar.removeSuffix("Link").replaceFirstChar { it.uppercase() }
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -383,21 +381,27 @@ class Animostream : Source() {
             name == "Abyss" || url.contains("abyss") -> {
                 abyssExtractor.videosFromUrl(url, referer = "$baseUrl/")
             }
+
             name == "EmbedSeek" || url.contains("embedseek") -> {
                 embedSeekExtractor.videosFromUrl(url, referer = "$baseUrl/")
             }
+
             name == "StreamWish" || url.contains("morencius") || url.contains("streamwish") -> {
                 streamWishExtractor.videosFromUrl(url, prefix = "StreamWish")
             }
+
             url.contains("streamtape") -> {
                 streamtapeExtractor.videoFromUrl(url)?.let { listOf(it) } ?: emptyList()
             }
+
             url.contains("dood") -> {
                 doodExtractor.videosFromUrl(url)
             }
+
             url.contains("filemoon") -> {
                 filemoonExtractor.videosFromUrl(url, prefix = "FileMoon - ")
             }
+
             else -> {
                 universalExtractor.videosFromUrl(url, headers)
             }

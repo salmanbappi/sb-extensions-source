@@ -523,6 +523,7 @@ class Mkissa : Source() {
                             .getOrNull()
                             ?.let { return it.episode?.sourceUrls.orEmpty() }
                     }
+
                     // No payload and no crypto error: an older, unencrypted show.
                     !keyManager.isCryptoError(responseBody) -> {
                         runCatching { responseBody.parseAs<EpisodeResult>().data?.episode?.sourceUrls.orEmpty() }

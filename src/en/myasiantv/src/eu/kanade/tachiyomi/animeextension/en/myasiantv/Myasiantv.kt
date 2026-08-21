@@ -22,20 +22,20 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
+import keiyoushi.utils.addBaseUrlPreference
+import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSetPreference
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import org.json.JSONObject
 import java.net.URLDecoder
 import java.text.SimpleDateFormat
 import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import keiyoushi.utils.addBaseUrlPreference
-import keiyoushi.utils.addListPreference
-import keiyoushi.utils.addSetPreference
 import kotlin.time.Duration.Companion.seconds
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import org.json.JSONObject
 
 class Myasiantv : Source() {
 
@@ -235,30 +235,37 @@ class Myasiantv : Source() {
                 val num = Regex("""\d+""").find(trimmed)?.value?.toLongOrNull() ?: 1L
                 now - num * 1000L
             }
+
             trimmed.contains("minute") -> {
                 val num = Regex("""\d+""").find(trimmed)?.value?.toLongOrNull() ?: 1L
                 now - num * 60 * 1000L
             }
+
             trimmed.contains("hour") -> {
                 val num = Regex("""\d+""").find(trimmed)?.value?.toLongOrNull() ?: 1L
                 now - num * 60 * 60 * 1000L
             }
+
             trimmed.contains("day") -> {
                 val num = Regex("""\d+""").find(trimmed)?.value?.toLongOrNull() ?: 1L
                 now - num * 24 * 60 * 60 * 1000L
             }
+
             trimmed.contains("week") -> {
                 val num = Regex("""\d+""").find(trimmed)?.value?.toLongOrNull() ?: 1L
                 now - num * 7 * 24 * 60 * 60 * 1000L
             }
+
             trimmed.contains("month") -> {
                 val num = Regex("""\d+""").find(trimmed)?.value?.toLongOrNull() ?: 1L
                 now - num * 30 * 24 * 60 * 60 * 1000L
             }
+
             trimmed.contains("year") -> {
                 val num = Regex("""\d+""").find(trimmed)?.value?.toLongOrNull() ?: 1L
                 now - num * 365 * 24 * 60 * 60 * 1000L
             }
+
             else -> runCatching { DATE_FORMAT.parse(dateStr)?.time ?: 0L }.getOrDefault(0L)
         }
     }
@@ -307,26 +314,37 @@ class Myasiantv : Source() {
         val extracted = when {
             embedUrl.contains("megaplay.su") ->
                 extractMegaplay(embedUrl)
+
             embedUrl.contains("megavid.buzz") || embedUrl.contains("/kisskh/") || embedUrl.contains("kissasian") ->
                 extractMegavid(embedUrl)
+
             embedUrl.contains("vidb.top") || embedUrl.contains("vidbasic.top") ->
                 extractVidb(embedUrl)
+
             embedUrl.contains("vidbasic.live") || embedUrl.contains("/stream/s-1/") ->
                 extractVidbasicLive(embedUrl)
+
             embedUrl.contains("dood") || embedUrl.contains("ds2play") || embedUrl.contains("doodstream") ->
                 doodExtractor.videosFromUrl(embedUrl)
+
             embedUrl.contains("streamtape") ->
                 streamtapeExtractor.videoFromUrl(embedUrl)?.let { listOf(it) } ?: emptyList()
+
             embedUrl.contains("filemoon") || embedUrl.contains("moonplayer") ->
                 filemoonExtractor.videosFromUrl(embedUrl, prefix = "", headers = embedHeaders)
+
             embedUrl.contains("streamwish") || embedUrl.contains("wish") ->
                 streamWishExtractor.videosFromUrl(embedUrl, videoNameGen = { it })
+
             embedUrl.contains("vidhide") ->
                 vidHideExtractor.videosFromUrl(embedUrl, videoNameGen = { it })
+
             embedUrl.contains("mp4upload") ->
                 mp4uploadExtractor.videosFromUrl(embedUrl, embedHeaders)
+
             embedUrl.endsWith(".m3u8") || embedUrl.contains(".m3u8?") ->
                 playlistUtils.extractFromHls(embedUrl, referer = "$baseUrl/", videoNameGen = { it })
+
             else ->
                 extractGenericOrUniversal(embedUrl, embedHeaders)
         }
@@ -401,7 +419,9 @@ class Myasiantv : Source() {
                 val body = resp.body.string()
                 val iframeSrc = Regex("""<iframe[^>]+src=["']([^"']+)["']""").find(body)?.groupValues?.get(1)
                 if (!iframeSrc.isNullOrBlank()) {
-                    targetUrl = if (iframeSrc.startsWith("http")) iframeSrc else {
+                    targetUrl = if (iframeSrc.startsWith("http")) {
+                        iframeSrc
+                    } else {
                         val base = targetUrl.substringBefore("/embed/")
                         "$base$iframeSrc"
                     }
@@ -438,18 +458,16 @@ class Myasiantv : Source() {
         }.getOrDefault(emptyList())
     }
 
-    private fun extractVidbasicLive(url: String): List<Video> {
-        return runCatching {
-            val id = Regex("""/stream/(?:s-\d+/)?(\d+)""").find(url)?.groupValues?.get(1)
-                ?: url.trimEnd('/').substringAfterLast('/')
-            if (id.isNotBlank() && id.all { it.isDigit() }) {
-                val bridgeUrl = "https://megavid.buzz/kisskh/$id"
-                extractMegavid(bridgeUrl)
-            } else {
-                emptyList()
-            }
-        }.getOrDefault(emptyList())
-    }
+    private fun extractVidbasicLive(url: String): List<Video> = runCatching {
+        val id = Regex("""/stream/(?:s-\d+/)?(\d+)""").find(url)?.groupValues?.get(1)
+            ?: url.trimEnd('/').substringAfterLast('/')
+        if (id.isNotBlank() && id.all { it.isDigit() }) {
+            val bridgeUrl = "https://megavid.buzz/kisskh/$id"
+            extractMegavid(bridgeUrl)
+        } else {
+            emptyList()
+        }
+    }.getOrDefault(emptyList())
 
     private fun extractGenericOrUniversal(embedUrl: String, embedHeaders: okhttp3.Headers): List<Video> {
         return runCatching {
@@ -477,20 +495,18 @@ class Myasiantv : Source() {
         }.getOrDefault(emptyList())
     }
 
-    private fun decryptVidb(cipherTextB64: String): String? {
-        return runCatching {
-            val keyBytes = "94588293375053432799222445521289".toByteArray(Charsets.UTF_8)
-            val ivBytes = "5259228356829423".toByteArray(Charsets.UTF_8)
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                SecretKeySpec(keyBytes, "AES"),
-                IvParameterSpec(ivBytes),
-            )
-            val decoded = Base64.decode(cipherTextB64, Base64.DEFAULT)
-            String(cipher.doFinal(decoded), Charsets.UTF_8)
-        }.getOrNull()
-    }
+    private fun decryptVidb(cipherTextB64: String): String? = runCatching {
+        val keyBytes = "94588293375053432799222445521289".toByteArray(Charsets.UTF_8)
+        val ivBytes = "5259228356829423".toByteArray(Charsets.UTF_8)
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(keyBytes, "AES"),
+            IvParameterSpec(ivBytes),
+        )
+        val decoded = Base64.decode(cipherTextB64, Base64.DEFAULT)
+        String(cipher.doFinal(decoded), Charsets.UTF_8)
+    }.getOrNull()
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
