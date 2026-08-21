@@ -45,6 +45,7 @@ EXTRACTOR_SIGNATURES = {
     "StreamWish": (re.compile(r'https?://(?:www\.)?(?:streamwish|wishfast|strwish|awish|wishembed|embedwish)\.[a-z0-9]+/([a-z0-9]+)', re.I), ":lib:streamwish-extractor"),
     "DoodStream": (re.compile(r'https?://(?:www\.)?(?:dood|doodstream|doods|ds2play|doodp)\.[a-z0-9]+/([a-z0-9]+)', re.I), ":lib:dood-extractor"),
     "Filemoon": (re.compile(r'https?://(?:www\.)?(?:filemoon|moonplayer|fmoon)\.[a-z0-9]+/([a-z0-9]+)', re.I), ":lib:filemoon-extractor"),
+    "VidMoly": (re.compile(r'https?://(?:www\.)?(?:vidmoly|moly)\.[a-z0-9]+/([a-z0-9]+)', re.I), ":lib:vidmoly-extractor"),
     "StreamTape": (re.compile(r'https?://(?:www\.)?streamtape\.[a-z0-9]+/([a-z0-9]+)', re.I), ":lib:streamtape-extractor"),
     "Mp4Upload": (re.compile(r'https?://(?:www\.)?mp4upload\.com/([a-z0-9]+)', re.I), ":lib:mp4upload-extractor"),
     "Vidplay": (re.compile(r'https?://(?:www\.)?(?:vidplay|vidsrc|mycloud)\.[a-z0-9]+/([a-z0-9]+)', re.I), ":lib:vidplay-extractor"),
@@ -57,6 +58,13 @@ EXTRACTOR_SIGNATURES = {
     "HubCloud": (re.compile(r'https?://(?:www\.)?(?:hubcloud|fastcloud|drivehub)\.[a-z0-9]+', re.I), ":lib:hubcloud-extractor"),
     "GDFlix": (re.compile(r'https?://(?:www\.)?gdflix\.[a-z0-9]+', re.I), ":lib:gdflix-extractor"),
     "FilePress": (re.compile(r'https?://(?:www\.)?filepress\.[a-z0-9]+', re.I), ":lib:filepress-extractor"),
+    "MegaCloud": (re.compile(r'https?://(?:www\.)?(?:megacloud|rapid-cloud|rabbitstream|dokicloud)\.[a-z0-9]+', re.I), ":lib:megacloud-extractor"),
+    "GogoStream": (re.compile(r'https?://(?:www\.)?(?:gogohd|gogo-stream|playgo1|anihdplay)\.[a-z0-9]+', re.I), ":lib:gogostream-extractor"),
+    "Okru": (re.compile(r'https?://(?:www\.)?(?:ok\.ru|odnoklassniki\.ru)/videoembed/([0-9]+)', re.I), ":lib:okru-extractor"),
+    "Sibnet": (re.compile(r'https?://(?:video\.)?sibnet\.ru/shell\.php\?videoid=([0-9]+)', re.I), ":lib:sibnet-extractor"),
+    "Dramavideo": (re.compile(r'https?://(?:www\.)?(?:dramavideo|player\.dramavideo)\.[a-z0-9]+', re.I), ":lib:cryptoaes"),
+    "KissKH": (re.compile(r'https?://(?:www\.)?kisskh\.[a-z0-9]+', re.I), ":lib:vidmoly-extractor"),
+    "CryptoJS AES": (re.compile(r'CryptoJS\.AES|encData\s*=|keyHex\s*=', re.I), ":lib:cryptoaes"),
     "Megaplay": (re.compile(r'https?://(?:www\.)?megaplay\.(?:su|buzz|cc)', re.I), ":lib:playlist-utils"),
     "Megavid": (re.compile(r'https?://(?:www\.)?megavid\.(?:buzz|cc)', re.I), ":lib:playlist-utils"),
     "Vidbasic": (re.compile(r'https?://(?:www\.)?(?:vidb|vidbasic)\.(?:top|live|cc)', re.I), ":lib:playlist-utils"),
@@ -261,6 +269,57 @@ class SiteRecon:
                             self.detected_libs.add(":lib:unpacker")
                 except Exception:
                     pass
+
+    def extract_dom_blueprints(self) -> Dict[str, str]:
+        """Empirically analyzes root HTML and sampled pages to deduce exact CSS selectors."""
+        html = self.root_html
+        selectors: Dict[str, str] = {}
+
+        # 1. Popular / Listing Selectors
+        if re.search(r'<ul[^>]*class=["\'][^"\']*items[^"\']*["\']', html):
+            selectors["popularSelector"] = "ul.items > li, .main_body ul.items li"
+            selectors["popularTitleSelector"] = ".bottom .name a, .name a, a[title]"
+            selectors["popularLinkSelector"] = ".img a, a[href]"
+            selectors["popularThumbSelector"] = "img[data-src], img"
+        elif "film-detail" in html or "film-item" in html:
+            selectors["popularSelector"] = "div.film-detail, div.film-item"
+            selectors["popularTitleSelector"] = ".film-name, h3 a, h2 a"
+            selectors["popularLinkSelector"] = "a.film-poster, a[href]"
+            selectors["popularThumbSelector"] = "img.film-poster-img, img[data-src], img"
+        elif "movie-card" in html or "drama-item" in html:
+            selectors["popularSelector"] = ".movie-card, .drama-item"
+            selectors["popularTitleSelector"] = ".title, h3 a"
+            selectors["popularLinkSelector"] = "a[href]"
+            selectors["popularThumbSelector"] = "img"
+
+        # 2. Detail Page Selectors (from sampled pages or root)
+        sample_htmls = [html]
+        for url in self.sample_pages[:2]:
+            st, s_html, _, _ = fetch_url(url, timeout=5)
+            if st == 200:
+                sample_htmls.append(s_html)
+
+        for s_html in sample_htmls:
+            if "info_des" in s_html:
+                selectors["detailsSynopsisSelector"] = "div.info_des, .description, .synopsis"
+            elif "synopsis" in s_html or "description" in s_html:
+                selectors["detailsSynopsisSelector"] = "div.synopsis, .description"
+
+            if "list_episode" in s_html:
+                selectors["episodeSelector"] = ".drama_info_episodes ul.list_episode li, ul.list_episode li"
+                selectors["episodeNameSelector"] = "span, a"
+                selectors["episodeLinkSelector"] = "a[href]"
+            elif "episodes-list" in s_html or "episode-item" in s_html:
+                selectors["episodeSelector"] = "ul.episodes > li, .episode-item"
+                selectors["episodeNameSelector"] = "span.name, a.title"
+                selectors["episodeLinkSelector"] = "a[href]"
+
+            if "Status:" in s_html or "status" in s_html:
+                selectors["detailsStatusSelector"] = "p:contains(Status:), .status"
+            if "Genre:" in s_html or "genres" in s_html:
+                selectors["detailsGenreSelector"] = "p:contains(Genre:) a, .genres a"
+
+        return selectors
 
     def _fetch_jina_preview(self) -> Optional[str]:
         """Fetches a high-speed Jina Reader markdown extraction."""

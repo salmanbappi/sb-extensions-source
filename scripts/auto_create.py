@@ -67,14 +67,14 @@ HTML Snippet:
         pass
     return {}
 
-def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en") -> bool:
-    """Orchestrates autonomous extension creation."""
+def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en", analyze_only: bool = False) -> bool:
+    """Orchestrates autonomous extension creation with strict Analysis-First architecture."""
     print("=" * 80)
     print("      🚀 AUTONOMOUS 1-CLICK EXTENSION SYNTHESIZER (v16 ENGINE)")
     print("=" * 80)
     print(f"Target URL: {url} | Language: {lang}")
 
-    # Stage 1: Parallel Site Reconnaissance
+    # Stage 1: Deep Parallel Site Reconnaissance
     recon = SiteRecon(url)
     report = recon.run(deep_samples=3)
 
@@ -84,9 +84,36 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en")
     pkg_name = name.lower().replace(" ", "").replace("-", "")
     class_name = to_pascal_case(name)
 
-    print(f"\n[+] Synthesizing Extension Module: src/{lang}/{pkg_name} ({class_name})")
+    # Stage 2: Empirical DOM & Selector Blueprinting
+    print("  [+] Analyzing DOM architecture & extracting CSS selectors...")
+    ai_selectors = extract_ai_selectors_json(recon.root_html)
+    heuristic_selectors = recon.extract_dom_blueprints()
 
-    # Stage 2: CMS / Theme Fast Path
+    # Merge heuristic fallback into AI selectors
+    selectors = {**heuristic_selectors, **ai_selectors}
+
+    print("\n" + "=" * 80)
+    print("            📊 EMPIRICAL ARCHITECTURAL & DOM BLUEPRINT")
+    print("=" * 80)
+    print(f"Target Domain:       {recon.domain}")
+    print(f"Listing Card:        {selectors.get('popularSelector', 'N/A')}")
+    print(f"Listing Title:       {selectors.get('popularTitleSelector', 'N/A')}")
+    print(f"Listing Link:        {selectors.get('popularLinkSelector', 'N/A')}")
+    print(f"Listing Thumbnail:   {selectors.get('popularThumbSelector', 'N/A')}")
+    print(f"Details Synopsis:    {selectors.get('detailsSynopsisSelector', 'N/A')}")
+    print(f"Details Status:      {selectors.get('detailsStatusSelector', 'N/A')}")
+    print(f"Episode Items:       {selectors.get('episodeSelector', 'N/A')}")
+    print(f"Episode Links:       {selectors.get('episodeLinkSelector', 'N/A')}")
+    print(f"Detected Extractors: {', '.join(report.get('extractors', [])) or 'None detected'}")
+    print("=" * 80 + "\n")
+
+    if analyze_only:
+        print("🔍 Analyze-only mode completed. Exiting without modifying codebase.")
+        return True
+
+    print(f"[+] Synthesizing Extension Module: src/{lang}/{pkg_name} ({class_name})")
+
+    # Stage 3: CMS / Theme Fast Path or Custom HTML
     cms = report.get("cms", "")
     if "DooPlay" in cms:
         print("  [✓] DooPlay Theme detected -> Generating DooPlay variant scaffold...")
@@ -98,7 +125,7 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en")
             repo_root=REPO_ROOT,
             has_filters=True,
             has_preferences=True,
-            theme_name="dooplay"
+            theme_name="dooplay",
         )
     elif "ToroTheme" in cms:
         print("  [✓] ToroTheme detected -> Generating ToroTheme variant scaffold...")
@@ -110,14 +137,10 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en")
             repo_root=REPO_ROOT,
             has_filters=True,
             has_preferences=True,
-            theme_name="torotheme"
+            theme_name="torotheme",
         )
     else:
-        # Stage 3: AI Selector Extraction for Standard HTML / Custom CMS
-        print("  [+] Extracting CSS selectors via Multi-Model AI Engine...")
-        selectors = extract_ai_selectors_json(recon.root_html)
-
-        # Stage 4: Generate Full Source Scaffold
+        # Generate Full Source Scaffold with verified empirical selectors
         generate_extension(
             ext_name=name,
             lang=lang,
@@ -127,10 +150,10 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en")
             has_filters=True,
             has_preferences=bool(report.get("libs")),
             has_metadata=True,
-            custom_selectors=selectors
+            custom_selectors=selectors,
         )
 
-    # Stage 5: Inject Auto-Detected Video Extractor Dependencies
+    # Stage 4: Inject Auto-Detected Video Extractor Dependencies
     libs = report.get("libs", [])
     if libs:
         build_gradle_path = REPO_ROOT / "src" / lang / pkg_name / "build.gradle"
@@ -145,7 +168,7 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en")
                 build_gradle_path.write_text(content, encoding="utf-8")
                 print(f"  [✓] Injected {len(dep_lines)} video extractor dependencies into build.gradle")
 
-    # Stage 6: Discover & Generate Launcher Icon
+    # Stage 5: Discover & Generate Launcher Icon
     icon_path = REPO_ROOT / "src" / lang / pkg_name / "res" / "drawable" / "ic_launcher.png"
     from scripts.cli import fetch_icon
     print("  [+] Fetching website launcher icon...")
@@ -154,7 +177,7 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en")
         create_minimal_png(icon_path)
         print("  [!] Used minimal fallback PNG icon.")
 
-    # Stage 7: Master Pre-flight Quality Gate
+    # Stage 6: Master Pre-flight Quality Gate
     print("\n[+] Running Master Pre-flight Quality Gates...")
     from scripts.ast_fixer import fix_codebase
     from scripts.cli import format_codebase, validate_extensions
@@ -178,9 +201,10 @@ def main():
     parser.add_argument("url", help="Target anime/movie website URL (e.g. 'https://animeflix.live')")
     parser.add_argument("--name", help="Extension name (optional, defaults to domain name)")
     parser.add_argument("--lang", default="en", help="Extension language (default: 'en')")
+    parser.add_argument("--analyze", "--dry-run", action="store_true", dest="analyze_only", help="Analyze site architecture and output blueprint without creating files")
     args = parser.parse_args()
 
-    success = synthesize_extension(args.url, name=args.name, lang=args.lang)
+    success = synthesize_extension(args.url, name=args.name, lang=args.lang, analyze_only=args.analyze_only)
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
