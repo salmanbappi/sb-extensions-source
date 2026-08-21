@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.lib.megacloudextractor
 
+import android.util.Log
 import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -11,7 +12,6 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import uy.kohesive.injekt.injectLazy
-import android.util.Log
 import java.net.URLEncoder
 
 // Thanks to https://github.com/yogesh-hacker/MediaVanced/
