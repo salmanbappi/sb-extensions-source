@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.lib.megacloudextractor
 
 import android.util.Log
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
@@ -25,26 +24,14 @@ class MegaCloudExtractor(
     private val json: Json by injectLazy()
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     companion object {
         private const val SOURCES_URL = "/embed-2/v3/e-1/getSources?id="
         private const val SOURCES_SPLITTER = "/e-1/"
     }
 
-    fun getVideosFromUrl(
-        url: String,
-        type: String,
-        name: String,
-        withM3u8Server: Boolean = false,
-    ): List<Video> {
-        val host = runCatching {
-            url.toHttpUrl().host
-        }.getOrNull() ?: throw IllegalStateException("MegaCloud host is invalid: $url")
-
-        val megaCloudServerUrl = "https://$host"
-
-        val videos = getVideoDto(url, megaCloudServerUrl)
+    fun getVideosFromUrl(url: String, type: String, name: String): List<Video> {
+        val videos = getVideoDto(url)
         if (videos.isEmpty()) return emptyList()
 
         val subtitles = videos.first().tracks
@@ -60,19 +47,19 @@ class MegaCloudExtractor(
                 subtitleList = subtitles,
                 referer = "https://${url.toHttpUrl().host}/",
             )
-        }.let {
-            if (withM3u8Server) {
-                m3u8Integration.processVideoList(it)
-            } else {
-                it
-            }
         }
     }
 
-    private fun getVideoDto(url: String, megaCloudServerUrl: String): List<VideoDto> {
+    private fun getVideoDto(url: String): List<VideoDto> {
         val id = url.substringAfter(SOURCES_SPLITTER, "")
             .substringBefore("?", "")
             .ifEmpty { throw Exception("Failed to extract ID from URL") }
+
+        val host = runCatching {
+            url.toHttpUrl().host
+        }.getOrNull() ?: throw IllegalStateException("MegaCloud host is invalid: $url")
+
+        val megaCloudServerUrl = "https://$host"
 
         val megaCloudHeaders = headers.newBuilder()
             .add("Accept", "*/*")
@@ -93,16 +80,14 @@ class MegaCloudExtractor(
             .execute().use { it.body.string() }
         val data = json.decodeFromString<SourceResponseDto>(srcRes)
 
-        return data.sources.mapNotNull { source ->
+        val key by lazy { requestNewKey() }
+
+        return data.sources.map { source ->
             val encoded = source.file
 
             val m3u8: String = if (!data.encrypted || ".m3u8" in encoded) {
                 encoded
             } else {
-                val key = requestNewKeyOrNull() ?: run {
-                    Log.w("MegaCloudExtractor", "Skipping encrypted source — decryption keys unavailable")
-                    return@mapNotNull null
-                }
                 val fullUrl = buildString {
                     append(megaCloudAPI)
                     append("?encrypted_data=").append(URLEncoder.encode(encoded, "UTF-8"))
@@ -122,27 +107,17 @@ class MegaCloudExtractor(
         }
     }
 
-    private fun requestNewKeyOrNull(): String? = try {
-        client.newCall(GET("https://raw.githubusercontent.com/yogesh-hacker/MegacloudKeys/refs/heads/main/keys.json"))
-            .execute()
-            .use { response ->
-                if (!response.isSuccessful) {
-                    Log.w("MegaCloudExtractor", "keys.json fetch failed: HTTP ${response.code}")
-                    return@use null
-                }
-                val jsonStr = response.body.string()
-                if (jsonStr.isEmpty()) {
-                    Log.w("MegaCloudExtractor", "keys.json is empty")
-                    return@use null
-                }
-                json.decodeFromString<Map<String, String>>(jsonStr)["mega"]?.also {
-                    Log.i("MegaCloudExtractor", "Using Mega Key: $it")
-                }
-            }
-    } catch (e: Exception) {
-        Log.w("MegaCloudExtractor", "requestNewKey failed: ${e.message}")
-        null
-    }
+    private fun requestNewKey(): String = client.newCall(GET("https://raw.githubusercontent.com/yogesh-hacker/MegacloudKeys/refs/heads/main/keys.json"))
+        .execute()
+        .use { response ->
+            if (!response.isSuccessful) throw IllegalStateException("Failed to fetch keys.json")
+            val jsonStr = response.body.string()
+            if (jsonStr.isEmpty()) throw IllegalStateException("keys.json is empty")
+            val key = json.decodeFromString<Map<String, String>>(jsonStr)["mega"]
+                ?: throw IllegalStateException("Mega key not found in keys.json")
+            Log.i("MegaCloudExtractor", "Using Mega Key: $key")
+            key
+        }
 
     @Serializable
     data class VideoDto(
