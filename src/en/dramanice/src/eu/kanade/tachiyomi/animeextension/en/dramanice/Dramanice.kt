@@ -221,7 +221,7 @@ class Dramanice :
                     else -> null
                 }
             }
-        }.reversed()
+        }
     }
 
     // ============================ Video Links =============================
