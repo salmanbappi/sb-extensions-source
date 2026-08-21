@@ -5,12 +5,12 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
+import java.security.MessageDigest
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.toHex
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
-import java.security.MessageDigest
 
 class VkExtractor(private val client: OkHttpClient, headers: Headers) {
     // Credit: https://github.com/skoruppa/docchi-stremio-addon/blob/main/app/players/vk.py
