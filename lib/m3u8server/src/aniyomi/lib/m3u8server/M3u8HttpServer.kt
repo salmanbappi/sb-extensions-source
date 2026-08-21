@@ -1,19 +1,16 @@
 package aniyomi.lib.m3u8server
 
 import android.util.Log
+import fi.iki.elonen.NanoHTTPD
+import fi.iki.elonen.NanoHTTPD.IHTTPSession
+import fi.iki.elonen.NanoHTTPD.Response
+import fi.iki.elonen.NanoHTTPD.Response.Status
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.nanohttpd.protocols.http.IHTTPSession
-import org.nanohttpd.protocols.http.NanoHTTPD
-import org.nanohttpd.protocols.http.response.Response
-import org.nanohttpd.protocols.http.response.Response.newChunkedResponse
-import org.nanohttpd.protocols.http.response.Response.newFixedLengthResponse
-import org.nanohttpd.protocols.http.response.Status
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -26,18 +23,6 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * Real HTTP server for M3U8 processing using NanoHTTPD
  * Compatible with Android and provides actual HTTP endpoints
- *
- * @param client the OkHttpClient used for all upstream fetches. May carry a
- *   Cloudflare-solve interceptor; if so, supply [fallbackClient] so a failed
- *   WebView solve does not hard-crash the m3u8 path.
- * @param fallbackClient optional secondary client consulted when [client]
- *   throws an IOException that looks like a Cloudflare-solve failure (the
- *   canonical case is `lib/cloudflareinterceptor` raising "Cloudflare
- *   WebView solve produced no cookies"). The fallback is expected to have
- *   no CF interceptor and to use HTTP/1.1; it lets the request flow
- *   through with whatever browser-fingerprint headers the caller attached
- *   so a header-gated CDN can still be served. May be null — when null,
- *   solve failures bubble up as `UpstreamStatusException(503, …)`.
  */
 class M3u8HttpServer(
     private val client: OkHttpClient,
@@ -72,7 +57,7 @@ class M3u8HttpServer(
 
     fun isRunning(): Boolean = isRunning
 
-    override fun handle(session: IHTTPSession): Response {
+    override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
         val method = session.method
 
@@ -157,13 +142,6 @@ class M3u8HttpServer(
         }
     }
 
-    /**
-     * Wraps the [UpstreamStatusException] code in an HTTP response that
-     * surfaces the upstream's status (403, 503, …) to the player instead of
-     * collapsing every failure into [Status.INTERNAL_ERROR]. The body carries
-     * the upstream URL + code so logcat / mpv diagnostics can pin the cause
-     * without re-reading the chain.
-     */
     private fun passThroughStatus(e: UpstreamStatusException): Response {
         val nanoStatus = when (e.code) {
             401 -> Status.UNAUTHORIZED
@@ -186,64 +164,37 @@ class M3u8HttpServer(
         return newFixedLengthResponse(Status.OK, MIME_PLAINTEXT, status)
     }
 
-    /**
-     * Build the upstream-fetch header map. Session headers (forwarded by the
-     * media player when it opens `http://localhost:…/m3u8?url=…`) seed the map;
-     * per-URL attachments from [fallbackReferer]/[fallbackUserAgent] then
-     * OVERRIDE / add their values, so the original extension's `video.headers`
-     * (encoded into the proxied URL by [createLocalUrl]) always win over
-     * whatever ExoPlayer/mpv copied to the localhost request.
-     *
-     * This prioritisation is the root-cause fix for `vault-99.owocdn.top` and
-     * similar Miruro-CDN hosts: the m3u8 server was previously fetching the
-     * upstream with no Referer (mpv does not carry the original `Referer`
-     * through to localhost), and the CDN returned a Cloudflare-signed 403 —
-     * the CloudflareInterceptor then kicked in, attempted a WebView solve, and
-     * when it failed (CDN sets no `cf_clearance` for null-Referer requests),
-     * the m3u8 path crashed with HTTP 500. Encoding the extension's Referer
-     * directly in the proxied URL cuts that whole branch off.
-     */
     private fun extractHeadersFromSession(
         session: IHTTPSession,
         fallbackReferer: String? = null,
         fallbackUserAgent: String? = null,
     ): Map<String, String> {
-        val headers = mutableMapOf<String, String>()
+        val extractedHeaders = mutableMapOf<String, String>()
 
-        session.headers.forEach { (key, value) ->
-            when (key.lowercase()) {
-                "user-agent", "referer", "origin", "accept", "accept-language",
-                "accept-encoding", "connection", "cache-control", "pragma",
-                -> {
-                    headers[key.lowercase()] = value
+        val rawHeaders: Map<String, String>? = session.headers
+        if (rawHeaders != null) {
+            for ((key, value) in rawHeaders) {
+                when (key.lowercase()) {
+                    "user-agent", "referer", "origin", "accept", "accept-language",
+                    "accept-encoding", "connection", "cache-control", "pragma",
+                    -> {
+                        extractedHeaders[key.lowercase()] = value
+                    }
                 }
             }
         }
 
         if (!fallbackUserAgent.isNullOrBlank()) {
-            headers["user-agent"] = fallbackUserAgent
+            extractedHeaders["user-agent"] = fallbackUserAgent
         }
         if (!fallbackReferer.isNullOrBlank()) {
-            headers["referer"] = fallbackReferer
+            extractedHeaders["referer"] = fallbackReferer
         }
 
-        Log.d(tag, "Extracted headers (referer=${headers["referer"]?.take(80) ?: "none"}, ua=${headers["user-agent"]?.take(40) ?: "none"})")
-        return headers
+        Log.d(tag, "Extracted headers (referer=${extractedHeaders["referer"]?.take(80) ?: "none"}, ua=${extractedHeaders["user-agent"]?.take(40) ?: "none"})")
+        return extractedHeaders
     }
 
-    /**
-     * Thrown by `fetchM3u8Content` / `fetchSegmentBytes` when the upstream
-     * returns a non-2xx HTTP code, OR when both the primary [client] and the
-     * secondary [fallbackClient] (CF-stripped) fail to retrieve the resource.
-     *
-     * The [code] carries the upstream's HTTP status when known; for
-     * transform-layer failures (e.g., a Cloudflare-solve crash with no
-     * response yet observed) it defaults to 503 so callers see a
-     * service-unavailable NanoHTTPD response instead of opaque INTERNAL_ERROR.
-     *
-     * Caught by [handleM3u8Request]/[handleSegmentRequest] → [passThroughStatus]
-     * so mpv receives a meaningful 403/503 (not a `500 Error: …` wrapper).
-     */
     private class UpstreamStatusException(
         val code: Int,
         val url: String,
@@ -251,9 +202,6 @@ class M3u8HttpServer(
         cause: Throwable? = null,
     ) : IOException("$code for $url: $message", cause)
 
-    /**
-     * Process M3U8 content through the server
-     */
     private suspend fun processM3u8Content(url: String, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
         try {
             Log.d(tag, "Fetching M3U8 content from: $url with headers: $headers")
@@ -276,14 +224,6 @@ class M3u8HttpServer(
         }
     }
 
-    /**
-     * Process segment with automatic detection. When [keyUrl] and [iv] are
-     * both supplied, the segment is treated as AES-128-CBC encrypted (the
-     * `#EXT-X-KEY:METHOD=AES-128` playlist path) and the bytes are decrypted
-     * BEFORE junk-byte interleaving is stripped (ChillX-style obfuscation
-     * may stack on top of AES-128; decryption first produces the raw TS that
-     * AutoDetector then scans for image-magic-junk blocks).
-     */
     suspend fun processSegmentUrl(
         url: String,
         headers: Map<String, String> = emptyMap(),
@@ -383,9 +323,6 @@ class M3u8HttpServer(
         substring(index * 2, index * 2 + 2).toInt(16).toByte()
     }
 
-    /**
-     * Health check
-     */
     fun getHealthStatus(): String = if (isRunning) {
         "M3U8 HTTP Server is running on port $port"
     } else {
@@ -422,10 +359,6 @@ class M3u8HttpServer(
         } catch (primary: UpstreamStatusException) {
             throw primary
         } catch (primary: Exception) {
-            // Primary client threw; if it was a CF-solve failure we are not
-            // a typed exception here (lib stays agnostic of cloudflareinterceptor).
-            // Use the fallback client when supplied — header-gated CDNs may
-            // return 200 once the WebView detour is bypassed.
             Log.w(tag, "Primary client failed for $url: ${primary.javaClass.simpleName}: ${primary.message}; ${if (fallbackClient != null) "attempting fallback" else "no fallback configured"}")
             val fb = fallbackClient ?: throw UpstreamStatusException(503, url, "Primary client failed: ${primary.message}", primary)
 
@@ -460,17 +393,6 @@ class M3u8HttpServer(
         return out
     }
 
-    /**
-     * Creates a local M3U8 URL that re-enters this server at `/m3u8`. The
-     * caller can attach the original extension's [referer] and [userAgent]
-     * so the upstream-fetch path can re-issue them even when the media
-     * player (mpv / ExoPlayer) does not carry them through to localhost.
-     *
-     * This is the root-cause fix for Cloudflare-fronted CDNs that reject
-     * null-Referer (or wrong-Referer) requests with a 403 — the m3u8 server
-     * would otherwise hit the upstream with whatever headers the player
-     * copied to localhost, which on most MPV integrations is "no Referer".
-     */
     fun createLocalUrl(
         m3u8Url: String,
         referer: String? = null,
@@ -551,8 +473,6 @@ class M3u8HttpServer(
                     val resolvedUrl = resolveHlsUrl(baseHttpUrl, line)
                     if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
                         val encodedUrl = URLEncoder.encode(resolvedUrl, Charsets.UTF_8.name())
-                        // Forward the caller's referer / UA to sub-playlists so
-                        // the redirect chain keeps browser-fingerprint headers.
                         modifiedLines.add(buildChildM3u8Url(serverPort, resolvedUrl, referer, userAgent))
                     } else {
                         modifiedLines.add(
