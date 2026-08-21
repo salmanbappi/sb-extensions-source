@@ -181,7 +181,7 @@ class {config.class_name} : Source(), ConfigurableAnimeSource {{
                 name = element.selectFirst(".ep-title, a")?.text() ?: "Episode ${{index + 1}}"
                 episode_number = (index + 1).toFloat()
             }}
-        }}.reversed()
+        }}
     }}
 
     // ============================ Video Streams (v16) ============================
