@@ -24,18 +24,20 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
-import java.net.URLDecoder
-import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Locale
 import keiyoushi.utils.parallelCatchingFlatMap
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
 
-class Dramanice : Source(), ConfigurableAnimeSource {
+class Dramanice :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "Dramanice"
 
@@ -250,6 +252,7 @@ class Dramanice : Source(), ConfigurableAnimeSource {
                         hosters.add(Hoster(hosterName = "Dramanice - Server ${idx + 1}", hosterUrl = "dramavideo_direct|$resolvedUrl"))
                     }
                 }
+
                 resolvedUrl.contains("kisskh") -> {
                     val subHosters = fetchKisskhServers(resolvedUrl)
                     if (subHosters.isNotEmpty()) {
@@ -258,6 +261,7 @@ class Dramanice : Source(), ConfigurableAnimeSource {
                         hosters.add(Hoster(hosterName = "KissKH", hosterUrl = resolvedUrl))
                     }
                 }
+
                 else -> {
                     val name = el.text().trim().ifBlank { "Server ${idx + 1}" }
                     hosters.add(Hoster(hosterName = name, hosterUrl = resolvedUrl))
@@ -287,7 +291,7 @@ class Dramanice : Source(), ConfigurableAnimeSource {
                     Hoster(
                         hosterName = "Dramanice - $label",
                         hosterUrl = "dramavideo|$videoCode|$provider",
-                    )
+                    ),
                 )
             }
         }
@@ -307,7 +311,7 @@ class Dramanice : Source(), ConfigurableAnimeSource {
                     Hoster(
                         hosterName = "KissKH - $srvName",
                         hosterUrl = video,
-                    )
+                    ),
                 )
             }
         }
@@ -334,28 +338,37 @@ class Dramanice : Source(), ConfigurableAnimeSource {
                     val code = parts[1]
                     val provider = parts[2]
                     extractDramavideoHls(code, provider)
-                } else emptyList()
+                } else {
+                    emptyList()
+                }
             }
+
             rawUrl.startsWith("dramavideo_direct|") -> {
                 val watchUrl = rawUrl.substringAfter("dramavideo_direct|")
                 val servers = fetchDramavideoServers(watchUrl)
                 servers.parallelCatchingFlatMap { getVideoList(it) }
             }
+
             rawUrl.contains("vidmoly") -> {
                 vidMolyExtractor.videosFromUrl(rawUrl)
             }
+
             rawUrl.contains("streamtape") -> {
                 streamtapeExtractor.videoFromUrl(rawUrl)?.let(::listOf) ?: emptyList()
             }
+
             rawUrl.contains("mixdrop") -> {
                 mixDropExtractor.videoFromUrl(rawUrl)
             }
+
             rawUrl.contains("dood") || rawUrl.contains("ds2play") -> {
                 doodExtractor.videosFromUrl(rawUrl)
             }
+
             rawUrl.contains("filemoon") || rawUrl.contains("moonplayer") -> {
                 filemoonExtractor.videosFromUrl(rawUrl, headers = embedHeaders)
             }
+
             rawUrl.endsWith(".m3u8") || rawUrl.contains(".m3u8?") -> {
                 playlistUtils.extractFromHls(
                     playlistUrl = rawUrl,
@@ -363,6 +376,7 @@ class Dramanice : Source(), ConfigurableAnimeSource {
                     videoNameGen = { quality -> quality },
                 )
             }
+
             else -> {
                 universalExtractor.videosFromUrl(rawUrl, embedHeaders)
             }
