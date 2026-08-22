@@ -11,54 +11,73 @@ object Filters {
         fun isDefault() = state == 0
     }
 
-    class CategoryFilter : UriPartFilter("Category", arrayOf(
-        Pair("All", ""),
-        Pair("K-Drama", "k-drama"),
-        Pair("C-Drama", "c-drama"),
-        Pair("J-Drama", "j-drama"),
-        Pair("Variety Show", "variety"),
-        Pair("Movies", "movies"),
-        Pair("Anime", "anime"),
-    ))
+    class CategoryFilter :
+        UriPartFilter(
+            "Category",
+            arrayOf(
+                Pair("All", ""),
+                Pair("K-Drama", "k-drama"),
+                Pair("C-Drama", "c-drama"),
+                Pair("J-Drama", "j-drama"),
+                Pair("Variety Show", "variety"),
+                Pair("Movies", "movies"),
+                Pair("Anime", "anime"),
+            ),
+        )
 
-    class CountryFilter : UriPartFilter("Country", arrayOf(
-        Pair("All", ""),
-        Pair("South Korea", "korea"),
-        Pair("China", "china"),
-        Pair("Japan", "japan"),
-        Pair("Taiwan", "taiwan"),
-        Pair("Thailand", "thailand"),
-        Pair("Hong Kong", "hong-kong"),
-    ))
+    class CountryFilter :
+        UriPartFilter(
+            "Country",
+            arrayOf(
+                Pair("All", ""),
+                Pair("South Korea", "korea"),
+                Pair("China", "china"),
+                Pair("Japan", "japan"),
+                Pair("Taiwan", "taiwan"),
+                Pair("Thailand", "thailand"),
+                Pair("Hong Kong", "hong-kong"),
+            ),
+        )
 
-    class TypeFilter : UriPartFilter("Type", arrayOf(
-        Pair("All", ""),
-        Pair("Drama Series", "drama"),
-        Pair("Movie", "movie"),
-        Pair("Special", "special"),
-        Pair("TV Show", "tv-show"),
-    ))
+    class TypeFilter :
+        UriPartFilter(
+            "Type",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Drama Series", "drama"),
+                Pair("Movie", "movie"),
+                Pair("Special", "special"),
+                Pair("TV Show", "tv-show"),
+            ),
+        )
 
-    class StatusFilter : UriPartFilter("Status", arrayOf(
-        Pair("All", ""),
-        Pair("Ongoing", "ongoing"),
-        Pair("Completed", "completed"),
-    ))
+    class StatusFilter :
+        UriPartFilter(
+            "Status",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Ongoing", "ongoing"),
+                Pair("Completed", "completed"),
+            ),
+        )
 
-    class SortFilter : UriPartFilter("Sort By", arrayOf(
-        Pair("Default", ""),
-        Pair("Latest Update", "latest"),
-        Pair("Most Popular", "popular"),
-        Pair("Highest Rated", "rating"),
-        Pair("Release Date", "release"),
-    ))
+    class SortFilter :
+        UriPartFilter(
+            "Sort By",
+            arrayOf(
+                Pair("Default", ""),
+                Pair("Latest Update", "latest"),
+                Pair("Most Popular", "popular"),
+                Pair("Highest Rated", "rating"),
+                Pair("Release Date", "release"),
+            ),
+        )
 
     class YearFilter : AnimeFilter.Text("Year", "")
 
     class GenreCheckBox(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
 
-    class GenreFilter(genres: List<Pair<String, String>> = defaultGenres) :
-        AnimeFilter.Group<AnimeFilter.CheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) }) {
+    class GenreFilter(genres: List<Pair<String, String>> = defaultGenres) : AnimeFilter.Group<AnimeFilter.CheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) }) {
         fun getIncluded(): List<String> = state.filter { it.state }.map { (it as GenreCheckBox).id }
     }
 
