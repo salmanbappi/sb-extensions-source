@@ -343,10 +343,11 @@ class Goplay :
                                 videoUrl = embedUrl,
                                 videoTitle = "GoPlay - DASH [$audioType]",
                                 headers = embedHeaders,
-                            )
+                            ),
                         )
                     }
                 }
+
                 embedUrl.contains("dood") || embedUrl.contains("ds2play") ->
                     doodExtractor.videosFromUrl(embedUrl)
 
