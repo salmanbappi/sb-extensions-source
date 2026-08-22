@@ -20,18 +20,18 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
-import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Locale
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.parallelCatchingFlatMap
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
 
 class Goplay :
     Source(),
@@ -136,7 +136,7 @@ class Goplay :
     private fun parseAnimeListPage(response: Response): AnimesPage {
         val doc = response.asJsoup()
         val elements = doc.select(
-            "div#indexepisodes, div.indexepisodes, #indexepisodelist > div, div.anime-card, div.film-item, div.drama-card, div.item, ul.items > li, .content_left ul.items li, .list-drama li, .drama-box, div.col-item, .video-block"
+            "div#indexepisodes, div.indexepisodes, #indexepisodelist > div, div.anime-card, div.film-item, div.drama-card, div.item, ul.items > li, .content_left ul.items li, .list-drama li, .drama-box, div.col-item, .video-block",
         )
 
         val animes = elements.mapNotNull { element ->
@@ -201,7 +201,7 @@ class Goplay :
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val doc = client.newCall(GET("$baseUrl${anime.url}", headers)).execute().asJsoup()
         val epElements = doc.select(
-            "div#episodediv > div, div#episodesodd, div#episodeseven, ul.episodes > li, div.episode-item, .episodes-list a, ul.all-episode li, .list-episode-item a, .episode-list li, div#episodes a"
+            "div#episodediv > div, div#episodesodd, div#episodeseven, ul.episodes > li, div.episode-item, .episodes-list a, ul.all-episode li, .list-episode-item a, .episode-list li, div#episodes a",
         )
 
         val episodes = epElements.mapIndexedNotNull { idx, element ->
@@ -230,7 +230,9 @@ class Goplay :
             val dateStr = element.selectFirst("span.date, .ep-date, .time")?.text() ?: ""
             val uploadDate = if (dateStr.isNotBlank()) {
                 runCatching { DATE_FORMAT.parse(dateStr)?.time ?: 0L }.getOrDefault(0L)
-            } else 0L
+            } else {
+                0L
+            }
 
             SEpisode.create().apply {
                 setUrlWithoutDomain(rawHref)
@@ -323,16 +325,20 @@ class Goplay :
             val extractedVideos = when {
                 embedUrl.contains("dood") || embedUrl.contains("ds2play") ->
                     doodExtractor.videosFromUrl(embedUrl)
+
                 embedUrl.contains("streamtape") ->
                     streamtapeExtractor.videoFromUrl(embedUrl)?.let { listOf(it) } ?: emptyList()
+
                 embedUrl.contains("filemoon") || embedUrl.contains("moonplayer") ->
                     filemoonExtractor.videosFromUrl(embedUrl, prefix = "${hoster.hosterName} - ", headers = embedHeaders)
+
                 embedUrl.endsWith(".m3u8") || embedUrl.contains(".m3u8?") ->
                     playlistUtils.extractFromHls(
                         playlistUrl = embedUrl,
                         referer = "$baseUrl/",
-                        videoNameGen = { quality -> "$quality [$audioType]" }
+                        videoNameGen = { quality -> "$quality [$audioType]" },
                     )
+
                 else ->
                     universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = "${hoster.hosterName} - ")
             }
@@ -362,7 +368,7 @@ class Goplay :
             compareByDescending<Video> { it.videoTitle.contains(prefType, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefServer, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
-                .thenByDescending { it.resolution ?: 0 }
+                .thenByDescending { it.resolution ?: 0 },
         )
     }
 
