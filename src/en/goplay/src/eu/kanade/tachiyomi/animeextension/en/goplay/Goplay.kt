@@ -255,12 +255,19 @@ class Goplay :
 
         // 1. Direct GoPlay Stream / Dash / MPD or HLS
         val html = doc.html()
-        val dcodeMatch = Regex("""(?:dcode|d)=([a-zA-Z0-9+/=_%-]+)""").find(html)
-        if (dcodeMatch != null) {
-            val dcode = dcodeMatch.groupValues[1]
-            if ("GoPlay Direct" !in excludedServers) {
-                providerMap.getOrPut("GoPlay Direct") { mutableListOf() }.add(Pair("SUB", "$baseUrl/?dcode=$dcode&downloadmp4vid=1"))
-            }
+        val mpdMatch = Regex("""/stream/(?:stream_dash_v3\.mpd|stream\.mpd)\?d=([a-zA-Z0-9+/=_%-]+)""").find(html)
+            ?: Regex("""(?:stream_dash_v3\.mpd|stream\.mpd)\?d=([a-zA-Z0-9+/=_%-]+)""").find(html)
+        val hlsMatch = Regex("""/stream/(?:stream_hls\.m3u8|stream\.m3u8)\?d=([a-zA-Z0-9+/=_%-]+)""").find(html)
+            ?: Regex("""(?:stream_hls\.m3u8|stream\.m3u8)\?d=([a-zA-Z0-9+/=_%-]+)""").find(html)
+
+        if (mpdMatch != null && "GoPlay DASH" !in excludedServers) {
+            val mpdUrl = if (mpdMatch.value.startsWith("http")) mpdMatch.value else "$baseUrl${if (mpdMatch.value.startsWith("/")) "" else "/"}${mpdMatch.value}"
+            providerMap.getOrPut("GoPlay DASH") { mutableListOf() }.add(Pair("SUB", mpdUrl))
+        }
+
+        if (hlsMatch != null && "GoPlay HLS" !in excludedServers) {
+            val hlsUrl = if (hlsMatch.value.startsWith("http")) hlsMatch.value else "$baseUrl${if (hlsMatch.value.startsWith("/")) "" else "/"}${hlsMatch.value}"
+            providerMap.getOrPut("GoPlay HLS") { mutableListOf() }.add(Pair("SUB", hlsUrl))
         }
 
         // 2. Scan iframes and embed elements
@@ -323,6 +330,23 @@ class Goplay :
             if (audioType.uppercase() in excludedAudios) return@parallelCatchingFlatMap emptyList()
 
             val extractedVideos = when {
+                embedUrl.contains(".mpd") -> {
+                    runCatching {
+                        playlistUtils.extractFromDash(
+                            mpdUrl = embedUrl,
+                            videoNameGen = { quality -> "$quality [$audioType]" },
+                            referer = "$baseUrl/",
+                        )
+                    }.getOrElse {
+                        listOf(
+                            Video(
+                                videoUrl = embedUrl,
+                                videoTitle = "GoPlay - DASH [$audioType]",
+                                headers = embedHeaders,
+                            )
+                        )
+                    }
+                }
                 embedUrl.contains("dood") || embedUrl.contains("ds2play") ->
                     doodExtractor.videosFromUrl(embedUrl)
 
