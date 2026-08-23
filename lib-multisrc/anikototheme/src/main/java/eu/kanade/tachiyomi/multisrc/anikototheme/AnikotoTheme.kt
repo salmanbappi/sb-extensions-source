@@ -322,7 +322,7 @@ abstract class AnikotoTheme : Source() {
             if (title.isBlank()) title = "Episode $num"
             val meta = EpisodeMeta(slug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
-                url = meta.encode()
+                url = "/watch/${getCleanSlug(slug)}/ep-$num"
                 name = title
                 episode_number = num.toFloatOrNull() ?: 0.0f
                 date_upload = (timestamp.toLongOrNull() ?: 0L) * 1000L
@@ -334,9 +334,7 @@ abstract class AnikotoTheme : Source() {
         }.reversed()
 
         val malId = elements.firstNotNullOfOrNull { it.attr("data-mal").takeIf { mal -> mal.isNotEmpty() } } ?: ""
-        val animeTitle = detailDoc.selectFirst("h1.title")?.text()?.trim() ?: ""
-        val malIdToUse = if (malId.toIntOrNull() != null && malId.toInt() < 100 && animeTitle.isNotEmpty()) "" else malId
-        return enrichEpisodesWithMetadata(episodes, detailDoc, malIdToUse)
+        return enrichEpisodesWithMetadata(episodes, detailDoc, malId)
     }
 
     private suspend fun enrichEpisodesWithMetadata(
@@ -652,13 +650,11 @@ abstract class AnikotoTheme : Source() {
         return video
     }
 
-    protected open fun getSourcesUrl(token: String): String = "$baseUrl/ajax/server?get=$token"
-
     private suspend fun resolveStreamForTask(task: HosterTask, slug: String): LocalProxyServer.AudioStream? {
         logi("--- resolving: ${task.label} ---")
         return try {
             val encodedToken = URLEncoder.encode(task.token, "UTF-8")
-            val ajaxUrl = getSourcesUrl(encodedToken)
+            val ajaxUrl = "$baseUrl/ajax/server?get=$encodedToken"
             val response = client.newCall(GET(ajaxUrl, ajaxHeaders(slug))).execute()
             val jsonResponse = json.decodeFromString<ServerResponse>(response.body.string())
             val url = jsonResponse.result?.url
@@ -675,11 +671,6 @@ abstract class AnikotoTheme : Source() {
                 host.contains("vidtube.site", ignoreCase = true) || host.contains("megaplay.buzz", ignoreCase = true) || host.contains("vidwish.live", ignoreCase = true) -> {
                     logi("  [${task.label}] → Flow A (VidTube), host=$host")
                     extractors.resolveVidTube(url, task.audioType, hosterName)
-                }
-
-                host.contains("echovideo.ru", ignoreCase = true) || host.contains("echovideo.to", ignoreCase = true) || host.contains("savedly.net", ignoreCase = true) -> {
-                    logi("  [${task.label}] → Flow EchoVideo, host=$host")
-                    extractors.resolveEchoVideo(url, task.audioType, hosterName)
                 }
 
                 host.contains("mewcdn.online", ignoreCase = true) -> {
@@ -735,14 +726,14 @@ abstract class AnikotoTheme : Source() {
 
     // ---- Parsers ----
 
-    protected open fun parseAnimeList(doc: Document): AnimesPage {
+    private fun parseAnimeList(doc: Document): AnimesPage {
         val elements = doc.select(popularAnimeSelector)
         val animes = elements.map { el -> parseSearchItem(el) }
-        val hasNext = doc.select("ul.pagination li.active ~ li, a.page-link[rel=next], a[rel=next], li.page-item.next:not(.disabled)").isNotEmpty()
+        val hasNext = doc.select("a.page-link[rel=next]").isNotEmpty()
         return AnimesPage(animes, hasNext)
     }
 
-    protected open fun parseSearchItem(el: org.jsoup.nodes.Element): SAnime {
+    private fun parseSearchItem(el: org.jsoup.nodes.Element): SAnime {
         val linkEl = when {
             el.tagName() == "a" && el.hasClass("name") -> el
             el.selectFirst("a.name.d-title") != null -> el.selectFirst("a.name.d-title")!!
@@ -763,7 +754,7 @@ abstract class AnikotoTheme : Source() {
         }
     }
 
-    protected open fun parseAnimeDetails(doc: Document, slug: String): SAnime {
+    private fun parseAnimeDetails(doc: Document, slug: String): SAnime {
         val useJp = titleLang == "jp"
         val binfo = doc.selectFirst("#w-info .binfo") ?: doc.selectFirst("div.binfo") ?: doc.selectFirst("#w-info")
             ?: return SAnime.create().apply { url = slug }

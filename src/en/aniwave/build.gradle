@@ -2,10 +2,14 @@ ext {
     extName = 'AniWave'
     extClass = '.AniWave'
     themePkg = 'anikototheme'
-    overrideVersionCode = 3
+    overrideVersionCode = 4
 }
 
 apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+}
 
 android {
     defaultConfig {
