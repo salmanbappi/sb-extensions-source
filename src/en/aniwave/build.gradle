@@ -2,7 +2,7 @@ ext {
     extName = 'AniWave'
     extClass = '.AniWave'
     themePkg = 'anikototheme'
-    overrideVersionCode = 6
+    overrideVersionCode = 7
 }
 
 apply from: "$rootDir/common.gradle"
