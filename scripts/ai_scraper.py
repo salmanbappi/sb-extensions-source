@@ -36,84 +36,113 @@ DEFAULT_GEMINI_KEY = get_secret("GEMINI_API_KEY", "")
 DEFAULT_GROQ_KEY = get_secret("GROQ_API_KEY", "")
 DEFAULT_OPENCODE_KEY = get_secret("OPENCODE_API_KEY", "")
 
-def call_groq(prompt: str, api_key: str = DEFAULT_GROQ_KEY, model: str = "llama-3.3-70b-versatile") -> Optional[str]:
-    """Calls Groq Cloud API with ultra-low latency."""
+def _clean_ai_output(text: Optional[str]) -> Optional[str]:
+    """Strips chain-of-thought reasoning tags (<think>...</think>) from model outputs."""
+    if not text:
+        return text
+    cleaned = re.sub(r'<think>[\s\S]*?</think>', '', text, flags=re.DOTALL).strip()
+    return cleaned if cleaned else text.strip()
+
+def call_groq(prompt: str, api_key: str = DEFAULT_GROQ_KEY, model: Optional[str] = None) -> Optional[str]:
+    """Calls Groq Cloud API with ultra-low latency and model fallback."""
+    if not api_key:
+        return None
     url = "https://api.groq.com/openai/v1/chat/completions"
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are an expert web scraping and Kotlin Aniyomi extension developer. Analyze HTML/JS and output structured, exact CSS selectors, regex, or Kotlin code."
-            },
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.1
-    }).encode("utf-8")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    }
-    req = urllib.request.Request(url, data=payload, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=15, context=SSL_CTX) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"]
-    except Exception as e:
-        print(f"  [!] Groq API Error: {e}", file=sys.stderr)
-        return None
+    candidate_models = [model] if model else ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b", "llama-3.3-70b-versatile"]
+    
+    for candidate in candidate_models:
+        payload = json.dumps({
+            "model": candidate,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are an expert web scraping and Kotlin Aniyomi extension developer. Analyze HTML/JS and output structured, exact CSS selectors, regex, or Kotlin code."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 4096
+        }).encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
+        req = urllib.request.Request(url, data=payload, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=15, context=SSL_CTX) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data["choices"][0]["message"]["content"]
+                return _clean_ai_output(content)
+        except Exception:
+            continue
+    return None
 
-def call_gemini(prompt: str, api_key: str = DEFAULT_GEMINI_KEY, model: str = "gemini-flash-latest") -> Optional[str]:
-    """Calls Google Gemini API."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    payload = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}]
-    }).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    }
-    req = urllib.request.Request(url, data=payload, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=15, context=SSL_CTX) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            candidates = data.get("candidates", [])
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if parts:
-                    return parts[0].get("text", "")
-    except Exception as e:
-        print(f"  [!] Gemini API Error: {e}", file=sys.stderr)
+def call_gemini(prompt: str, api_key: str = DEFAULT_GEMINI_KEY, model: Optional[str] = None) -> Optional[str]:
+    """Calls Google Gemini API with fallback models."""
+    if not api_key:
         return None
+    candidate_models = [model] if model else ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite"]
+    
+    for candidate in candidate_models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate}:generateContent?key={api_key}"
+        payload = json.dumps({
+            "contents": [{"parts": [{"text": prompt}]}]
+        }).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
+        req = urllib.request.Request(url, data=payload, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30, context=SSL_CTX) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        return _clean_ai_output(parts[0].get("text", ""))
+        except Exception:
+            continue
+    return None
 
-def call_opencode(prompt: str, api_key: str = DEFAULT_OPENCODE_KEY, model: str = "deepseek-v4-flash-free") -> Optional[str]:
-    """Calls OpenCode Zen AI Gateway."""
+def call_opencode(prompt: str, api_key: str = DEFAULT_OPENCODE_KEY, model: Optional[str] = None) -> Optional[str]:
+    """Calls OpenCode Zen AI Gateway with model fallback."""
+    if not api_key:
+        return None
     url = "https://opencode.ai/zen/v1/chat/completions"
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are an expert web scraping and Kotlin Aniyomi extension developer. Analyze HTML/JS and output structured, exact CSS selectors, regex, or Kotlin code."
-            },
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.1
-    }).encode("utf-8")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    }
-    req = urllib.request.Request(url, data=payload, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=20, context=SSL_CTX) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"]
-    except Exception as e:
-        print(f"  [!] OpenCode Zen Error: {e}", file=sys.stderr)
-        return None
+    candidate_models = [model] if model else ["laguna-s-2.1-free", "nemotron-3.5-lightning-free", "deepseek-v4-flash-free"]
+    
+    for candidate in candidate_models:
+        payload = json.dumps({
+            "model": candidate,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are an expert web scraping and Kotlin Aniyomi extension developer. Analyze HTML/JS and output structured, exact CSS selectors, regex, or Kotlin code."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 4096
+        }).encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
+        req = urllib.request.Request(url, data=payload, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=20, context=SSL_CTX) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                choices = data.get("choices", [])
+                if choices:
+                    content = choices[0].get("message", {}).get("content", "")
+                    if content:
+                        return _clean_ai_output(content)
+        except Exception:
+            continue
+    return None
 
 def generate_selectors(target_html_or_url: str, provider: str = "auto") -> str:
     """Fetches HTML (if URL) and generates Jsoup CSS selectors & Kotlin code."""

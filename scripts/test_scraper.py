@@ -32,10 +32,31 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
+# Ensure repo root and scripts directory are in sys.path for cross-module imports
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(REPO_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
 try:
     import readline
 except ImportError:
     pass
+
+# Try loading Scrapling integration
+try:
+    from scripts.scrapling_adapter import (
+        select_elements_scrapling,
+        query_css as scrapling_css,
+        query_xpath as scrapling_xpath,
+        fetch_url_scrapling,
+        extract_video_embeds,
+        is_scrapling_available
+    )
+    _HAS_SCRAPLING = is_scrapling_available()
+except Exception as e:
+    _HAS_SCRAPLING = False
 
 # ==============================================================================
 # HTTP Client & Session Handler
@@ -429,14 +450,19 @@ def _stdlib_select(root: "_Node", selector: str) -> List[Dict[str, Any]]:
         results.append({"tag": n.tag, "attrs": n.attrs, "text": _collect_text(n)})
     return results
 
-def select_elements(html: str, selector: str) -> List[Dict[str, Any]]:
+def select_elements(html: str, selector: str, adaptive: bool = False) -> List[Dict[str, Any]]:
     """Evaluate *selector* against *html* and return a list of element dicts.
 
-    Each dict has keys: ``tag`` (str), ``attrs`` (dict), ``text`` (str).
+    Each dict has keys: ``tag`` (str), ``attrs`` (dict), ``text`` (str), ``html`` (str).
 
-    Uses ``bs4.BeautifulSoup.select()`` when BeautifulSoup is available for
-    maximum Jsoup parity; falls back to the stdlib DOM engine otherwise.
+    Uses Scrapling Adaptor when available for high-speed CSS/XPath and adaptive parsing;
+    falls back to ``bs4.BeautifulSoup.select()`` or stdlib DOM engine otherwise.
     """
+    if _HAS_SCRAPLING:
+        scrapling_res = select_elements_scrapling(html, selector, adaptive=adaptive)
+        if scrapling_res is not None:
+            return scrapling_res
+
     if _HAS_BS4:
         soup = _BeautifulSoup(html, "html.parser")
         return [
@@ -572,7 +598,7 @@ def run_interactive_repl(session: ScraperSession, url: str, headers: Dict[str, s
                     print(f"  [{i:2d}] {m}")
             except Exception as e:
                 print(f"❌ Regex Error: {e}")
-        elif cmd == "select":
+        elif cmd in ["select", "css"]:
             if not arg:
                 print("Usage: select <css_selector>")
                 continue
@@ -581,15 +607,37 @@ def run_interactive_repl(session: ScraperSession, url: str, headers: Dict[str, s
             for i, m in enumerate(matches[:10], 1):
                 text = m['text'].strip().replace('\n', ' ')[:90]
                 print(f"  [{i:2d}] <{m['tag']}> Text: '{text}' | Attrs: {m['attrs']}")
+        elif cmd == "adaptive":
+            if not arg:
+                print("Usage: adaptive <css_selector>")
+                continue
+            matches = select_elements(current_body, arg, adaptive=True)
+            print(f"🧬 [Adaptive] Selector '{arg}' found {len(matches)} element(s):")
+            for i, m in enumerate(matches[:10], 1):
+                text = m['text'].strip().replace('\n', ' ')[:90]
+                print(f"  [{i:2d}] <{m['tag']}> Text: '{text}' | Attrs: {m['attrs']}")
+        elif cmd == "xpath":
+            if not arg:
+                print("Usage: xpath <xpath_expression>")
+                continue
+            if _HAS_SCRAPLING:
+                results = scrapling_xpath(current_body, arg, get_all=True)
+                print(f"🎯 XPath '{arg}' found {len(results)} match(es):")
+                for i, r in enumerate(results[:15], 1):
+                    print(f"  [{i:2d}] {str(r)[:100]}")
+            else:
+                print("⚠️ XPath evaluation requires Scrapling (pip install scrapling).")
         elif cmd in ["help", "?"]:
             print("\n📖 Available REPL Commands:")
-            print("  select <css_selector>  - Test CSS selector (e.g. 'select div.title' or 'select #player')")
-            print("  regex <pattern>        - Test regex against body (e.g. 'regex /stream/(\\w+)')")
-            print("  media                  - Sniff .m3u8, .mp4, and video iframe hosters")
-            print("  json                   - View body formatted as JSON")
-            print("  refetch                - Re-fetch the current target URL")
-            print("  url <new_url>          - Switch target URL and fetch")
-            print("  exit / quit / q        - Exit REPL session\n")
+            print("  select <css_selector>    - Test CSS selector (e.g. 'select div.title' or 'select #player')")
+            print("  adaptive <css_selector>  - Test adaptive CSS selector with auto-healing")
+            print("  xpath <expression>       - Test XPath expression (e.g. 'xpath //div[@class=\"title\"]/a/text()')")
+            print("  regex <pattern>          - Test regex against body (e.g. 'regex /stream/(\\w+)')")
+            print("  media                    - Sniff .m3u8, .mp4, and video iframe hosters")
+            print("  json                     - View body formatted as JSON")
+            print("  refetch                  - Re-fetch the current target URL")
+            print("  url <new_url>            - Switch target URL and fetch")
+            print("  exit / quit / q          - Exit REPL session\n")
         else:
             print(f"Unknown command: '{cmd}'. Type 'help' for command list.")
 
@@ -726,6 +774,9 @@ def main():
     parser.add_argument("-i", "--interactive", action="store_true", help="Launch interactive selector, regex, and media sniffer REPL")
     parser.add_argument("--media", action="store_true", help="Scan body for .m3u8, .mp4, and video iframe hosters")
     parser.add_argument("--selector", help="CSS selector to test (e.g. 'div.title', '#player', 'a.item')")
+    parser.add_argument("--xpath", help="XPath expression to test (e.g. '//div[@class=\"title\"]/a/text()')")
+    parser.add_argument("--adaptive", action="store_true", help="Enable Scrapling adaptive parsing for auto-healing selectors")
+    parser.add_argument("--stealth", action="store_true", help="Use Scrapling stealth fetcher to bypass Cloudflare Turnstile & anti-bot protection")
     parser.add_argument("--regex", help="Regular expression pattern to evaluate against response body")
     parser.add_argument("--json", action="store_true", help="Format and print body as structured JSON")
     parser.add_argument("--benchmark", type=int, default=0, help="Run N consecutive requests to benchmark latency and throughput")
@@ -767,10 +818,17 @@ def main():
                         print(f"⚡ Testing Latest Updates endpoint: {target_url}")
                     elif args.search:
                         raw_pattern = endpoints.get("search", f"{base_url}/search")
-                        clean_pattern = raw_pattern.replace("$baseUrl", base_url)
+                        clean_pattern = raw_pattern.replace("$baseUrl", base_url).replace("$page", str(args.page)).replace("${page}", str(args.page))
                         query_enc = urllib.parse.quote(args.search)
-                        if any(k in clean_pattern for k in ["${query.trim()}", "${query}", "$query", "$search", "%s"]):
-                            target_url = clean_pattern.replace("${query.trim()}", query_enc).replace("${query}", query_enc).replace("$query", query_enc).replace("$search", query_enc).replace("%s", query_enc)
+                        if any(k in clean_pattern for k in ["$encodedQuery", "${encodedQuery}", "${query.trim()}", "${query}", "$query", "$search", "%s"]):
+                            target_url = (clean_pattern
+                                          .replace("$encodedQuery", query_enc)
+                                          .replace("${encodedQuery}", query_enc)
+                                          .replace("${query.trim()}", query_enc)
+                                          .replace("${query}", query_enc)
+                                          .replace("$query", query_enc)
+                                          .replace("$search", query_enc)
+                                          .replace("%s", query_enc))
                         else:
                             sep = "&" if "?" in clean_pattern else "?"
                             target_url = f"{clean_pattern}{sep}q={query_enc}"
@@ -807,14 +865,22 @@ def main():
         return
 
     # Standard Execution
-    print(f"🚀 Sending {args.method} request to: {target_url}")
+    print(f"🚀 Sending {args.method} request to: {target_url}" + (" (Stealth Mode Enabled)" if args.stealth else ""))
     try:
-        status, body, resp_headers, elapsed = session.fetch(
-            url=target_url,
-            method=args.method,
-            headers=headers,
-            data=args.data
-        )
+        if args.stealth and _HAS_SCRAPLING:
+            status, body, resp_headers, elapsed_ms = fetch_url_scrapling(
+                url=target_url,
+                stealth=True,
+                headers=headers
+            )
+            elapsed = elapsed_ms / 1000.0
+        else:
+            status, body, resp_headers, elapsed = session.fetch(
+                url=target_url,
+                method=args.method,
+                headers=headers,
+                data=args.data
+            )
     except Exception as e:
         print(f"❌ Request Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -853,6 +919,19 @@ def main():
         m3u8s = sorted(set(re.findall(r'https?://[^\s"\'<>]+\.m3u8[^\s"\'<>]*', body)))
         mp4s = sorted(set(re.findall(r'https?://[^\s"\'<>]+\.mp4[^\s"\'<>]*', body)))
         iframes = sorted(set(re.findall(r'<iframe[^>]+(?:src|data-src)=["\']([^"\']+)["\']', body, re.IGNORECASE)))
+        if _HAS_SCRAPLING:
+            scrapling_embeds = extract_video_embeds(body)
+            for emb in scrapling_embeds:
+                if ".m3u8" in emb:
+                    m3u8s.append(emb)
+                elif ".mp4" in emb:
+                    mp4s.append(emb)
+                else:
+                    iframes.append(emb)
+            m3u8s = sorted(set(m3u8s))
+            mp4s = sorted(set(mp4s))
+            iframes = sorted(set(iframes))
+
         print(f"📹 Media Discovery:")
         print(f"  • HLS Streams (.m3u8): {len(m3u8s)}")
         for u in m3u8s[:5]: print(f"    - {u}")
@@ -874,6 +953,16 @@ def main():
         except Exception:
             pass
 
+    if args.xpath:
+        if _HAS_SCRAPLING:
+            results = scrapling_xpath(body, args.xpath, get_all=True)
+            print(f"XPath '{args.xpath}' found {len(results)} match(es):")
+            for i, r in enumerate(results[:20], 1):
+                print(f"  [{i:2d}] {str(r)[:100]}")
+        else:
+            print("⚠️ XPath evaluation requires Scrapling (pip install scrapling).")
+        return
+
     if args.regex:
         matches = re.findall(args.regex, body)
         print(f"Regex '{args.regex}' found {len(matches)} match(es):")
@@ -882,8 +971,9 @@ def main():
         return
 
     if args.selector:
-        matches = select_elements(body, args.selector.strip())
-        print(f"Found {len(matches)} matching element(s):")
+        matches = select_elements(body, args.selector.strip(), adaptive=args.adaptive)
+        mode_str = " (Adaptive Mode)" if args.adaptive else ""
+        print(f"Found {len(matches)} matching element(s){mode_str}:")
         for i, m in enumerate(matches[:10], 1):
             text = m['text'].strip().replace('\n', ' ')[:90]
             print(f"  [{i:2d}] <{m['tag']}> | Text: '{text}' | Attrs: {m['attrs']}")

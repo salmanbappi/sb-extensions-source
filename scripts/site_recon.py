@@ -32,6 +32,18 @@ if str(REPO_ROOT / "scripts") not in sys.path:
 
 from scripts.secrets_loader import get_secret
 
+# Try loading Scrapling integration
+try:
+    from scripts.scrapling_adapter import (
+        fetch_url_scrapling,
+        extract_video_embeds,
+        query_css,
+        is_scrapling_available
+    )
+    _HAS_SCRAPLING = is_scrapling_available()
+except Exception:
+    _HAS_SCRAPLING = False
+
 # Ignore SSL errors for reconnaissance
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
@@ -71,8 +83,11 @@ EXTRACTOR_SIGNATURES = {
     "Universal": (re.compile(r'(?:vidbasic\.live|3rdplayer\.html|player-container)', re.I), ":lib:universal-extractor"),
 }
 
-def fetch_url(url: str, timeout: int = 8, headers: Optional[Dict[str, str]] = None) -> Tuple[int, str, Dict[str, str], float]:
+def fetch_url(url: str, timeout: int = 8, headers: Optional[Dict[str, str]] = None, stealth: bool = False) -> Tuple[int, str, Dict[str, str], float]:
     """Fetches a URL and returns (status_code, content, headers, latency_ms)."""
+    if stealth and _HAS_SCRAPLING:
+        return fetch_url_scrapling(url, stealth=True, timeout=timeout, headers=headers)
+
     req_headers = {
         "User-Agent": DEFAULT_USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8",
@@ -97,6 +112,11 @@ def fetch_url(url: str, timeout: int = 8, headers: Optional[Dict[str, str]] = No
         except Exception:
             content = ""
         resp_headers = {k.lower(): v for k, v in e.headers.items()} if e.headers else {}
+
+        # If Cloudflare / anti-bot challenge is detected, attempt Scrapling recovery
+        if e.code in (403, 503) and _HAS_SCRAPLING:
+            return fetch_url_scrapling(url, stealth=False, timeout=timeout, headers=headers)
+
         return e.code, content, resp_headers, latency
     except Exception as e:
         latency = (time.time() - start_t) * 1000
@@ -129,9 +149,9 @@ class SiteRecon:
             "Custom HTML / CMS": 0,
         }
 
-    def run(self, deep_samples: int = 3, use_jina: bool = False) -> Dict[str, Any]:
+    def run(self, deep_samples: int = 3, use_jina: bool = False, stealth: bool = False) -> Dict[str, Any]:
         """Runs the complete reconnaissance sweep."""
-        print(f"🚀 Launching Parallel Reconnaissance Probe against: {self.base_url}")
+        print(f"🚀 Launching Parallel Reconnaissance Probe against: {self.base_url}" + (" (Stealth Mode)" if stealth else ""))
 
         probe_targets = {
             "root": self.base_url,
@@ -146,7 +166,7 @@ class SiteRecon:
 
         # Stage 1: Parallel HTTP Probes
         with ThreadPoolExecutor(max_workers=8) as executor:
-            future_to_key = {executor.submit(fetch_url, url): key for key, url in probe_targets.items()}
+            future_to_key = {executor.submit(fetch_url, url, 8, None, stealth): key for key, url in probe_targets.items()}
             for future in as_completed(future_to_key):
                 key = future_to_key[future]
                 try:
@@ -260,6 +280,14 @@ class SiteRecon:
                             if pattern.search(html):
                                 self.detected_extractors.add(name)
                                 self.detected_libs.add(lib_dep)
+
+                        if _HAS_SCRAPLING:
+                            embed_urls = extract_video_embeds(html)
+                            for emb in embed_urls:
+                                for name, (pattern, lib_dep) in EXTRACTOR_SIGNATURES.items():
+                                    if pattern.search(emb):
+                                        self.detected_extractors.add(name)
+                                        self.detected_libs.add(lib_dep)
 
                         if ".m3u8" in html:
                             self.detected_extractors.add("Direct HLS (.m3u8)")
@@ -460,6 +488,7 @@ def main():
     parser.add_argument("--firecrawl", action="store_true", help="Fetch deep headless browser markdown via Firecrawl API")
     parser.add_argument("--firecrawl-map", action="store_true", help="Discover all site URLs using Firecrawl /v1/map")
     parser.add_argument("--firecrawl-key", default="", help="Custom Firecrawl API key")
+    parser.add_argument("--stealth", action="store_true", help="Use Scrapling stealth fetcher for Cloudflare bypass")
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     args = parser.parse_args()
 
@@ -481,7 +510,7 @@ def main():
     elif args.jina:
         preview_text = recon._fetch_jina_preview()
 
-    report = recon.run(deep_samples=args.samples, use_jina=False)
+    report = recon.run(deep_samples=args.samples, use_jina=False, stealth=args.stealth)
     if preview_text:
         print("-" * 80)
         print(f"🤖 {preview_engine} Markdown Output:")

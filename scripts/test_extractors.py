@@ -327,11 +327,12 @@ def extract_megacloud_flixcloud(html, url):
     return {"embed_url": embed_match.group(1)} if embed_match else {"status": "requires webview / source key decryption"}
 
 def extract_byse(html, url):
-    print("[INFO] Running Byse (bysetayico) extraction logic...")
-    file_id = url.split("/e/")[-1].split("?")[0].split("#")[0].strip("/")
+    print("[INFO] Running Byse (bysetayico / bysesukior) extraction logic...")
+    norm_url = url.replace("/d/", "/e/")
+    file_id = norm_url.split("/e/")[-1].split("?")[0].split("#")[0].strip("/")
     if not file_id:
         return {"status": "failed to extract file_id"}
-    host = url.split("/e/")[0] if "http" in url.split("/e/")[0] else "https://bysetayico.com"
+    host = norm_url.split("/e/")[0] if "http" in norm_url.split("/e/")[0] else "https://bysetayico.com"
     api_url = f"{host}/api/videos/{file_id}"
     try:
         req = urllib.request.Request(api_url, headers={
@@ -441,13 +442,55 @@ def extract_vidzee(html, url):
             continue
     return None
 
+def extract_okru(html, url):
+    print("[INFO] Running Okru extraction logic...")
+    data_opts = re.search(r'data-options=["\']([^"\']+)["\']', html)
+    if data_opts:
+        import html as html_lib
+        raw = html_lib.unescape(data_opts.group(1))
+        hls_m = re.search(r'ondemandHls\\":\\"([^"\\]+)', raw)
+        if hls_m:
+            return {"hls_url": hls_m.group(1).replace("\\u0026", "&")}
+        m3u8_m = re.search(r'(https?://[^\s"\'<>\\]+\.m3u8[^\s"\'<>\\]*)', raw)
+        if m3u8_m:
+            return {"hls_url": m3u8_m.group(1).replace("\\u0026", "&")}
+    urls = StreamObfuscationSolver.extract_stream_urls(html)
+    if urls:
+        return {"hls_url": urls[0]}
+    return {"status": "Could not extract Okru video stream"}
+
+def extract_dailymotion(html, url):
+    print("[INFO] Running Dailymotion extraction logic...")
+    m = re.search(r'video=([a-zA-Z0-9]+)', url) or re.search(r'/video/([a-zA-Z0-9]+)', url)
+    video_id = m.group(1) if m else url.split("/")[-1].split("?")[0]
+    ts_m = re.search(r'\"ts\":(\d+)', html)
+    v1st_m = re.search(r'\"v1st\":\"([^\"]+)\"', html)
+    ts = ts_m.group(1) if ts_m else ""
+    v1st = v1st_m.group(1) if v1st_m else ""
+    meta_url = f"https://www.dailymotion.com/player/metadata/video/{video_id}?locale=en-US&dmV1st={v1st}&dmTs={ts}&is_native_app=0"
+    try:
+        req = urllib.request.Request(meta_url, headers={
+            "User-Agent": HEADERS["User-Agent"],
+            "Referer": "https://www.dailymotion.com/"
+        })
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        auto_url = data.get("qualities", {}).get("auto", [{}])[0].get("url")
+        if auto_url:
+            return {"hls_url": auto_url, "subtitles": data.get("subtitles")}
+    except Exception as e:
+        return {"status": f"Dailymotion API error: {e}"}
+    return None
+
 def auto_detect_provider(url):
     url_lower = url.lower()
     if "dood" in url_lower or "ds2play" in url_lower: return "doodstream"
     if "streamtape" in url_lower or "strcloud" in url_lower: return "streamtape"
-    if "bysetayico" in url_lower or "byse" in url_lower: return "byse"
+    if "bysetayico" in url_lower or "byse" in url_lower or "bysesukior" in url_lower: return "byse"
     if "vidzee" in url_lower: return "vidzee"
     if "filemoon" in url_lower: return "filemoon"
+    if "ok.ru" in url_lower or "odnoklassniki" in url_lower: return "okru"
+    if "dailymotion" in url_lower or "dai.ly" in url_lower: return "dailymotion"
     if "mixdrop" in url_lower or "mixeno" in url_lower: return "mixdrop"
     if "vidsrc" in url_lower: return "vidsrc"
     if "playerjs" in url_lower: return "playerjs"
@@ -466,6 +509,8 @@ def extract(html, url, provider):
     if provider == "byse": return extract_byse(html, url)
     if provider == "vidzee": return extract_vidzee(html, url)
     if provider == "filemoon": return extract_filemoon(html, url)
+    if provider == "okru": return extract_okru(html, url)
+    if provider == "dailymotion": return extract_dailymotion(html, url)
     if provider == "mixdrop": return extract_mixdrop(html, url)
     if provider == "vidsrc": return extract_vidsrc(html, url)
     if provider == "playerjs": return extract_playerjs(html, url)
@@ -548,9 +593,9 @@ def main():
             try:
                 from probe_stream import StreamProber
             except ImportError:
-                import sys
                 from pathlib import Path
-                sys.path.insert(0, str(Path(__file__).parent))
+                if str(Path(__file__).parent) not in sys.path:
+                    sys.path.insert(0, str(Path(__file__).parent))
                 from probe_stream import StreamProber
 
             embed_host = urllib.parse.urlparse(url).netloc

@@ -30,6 +30,16 @@ from scripts.site_recon import SiteRecon
 from scripts.ai_scraper import call_groq, call_gemini, call_opencode
 from scripts.create_extension import generate_extension, generate_theme_scaffold, to_pascal_case, create_minimal_png
 
+# Try loading Scrapling integration
+try:
+    from scripts.scrapling_adapter import (
+        select_elements_scrapling,
+        is_scrapling_available
+    )
+    _HAS_SCRAPLING = is_scrapling_available()
+except Exception:
+    _HAS_SCRAPLING = False
+
 def extract_ai_selectors_json(html_content: str) -> Dict[str, str]:
     """Uses Groq / Gemini to extract a strict JSON dictionary of CSS selectors."""
     prompt = f"""
@@ -67,16 +77,16 @@ HTML Snippet:
         pass
     return {}
 
-def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en", analyze_only: bool = False) -> bool:
+def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en", analyze_only: bool = False, stealth: bool = False) -> bool:
     """Orchestrates autonomous extension creation with strict Analysis-First architecture."""
     print("=" * 80)
     print("      🚀 AUTONOMOUS 1-CLICK EXTENSION SYNTHESIZER (v16 ENGINE)")
     print("=" * 80)
-    print(f"Target URL: {url} | Language: {lang}")
+    print(f"Target URL: {url} | Language: {lang}" + (" (Stealth Mode Enabled)" if stealth else ""))
 
     # Stage 1: Deep Parallel Site Reconnaissance
     recon = SiteRecon(url)
-    report = recon.run(deep_samples=3)
+    report = recon.run(deep_samples=3, stealth=stealth)
 
     if not name:
         name = recon.domain.split(".")[0].capitalize().replace("-", "")
@@ -91,6 +101,19 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en",
 
     # Merge heuristic fallback into AI selectors
     selectors = {**heuristic_selectors, **ai_selectors}
+
+    # Verify selectors using Scrapling engine
+    if _HAS_SCRAPLING and recon.root_html:
+        card_sel = selectors.get("popularSelector")
+        if card_sel:
+            matches = select_elements_scrapling(recon.root_html, card_sel)
+            if matches:
+                print(f"  [✓] Scrapling verified listing card selector '{card_sel}' -> {len(matches)} item(s) found")
+            else:
+                print(f"  [!] Scrapling notice: '{card_sel}' found 0 matches on root HTML. Trying adaptive...")
+                adaptive_matches = select_elements_scrapling(recon.root_html, card_sel, adaptive=True)
+                if adaptive_matches:
+                    print(f"  [✓] Scrapling adaptive healed selector -> {len(adaptive_matches)} item(s) found")
 
     print("\n" + "=" * 80)
     print("            📊 EMPIRICAL ARCHITECTURAL & DOM BLUEPRINT")
@@ -202,9 +225,10 @@ def main():
     parser.add_argument("--name", help="Extension name (optional, defaults to domain name)")
     parser.add_argument("--lang", default="en", help="Extension language (default: 'en')")
     parser.add_argument("--analyze", "--dry-run", action="store_true", dest="analyze_only", help="Analyze site architecture and output blueprint without creating files")
+    parser.add_argument("--stealth", action="store_true", help="Use Scrapling stealth fetcher for Cloudflare Turnstile bypass")
     args = parser.parse_args()
 
-    success = synthesize_extension(args.url, name=args.name, lang=args.lang, analyze_only=args.analyze_only)
+    success = synthesize_extension(args.url, name=args.name, lang=args.lang, analyze_only=args.analyze_only, stealth=args.stealth)
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":

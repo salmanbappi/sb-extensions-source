@@ -1606,8 +1606,8 @@ def main():
                 ("agent", "Autonomous multi-agent swarms (pipeline, recon, deobfuscate, critique, heal)."),
             ]),
             ("🏗️  Scaffolding & DTOs", [
-                ("auto-create", "Autonomous 1-click synthesizer (Recon -> AI Selectors -> Kotlin -> Icon -> Validate)."),
-                ("site-recon", "Parallel full-site reconnaissance, CMS/theme fingerprinting, and scaffold advisor."),
+                ("auto-create", "Autonomous 1-click synthesizer (Recon -> AI/Scrapling Selectors -> Kotlin -> Icon -> Validate)."),
+                ("site-recon", "Parallel full-site reconnaissance, CMS/theme fingerprinting, stealth probe, and scaffold advisor."),
                 ("ai-selectors", "AI-powered HTML reverse engineering, Jsoup CSS selector, and Kotlin parser generator."),
                 ("create", "Scaffold full extension boilerplate (HTML, API, Theme, Movie-Locker)."),
                 ("create-theme", "Scaffold a new multi-source theme in lib-multisrc/."),
@@ -1615,7 +1615,7 @@ def main():
                 ("everythingmoe", "Crawl anime streaming site directory, reviews, and mirrors from EverythingMoe."),
             ]),
             ("🔬 Testing & Scraper Sandbox", [
-                ("test-scraper", "Test live HTTP requests, CSS selectors, regex, DevTools headers, and REPL."),
+                ("test-scraper", "Test live HTTP requests, CSS/XPath selectors, adaptive parsing, stealth mode, and REPL."),
                 ("test-pipeline", "Run full 5-stage automated scraper verification (Popular -> Stream)."),
                 ("test-extractor", "Unit test video embed resolvers with one-click FFmpeg playback simulation (--play)."),
                 ("test-filters", "Combinatorial search filter matrix fuzzer."),
@@ -1678,6 +1678,8 @@ def main():
             "  python3 scripts/cli.py doctor",
             "  python3 scripts/cli.py create --name AnimeFlix --lang en --baseUrl https://animeflix.live",
             "  python3 scripts/cli.py test-scraper animestream --popular",
+            "  python3 scripts/cli.py test-scraper https://example.com --xpath '//h1/text()'",
+            "  python3 scripts/cli.py test-scraper https://example.com --selector 'h1' --adaptive",
             "  python3 scripts/cli.py probe-stream 'https://example.com/master.m3u8' --deep",
             "  python3 scripts/cli.py json-to-dto https://api.site.com/anime/1",
             "  python3 scripts/cli.py validate <module> --fix",

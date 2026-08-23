@@ -72,25 +72,39 @@ class PipelineTester:
             print(f"❌ Failed to fetch list page: {e}")
             return False
 
-        # Extract anime items
-        links = re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.DOTALL)
+        # Extract anime items from cards / articles / headings first
         candidate_items = []
-        for href, text in links:
+        card_headings = re.findall(r'<h[23][^>]*>\s*<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.DOTALL | re.IGNORECASE)
+        for href, text in card_headings:
             clean_text = re.sub(r"<[^>]+>", "", text).strip()
-            if not clean_text or href == self.base_url or href == f"{self.base_url}/" or "#" in href:
-                continue
-            clean_href = href.rstrip("/")
-            if clean_href.endswith("/movies") or clean_href.endswith("/tvshows") or clean_href.endswith("/trending") or "/genre/" in clean_href:
-                continue
-            if ("/movies/" in href or "/tvshows/" in href or "/anime/" in href or "/watch/" in href or "/series/" in href):
+            if clean_text and not href.startswith(("javascript:", "#", "mailto:")):
+                if not href.startswith("http"):
+                    href = urllib.parse.urljoin(self.base_url, href)
                 if not any(item[0] == href for item in candidate_items):
                     candidate_items.append((href, clean_text))
+
+        if not candidate_items:
+            links = re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.DOTALL)
+            for href, text in links:
+                clean_text = re.sub(r"<[^>]+>", "", text).strip()
+                if not clean_text or href == self.base_url or href == f"{self.base_url}/" or "#" in href or href.startswith("javascript:"):
+                    continue
+                clean_href = href.rstrip("/")
+                if clean_href.endswith("/movies") or clean_href.endswith("/tvshows") or clean_href.endswith("/trending") or "/genre/" in clean_href:
+                    continue
+                if ("/movies/" in href or "/tvshows/" in href or "/anime/" in href or "/watch/" in href or "/series/" in href):
+                    if not any(item[0] == href for item in candidate_items):
+                        if not href.startswith("http"):
+                            href = urllib.parse.urljoin(self.base_url, href)
+                        candidate_items.append((href, clean_text))
 
         if not candidate_items:
             # Fallback search for any internal links with images
             img_links = re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>\s*<img[^>]+(?:alt|title)=["\']([^"\']+)["\']', html, re.DOTALL)
             for href, title in img_links:
-                if href.startswith("http") or href.startswith("/"):
+                if (href.startswith("http") or href.startswith("/")) and not href.startswith("javascript:"):
+                    if not href.startswith("http"):
+                        href = urllib.parse.urljoin(self.base_url, href)
                     if not any(item[0] == href for item in candidate_items):
                         candidate_items.append((href, title.strip()))
 
@@ -140,16 +154,24 @@ class PipelineTester:
         print_stage(3, "Episode List & Stable Anchor Verification")
 
         # Check for linkstore buttons (TV Series) or direct files
-        linkstore_btns = re.findall(r'<a[^>]+href=["\'](https?://[^"\']*linkstore[^"\']*)["\'][^>]*>(.*?)</a>', detail_html, re.DOTALL)
-        if not linkstore_btns:
-            linkstore_btns = re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*class=["\'][^"\']*button[^"\']*["\'][^>]*>(.*?)</a>', detail_html, re.DOTALL)
+        raw_btns = re.findall(r'<a[^>]+href=["\'](https?://[^"\']*linkstore[^"\']*)["\'][^>]*>(.*?)</a>', detail_html, re.DOTALL)
+        if not raw_btns:
+            raw_btns = re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*class=["\'][^"\']*\bbutton\b[^"\']*["\'][^>]*>(.*?)</a>', detail_html, re.DOTALL)
+
+        # Filter out javascript, anchors, etc.
+        linkstore_btns = []
+        for href, text in raw_btns:
+            if href.startswith(("javascript:", "mailto:", "#", "tel:", "data:")):
+                continue
+            if not href.startswith("http"):
+                base_domain = target_anime_url.split("/")[0] + "//" + target_anime_url.split("/")[2]
+                href = urllib.parse.urljoin(base_domain, href)
+            linkstore_btns.append((href, text))
 
         detected_episodes = []
         is_tv_series = False
 
         if linkstore_btns:
-            is_tv_series = True
-            print(f"  ✓ TV Series detected with {len(linkstore_btns)} batch linkstore/button(s)")
             seasons_tested = set()
             for href, text in linkstore_btns:
                 s_match = re.search(r"Season\s*0*(\d+)", text, re.IGNORECASE)
@@ -182,7 +204,18 @@ class PipelineTester:
                 # Direct HTML episodes check
                 ep_items = re.findall(r'<li[^>]*>\s*<a[^>]+href=["\']([^"\']+)["\'][^>]*>(?:Episode|Ep)?\s*(\d+)</a>', detail_html, re.IGNORECASE)
                 for ep_href, ep_num in ep_items:
+                    if ep_href.startswith(("javascript:", "#", "mailto:", "tel:")):
+                        continue
+                    if not ep_href.startswith("http"):
+                        base_domain = target_anime_url.split("/")[0] + "//" + target_anime_url.split("/")[2]
+                        ep_href = urllib.parse.urljoin(base_domain, ep_href)
                     detected_episodes.append((1, int(ep_num), ep_href))
+
+        if not detected_episodes:
+            # Check if details page itself contains embeds (Single Movie / Race Replay)
+            if re.search(r'<iframe|class=["\'][^"\']*gameplayer|player|videoembed', detail_html, re.IGNORECASE):
+                print("  ✓ Single Race/Movie Replay detected (using details URL as episode)")
+                detected_episodes.append((1, 1, target_anime_url))
 
         if not detected_episodes:
             print("⚠️ No episodes extracted. Test completed up to Stage 2.")
