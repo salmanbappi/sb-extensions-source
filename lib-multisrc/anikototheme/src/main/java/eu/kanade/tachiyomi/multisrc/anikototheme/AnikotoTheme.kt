@@ -726,14 +726,14 @@ abstract class AnikotoTheme : Source() {
 
     // ---- Parsers ----
 
-    private fun parseAnimeList(doc: Document): AnimesPage {
+    protected open fun parseAnimeList(doc: Document): AnimesPage {
         val elements = doc.select(popularAnimeSelector)
         val animes = elements.map { el -> parseSearchItem(el) }
-        val hasNext = doc.select("a.page-link[rel=next]").isNotEmpty()
+        val hasNext = doc.select("ul.pagination li.active ~ li, a.page-link[rel=next], a[rel=next], li.page-item.next:not(.disabled)").isNotEmpty()
         return AnimesPage(animes, hasNext)
     }
 
-    private fun parseSearchItem(el: org.jsoup.nodes.Element): SAnime {
+    protected open fun parseSearchItem(el: org.jsoup.nodes.Element): SAnime {
         val linkEl = when {
             el.tagName() == "a" && el.hasClass("name") -> el
             el.selectFirst("a.name.d-title") != null -> el.selectFirst("a.name.d-title")!!
@@ -754,7 +754,7 @@ abstract class AnikotoTheme : Source() {
         }
     }
 
-    private fun parseAnimeDetails(doc: Document, slug: String): SAnime {
+    protected open fun parseAnimeDetails(doc: Document, slug: String): SAnime {
         val useJp = titleLang == "jp"
         val binfo = doc.selectFirst("#w-info .binfo") ?: doc.selectFirst("div.binfo") ?: doc.selectFirst("#w-info")
             ?: return SAnime.create().apply { url = slug }
