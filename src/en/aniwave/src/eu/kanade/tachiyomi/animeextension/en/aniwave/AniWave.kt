@@ -197,27 +197,35 @@ class AniWave : AnikotoTheme() {
         val serverDoc = Jsoup.parse(serverListJson.result)
         val serverTasks = mutableListOf<AniServerTask>()
 
+        val excludedServers = preferences.getStringSet("pref_exclude_servers_key", emptySet()) ?: emptySet()
+        val excludedAudios = preferences.getStringSet("pref_exclude_audio_key", emptySet()) ?: emptySet()
+
         for (typeElem in serverDoc.select("div.type, .server-type")) {
             val dataType = typeElem.attr("data-type").ifBlank {
                 typeElem.selectFirst("label")?.text()?.trim() ?: "sub"
             }.lowercase(Locale.ROOT)
             val audioLabel = when (dataType) {
                 "dub" -> "DUB"
-                "ssub", "s-sub" -> "S-SUB"
-                "hsub", "h-sub" -> "H-SUB"
+                "ssub", "s-sub" -> "SSUB"
+                "hsub", "h-sub" -> "HSUB"
                 else -> "SUB"
             }
+            if (excludedAudios.any { it.equals(audioLabel, true) }) continue
 
             for (li in typeElem.select("li[data-link-id], li[data-id]")) {
                 val linkId = li.attr("data-link-id").ifBlank { li.attr("data-id") }
                 val serverName = li.text().trim()
+                if (excludedServers.any { it.equals(serverName, true) }) continue
+
                 if (linkId.isNotEmpty()) {
                     serverTasks.add(AniServerTask(serverName, linkId, audioLabel, slug))
                 }
             }
         }
 
-        val videoList = coroutineScope {
+        if (serverTasks.isEmpty()) return emptyList()
+
+        val resolvedVideos = coroutineScope {
             serverTasks.map { task ->
                 async(Dispatchers.IO) {
                     resolveAniServerVideos(task)
@@ -225,17 +233,40 @@ class AniWave : AnikotoTheme() {
             }.awaitAll().flatten()
         }
 
-        return videoList.sortVideos()
-    }
+        // Group cleanly by server name (Provider folder) with Sub & Dub combined inside
+        val hostersMap = mutableMapOf<String, MutableList<Video>>()
+        for (video in resolvedVideos) {
+            val serverName = video.extraData?.takeIf { it.isNotEmpty() }
+                ?: serverTasks.firstOrNull { task -> video.videoTitle.contains(task.serverName) }?.serverName
+                ?: "Server"
 
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val videos = getVideoList(episode)
-        if (videos.isEmpty()) return emptyList()
-        val grouped = videos.groupBy { it.videoTitle.substringBefore(" - ") }
-        return grouped.map { (hosterName, videoList) ->
-            Hoster(hosterName = hosterName, videoList = videoList)
+            hostersMap.getOrPut(serverName) { mutableListOf() }.add(video)
+        }
+
+        val preferredServerVal = preferredServer
+        val hostersList = hostersMap.map { (serverName, videos) ->
+            val sortedVideos = try {
+                videos.sortVideos()
+            } catch (_: Throwable) {
+                videos
+            }
+            Hoster(
+                hosterName = serverName,
+                hosterUrl = "",
+                videoList = sortedVideos,
+            )
+        }
+
+        return if (preferredServerVal != "auto") {
+            hostersList.sortedByDescending { it.hosterName.contains(preferredServerVal, ignoreCase = true) }
+        } else {
+            hostersList
         }
     }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> = hoster.videoList ?: emptyList()
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> = getHosterList(episode).flatMap { it.videoList ?: emptyList() }
 
     private data class AniServerTask(
         val serverName: String,
@@ -296,7 +327,8 @@ class AniWave : AnikotoTheme() {
                                     videos.add(
                                         Video(
                                             videoUrl = vUrl,
-                                            videoTitle = "${task.serverName} [${task.audioLabel}] - $quality",
+                                            videoTitle = "${task.audioLabel} - $quality",
+                                            extraData = task.serverName,
                                             headers = vidHeaders,
                                             subtitleTracks = subtitles,
                                         ),
@@ -309,9 +341,10 @@ class AniWave : AnikotoTheme() {
                                 val hlsVideos = playlistUtils.extractFromHls(
                                     hlsUrl,
                                     referer = "https://play.echovideo.ru/",
-                                    videoNameGen = { "${task.serverName} [${task.audioLabel}] - $it" },
+                                    videoNameGen = { "${task.audioLabel} - $it" },
                                     subtitleList = subtitles,
                                 )
+                                hlsVideos.forEach { it.extraData = task.serverName }
                                 videos.addAll(hlsVideos)
                             }
                         }
@@ -321,8 +354,9 @@ class AniWave : AnikotoTheme() {
                 val hlsVideos = playlistUtils.extractFromHls(
                     embedUrl,
                     referer = "$baseUrl/",
-                    videoNameGen = { "${task.serverName} [${task.audioLabel}] - $it" },
+                    videoNameGen = { "${task.audioLabel} - $it" },
                 )
+                hlsVideos.forEach { it.extraData = task.serverName }
                 videos.addAll(hlsVideos)
             }
 
