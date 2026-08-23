@@ -228,7 +228,7 @@ class Sankanime : Source() {
             }
             Hoster(
                 hosterName = displayName,
-                hosterUrl = "$animeId#ep=$epNum&server=${name.lowercase()}&types=$typesStr"
+                hosterUrl = "$animeId#ep=$epNum&server=${name.lowercase()}&types=$typesStr",
             )
         }
     }
