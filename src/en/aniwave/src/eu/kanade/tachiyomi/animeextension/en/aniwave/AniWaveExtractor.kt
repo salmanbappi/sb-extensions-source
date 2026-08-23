@@ -33,7 +33,7 @@ class AniWaveExtractor(private val source: AniWave) {
     private suspend fun getEmbedLink(serverId: String, epUrl: String): String {
         val listHeaders = source.headers.newBuilder().apply {
             add("Accept", "application/json, text/javascript, */*; q=0.01")
-            add("Referer", source.baseUrl + epUrl)
+            add("Referer", source.getFullUrl(epUrl))
             add("X-Requested-With", "XMLHttpRequest")
         }.build()
 
@@ -113,10 +113,8 @@ class AniWaveExtractor(private val source: AniWave) {
         val result = when {
             embedLink.contains("mewcdn.online/player/plyr.php") ->
                 extractFromMewcdnPlayer(embedLink, server)
-
             embedLink.endsWith(".m3u8") || (embedLink.contains(".m3u8") && !embedLink.contains("/stream/")) ->
                 extractDirectM3u8(embedLink, server)
-
             else ->
                 extractFromPlayer(embedLink, server)
         }
