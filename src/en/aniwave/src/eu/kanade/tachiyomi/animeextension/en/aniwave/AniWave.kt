@@ -85,27 +85,23 @@ class AniWave : Source() {
 
     // ============================ Helper URL Methods =======================
 
-    fun getUrlWithoutDomain(orig: String): String {
-        return try {
-            if (orig.startsWith("http://") || orig.startsWith("https://")) {
-                val httpUrl = orig.toHttpUrl()
-                val path = httpUrl.encodedPath
-                val query = httpUrl.encodedQuery
-                if (query != null) "$path?$query" else path
-            } else {
-                if (orig.startsWith("/")) orig else "/$orig"
-            }
-        } catch (_: Exception) {
-            orig
+    fun getUrlWithoutDomain(orig: String): String = try {
+        if (orig.startsWith("http://") || orig.startsWith("https://")) {
+            val httpUrl = orig.toHttpUrl()
+            val path = httpUrl.encodedPath
+            val query = httpUrl.encodedQuery
+            if (query != null) "$path?$query" else path
+        } else {
+            if (orig.startsWith("/")) orig else "/$orig"
         }
+    } catch (_: Exception) {
+        orig
     }
 
-    fun getFullUrl(url: String): String {
-        return if (url.startsWith("http://") || url.startsWith("https://")) {
-            url
-        } else {
-            "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
-        }
+    fun getFullUrl(url: String): String = if (url.startsWith("http://") || url.startsWith("https://")) {
+        url
+    } else {
+        "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
     }
 
     // ============================ Headers & Client =========================
@@ -782,11 +778,17 @@ class AniWave : Source() {
 
         return when (labelText.lowercase()) {
             "sub" -> "Sub"
+
             "h-sub" -> "H-Sub"
+
             "hsub" -> "HSub"
+
             "dub" -> "Dub"
+
             "a-dub", "adub" -> "A-Dub"
+
             "s-sub" -> "S-Sub"
+
             else -> when (dataType.lowercase()) {
                 "sub" -> "Sub"
                 "hsub" -> "HSub"
