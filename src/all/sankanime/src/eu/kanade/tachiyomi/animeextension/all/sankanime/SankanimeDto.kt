@@ -189,10 +189,10 @@ data class StreamSourceDto(
 @Serializable
 data class SubtitleTrackDto(
     val file: String? = null,
-    val url: String? = null,
+    @SerialName("url") val trackUrl: String? = null,
     val label: String? = null,
     val kind: String? = null,
     @SerialName("default") val isDefault: Boolean? = null,
 ) {
-    fun getUrl(): String? = file ?: url
+    fun resolveUrl(): String? = file ?: trackUrl
 }

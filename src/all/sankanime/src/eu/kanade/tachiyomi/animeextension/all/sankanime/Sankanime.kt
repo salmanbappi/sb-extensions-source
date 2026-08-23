@@ -163,7 +163,7 @@ class Sankanime : Source() {
 
             val subtitleTracks = (streamResult.tracks ?: streamResult.subtitle)
                 ?.mapNotNull { track ->
-                    val file = track.getUrl() ?: return@mapNotNull null
+                    val file = track.resolveUrl() ?: return@mapNotNull null
                     val label = track.label ?: "Subtitle"
                     Track(file, label)
                 } ?: emptyList()
