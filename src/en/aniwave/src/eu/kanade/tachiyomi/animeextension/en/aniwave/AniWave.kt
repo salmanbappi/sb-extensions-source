@@ -377,6 +377,16 @@ class AniWave : Source() {
 
     // =========================== Anime Details ============================
 
+    override fun animeDetailsRequest(anime: SAnime): Request {
+        val animeUrl = anime.url.substringBefore("#")
+        return GET(baseUrl + animeUrl, docHeaders)
+    }
+
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        val response = client.newCall(animeDetailsRequest(anime)).awaitSuccess()
+        return animeDetailsParse(response)
+    }
+
     override fun animeDetailsParse(response: Response): SAnime = animeDetailsParse(response.asJsoup())
 
     fun animeDetailsParse(document: Document): SAnime {
@@ -477,6 +487,11 @@ class AniWave : Source() {
     }
 
     // ============================== Episodes ==============================
+
+    override fun episodeListRequest(anime: SAnime): Request {
+        val animeUrl = anime.url.substringBefore("#")
+        return GET(baseUrl + animeUrl, docHeaders)
+    }
 
     fun episodeListSelector() = "div.episodes ul > li > a"
 
