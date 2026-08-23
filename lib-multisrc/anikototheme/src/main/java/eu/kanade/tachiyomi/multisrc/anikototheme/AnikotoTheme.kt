@@ -322,7 +322,7 @@ abstract class AnikotoTheme : Source() {
             if (title.isBlank()) title = "Episode $num"
             val meta = EpisodeMeta(slug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
-                url = "/watch/${getCleanSlug(slug)}/ep-$num"
+                url = meta.encode()
                 name = title
                 episode_number = num.toFloatOrNull() ?: 0.0f
                 date_upload = (timestamp.toLongOrNull() ?: 0L) * 1000L
@@ -334,7 +334,9 @@ abstract class AnikotoTheme : Source() {
         }.reversed()
 
         val malId = elements.firstNotNullOfOrNull { it.attr("data-mal").takeIf { mal -> mal.isNotEmpty() } } ?: ""
-        return enrichEpisodesWithMetadata(episodes, detailDoc, malId)
+        val animeTitle = detailDoc.selectFirst("h1.title")?.text()?.trim() ?: ""
+        val malIdToUse = if (malId.toIntOrNull() != null && malId.toInt() < 100 && animeTitle.isNotEmpty()) "" else malId
+        return enrichEpisodesWithMetadata(episodes, detailDoc, malIdToUse)
     }
 
     private suspend fun enrichEpisodesWithMetadata(
@@ -650,11 +652,13 @@ abstract class AnikotoTheme : Source() {
         return video
     }
 
+    protected open fun getSourcesUrl(token: String): String = "$baseUrl/ajax/server?get=$token"
+
     private suspend fun resolveStreamForTask(task: HosterTask, slug: String): LocalProxyServer.AudioStream? {
         logi("--- resolving: ${task.label} ---")
         return try {
             val encodedToken = URLEncoder.encode(task.token, "UTF-8")
-            val ajaxUrl = "$baseUrl/ajax/server?get=$encodedToken"
+            val ajaxUrl = getSourcesUrl(encodedToken)
             val response = client.newCall(GET(ajaxUrl, ajaxHeaders(slug))).execute()
             val jsonResponse = json.decodeFromString<ServerResponse>(response.body.string())
             val url = jsonResponse.result?.url
@@ -671,6 +675,11 @@ abstract class AnikotoTheme : Source() {
                 host.contains("vidtube.site", ignoreCase = true) || host.contains("megaplay.buzz", ignoreCase = true) || host.contains("vidwish.live", ignoreCase = true) -> {
                     logi("  [${task.label}] → Flow A (VidTube), host=$host")
                     extractors.resolveVidTube(url, task.audioType, hosterName)
+                }
+
+                host.contains("echovideo.ru", ignoreCase = true) || host.contains("echovideo.to", ignoreCase = true) || host.contains("savedly.net", ignoreCase = true) -> {
+                    logi("  [${task.label}] → Flow EchoVideo, host=$host")
+                    extractors.resolveEchoVideo(url, task.audioType, hosterName)
                 }
 
                 host.contains("mewcdn.online", ignoreCase = true) -> {
