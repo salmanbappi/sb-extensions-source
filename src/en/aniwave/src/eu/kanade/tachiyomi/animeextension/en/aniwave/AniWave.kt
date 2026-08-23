@@ -9,7 +9,6 @@ import androidx.preference.PreferenceScreen
 import aniyomi.lib.m3u8server.M3u8ServerManager
 import eu.kanade.tachiyomi.animeextension.en.aniwave.AniWaveFilters.addListQueryParameter
 import eu.kanade.tachiyomi.animeextension.en.aniwave.AniWaveFilters.addQueryParameterIfNotEmpty
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -19,7 +18,8 @@ import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.interceptor.rateLimitHost
-import eu.kanade.tachiyomi.util.asJsoup
+import extensions.utils.Source
+import extensions.utils.asJsoup
 import keiyoushi.utils.LazyMutable
 import keiyoushi.utils.delegate
 import keiyoushi.utils.getPreferencesLazy
@@ -48,7 +48,7 @@ import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 import kotlin.time.Duration.Companion.hours
 
-class AniWave : extensions.utils.Source() {
+class AniWave : Source() {
 
     override val name = "AniWave (Unoriginal)"
     override val lang = "en"
@@ -64,7 +64,7 @@ class AniWave : extensions.utils.Source() {
 
     private val defaultBaseUrl = "https://${domainEntries.first()}"
 
-    protected val preferences by getPreferencesLazy { clearOldPrefs() }
+    override val migration: SharedPreferences.() -> Unit = { clearOldPrefs() }
 
     override var baseUrl: String
         get() = preferences.getString(PREF_DOMAIN_KEY, defaultBaseUrl) ?: defaultBaseUrl
@@ -287,9 +287,9 @@ class AniWave : extensions.utils.Source() {
         cacheControl,
     )
 
-    override fun popularAnimeSelector(): String = "div.ani.items > div.item"
+    fun popularAnimeSelector(): String = "div.ani.items > div.item"
 
-    override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
+    fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         element.selectFirst("a.name")?.let { a ->
             url = EP_URL_SUFFIX_REGEX.replace(a.attr("href").substringBefore("?"), "")
             title = getTitle(a)
@@ -299,7 +299,7 @@ class AniWave : extensions.utils.Source() {
         }
     }
 
-    override fun popularAnimeNextPageSelector(): String = "nav > ul.pagination > li.active ~ li"
+    fun popularAnimeNextPageSelector(): String = "nav > ul.pagination > li.active ~ li"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -322,9 +322,9 @@ class AniWave : extensions.utils.Source() {
         cacheControl,
     )
 
-    override fun latestUpdatesSelector() = popularAnimeSelector()
-    override fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
-    override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
+    fun latestUpdatesSelector() = popularAnimeSelector()
+    fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
+    fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -360,9 +360,9 @@ class AniWave : extensions.utils.Source() {
         return GET(url, docHeaders, cacheControl)
     }
 
-    override fun searchAnimeSelector() = popularAnimeSelector()
-    override fun searchAnimeFromElement(element: Element) = popularAnimeFromElement(element)
-    override fun searchAnimeNextPageSelector() = popularAnimeNextPageSelector()
+    fun searchAnimeSelector() = popularAnimeSelector()
+    fun searchAnimeFromElement(element: Element) = popularAnimeFromElement(element)
+    fun searchAnimeNextPageSelector() = popularAnimeNextPageSelector()
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -393,6 +393,7 @@ class AniWave : extensions.utils.Source() {
             author = newDocument.select("div:contains(Studios) > span > a").joinToString { it.text() }
             status = parseStatus(newDocument.select("div:contains(Status) > span").text())
             description = buildDescription(newDocument, titleElement)
+            initialized = true
 
             if (detailThumbnailSelector.isNotEmpty()) {
                 newDocument.selectFirst(detailThumbnailSelector)?.let { img ->
@@ -405,7 +406,7 @@ class AniWave : extensions.utils.Source() {
 
     // ============================== Related ===============================
 
-    override fun relatedAnimeListRequest(anime: SAnime): Request {
+    fun relatedAnimeListRequest(anime: SAnime): Request {
         val animeUrl = anime.url.substringBefore("#")
         val animeId = anime.url.substringAfter("#", "")
         return if (animeId.isNotEmpty()) {
@@ -416,7 +417,7 @@ class AniWave : extensions.utils.Source() {
         }
     }
 
-    override fun relatedAnimeListParse(response: Response): List<SAnime> {
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
         return try {
             val document = response.asJsoup()
             val currentAnimePath = response.request.url.encodedPath
@@ -477,8 +478,7 @@ class AniWave : extensions.utils.Source() {
 
     // ============================== Episodes ==============================
 
-    override fun episodeListRequest(anime: SAnime): Request = throw UnsupportedOperationException()
-    override fun episodeListSelector() = "div.episodes ul > li > a"
+    fun episodeListSelector() = "div.episodes ul > li > a"
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val animeId = anime.url.substringAfter("#", "")
@@ -521,9 +521,7 @@ class AniWave : extensions.utils.Source() {
         }
     }
 
-    override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException()
-
-    private fun episodeFromElement(element: Element, animeUrl: String): SEpisode {
+    fun episodeFromElement(element: Element, animeUrl: String): SEpisode {
         val title = element.parent()?.attr("title") ?: ""
         val epNum = element.attr("data-num")
         val ids = element.attr("data-ids")
@@ -570,8 +568,6 @@ class AniWave : extensions.utils.Source() {
         return GET("$baseUrl/ajax/server/list?servers=$ids", listHeaders)
     }
 
-    override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
-
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val isServerInvalid = preferences.getBoolean(PREF_SERVER_INVALID_FLAG, false) ||
             (prefServer.isNotEmpty() && prefServer !in discoveredServers && prefServer !in hosterNames)
@@ -599,7 +595,8 @@ class AniWave : extensions.utils.Source() {
 
         ensureM3u8ServerRunning()
 
-        return extractors.extractVideos(document, episode, epUrl)
+        val rawVideos = extractors.extractVideos(document, episode, epUrl)
+        return rawVideos.sortAniwaveVideos()
     }
 
     private suspend fun ensureM3u8ServerRunning() {
@@ -615,13 +612,9 @@ class AniWave : extensions.utils.Source() {
         }
     }
 
-    override fun videoListSelector() = throw UnsupportedOperationException()
-    override fun videoFromElement(element: Element) = throw UnsupportedOperationException()
-    override fun videoUrlParse(document: Document) = throw UnsupportedOperationException()
-
     // ============================ Video Sort ==============================
 
-    override fun List<Video>.sort(): List<Video> {
+    fun List<Video>.sortAniwaveVideos(): List<Video> {
         val quality = prefQuality
         val preferredServer = prefServer
         val preferredBase = extractBaseServerName(prefServer)
@@ -746,17 +739,11 @@ class AniWave : extensions.utils.Source() {
 
         return when (labelText.lowercase()) {
             "sub" -> "Sub"
-
             "h-sub" -> "H-Sub"
-
             "hsub" -> "HSub"
-
             "dub" -> "Dub"
-
             "a-dub", "adub" -> "A-Dub"
-
             "s-sub" -> "S-Sub"
-
             else -> when (dataType.lowercase()) {
                 "sub" -> "Sub"
                 "hsub" -> "HSub"

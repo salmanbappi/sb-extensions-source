@@ -40,7 +40,7 @@ class AniWaveExtractor(private val source: AniWave) {
         return source.client.newCall(GET("${source.baseUrl}/ajax/server?get=$serverId", listHeaders))
             .awaitSuccess().use { response ->
                 if (!response.isSuccessful) throw Exception("Server API returned HTTP ${response.code}")
-                response.parseAs<ServerResponseDto>().result.url
+                response.parseAs<ServerResponseDto>().result?.url ?: ""
             }
     }
 
@@ -86,6 +86,7 @@ class AniWaveExtractor(private val source: AniWave) {
                         } ?: return@forEach
 
                         val linkId = linkDto.url
+                        if (linkId.isEmpty()) return@forEach
 
                         if (!source.hostToggle.contains(serverName)) return@forEach
                         if (!source.isTypeEnabled(typeLabel, source.typeToggle)) return@forEach
@@ -112,10 +113,8 @@ class AniWaveExtractor(private val source: AniWave) {
         val result = when {
             embedLink.contains("mewcdn.online/player/plyr.php") ->
                 extractFromMewcdnPlayer(embedLink, server)
-
             embedLink.endsWith(".m3u8") || (embedLink.contains(".m3u8") && !embedLink.contains("/stream/")) ->
                 extractDirectM3u8(embedLink, server)
-
             else ->
                 extractFromPlayer(embedLink, server)
         }
@@ -228,7 +227,7 @@ class AniWaveExtractor(private val source: AniWave) {
             .build()
 
         val videos = source.playlistUtils.extractFromHls(
-            m3u8,
+            playlistUrl = m3u8,
             videoNameGen = { quality ->
                 "$displayName$typeSuffix - ${source.cleanHlsQuality(quality)}"
             },
@@ -312,7 +311,7 @@ class AniWaveExtractor(private val source: AniWave) {
             .build()
 
         val videos = source.playlistUtils.extractFromHls(
-            m3u8Url,
+            playlistUrl = m3u8Url,
             videoNameGen = { quality ->
                 "$displayName$typeSuffix - ${source.cleanHlsQuality(quality)}"
             },
@@ -352,7 +351,7 @@ class AniWaveExtractor(private val source: AniWave) {
             .build()
 
         val videos = source.playlistUtils.extractFromHls(
-            m3u8,
+            playlistUrl = m3u8,
             videoNameGen = { quality ->
                 "$displayName$typeSuffix - ${source.cleanHlsQuality(quality)}"
             },

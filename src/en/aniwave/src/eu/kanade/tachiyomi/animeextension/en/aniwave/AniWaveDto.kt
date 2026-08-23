@@ -19,7 +19,7 @@ import org.jsoup.nodes.Document
 class ResultResponse(
     private val result: String? = null,
 ) {
-    fun toDocument(): Document = Jsoup.parseBodyFragment(result)
+    fun toDocument(): Document = Jsoup.parseBodyFragment(result ?: "")
 }
 
 @Serializable
@@ -29,7 +29,7 @@ class ServerResponseDto(
 
 @Serializable
 class ServerResultDto(
-    val url: String? = null,
+    val url: String = "",
     @SerialName("skip_data") val skipData: SkipDataDto? = null,
 )
 
@@ -41,14 +41,14 @@ class SkipDataDto(
 
 @Serializable
 class SourceResponseDto(
-    @Serializable(with = SourcesSerializer::class) val sources: String,
+    @Serializable(with = SourcesSerializer::class) val sources: String = "",
     val tracks: List<TrackDto>? = null,
 )
 
 @Serializable
 class TrackDto(
-    val file: String? = null,
-    val kind: String? = null,
+    val file: String = "",
+    val kind: String = "",
     val label: String = "",
 )
 
@@ -60,25 +60,23 @@ class MapperServerDto(
 
 @Serializable
 class MapperLinkDto(
-    val url: String? = null,
+    val url: String = "",
 )
 
 object SourcesSerializer : KSerializer<String> {
     override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
 
     override fun deserialize(decoder: Decoder): String = when (val element = (decoder as JsonDecoder).decodeJsonElement()) {
-        is JsonObject -> element["file"]?.jsonPrimitive?.content
-
+        is JsonObject -> element["file"]?.jsonPrimitive?.content ?: ""
         is JsonArray -> element.firstOrNull()?.let {
             when (it) {
-                is JsonObject -> it["file"]?.jsonPrimitive?.content
+                is JsonObject -> it["file"]?.jsonPrimitive?.content ?: ""
                 is JsonPrimitive -> it.content
-                else -> null
+                else -> ""
             }
-        }
-
+        } ?: ""
         is JsonPrimitive -> element.content
-    } ?: throw IllegalStateException("No valid m3u8 found in sources")
+    }
 
     override fun serialize(encoder: Encoder, value: String): Unit = throw UnsupportedOperationException("Serialization not supported")
 }
