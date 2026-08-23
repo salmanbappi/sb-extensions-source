@@ -746,11 +746,17 @@ class AniWave : extensions.utils.Source() {
 
         return when (labelText.lowercase()) {
             "sub" -> "Sub"
+
             "h-sub" -> "H-Sub"
+
             "hsub" -> "HSub"
+
             "dub" -> "Dub"
+
             "a-dub", "adub" -> "A-Dub"
+
             "s-sub" -> "S-Sub"
+
             else -> when (dataType.lowercase()) {
                 "sub" -> "Sub"
                 "hsub" -> "HSub"

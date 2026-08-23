@@ -76,13 +76,21 @@ object AniWaveFilters {
                         }
                     }
                 }
+
                 is SeasonFilter -> seasons = filter.state.filter { it.state }.map { it.id }
+
                 is YearFilter -> years = filter.state.filter { it.state }.map { it.id }
+
                 is TypeFilter -> types = filter.state.filter { it.state }.map { it.id }
+
                 is StatusFilter -> statuses = filter.state.filter { it.state }.map { it.id }
+
                 is LanguageFilter -> languages = filter.state.filter { it.state }.map { it.id }
+
                 is RatingFilter -> ratings = filter.state.filter { it.state }.map { it.id }
+
                 is SortFilter -> sort = SORT_OPTIONS[filter.state].second
+
                 else -> {}
             }
         }
@@ -91,7 +99,7 @@ object AniWaveFilters {
     }
 
     fun HttpUrl.Builder.addListQueryParameter(name: String, values: List<String>) {
-        values.forEach { addQueryParameter("${name}[]", it) }
+        values.forEach { addQueryParameter("$name[]", it) }
     }
 
     fun HttpUrl.Builder.addQueryParameterIfNotEmpty(name: String, value: String) {
