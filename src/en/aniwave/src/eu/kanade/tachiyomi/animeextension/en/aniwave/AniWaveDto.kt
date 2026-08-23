@@ -17,50 +17,50 @@ import org.jsoup.nodes.Document
 
 @Serializable
 class ResultResponse(
-    private val result: String? = null
+    private val result: String? = null,
 ) {
     fun toDocument(): Document = Jsoup.parseBodyFragment(result)
 }
 
 @Serializable
 class ServerResponseDto(
-    val result: ServerResultDto? = null
+    val result: ServerResultDto? = null,
 )
 
 @Serializable
 class ServerResultDto(
     val url: String? = null,
-    @SerialName("skip_data") val skipData: SkipDataDto? = null
+    @SerialName("skip_data") val skipData: SkipDataDto? = null,
 )
 
 @Serializable
 class SkipDataDto(
     val intro: List<Int>? = null,
-    val outro: List<Int>? = null
+    val outro: List<Int>? = null,
 )
 
 @Serializable
 class SourceResponseDto(
     @Serializable(with = SourcesSerializer::class) val sources: String,
-    val tracks: List<TrackDto>? = null
+    val tracks: List<TrackDto>? = null,
 )
 
 @Serializable
 class TrackDto(
     val file: String? = null,
     val kind: String? = null,
-    val label: String = ""
+    val label: String = "",
 )
 
 @Serializable
 class MapperServerDto(
     val sub: MapperLinkDto? = null,
-    val dub: MapperLinkDto? = null
+    val dub: MapperLinkDto? = null,
 )
 
 @Serializable
 class MapperLinkDto(
-    val url: String? = null
+    val url: String? = null,
 )
 
 object SourcesSerializer : KSerializer<String> {
@@ -68,6 +68,7 @@ object SourcesSerializer : KSerializer<String> {
 
     override fun deserialize(decoder: Decoder): String = when (val element = (decoder as JsonDecoder).decodeJsonElement()) {
         is JsonObject -> element["file"]?.jsonPrimitive?.content
+
         is JsonArray -> element.firstOrNull()?.let {
             when (it) {
                 is JsonObject -> it["file"]?.jsonPrimitive?.content
@@ -75,6 +76,7 @@ object SourcesSerializer : KSerializer<String> {
                 else -> null
             }
         }
+
         is JsonPrimitive -> element.content
     } ?: throw IllegalStateException("No valid m3u8 found in sources")
 
