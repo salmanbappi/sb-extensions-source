@@ -31,7 +31,9 @@ import java.net.URI
 import java.net.URLEncoder
 import kotlin.time.Duration.Companion.seconds
 
-class Sankanime : ConfigurableAnimeSource, Source() {
+class Sankanime :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "Sankanime"
 
@@ -140,21 +142,26 @@ class Sankanime : ConfigurableAnimeSource, Source() {
                     is Filters.TypeFilter -> {
                         if (!filter.isDefault()) params.add("format=${filter.toUriPart()}")
                     }
+
                     is Filters.StatusFilter -> {
                         if (!filter.isDefault()) params.add("status=${filter.toUriPart()}")
                     }
+
                     is Filters.SeasonFilter -> {
                         if (!filter.isDefault()) params.add("season=${filter.toUriPart()}")
                     }
+
                     is Filters.SortFilter -> {
                         if (!filter.isDefault()) params.add("sort=${filter.toUriPart()}")
                     }
+
                     is Filters.GenreFilter -> {
                         val included = filter.getIncluded()
                         if (included.isNotEmpty()) {
                             params.add("genres=${included.joinToString(",")}")
                         }
                     }
+
                     else -> {}
                 }
             }

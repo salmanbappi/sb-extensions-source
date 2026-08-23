@@ -46,16 +46,14 @@ object SankanimeCrypto {
         return bytesToHex(mac.doFinal(msg.toByteArray(Charsets.UTF_8)))
     }
 
-    private fun kt(salt: String, nonce: String, session: String): String {
-        return listOf(
-            nonce.substring(16),
-            salt.substring(0, 16),
-            session.substring(16),
-            nonce.substring(0, 16),
-            salt.substring(16),
-            session.substring(0, 16),
-        ).joinToString(":")
-    }
+    private fun kt(salt: String, nonce: String, session: String): String = listOf(
+        nonce.substring(16),
+        salt.substring(0, 16),
+        session.substring(16),
+        nonce.substring(0, 16),
+        salt.substring(16),
+        session.substring(0, 16),
+    ).joinToString(":")
 
     fun makeRequestHeader(method: String, fullPath: String, bodyStr: String = ""): Pair<String, String> {
         val nonceBytes = ByteArray(16)
@@ -168,32 +166,30 @@ object SankanimeCrypto {
         return rawJsonStr
     }
 
-    private fun decompressDeflate(data: ByteArray): String {
-        return try {
-            val inflater = Inflater(true)
-            inflater.setInput(data)
-            val outputStream = ByteArrayOutputStream(data.size * 2)
-            val buffer = ByteArray(4096)
-            while (!inflater.finished()) {
-                val count = inflater.inflate(buffer)
-                if (count == 0 && inflater.needsInput()) break
-                outputStream.write(buffer, 0, count)
-            }
-            inflater.end()
-            outputStream.toString("UTF-8")
-        } catch (_: Exception) {
-            val inflater = Inflater(false)
-            inflater.setInput(data)
-            val outputStream = ByteArrayOutputStream(data.size * 2)
-            val buffer = ByteArray(4096)
-            while (!inflater.finished()) {
-                val count = inflater.inflate(buffer)
-                if (count == 0 && inflater.needsInput()) break
-                outputStream.write(buffer, 0, count)
-            }
-            inflater.end()
-            outputStream.toString("UTF-8")
+    private fun decompressDeflate(data: ByteArray): String = try {
+        val inflater = Inflater(true)
+        inflater.setInput(data)
+        val outputStream = ByteArrayOutputStream(data.size * 2)
+        val buffer = ByteArray(4096)
+        while (!inflater.finished()) {
+            val count = inflater.inflate(buffer)
+            if (count == 0 && inflater.needsInput()) break
+            outputStream.write(buffer, 0, count)
         }
+        inflater.end()
+        outputStream.toString("UTF-8")
+    } catch (_: Exception) {
+        val inflater = Inflater(false)
+        inflater.setInput(data)
+        val outputStream = ByteArrayOutputStream(data.size * 2)
+        val buffer = ByteArray(4096)
+        while (!inflater.finished()) {
+            val count = inflater.inflate(buffer)
+            if (count == 0 && inflater.needsInput()) break
+            outputStream.write(buffer, 0, count)
+        }
+        inflater.end()
+        outputStream.toString("UTF-8")
     }
 
     private fun decompressGzip(data: ByteArray): String {
