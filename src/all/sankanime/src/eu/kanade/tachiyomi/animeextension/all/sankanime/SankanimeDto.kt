@@ -6,111 +6,118 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+// ─────────────────────────── Root wrapper ───────────────────────────────────
+// Real shape: { data: { data: { movie: [...], totalPage: N } } }
 @Serializable
 data class ApiResponseDto<T>(
+    val data: T? = null,
     val success: Boolean? = null,
-    val results: T? = null,
+    val message: String? = null,
 )
 
 @Serializable
-data class AnimeListResultDto(
-    val totalPages: Int? = null,
-    val data: List<AnimeItemDto>? = null,
+data class DataWrapperDto<T>(
+    val data: T? = null,
 )
+
+// ─────────────────────────── Anime list ─────────────────────────────────────
+// Used by /popular, /new, /hot, /foryou, /search, /genre, /year, /type
+@Serializable
+data class AnimeListDataDto(
+    val movie: List<AnimeItemDto>? = null,
+    @SerialName("totalPage") val totalPage: Int? = null,
+    @SerialName("total_page") val totalPageAlt: Int? = null,
+    val total: Int? = null,
+)
+
+fun AnimeListDataDto.getTotalPages(): Int = totalPage ?: totalPageAlt ?: 1
 
 @Serializable
 data class AnimeItemDto(
     val id: String? = null,
-    val data_id: String? = null,
-    val number: String? = null,
-    val poster: String? = null,
+    val slug: String? = null,
     val title: String? = null,
-    val japanese_title: String? = null,
+    @SerialName("japanese_title") val japaneseTitle: String? = null,
+    val thumbnail: String? = null,
+    val cover: String? = null,
+    val image: String? = null,
+    val status: String? = null,
+    val type: String? = null,
+    val synopsis: String? = null,
     val description: String? = null,
-    val tvInfo: TvInfoDto? = null,
-    val adultContent: Boolean? = null,
+    val genre: List<String>? = null,
+    val score: String? = null,
+    val year: String? = null,
 ) {
     fun toSAnime(): SAnime = SAnime.create().apply {
-        val animeId = this@AnimeItemDto.id ?: this@AnimeItemDto.data_id ?: ""
-        url = animeId
-        title = this@AnimeItemDto.title ?: this@AnimeItemDto.japanese_title ?: "Unknown"
-        thumbnail_url = this@AnimeItemDto.poster
-        description = this@AnimeItemDto.description
-        status = SAnime.UNKNOWN
+        val animeSlug = this@AnimeItemDto.slug ?: this@AnimeItemDto.id ?: ""
+        url = animeSlug
+        title = this@AnimeItemDto.title ?: this@AnimeItemDto.japaneseTitle ?: "Unknown"
+        thumbnail_url = this@AnimeItemDto.thumbnail
+            ?: this@AnimeItemDto.cover
+            ?: this@AnimeItemDto.image
+        description = this@AnimeItemDto.synopsis ?: this@AnimeItemDto.description
+        status = when (this@AnimeItemDto.status?.lowercase()) {
+            "ongoing", "airing", "currently airing" -> SAnime.ONGOING
+            "completed", "finished", "finished airing" -> SAnime.COMPLETED
+            else -> SAnime.UNKNOWN
+        }
+        genre = this@AnimeItemDto.genre?.joinToString(", ")
         fetch_type = FetchType.Episodes
     }
 }
 
+// ─────────────────────────── Anime detail ───────────────────────────────────
+// Used by /detail/{slug} — returns movie object with episode[] array embedded
 @Serializable
-data class TvInfoDto(
-    val showType: String? = null,
-    val eps: String? = null,
-    val sub: String? = null,
-    val dub: String? = null,
-    val quality: String? = null,
-    val releaseDate: String? = null,
-    val rating: String? = null,
-)
-
-@Serializable
-data class AnimeInfoResultDto(
-    val data: AnimeDetailDto? = null,
+data class AnimeDetailDataDto(
+    val movie: AnimeDetailDto? = null,
 )
 
 @Serializable
 data class AnimeDetailDto(
     val id: String? = null,
-    val data_id: String? = null,
+    val slug: String? = null,
     val title: String? = null,
-    val japanese_title: String? = null,
-    val titles: TitlesDto? = null,
-    val poster: String? = null,
+    @SerialName("japanese_title") val japaneseTitle: String? = null,
+    val thumbnail: String? = null,
+    val cover: String? = null,
+    val image: String? = null,
+    val synopsis: String? = null,
     val description: String? = null,
-    val genres: List<String>? = null,
     val status: String? = null,
-    val releaseDate: String? = null,
-    val studios: List<String>? = null,
-    val showType: String? = null,
-    val rating: String? = null,
-    val adultContent: Boolean? = null,
-    val animeInfo: AnimeInfoDto? = null,
+    val type: String? = null,
+    val genre: List<String>? = null,
+    val studio: List<String>? = null,
+    val score: String? = null,
+    val year: String? = null,
+    val season: String? = null,
+    val episode: List<EpisodeItemDto>? = null,
 ) {
-    fun toSAnime(fallbackAnime: SAnime? = null): SAnime = SAnime.create().apply {
-        url = this@AnimeDetailDto.id ?: this@AnimeDetailDto.data_id ?: fallbackAnime?.url ?: ""
-        title = this@AnimeDetailDto.title ?: this@AnimeDetailDto.japanese_title ?: fallbackAnime?.title ?: "Unknown"
-        thumbnail_url = this@AnimeDetailDto.poster ?: fallbackAnime?.thumbnail_url
+    fun toSAnime(fallback: SAnime? = null): SAnime = SAnime.create().apply {
+        val animeSlug = this@AnimeDetailDto.slug ?: this@AnimeDetailDto.id ?: fallback?.url ?: ""
+        url = animeSlug
+        title = this@AnimeDetailDto.title ?: this@AnimeDetailDto.japaneseTitle ?: fallback?.title ?: "Unknown"
+        thumbnail_url = this@AnimeDetailDto.thumbnail
+            ?: this@AnimeDetailDto.cover
+            ?: this@AnimeDetailDto.image
+            ?: fallback?.thumbnail_url
 
-        val overviewText = this@AnimeDetailDto.animeInfo?.overview
-            ?: this@AnimeDetailDto.description
-            ?: fallbackAnime?.description
-
+        val desc = this@AnimeDetailDto.synopsis ?: this@AnimeDetailDto.description
         val descBuilder = StringBuilder()
-        if (!overviewText.isNullOrBlank()) {
-            descBuilder.append(overviewText).append("\n\n")
-        }
-        this@AnimeDetailDto.japanese_title?.let { descBuilder.append("Japanese: ").append(it).append("\n") }
-        this@AnimeDetailDto.titles?.en?.let { descBuilder.append("English: ").append(it).append("\n") }
-        (this@AnimeDetailDto.animeInfo?.premiered ?: this@AnimeDetailDto.releaseDate)?.let {
-            descBuilder.append("Premiered: ").append(it).append("\n")
-        }
-        this@AnimeDetailDto.animeInfo?.aired?.let {
-            descBuilder.append("Aired: ").append(it).append("\n")
-        }
-        this@AnimeDetailDto.animeInfo?.duration?.let {
-            descBuilder.append("Duration: ").append(it).append("\n")
-        }
-        (this@AnimeDetailDto.animeInfo?.tvInfo?.rating ?: this@AnimeDetailDto.rating)?.let {
-            descBuilder.append("Rating: ").append(it).append("\n")
-        }
+        if (!desc.isNullOrBlank()) descBuilder.append(desc).append("\n\n")
+        this@AnimeDetailDto.japaneseTitle?.let { descBuilder.append("Japanese: $it\n") }
+        this@AnimeDetailDto.year?.let { descBuilder.append("Year: $it\n") }
+        this@AnimeDetailDto.season?.let { descBuilder.append("Season: $it\n") }
+        this@AnimeDetailDto.score?.let { descBuilder.append("Score: $it\n") }
+        description = descBuilder.toString().trim().ifEmpty { fallback?.description }
 
-        description = descBuilder.toString().trim()
-        genre = (this@AnimeDetailDto.animeInfo?.genres ?: this@AnimeDetailDto.genres)?.joinToString(", ")
-        author = (this@AnimeDetailDto.animeInfo?.studios ?: this@AnimeDetailDto.studios)?.joinToString(", ")
+        genre = (this@AnimeDetailDto.genre)?.joinToString(", ") ?: fallback?.genre
+        author = this@AnimeDetailDto.studio?.joinToString(", ")
 
-        val rawStatus = this@AnimeDetailDto.animeInfo?.status ?: this@AnimeDetailDto.status
-        status = when (rawStatus?.lowercase()) {
-            "currently airing", "releasing", "ongoing", "airing" -> SAnime.ONGOING
-            "finished airing", "completed", "finished" -> SAnime.COMPLETED
+        status = when (this@AnimeDetailDto.status?.lowercase()) {
+            "ongoing", "airing", "currently airing" -> SAnime.ONGOING
+            "completed", "finished", "finished airing" -> SAnime.COMPLETED
             else -> SAnime.UNKNOWN
         }
         fetch_type = FetchType.Episodes
@@ -118,48 +125,26 @@ data class AnimeDetailDto(
     }
 }
 
-@Serializable
-data class AnimeInfoDto(
-    @SerialName("Genres") val genres: List<String>? = null,
-    @SerialName("Producers") val producers: List<String>? = null,
-    @SerialName("Studios") val studios: List<String>? = null,
-    @SerialName("Aired") val aired: String? = null,
-    @SerialName("Premiered") val premiered: String? = null,
-    @SerialName("Duration") val duration: String? = null,
-    @SerialName("Status") val status: String? = null,
-    @SerialName("Overview") val overview: String? = null,
-    @SerialName("bannerImage") val bannerImage: String? = null,
-    @SerialName("tvInfo") val tvInfo: TvInfoDto? = null,
-)
-
-@Serializable
-data class TitlesDto(
-    @SerialName("x-jat")
-    val xJat: String? = null,
-    val en: String? = null,
-    val ja: String? = null,
-)
-
-@Serializable
-data class EpisodeListResultDto(
-    val totalEpisodes: Int? = null,
-    val episodes: List<EpisodeItemDto>? = null,
-)
-
+// ─────────────────────────── Episode ────────────────────────────────────────
+// Embedded in AnimeDetailDto.episode[] — fields: index, id, title
 @Serializable
 data class EpisodeItemDto(
-    val episode_no: Int? = null,
     val id: String? = null,
+    val index: Int? = null,
+    @SerialName("episode_no") val episodeNo: Int? = null,
     val title: String? = null,
-    val japanese_title: String? = null,
-    val overview: String? = null,
+    val thumbnail: String? = null,
     val image: String? = null,
+    val synopsis: String? = null,
+    val overview: String? = null,
     val filler: Boolean? = null,
 ) {
-    fun toSEpisode(animeId: String): SEpisode = SEpisode.create().apply {
-        val epNum = this@EpisodeItemDto.episode_no ?: 1
+    fun toSEpisode(animeSlug: String): SEpisode = SEpisode.create().apply {
+        val epNum = this@EpisodeItemDto.index ?: this@EpisodeItemDto.episodeNo ?: 1
+        val streamId = this@EpisodeItemDto.id ?: ""
         episode_number = epNum.toFloat()
-        url = "$animeId#ep=$epNum"
+        // url = "animeSlug#streamId" so we can call /stream/{id} directly
+        url = "$animeSlug#$streamId"
 
         val titleText = this@EpisodeItemDto.title
         val fillerTag = if (this@EpisodeItemDto.filler == true) " [Filler]" else ""
@@ -168,56 +153,46 @@ data class EpisodeItemDto(
         } else {
             "Episode $epNum$fillerTag"
         }
-        this@EpisodeItemDto.image?.let { preview_url = it }
-        this@EpisodeItemDto.overview?.let { summary = it }
+        (this@EpisodeItemDto.thumbnail ?: this@EpisodeItemDto.image)?.let { preview_url = it }
+        (this@EpisodeItemDto.synopsis ?: this@EpisodeItemDto.overview)?.let { summary = it }
     }
 }
 
-@Serializable
-data class ServerItemDto(
-    val type: String? = null,
-    val data_id: String? = null,
-    val server_id: String? = null,
-    val serverName: String? = null,
-)
-
+// ─────────────────────────── Stream ─────────────────────────────────────────
+// /stream/{id} → response.data.data = StreamResultDto
 @Serializable
 data class StreamResultDto(
     val title: String? = null,
-    val japanese_title: String? = null,
-    val streamingLink: StreamingLinkDto? = null,
-    val iframe: String? = null,
-    val server: String? = null,
-)
-
-@Serializable
-data class StreamingLinkDto(
-    val id: String? = null,
-    val type: String? = null,
-    val link: LinkFileDto? = null,
-    val tracks: List<SubtitleTrackDto>? = null,
-    val intro: SkipIntervalDto? = null,
-    val outro: SkipIntervalDto? = null,
-    val server: String? = null,
-    val iframe: String? = null,
-)
-
-@Serializable
-data class LinkFileDto(
+    val link: String? = null,
+    val url: String? = null,
     val file: String? = null,
+    val iframe: String? = null,
+    val server: String? = null,
+    val type: String? = null,
+    val tracks: List<SubtitleTrackDto>? = null,
+    val sources: List<StreamSourceDto>? = null,
+    val subtitle: List<SubtitleTrackDto>? = null,
+) {
+    fun getStreamUrl(): String? = link ?: url ?: file
+        ?: sources?.firstOrNull()?.file
+        ?: sources?.firstOrNull()?.url
+}
+
+@Serializable
+data class StreamSourceDto(
+    val file: String? = null,
+    val url: String? = null,
+    val label: String? = null,
     val type: String? = null,
 )
 
 @Serializable
 data class SubtitleTrackDto(
     val file: String? = null,
+    val url: String? = null,
     val label: String? = null,
     val kind: String? = null,
-    val default: Boolean? = null,
-)
-
-@Serializable
-data class SkipIntervalDto(
-    val start: Int? = null,
-    val end: Int? = null,
-)
+    @SerialName("default") val isDefault: Boolean? = null,
+) {
+    fun getUrl(): String? = file ?: url
+}
