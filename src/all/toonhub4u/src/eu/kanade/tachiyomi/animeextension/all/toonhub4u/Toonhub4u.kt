@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -51,6 +52,8 @@ class Toonhub4u :
     override val supportsLatest = true
     override val id: Long = 5182749372810482937L
 
+    private val m3u8Integration by lazy { M3u8Integration(client) }
+
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
 
@@ -69,8 +72,12 @@ class Toonhub4u :
                     setUrlWithoutDomain(titleEl.attr("href"))
 
                     val img = element.selectFirst("a.post-thumb img")
-                    thumbnail_url = img?.attr("data-src")?.takeIf { it.isNotBlank() }
-                        ?: img?.attr("src")?.takeIf { it.isNotBlank() }
+                    thumbnail_url = img?.let {
+                        it.attr("abs:data-src").ifBlank { null }
+                            ?: it.attr("abs:data-lazy-src").ifBlank { null }
+                            ?: it.attr("srcset").substringBefore(" ").ifBlank { null }
+                            ?: it.attr("abs:src").ifBlank { null }
+                    }
                 }
             } catch (e: Exception) {
                 null
@@ -152,11 +159,14 @@ class Toonhub4u :
                 ?: document.select(".entry-content p").firstOrNull()?.text()
 
             val ogImg = document.selectFirst("meta[property=og:image]")?.attr("content")
-            val mainImg = document.selectFirst(".entry-content img")?.attr("src")
-            thumbnail_url = ogImg ?: mainImg
+            val mainImg = document.selectFirst(".entry-content img")?.let {
+                it.attr("abs:data-src").ifBlank { null } ?: it.attr("abs:src").ifBlank { null }
+            }
+            thumbnail_url = ogImg?.takeIf { it.isNotBlank() } ?: mainImg
 
             genre = document.select(".post-cats a").joinToString(", ") { it.text() }
             status = SAnime.COMPLETED
+            initialized = true
         }
     }
 
@@ -234,7 +244,7 @@ class Toonhub4u :
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val embedUrls = episode.url.split(",")
 
-        return embedUrls.parallelCatchingFlatMap { embedUrl ->
+        val videos = embedUrls.parallelCatchingFlatMap { embedUrl ->
             val videoList = mutableListOf<Video>()
             try {
                 // Direct hoster URLs (older posts) — bypass embedhelper flow
@@ -307,23 +317,43 @@ class Toonhub4u :
 
                         try {
                             when {
-                                friendlyName.equals("FileMoon", ignoreCase = true) || friendlyName.equals("Fmoon", ignoreCase = true) -> {
+                                friendlyName.equals("FileMoon", ignoreCase = true) ||
+                                    friendlyName.equals("Fmoon", ignoreCase = true) ||
+                                    friendlyName.equals("byse", ignoreCase = true) ||
+                                    base.contains("bysetayico", ignoreCase = true) ||
+                                    base.contains("filemoon", ignoreCase = true) -> {
                                     videoList.addAll(FilemoonExtractor(client).videosFromUrl(fullUrl, "FileMoon - "))
                                 }
 
-                                friendlyName.contains("Streamwish", ignoreCase = true) || friendlyName.contains("Cdnwish", ignoreCase = true) || friendlyName.contains("Wish", ignoreCase = true) -> {
+                                friendlyName.contains("Streamwish", ignoreCase = true) ||
+                                    friendlyName.contains("Cdnwish", ignoreCase = true) ||
+                                    friendlyName.contains("Wish", ignoreCase = true) ||
+                                    base.contains("streamwish", ignoreCase = true) ||
+                                    base.contains("wishembed", ignoreCase = true) -> {
                                     videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(fullUrl, "StreamWish"))
                                 }
 
-                                friendlyName.contains("Vidhide", ignoreCase = true) || friendlyName.contains("Animezia", ignoreCase = true) || friendlyName.contains("StreamHG", ignoreCase = true) || friendlyName.contains("EarnVids", ignoreCase = true) -> {
+                                friendlyName.contains("Vidhide", ignoreCase = true) ||
+                                    friendlyName.contains("Animezia", ignoreCase = true) ||
+                                    friendlyName.contains("StreamHG", ignoreCase = true) ||
+                                    friendlyName.contains("EarnVids", ignoreCase = true) ||
+                                    base.contains("hanerix", ignoreCase = true) ||
+                                    base.contains("smoothpre", ignoreCase = true) ||
+                                    base.contains("vidhide", ignoreCase = true) ||
+                                    base.contains("vidshow", ignoreCase = true) -> {
                                     videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(fullUrl) { "VidHide - $it" })
                                 }
 
-                                friendlyName.equals("Buzzheavier", ignoreCase = true) -> {
+                                friendlyName.equals("Buzzheavier", ignoreCase = true) ||
+                                    base.contains("buzzheavier", ignoreCase = true) -> {
                                     videoList.addAll(BuzzheavierExtractor(client, headers).videosFromUrl(fullUrl, "Buzzheavier - "))
                                 }
 
-                                friendlyName.contains("StreamP2p", ignoreCase = true) || friendlyName.contains("RpmShare", ignoreCase = true) || friendlyName.contains("UpnShare", ignoreCase = true) -> {
+                                friendlyName.contains("StreamP2p", ignoreCase = true) ||
+                                    friendlyName.contains("RpmShare", ignoreCase = true) ||
+                                    friendlyName.contains("UpnShare", ignoreCase = true) ||
+                                    base.contains("p2pplay", ignoreCase = true) ||
+                                    base.contains("strp2p", ignoreCase = true) -> {
                                     videoList.addAll(StreamP2PExtractor(client, headers).videosFromUrl(fullUrl, friendlyName))
                                 }
                             }
@@ -337,6 +367,9 @@ class Toonhub4u :
             }
             videoList
         }
+
+        val sorted = videos.sortVideos()
+        return m3u8Integration.processVideoList(sorted)
     }
 
     override fun List<Video>.sortVideos(): List<Video> {

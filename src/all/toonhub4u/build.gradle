@@ -1,15 +1,19 @@
 ext {
     extName = 'Toonhub4u'
     extClass = '.Toonhub4u'
-    extVersionCode = 9
+    extVersionCode = 10
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
+    implementation(project(":lib:unpacker"))
+    implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:synchrony"))
     implementation(project(':lib:dood-extractor'))
     implementation(project(':lib:filemoon-extractor'))
     implementation(project(':lib:streamwish-extractor'))
     implementation(project(':lib:vidhide-extractor'))
     implementation(project(':lib:buzzheavier-extractor'))
+    implementation(project(':lib:m3u8server'))
 }

@@ -1,0 +1,20 @@
+ext {
+    extName = 'Fullraces'
+    extClass = '.Fullraces'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:unpacker"))
+    implementation(project(":lib:okru-extractor"))
+    implementation(project(":lib:dailymotion-extractor"))
+    implementation(project(":lib:byse-extractor"))
+    implementation(project(":lib:filemoon-extractor"))
+    implementation(project(":lib:dood-extractor"))
+    implementation(project(":lib:streamtape-extractor"))
+    implementation(project(":lib:universal-extractor"))
+    implementation(project(":lib:playlist-utils"))
+}
