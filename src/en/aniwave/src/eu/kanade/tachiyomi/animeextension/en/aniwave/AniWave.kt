@@ -195,7 +195,7 @@ class AniWave : AnikotoTheme() {
         if (serverListJson.status != 200 || serverListJson.result.isEmpty()) return emptyList()
 
         val serverDoc = Jsoup.parse(serverListJson.result)
-        val serverTasks = mutableListOf<AniServerTask>()
+        val providerMap = mutableMapOf<String, MutableList<Pair<String, String>>>()
 
         val excludedServers = preferences.getStringSet("pref_exclude_servers_key", emptySet()) ?: emptySet()
         val excludedAudios = preferences.getStringSet("pref_exclude_audio_key", emptySet()) ?: emptySet()
@@ -218,42 +218,19 @@ class AniWave : AnikotoTheme() {
                 if (excludedServers.any { it.equals(serverName, true) }) continue
 
                 if (linkId.isNotEmpty()) {
-                    serverTasks.add(AniServerTask(serverName, linkId, audioLabel, slug))
+                    providerMap.getOrPut(serverName) { mutableListOf() }.add(audioLabel to linkId)
                 }
             }
         }
 
-        if (serverTasks.isEmpty()) return emptyList()
-
-        val resolvedVideos = coroutineScope {
-            serverTasks.map { task ->
-                async(Dispatchers.IO) {
-                    resolveAniServerVideos(task)
-                }
-            }.awaitAll().flatten()
-        }
-
-        // Group cleanly by server name (Provider folder) with Sub & Dub combined inside
-        val hostersMap = mutableMapOf<String, MutableList<Video>>()
-        for (video in resolvedVideos) {
-            val serverName = video.extraData?.takeIf { it.isNotEmpty() }
-                ?: serverTasks.firstOrNull { task -> video.videoTitle.contains(task.serverName) }?.serverName
-                ?: "Server"
-
-            hostersMap.getOrPut(serverName) { mutableListOf() }.add(video)
-        }
+        if (providerMap.isEmpty()) return emptyList()
 
         val preferredServerVal = preferredServer
-        val hostersList = hostersMap.map { (serverName, videos) ->
-            val sortedVideos = try {
-                videos.sortVideos()
-            } catch (_: Throwable) {
-                videos
-            }
+        val hostersList = providerMap.map { (serverName, sources) ->
+            val encodedSources = sources.joinToString(";") { "${it.first}|${it.second}" } + "#$slug"
             Hoster(
                 hosterName = serverName,
-                hosterUrl = "",
-                videoList = sortedVideos,
+                hosterUrl = encodedSources,
             )
         }
 
@@ -264,9 +241,55 @@ class AniWave : AnikotoTheme() {
         }
     }
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> = hoster.videoList ?: emptyList()
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val raw = hoster.hosterUrl
+        if (raw.isEmpty()) return emptyList()
+        val slug = raw.substringAfter("#", "")
+        val sourcesStr = raw.substringBefore("#")
+        val items = sourcesStr.split(";").filter { it.contains("|") }
+        if (items.isEmpty()) return emptyList()
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> = getHosterList(episode).flatMap { it.videoList ?: emptyList() }
+        val serverTasks = items.map { item ->
+            val parts = item.split("|", limit = 2)
+            AniServerTask(
+                serverName = hoster.hosterName,
+                linkId = parts[1],
+                audioLabel = parts[0],
+                slug = slug,
+            )
+        }
+
+        val videos = coroutineScope {
+            serverTasks.map { task ->
+                async(Dispatchers.IO) {
+                    resolveAniServerVideos(task)
+                }
+            }.awaitAll().flatten()
+        }
+
+        return try {
+            videos.sortVideos()
+        } catch (_: Throwable) {
+            videos
+        }
+    }
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val hosters = getHosterList(episode)
+        if (hosters.isEmpty()) return emptyList()
+        val videos = coroutineScope {
+            hosters.map { hoster ->
+                async(Dispatchers.IO) {
+                    getVideoList(hoster)
+                }
+            }.awaitAll().flatten()
+        }
+        return try {
+            videos.sortVideos()
+        } catch (_: Throwable) {
+            videos
+        }
+    }
 
     private data class AniServerTask(
         val serverName: String,
