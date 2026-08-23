@@ -173,7 +173,7 @@ class AniWave : AnikotoTheme() {
         }
     }
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val slug = getCleanSlug(episode.url.substringBefore("#"))
         var dataIds = episode.url.substringAfter("#", "")
         if (dataIds.isEmpty() || dataIds == episode.url) {
@@ -225,7 +225,7 @@ class AniWave : AnikotoTheme() {
 
         if (providerMap.isEmpty()) return emptyList()
 
-        val preferredServerVal = preferredServer
+        val preferredServerVal = preferences.getString("pref_server_key", "auto") ?: "auto"
         val hostersList = providerMap.map { (serverName, sources) ->
             val encodedSources = sources.joinToString(";") { "${it.first}|${it.second}" } + "#$slug"
             Hoster(
@@ -267,23 +267,6 @@ class AniWave : AnikotoTheme() {
             }.awaitAll().flatten()
         }
 
-        return try {
-            videos.sortVideos()
-        } catch (_: Throwable) {
-            videos
-        }
-    }
-
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val hosters = getHosterList(episode)
-        if (hosters.isEmpty()) return emptyList()
-        val videos = coroutineScope {
-            hosters.map { hoster ->
-                async(Dispatchers.IO) {
-                    getVideoList(hoster)
-                }
-            }.awaitAll().flatten()
-        }
         return try {
             videos.sortVideos()
         } catch (_: Throwable) {
@@ -351,7 +334,6 @@ class AniWave : AnikotoTheme() {
                                         Video(
                                             videoUrl = vUrl,
                                             videoTitle = "${task.audioLabel} - $quality",
-                                            extraData = task.serverName,
                                             headers = vidHeaders,
                                             subtitleTracks = subtitles,
                                         ),
@@ -367,7 +349,6 @@ class AniWave : AnikotoTheme() {
                                     videoNameGen = { "${task.audioLabel} - $it" },
                                     subtitleList = subtitles,
                                 )
-                                hlsVideos.forEach { it.extraData = task.serverName }
                                 videos.addAll(hlsVideos)
                             }
                         }
@@ -379,7 +360,6 @@ class AniWave : AnikotoTheme() {
                     referer = "$baseUrl/",
                     videoNameGen = { "${task.audioLabel} - $it" },
                 )
-                hlsVideos.forEach { it.extraData = task.serverName }
                 videos.addAll(hlsVideos)
             }
 
