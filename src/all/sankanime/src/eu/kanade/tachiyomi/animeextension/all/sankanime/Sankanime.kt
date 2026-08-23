@@ -5,6 +5,7 @@ import androidx.preference.PreferenceScreen
 import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
@@ -14,12 +15,10 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.parseAs
-import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import java.net.URI
@@ -163,10 +162,18 @@ class Sankanime : Source() {
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val animeId = anime.url.substringBefore("#")
         val reqUrl = "$apiBaseUrl/info?id=$animeId"
-        val response = client.newCall(GET(reqUrl, headers)).execute()
-        val dto = response.parseAs<ApiResponseDto<AnimeInfoResultDto>>(json)
-        val detail = dto.results?.data ?: return anime.apply { initialized = true }
-        return detail.toSAnime()
+        return try {
+            val response = client.newCall(GET(reqUrl, headers)).execute()
+            val dto = response.parseAs<ApiResponseDto<AnimeInfoResultDto>>(json)
+            val detail = dto.results?.data
+            if (detail != null) {
+                detail.toSAnime(anime)
+            } else {
+                anime.apply { initialized = true }
+            }
+        } catch (_: Exception) {
+            anime.apply { initialized = true }
+        }
     }
 
     // ============================== Episodes ==============================
@@ -179,23 +186,64 @@ class Sankanime : Source() {
         return epList.map { it.toSEpisode(animeId) }.reversed()
     }
 
-    // ============================ Video Links =============================
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+    // ============================ 2-Tier Hosters =============================
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val animeId = episode.url.substringBefore("#")
         val epNum = episode.url.substringAfter("#ep=", "1")
 
         val serversUrl = "$apiBaseUrl/servers/$animeId?ep=$epNum"
-        val serversResp = client.newCall(GET(serversUrl, headers)).execute()
-        val serversDto = serversResp.parseAs<ApiResponseDto<List<ServerItemDto>>>(json)
-        val serverList = serversDto.results ?: emptyList()
+        val serverList = try {
+            val serversResp = client.newCall(GET(serversUrl, headers)).execute()
+            val serversDto = serversResp.parseAs<ApiResponseDto<List<ServerItemDto>>>(json)
+            serversDto.results ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        val serverMap = linkedMapOf<String, MutableSet<String>>()
+        for (server in serverList) {
+            val sName = server.serverName ?: continue
+            val sType = server.type ?: "sub"
+            serverMap.getOrPut(sName) { mutableSetOf() }.add(sType)
+        }
+
+        val vhdServers = listOf("VHD-1", "VHD-2", "VHD-3")
+        for (vhd in vhdServers) {
+            if (!serverMap.containsKey(vhd)) {
+                serverMap[vhd] = mutableSetOf("sub", "dub")
+            }
+        }
+
+        return serverMap.map { (name, types) ->
+            val typesStr = types.joinToString(",")
+            val displayName = when (name.uppercase()) {
+                "HD-1" -> "HD-1 (Megaplay)"
+                "HD-2" -> "HD-2 (Megaplay-SU)"
+                "HD-3" -> "HD-3 (VidNest)"
+                "HD-4" -> "HD-4 (Gogoanime)"
+                "VHD-1" -> "VHD-1 (Megaplay-Alt)"
+                "VHD-2" -> "VHD-2 (Megaplay-SU-Alt)"
+                "VHD-3" -> "VHD-3 (TryEmbed)"
+                else -> name
+            }
+            Hoster(
+                hosterName = displayName,
+                hosterUrl = "$animeId#ep=$epNum&server=${name.lowercase()}&types=$typesStr"
+            )
+        }
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val animeId = hoster.hosterUrl.substringBefore("#")
+        val epNum = hoster.hosterUrl.substringAfter("#ep=").substringBefore("&")
+        val server = hoster.hosterUrl.substringAfter("&server=").substringBefore("&")
+        val typesStr = hoster.hosterUrl.substringAfter("&types=", "sub,dub")
+        val types = typesStr.split(",").filter { it.isNotBlank() }
 
         val videoList = mutableListOf<Video>()
 
-        for (server in serverList) {
-            val sName = server.serverName ?: "Server"
-            val sType = server.type ?: "sub"
-
-            val streamUrl = "$apiBaseUrl/stream?id=$animeId?ep=$epNum&server=${URLEncoder.encode(sName.lowercase(), "UTF-8")}&type=${URLEncoder.encode(sType.lowercase(), "UTF-8")}"
+        for (type in types) {
+            val streamUrl = "$apiBaseUrl/stream?id=$animeId?ep=$epNum&server=${URLEncoder.encode(server.lowercase(), "UTF-8")}&type=${URLEncoder.encode(type.lowercase(), "UTF-8")}"
             try {
                 val streamResp = client.newCall(GET(streamUrl, headers)).execute()
                 val streamDto = streamResp.parseAs<ApiResponseDto<StreamResultDto>>(json)
@@ -228,7 +276,7 @@ class Sankanime : Source() {
                 val extractedVideos = playlistUtils.extractFromHls(
                     playlistUrl = m3u8Url,
                     referer = refererHost,
-                    videoNameGen = { quality -> "[$sType] $sName - $quality" },
+                    videoNameGen = { quality -> "[${type.uppercase()}] $quality" },
                     subtitleList = subtitleTracks,
                 )
 
@@ -238,7 +286,7 @@ class Sankanime : Source() {
                     videoList.add(
                         Video(
                             videoUrl = m3u8Url,
-                            videoTitle = "[$sType] $sName - Default",
+                            videoTitle = "[${type.uppercase()}] Default",
                             headers = streamHeaders,
                             subtitleTracks = subtitleTracks,
                         ),
@@ -265,21 +313,9 @@ class Sankanime : Source() {
             }
         }
 
-        val serverPref = ListPreference(screen.context).apply {
-            key = PREF_SERVER_KEY
-            title = "Preferred Server"
-            entries = arrayOf("HD-1 (Megaplay)", "HD-2 (Megaplay-SU)", "HD-3 (VidNest)", "HD-4 (Gogoanime)")
-            entryValues = arrayOf("HD-1", "HD-2", "HD-3", "HD-4")
-            setDefaultValue(PREF_SERVER_DEFAULT)
-            summary = "%s"
-            setOnPreferenceChangeListener { _, newValue ->
-                preferences.edit().putString(key, newValue as String).commit()
-            }
-        }
-
         val subDubPref = ListPreference(screen.context).apply {
             key = PREF_SUB_DUB_KEY
-            title = "Preferred Audio/Subtitle"
+            title = "Preferred Audio (Sub/Dub)"
             entries = arrayOf("Sub", "Dub")
             entryValues = arrayOf("sub", "dub")
             setDefaultValue(PREF_SUB_DUB_DEFAULT)
@@ -290,18 +326,15 @@ class Sankanime : Source() {
         }
 
         screen.addPreference(qualityPref)
-        screen.addPreference(serverPref)
         screen.addPreference(subDubPref)
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-        val server = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         val subDub = preferences.getString(PREF_SUB_DUB_KEY, PREF_SUB_DUB_DEFAULT) ?: PREF_SUB_DUB_DEFAULT
 
         return this.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(subDub, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(server, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(quality) },
         )
     }
@@ -309,9 +342,6 @@ class Sankanime : Source() {
     companion object {
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
-
-        private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "HD-1"
 
         private const val PREF_SUB_DUB_KEY = "pref_sub_dub"
         private const val PREF_SUB_DUB_DEFAULT = "sub"
