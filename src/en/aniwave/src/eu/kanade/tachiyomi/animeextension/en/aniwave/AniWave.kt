@@ -83,6 +83,31 @@ class AniWave : Source() {
 
     val mapperUrl = "https://mapper.nekostream.site/api"
 
+    // ============================ Helper URL Methods =======================
+
+    fun getUrlWithoutDomain(orig: String): String {
+        return try {
+            if (orig.startsWith("http://") || orig.startsWith("https://")) {
+                val httpUrl = orig.toHttpUrl()
+                val path = httpUrl.encodedPath
+                val query = httpUrl.encodedQuery
+                if (query != null) "$path?$query" else path
+            } else {
+                if (orig.startsWith("/")) orig else "/$orig"
+            }
+        } catch (_: Exception) {
+            orig
+        }
+    }
+
+    fun getFullUrl(url: String): String {
+        return if (url.startsWith("http://") || url.startsWith("https://")) {
+            url
+        } else {
+            "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
+        }
+    }
+
     // ============================ Headers & Client =========================
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -291,7 +316,8 @@ class AniWave : Source() {
 
     fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         element.selectFirst("a.name")?.let { a ->
-            url = EP_URL_SUFFIX_REGEX.replace(a.attr("href").substringBefore("?"), "")
+            val cleanUrl = getUrlWithoutDomain(a.attr("href").substringBefore("?"))
+            url = EP_URL_SUFFIX_REGEX.replace(cleanUrl, "")
             title = getTitle(a)
         }
         thumbnail_url = element.selectFirst(listingThumbnailSelector)?.let {
@@ -379,7 +405,7 @@ class AniWave : Source() {
 
     override fun animeDetailsRequest(anime: SAnime): Request {
         val animeUrl = anime.url.substringBefore("#")
-        return GET(baseUrl + animeUrl, docHeaders)
+        return GET(getFullUrl(animeUrl), docHeaders)
     }
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
@@ -396,7 +422,8 @@ class AniWave : Source() {
             ?: newDocument.selectFirst("[data-tip]")?.attr("data-tip")
 
         return SAnime.create().apply {
-            url = newDocument.location().removePrefix(baseUrl)
+            val cleanPath = getUrlWithoutDomain(newDocument.location())
+            url = cleanPath
             if (!animeId.isNullOrBlank()) url += "#$animeId"
             titleElement?.let { getTitle(it) }?.takeIf { it.isNotEmpty() }?.let { title = it }
             genre = newDocument.select("div:contains(Genres) > span > a").joinToString { it.text() }
@@ -420,10 +447,10 @@ class AniWave : Source() {
         val animeUrl = anime.url.substringBefore("#")
         val animeId = anime.url.substringAfter("#", "")
         return if (animeId.isNotEmpty()) {
-            GET(baseUrl + animeUrl, docHeaders).newBuilder()
+            GET(getFullUrl(animeUrl), docHeaders).newBuilder()
                 .header("X-Anime-Id", animeId).build()
         } else {
-            GET(baseUrl + animeUrl, docHeaders)
+            GET(getFullUrl(animeUrl), docHeaders)
         }
     }
 
@@ -490,7 +517,7 @@ class AniWave : Source() {
 
     override fun episodeListRequest(anime: SAnime): Request {
         val animeUrl = anime.url.substringBefore("#")
-        return GET(baseUrl + animeUrl, docHeaders)
+        return GET(getFullUrl(animeUrl), docHeaders)
     }
 
     fun episodeListSelector() = "div.episodes ul > li > a"
@@ -500,7 +527,7 @@ class AniWave : Source() {
         val animeUrl = anime.url.substringBefore("#")
 
         val id = animeId.ifBlank {
-            val response = client.newCall(GET(baseUrl + animeUrl, docHeaders)).awaitSuccess()
+            val response = client.newCall(GET(getFullUrl(animeUrl), docHeaders)).awaitSuccess()
             val doc = resolveSearchAnime(response.asJsoup())
             doc.selectFirst("[data-id]")?.attr("data-id")
                 ?: doc.selectFirst("[data-tip]")?.attr("data-tip")
@@ -509,7 +536,7 @@ class AniWave : Source() {
 
         val listHeaders = headers.newBuilder().apply {
             add("Accept", "application/json, text/javascript, */*; q=0.01")
-            add("Referer", baseUrl + animeUrl)
+            add("Referer", getFullUrl(animeUrl))
             add("X-Requested-With", "XMLHttpRequest")
         }.build()
 
@@ -548,11 +575,12 @@ class AniWave : Source() {
         val malId = element.attr("data-mal")
         val slug = element.attr("data-slug")
         val timestamp = element.attr("data-timestamp")
+        val cleanAnimeUrl = getUrlWithoutDomain(animeUrl)
 
         return SEpisode.create().apply {
             this.name = "Episode $epNum" + if (name.isNotEmpty() && name != "Episode $epNum") ": $name" else ""
             this.url = buildString {
-                append("$ids&epurl=${EP_URL_SUFFIX_REGEX.replace(animeUrl, "")}/ep-$epNum")
+                append("$ids&epurl=${EP_URL_SUFFIX_REGEX.replace(cleanAnimeUrl, "")}/ep-$epNum")
                 if (malId.isNotEmpty()) append("&mal=$malId")
                 if (slug.isNotEmpty()) append("&slug=$slug")
                 if (timestamp.isNotEmpty()) append("&ts=$timestamp")
@@ -577,7 +605,7 @@ class AniWave : Source() {
 
         val listHeaders = headers.newBuilder().apply {
             add("Accept", "application/json, text/javascript, */*; q=0.01")
-            add("Referer", "$baseUrl$epurlPart")
+            add("Referer", getFullUrl(epurlPart))
             add("X-Requested-With", "XMLHttpRequest")
         }.build()
         return GET("$baseUrl/ajax/server/list?servers=$ids", listHeaders)
@@ -733,7 +761,7 @@ class AniWave : Source() {
             val foundAnimePath = document.selectFirst(searchAnimeSelector())?.selectFirst("a[href]")?.attr("href")
                 ?: throw IllegalStateException("Search element not found")
             val resolveAnimePath = EP_URL_SUFFIX_REGEX.replace(foundAnimePath, "")
-            return client.newCall(GET(baseUrl + resolveAnimePath)).execute().useAsJsoup()
+            return client.newCall(GET(getFullUrl(resolveAnimePath))).execute().useAsJsoup()
         }
         return document
     }
@@ -754,17 +782,11 @@ class AniWave : Source() {
 
         return when (labelText.lowercase()) {
             "sub" -> "Sub"
-
             "h-sub" -> "H-Sub"
-
             "hsub" -> "HSub"
-
             "dub" -> "Dub"
-
             "a-dub", "adub" -> "A-Dub"
-
             "s-sub" -> "S-Sub"
-
             else -> when (dataType.lowercase()) {
                 "sub" -> "Sub"
                 "hsub" -> "HSub"
