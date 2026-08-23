@@ -68,6 +68,7 @@ object SourcesSerializer : KSerializer<String> {
 
     override fun deserialize(decoder: Decoder): String = when (val element = (decoder as JsonDecoder).decodeJsonElement()) {
         is JsonObject -> element["file"]?.jsonPrimitive?.content ?: ""
+
         is JsonArray -> element.firstOrNull()?.let {
             when (it) {
                 is JsonObject -> it["file"]?.jsonPrimitive?.content ?: ""
@@ -75,6 +76,7 @@ object SourcesSerializer : KSerializer<String> {
                 else -> ""
             }
         } ?: ""
+
         is JsonPrimitive -> element.content
     }
 
