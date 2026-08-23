@@ -117,8 +117,10 @@ class AniWaveExtractor(private val source: AniWave) {
         val result = when {
             embedLink.contains("mewcdn.online/player/plyr.php") ->
                 extractFromMewcdnPlayer(embedLink, server, includeServerInTitle)
+
             embedLink.endsWith(".m3u8") || (embedLink.contains(".m3u8") && !embedLink.contains("/stream/")) ->
                 extractDirectM3u8(embedLink, server, includeServerInTitle = includeServerInTitle)
+
             else ->
                 extractFromPlayer(embedLink, server, includeServerInTitle = includeServerInTitle)
         }
