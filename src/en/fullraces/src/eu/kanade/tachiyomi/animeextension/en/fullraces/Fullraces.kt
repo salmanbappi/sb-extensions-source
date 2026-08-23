@@ -21,14 +21,14 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
+import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSetPreference
+import okhttp3.OkHttpClient
+import okhttp3.Response
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Locale
-import keiyoushi.utils.addListPreference
-import keiyoushi.utils.addSetPreference
 import kotlin.time.Duration.Companion.seconds
-import okhttp3.OkHttpClient
-import okhttp3.Response
 
 class Fullraces : Source() {
 
@@ -74,27 +74,25 @@ class Fullraces : Source() {
     }
 
     // =============================== Search ===============================
-    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        return if (query.isNotBlank()) {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val url = "$baseUrl/search/?q=$encodedQuery&p=$page"
-            val response = client.newCall(GET(url, headers)).execute()
-            parseSearchPage(response)
-        } else {
-            var path = ""
-            filters.forEach { filter ->
-                if (filter is Filters.SeriesFilter && !filter.isDefault()) {
-                    path = filter.toUriPart()
-                }
+    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage = if (query.isNotBlank()) {
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val url = "$baseUrl/search/?q=$encodedQuery&p=$page"
+        val response = client.newCall(GET(url, headers)).execute()
+        parseSearchPage(response)
+    } else {
+        var path = ""
+        filters.forEach { filter ->
+            if (filter is Filters.SeriesFilter && !filter.isDefault()) {
+                path = filter.toUriPart()
             }
-            val url = when {
-                path.isBlank() -> if (page == 1) "$baseUrl/" else "$baseUrl/?page$page"
-                path.contains("/watch/") -> if (page == 1) "$baseUrl$path" else "$baseUrl$path-$page"
-                else -> if (page == 1) "$baseUrl$path" else "$baseUrl$path?page$page"
-            }
-            val response = client.newCall(GET(url, headers)).execute()
-            parseAnimeListPage(response)
         }
+        val url = when {
+            path.isBlank() -> if (page == 1) "$baseUrl/" else "$baseUrl/?page$page"
+            path.contains("/watch/") -> if (page == 1) "$baseUrl$path" else "$baseUrl$path-$page"
+            else -> if (page == 1) "$baseUrl$path" else "$baseUrl$path?page$page"
+        }
+        val response = client.newCall(GET(url, headers)).execute()
+        parseAnimeListPage(response)
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
@@ -121,8 +119,8 @@ class Fullraces : Source() {
             }
         }.distinctBy { it.url }
 
-        val hasNext = doc.selectFirst("a.swchItem-next, a.swchItem:contains(»)") != null
-            || doc.select("a.swchItem").any { it.attr("href").contains("page") }
+        val hasNext = doc.selectFirst("a.swchItem-next, a.swchItem:contains(»)") != null ||
+            doc.select("a.swchItem").any { it.attr("href").contains("page") }
 
         return AnimesPage(animes, hasNext)
     }
@@ -146,8 +144,8 @@ class Fullraces : Source() {
             }
         }.distinctBy { it.url }
 
-        val hasNext = doc.selectFirst("a.swchItem-next, a.swchItem:contains(»)") != null
-            || doc.select("a.swchItem").any { it.attr("href").contains("p=") }
+        val hasNext = doc.selectFirst("a.swchItem-next, a.swchItem:contains(»)") != null ||
+            doc.select("a.swchItem").any { it.attr("href").contains("p=") }
 
         return AnimesPage(animes, hasNext)
     }
@@ -263,16 +261,23 @@ class Fullraces : Source() {
         val videos = runCatching {
             when {
                 url.contains("ok.ru") -> okruExtractor.videosFromUrl(url, prefix = prefix)
+
                 url.contains("dailymotion.com") -> dailymotionExtractor.videosFromUrl(url, prefix = prefix)
+
                 url.contains("bysesukior") || url.contains("byse") -> byseExtractor.videosFromUrl(url.replace("/d/", "/e/"), prefix = prefix)
+
                 url.contains("filemoon") || url.contains("moonplayer") -> filemoonExtractor.videosFromUrl(url, prefix = prefix, headers = headers)
+
                 url.contains("streamtape") -> streamtapeExtractor.videoFromUrl(url)?.let { listOf(it) } ?: emptyList()
+
                 url.contains("dood") || url.contains("ds2play") -> doodExtractor.videosFromUrl(url)
+
                 url.endsWith(".m3u8") || url.contains(".m3u8?") -> playlistUtils.extractFromHls(
                     playlistUrl = url,
                     referer = "$baseUrl/",
                     videoNameGen = { quality -> "$prefix$quality" },
                 )
+
                 else -> universalExtractor.videosFromUrl(url, headers, prefix = prefix)
             }
         }.getOrDefault(emptyList())
