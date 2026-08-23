@@ -81,13 +81,18 @@ class Sankanime : Source() {
             for (filter in filters) {
                 when (filter) {
                     is Filters.TypeFilter -> if (!filter.isDefault()) params.add("type=${filter.toUriPart()}")
+
                     is Filters.StatusFilter -> if (!filter.isDefault()) params.add("status=${filter.toUriPart()}")
+
                     is Filters.SeasonFilter -> if (!filter.isDefault()) params.add("season=${filter.toUriPart()}")
+
                     is Filters.SortFilter -> if (!filter.isDefault()) params.add("sort=${filter.toUriPart()}")
+
                     is Filters.GenreFilter -> {
                         val included = filter.getIncluded()
                         if (included.isNotEmpty()) params.add("genre_in=${included.joinToString(",")}")
                     }
+
                     else -> {}
                 }
             }
