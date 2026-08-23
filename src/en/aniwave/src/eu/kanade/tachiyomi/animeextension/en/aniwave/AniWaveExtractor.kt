@@ -26,7 +26,7 @@ class AniWaveExtractor(private val source: AniWave) {
         serverData.addAll(mapperServers)
 
         return serverData.parallelCatchingFlatMap { server ->
-            extractVideo(server, epUrl)
+            extractVideo(server, epUrl, includeServerInTitle = true)
         }
     }
 
@@ -44,7 +44,7 @@ class AniWaveExtractor(private val source: AniWave) {
             }
     }
 
-    private suspend fun fetchMapperServers(episode: SEpisode): List<AniWave.VideoData> {
+    internal suspend fun fetchMapperServers(episode: SEpisode): List<AniWave.VideoData> {
         val epUrlStr = episode.url
         val malId = epUrlStr.substringAfter("&mal=", "").substringBefore("&")
             .takeIf { it.isNotEmpty() } ?: return emptyList()
@@ -103,7 +103,11 @@ class AniWaveExtractor(private val source: AniWave) {
         }
     }
 
-    private suspend fun extractVideo(server: AniWave.VideoData, epUrl: String): List<Video> = try {
+    internal suspend fun extractVideo(
+        server: AniWave.VideoData,
+        epUrl: String,
+        includeServerInTitle: Boolean = true,
+    ): List<Video> = try {
         val embedLink = if (server.serverId.startsWith("http")) {
             server.serverId
         } else {
@@ -112,13 +116,11 @@ class AniWaveExtractor(private val source: AniWave) {
 
         val result = when {
             embedLink.contains("mewcdn.online/player/plyr.php") ->
-                extractFromMewcdnPlayer(embedLink, server)
-
+                extractFromMewcdnPlayer(embedLink, server, includeServerInTitle)
             embedLink.endsWith(".m3u8") || (embedLink.contains(".m3u8") && !embedLink.contains("/stream/")) ->
-                extractDirectM3u8(embedLink, server)
-
+                extractDirectM3u8(embedLink, server, includeServerInTitle = includeServerInTitle)
             else ->
-                extractFromPlayer(embedLink, server)
+                extractFromPlayer(embedLink, server, includeServerInTitle = includeServerInTitle)
         }
 
         val needsProxy = result.requiresProxy || source.alwaysNeedsProxy(server.serverName)
@@ -133,6 +135,7 @@ class AniWaveExtractor(private val source: AniWave) {
         embedUrl: String,
         server: AniWave.VideoData,
         pageReferer: String = "${source.baseUrl}/",
+        includeServerInTitle: Boolean = true,
     ): ExtractionResult {
         val host = try {
             embedUrl.toHttpUrl().host
@@ -151,24 +154,24 @@ class AniWaveExtractor(private val source: AniWave) {
 
         val dataId = DATA_ID_REGEX.find(pageBody)?.groupValues?.get(1)
         if (dataId != null) {
-            return fetchSourcesFromApi(dataId, host, embedUrl, server)
+            return fetchSourcesFromApi(dataId, host, embedUrl, server, includeServerInTitle)
         }
 
         val iframeSrc = IFRAME_SRC_REGEX.find(pageBody)?.groupValues?.get(1)
         if (iframeSrc != null) {
             val resolvedSrc = resolveUrl(iframeSrc, embedUrl)
-            return extractFromPlayer(resolvedSrc, server, pageReferer = embedUrl)
+            return extractFromPlayer(resolvedSrc, server, pageReferer = embedUrl, includeServerInTitle = includeServerInTitle)
         }
 
         val directM3u8 = M3U8_REGEX.find(pageBody)?.groupValues?.get(0)
         if (directM3u8 != null) {
-            return extractDirectM3u8(directM3u8, server, "https://$host/")
+            return extractDirectM3u8(directM3u8, server, "https://$host/", includeServerInTitle)
         }
 
         val sourceSrc = SOURCE_TAG_REGEX.find(pageBody)?.groupValues?.get(1)
         if (sourceSrc != null) {
             val resolvedSrc = resolveUrl(sourceSrc, embedUrl)
-            return extractDirectM3u8(resolvedSrc, server, "https://$host/")
+            return extractDirectM3u8(resolvedSrc, server, "https://$host/", includeServerInTitle)
         }
 
         val jsVarUrl = JS_VAR_M3U8_REGEX.find(pageBody)?.let { match ->
@@ -179,9 +182,9 @@ class AniWaveExtractor(private val source: AniWave) {
             val resolvedUrl = resolveUrl(jsVarUrl, embedUrl)
             if (resolvedUrl.contains(".m3u8") || resolvedUrl.contains("/stream/")) {
                 return try {
-                    fetchSourcesFromPage(resolvedUrl, server, "https://$host/")
+                    fetchSourcesFromPage(resolvedUrl, server, "https://$host/", includeServerInTitle)
                 } catch (_: Exception) {
-                    extractDirectM3u8(resolvedUrl, server, "https://$host/")
+                    extractDirectM3u8(resolvedUrl, server, "https://$host/", includeServerInTitle)
                 }
             }
         }
@@ -195,6 +198,7 @@ class AniWaveExtractor(private val source: AniWave) {
         host: String,
         embedUrl: String,
         server: AniWave.VideoData,
+        includeServerInTitle: Boolean = true,
     ): ExtractionResult {
         val streamType = try {
             embedUrl.toHttpUrl().pathSegments.lastOrNull()
@@ -220,8 +224,13 @@ class AniWaveExtractor(private val source: AniWave) {
             ?.map { Track(it.file, it.label) }
             .orEmpty()
 
-        val displayName = source.getServerDisplayName(server.serverName)
-        val typeSuffix = server.type.takeIf { it.isNotEmpty() }?.let { " - $it" } ?: ""
+        val titlePrefix = if (includeServerInTitle) {
+            val displayName = source.getServerDisplayName(server.serverName)
+            val typeSuffix = server.type.takeIf { it.isNotEmpty() }?.let { " - $it" } ?: ""
+            "$displayName$typeSuffix"
+        } else {
+            server.type.takeIf { it.isNotEmpty() } ?: "Video"
+        }
 
         val vidHeaders = source.headers.newBuilder()
             .set("Referer", "https://$host/")
@@ -231,7 +240,7 @@ class AniWaveExtractor(private val source: AniWave) {
         val videos = source.playlistUtils.extractFromHls(
             playlistUrl = m3u8,
             videoNameGen = { quality ->
-                "$displayName$typeSuffix - ${source.cleanHlsQuality(quality)}"
+                "$titlePrefix - ${source.cleanHlsQuality(quality)}"
             },
             subtitleList = subtitles,
             referer = "https://$host/",
@@ -280,6 +289,7 @@ class AniWaveExtractor(private val source: AniWave) {
         url: String,
         server: AniWave.VideoData,
         referer: String,
+        includeServerInTitle: Boolean = true,
     ): ExtractionResult {
         val pageHeaders = source.headers.newBuilder()
             .add("Referer", referer)
@@ -291,22 +301,28 @@ class AniWaveExtractor(private val source: AniWave) {
         }
 
         if (body.trimStart().startsWith("#EXTM3U")) {
-            return extractDirectM3u8(url, server, referer)
+            return extractDirectM3u8(url, server, referer, includeServerInTitle)
         }
 
         val m3u8 = M3U8_REGEX.find(body)?.groupValues?.get(0)
             ?: throw Exception("No m3u8 found in page")
 
-        return extractDirectM3u8(m3u8, server, referer)
+        return extractDirectM3u8(m3u8, server, referer, includeServerInTitle)
     }
 
     private suspend fun extractDirectM3u8(
         m3u8Url: String,
         server: AniWave.VideoData,
         referer: String = "${source.baseUrl}/",
+        includeServerInTitle: Boolean = true,
     ): ExtractionResult {
-        val displayName = source.getServerDisplayName(server.serverName)
-        val typeSuffix = server.type.takeIf { it.isNotEmpty() }?.let { " - $it" } ?: ""
+        val titlePrefix = if (includeServerInTitle) {
+            val displayName = source.getServerDisplayName(server.serverName)
+            val typeSuffix = server.type.takeIf { it.isNotEmpty() }?.let { " - $it" } ?: ""
+            "$displayName$typeSuffix"
+        } else {
+            server.type.takeIf { it.isNotEmpty() } ?: "Video"
+        }
 
         val vidHeaders = source.headers.newBuilder()
             .set("Referer", referer)
@@ -315,7 +331,7 @@ class AniWaveExtractor(private val source: AniWave) {
         val videos = source.playlistUtils.extractFromHls(
             playlistUrl = m3u8Url,
             videoNameGen = { quality ->
-                "$displayName$typeSuffix - ${source.cleanHlsQuality(quality)}"
+                "$titlePrefix - ${source.cleanHlsQuality(quality)}"
             },
             referer = referer,
             masterHeaders = vidHeaders,
@@ -325,7 +341,11 @@ class AniWaveExtractor(private val source: AniWave) {
         return ExtractionResult(videos, false)
     }
 
-    private suspend fun extractFromMewcdnPlayer(embedUrl: String, server: AniWave.VideoData): ExtractionResult {
+    private suspend fun extractFromMewcdnPlayer(
+        embedUrl: String,
+        server: AniWave.VideoData,
+        includeServerInTitle: Boolean = true,
+    ): ExtractionResult {
         val fragment = embedUrl.substringAfter("#").substringBefore("#").takeIf { it.isNotEmpty() }
             ?: throw Exception("No fragment found in mewcdn player URL")
 
@@ -344,8 +364,13 @@ class AniWaveExtractor(private val source: AniWave) {
 
         val m3u8 = applyHostMap(rawM3u8, hostMap)
 
-        val displayName = source.getServerDisplayName(server.serverName)
-        val typeSuffix = server.type.takeIf { it.isNotEmpty() }?.let { " - $it" } ?: ""
+        val titlePrefix = if (includeServerInTitle) {
+            val displayName = source.getServerDisplayName(server.serverName)
+            val typeSuffix = server.type.takeIf { it.isNotEmpty() }?.let { " - $it" } ?: ""
+            "$displayName$typeSuffix"
+        } else {
+            server.type.takeIf { it.isNotEmpty() } ?: "Video"
+        }
 
         val vidHeaders = source.headers.newBuilder()
             .set("Referer", "https://mewcdn.online/")
@@ -355,7 +380,7 @@ class AniWaveExtractor(private val source: AniWave) {
         val videos = source.playlistUtils.extractFromHls(
             playlistUrl = m3u8,
             videoNameGen = { quality ->
-                "$displayName$typeSuffix - ${source.cleanHlsQuality(quality)}"
+                "$titlePrefix - ${source.cleanHlsQuality(quality)}"
             },
             referer = "https://mewcdn.online/",
             masterHeaders = vidHeaders,

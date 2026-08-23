@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.animeextension.en.aniwave.AniWaveFilters.addListQuery
 import eu.kanade.tachiyomi.animeextension.en.aniwave.AniWaveFilters.addQueryParameterIfNotEmpty
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -23,6 +24,7 @@ import extensions.utils.asJsoup
 import keiyoushi.utils.LazyMutable
 import keiyoushi.utils.delegate
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
 import keiyoushi.utils.useAsJsoup
@@ -85,23 +87,27 @@ class AniWave : Source() {
 
     // ============================ Helper URL Methods =======================
 
-    fun getUrlWithoutDomain(orig: String): String = try {
-        if (orig.startsWith("http://") || orig.startsWith("https://")) {
-            val httpUrl = orig.toHttpUrl()
-            val path = httpUrl.encodedPath
-            val query = httpUrl.encodedQuery
-            if (query != null) "$path?$query" else path
-        } else {
-            if (orig.startsWith("/")) orig else "/$orig"
+    fun getUrlWithoutDomain(orig: String): String {
+        return try {
+            if (orig.startsWith("http://") || orig.startsWith("https://")) {
+                val httpUrl = orig.toHttpUrl()
+                val path = httpUrl.encodedPath
+                val query = httpUrl.encodedQuery
+                if (query != null) "$path?$query" else path
+            } else {
+                if (orig.startsWith("/")) orig else "/$orig"
+            }
+        } catch (_: Exception) {
+            orig
         }
-    } catch (_: Exception) {
-        orig
     }
 
-    fun getFullUrl(url: String): String = if (url.startsWith("http://") || url.startsWith("https://")) {
-        url
-    } else {
-        "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
+    fun getFullUrl(url: String): String {
+        return if (url.startsWith("http://") || url.startsWith("https://")) {
+            url
+        } else {
+            "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
+        }
     }
 
     // ============================ Headers & Client =========================
@@ -587,7 +593,7 @@ class AniWave : Source() {
         }
     }
 
-    // ============================ Video List ==============================
+    // ============================ Video Links & Hosters ===================
 
     data class VideoData(
         val type: String,
@@ -607,7 +613,7 @@ class AniWave : Source() {
         return GET("$baseUrl/ajax/server/list?servers=$ids", listHeaders)
     }
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val isServerInvalid = preferences.getBoolean(PREF_SERVER_INVALID_FLAG, false) ||
             (prefServer.isNotEmpty() && prefServer !in discoveredServers && prefServer !in hosterNames)
 
@@ -618,24 +624,69 @@ class AniWave : Source() {
 
         val response = client.newCall(videoListRequest(episode)).awaitSuccess()
         val referer = response.request.header("Referer")
-        if (referer.isNullOrBlank()) return emptyList()
         val epUrl = try {
-            referer.toHttpUrl().encodedPath
+            referer?.let { getUrlWithoutDomain(it) } ?: ""
         } catch (_: Exception) {
-            return emptyList()
+            ""
         }
 
         val document = try {
             response.parseAs<ResultResponse>().toDocument()
         } catch (e: Exception) {
-            Log.e("AniWave", "Failed to parse video list: ${e.message}")
+            Log.e("AniWave", "Failed to parse hoster list: ${e.message}")
             return emptyList()
         }
 
-        ensureM3u8ServerRunning()
+        val serverData = parseServerListData(document).toMutableList()
+        val mapperServers = extractors.fetchMapperServers(episode)
+        serverData.addAll(mapperServers)
 
-        val rawVideos = extractors.extractVideos(document, episode, epUrl)
-        return rawVideos.sortAniwaveVideos()
+        val grouped = serverData.groupBy { getServerDisplayName(it.serverName) }
+        val preferredServer = prefServer
+        val preferredBase = extractBaseServerName(prefServer)
+
+        return grouped.map { (serverName, items) ->
+            val payload = json.encodeToString(
+                HosterPayload.serializer(),
+                HosterPayload(
+                    serverName = serverName,
+                    epUrl = epUrl,
+                    items = items.map { VideoDataItem(it.type, it.serverId, it.serverName) },
+                ),
+            )
+            Hoster(
+                hosterName = serverName,
+                hosterUrl = payload,
+            )
+        }.sortedWith(
+            compareByDescending { hoster ->
+                when {
+                    hoster.hosterName.equals(preferredServer, ignoreCase = true) -> 2
+                    extractBaseServerName(hoster.hosterName).equals(preferredBase, ignoreCase = true) -> 1
+                    else -> 0
+                }
+            },
+        )
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        ensureM3u8ServerRunning()
+        return try {
+            val payload = json.decodeFromString(HosterPayload.serializer(), hoster.hosterUrl)
+            val videoDataList = payload.items.map { VideoData(it.type, it.serverId, it.serverName) }
+            val videos = videoDataList.parallelCatchingFlatMap { server ->
+                extractors.extractVideo(server, payload.epUrl, includeServerInTitle = false)
+            }
+            videos.sortHosterVideos()
+        } catch (e: Exception) {
+            Log.e("AniWave", "Failed to parse hoster payload: ${e.message}")
+            emptyList()
+        }
+    }
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val hosters = getHosterList(episode)
+        return hosters.flatMap { getVideoList(it) }
     }
 
     private suspend fun ensureM3u8ServerRunning() {
@@ -653,27 +704,16 @@ class AniWave : Source() {
 
     // ============================ Video Sort ==============================
 
-    fun List<Video>.sortAniwaveVideos(): List<Video> {
+    fun List<Video>.sortHosterVideos(): List<Video> {
         val quality = prefQuality
-        val preferredServer = prefServer
-        val preferredBase = extractBaseServerName(prefServer)
         val type = prefType
         val qualitiesList = PREF_QUALITY_ENTRIES.reversed()
-
         val sortType = buildTypeFallbackChain(type)
 
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(quality) }
                 .thenByDescending { video -> qualitiesList.indexOfLast { video.videoTitle.contains(it) } }
-                .thenByDescending { sortType.any { t -> it.videoTitle.contains(" - $t ", true) } }
-                .thenByDescending { video ->
-                    val videoServer = video.videoTitle.substringBefore(" - ")
-                    when {
-                        videoServer.equals(preferredServer, ignoreCase = true) -> 2
-                        extractBaseServerName(videoServer).equals(preferredBase, ignoreCase = true) -> 1
-                        else -> 0
-                    }
-                },
+                .thenByDescending { sortType.any { t -> it.videoTitle.startsWith("$t ") || it.videoTitle.contains(" - $t ") || it.videoTitle.startsWith("$t-") } },
         )
     }
 
@@ -778,17 +818,11 @@ class AniWave : Source() {
 
         return when (labelText.lowercase()) {
             "sub" -> "Sub"
-
             "h-sub" -> "H-Sub"
-
             "hsub" -> "HSub"
-
             "dub" -> "Dub"
-
             "a-dub", "adub" -> "A-Dub"
-
             "s-sub" -> "S-Sub"
-
             else -> when (dataType.lowercase()) {
                 "sub" -> "Sub"
                 "hsub" -> "HSub"

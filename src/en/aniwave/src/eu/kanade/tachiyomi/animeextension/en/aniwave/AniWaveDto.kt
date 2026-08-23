@@ -63,12 +63,25 @@ class MapperLinkDto(
     val url: String = "",
 )
 
+@Serializable
+data class HosterPayload(
+    val serverName: String = "",
+    val epUrl: String = "",
+    val items: List<VideoDataItem> = emptyList(),
+)
+
+@Serializable
+data class VideoDataItem(
+    val type: String = "",
+    val serverId: String = "",
+    val serverName: String = "",
+)
+
 object SourcesSerializer : KSerializer<String> {
     override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
 
     override fun deserialize(decoder: Decoder): String = when (val element = (decoder as JsonDecoder).decodeJsonElement()) {
         is JsonObject -> element["file"]?.jsonPrimitive?.content ?: ""
-
         is JsonArray -> element.firstOrNull()?.let {
             when (it) {
                 is JsonObject -> it["file"]?.jsonPrimitive?.content ?: ""
@@ -76,7 +89,6 @@ object SourcesSerializer : KSerializer<String> {
                 else -> ""
             }
         } ?: ""
-
         is JsonPrimitive -> element.content
     }
 
