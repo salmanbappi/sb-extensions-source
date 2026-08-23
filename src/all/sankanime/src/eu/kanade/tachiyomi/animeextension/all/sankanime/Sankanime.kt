@@ -1,11 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.all.sankanime
 
-import android.app.Application
-import android.content.SharedPreferences
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.m3u8server.M3u8Integration
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -25,15 +22,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.net.URI
 import java.net.URLEncoder
 import kotlin.time.Duration.Companion.seconds
 
-class Sankanime :
-    Source(),
-    ConfigurableAnimeSource {
+class Sankanime : Source() {
 
     override val name = "Sankanime"
 
@@ -45,20 +38,8 @@ class Sankanime :
 
     override val supportsLatest = true
 
-    override val json: Json by lazy {
-        Json {
-            ignoreUnknownKeys = true
-            coerceInputValues = true
-            isLenient = true
-        }
-    }
-
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val m3u8Integration by lazy { M3u8Integration(client) }
-
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", Application.MODE_PRIVATE)
-    }
 
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
@@ -142,26 +123,21 @@ class Sankanime :
                     is Filters.TypeFilter -> {
                         if (!filter.isDefault()) params.add("format=${filter.toUriPart()}")
                     }
-
                     is Filters.StatusFilter -> {
                         if (!filter.isDefault()) params.add("status=${filter.toUriPart()}")
                     }
-
                     is Filters.SeasonFilter -> {
                         if (!filter.isDefault()) params.add("season=${filter.toUriPart()}")
                     }
-
                     is Filters.SortFilter -> {
                         if (!filter.isDefault()) params.add("sort=${filter.toUriPart()}")
                     }
-
                     is Filters.GenreFilter -> {
                         val included = filter.getIncluded()
                         if (included.isNotEmpty()) {
                             params.add("genres=${included.joinToString(",")}")
                         }
                     }
-
                     else -> {}
                 }
             }
