@@ -11,6 +11,10 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -349,4 +353,132 @@ class AnikotoExtractors(
             null
         }
     }
+
+    suspend fun resolveEchoVideo(
+        iframeUrl: String,
+        audioType: String,
+        hosterName: String,
+    ): LocalProxyServer.AudioStream? {
+        logi("resolveEchoVideo: START hoster=$hosterName audio=$audioType iframe=$iframeUrl")
+        return try {
+            val parts = iframeUrl.split("/")
+            val embedType = parts.getOrNull(3) ?: "embed-0"
+            val dataId = parts.getOrNull(4)?.substringBefore("?") ?: ""
+            if (dataId.isEmpty()) {
+                loge("resolveEchoVideo: no data-id found in iframe URL $iframeUrl")
+                return null
+            }
+
+            val host = extractHost(iframeUrl) ?: "play.echovideo.ru"
+            val apiHeaders = Headers.Builder()
+                .set("User-Agent", BROWSER_UA)
+                .set("Referer", iframeUrl)
+                .set("X-Requested-With", "XMLHttpRequest")
+                .set("Accept", "application/json, text/javascript, */*; q=0.01")
+                .build()
+
+            val getSourcesUrl = "https://$host/$embedType/getSources?id=$dataId"
+            val body = fetchString(getSourcesUrl, apiHeaders)
+            val jsonObj = json.decodeFromString<JsonObject>(body)
+
+            val subtitles = mutableListOf<LocalProxyServer.SubtitleData>()
+            jsonObj["tracks"]?.let { tracksElem ->
+                if (tracksElem is JsonArray) {
+                    tracksElem.forEach { trackElem ->
+                        val tObj = trackElem.jsonObject
+                        val file = tObj["file"]?.jsonPrimitive?.content ?: ""
+                        val label = tObj["label"]?.jsonPrimitive?.content ?: "Subtitles"
+                        if (file.startsWith("http")) {
+                            subtitles.add(LocalProxyServer.SubtitleData(file, label, inferLang(label)))
+                        }
+                    }
+                }
+            }
+
+            val sourcesElem = jsonObj["sources"] ?: return null
+            val audioLabel = when (audioType) {
+                "dub" -> "DUB"
+                "ssub", "s-sub" -> "S-SUB"
+                "hsub", "h-sub" -> "H-SUB"
+                else -> "SUB"
+            }
+
+            if (sourcesElem is JsonObject) {
+                val variantDataList = mutableListOf<LocalProxyServer.VariantData>()
+                for ((quality, urlArray) in sourcesElem) {
+                    val vUrl = if (urlArray is JsonArray) {
+                        urlArray.firstOrNull()?.jsonPrimitive?.content ?: ""
+                    } else {
+                        urlArray.jsonPrimitive.content
+                    }
+                    if (vUrl.startsWith("http")) {
+                        val resolution = when (quality) {
+                            "HD" -> 1080
+                            "SD" -> 720
+                            "HQ" -> 480
+                            else -> 720
+                        }
+                        val singleSeg = listOf(LocalProxyServer.SegmentInfo(vUrl, 0.0))
+                        variantDataList.add(LocalProxyServer.VariantData(quality, 0, resolution, singleSeg))
+                    }
+                }
+                if (variantDataList.isEmpty()) return null
+                val segHeaders = Headers.Builder()
+                    .set("User-Agent", BROWSER_UA)
+                    .set("Referer", "https://$host/")
+                    .set("Accept", "*/*")
+                    .build()
+                logi("resolveEchoVideo: SUCCESS hoster=$hosterName audio=$audioLabel variants=${variantDataList.size} (MP4)")
+                LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, subtitles, segHeaders)
+            } else {
+                val masterM3u8 = sourcesElem.jsonPrimitive.content
+                if (!masterM3u8.startsWith("http")) return null
+
+                val masterHost = extractHost(masterM3u8) ?: host
+                val seg = segHeaders(masterHost)
+                val masterText = fetchString(masterM3u8, seg)
+                if (!masterText.startsWith("#EXTM3U")) {
+                    loge("resolveEchoVideo: master is not m3u8")
+                    return null
+                }
+
+                val variants = parseMasterPlaylist(masterText, masterM3u8)
+                if (variants.isEmpty()) {
+                    loge("resolveEchoVideo: no variants in master m3u8")
+                    return null
+                }
+
+                val variantDataList = coroutineScope {
+                    variants.map { vi ->
+                        async(Dispatchers.IO) {
+                            variantSemaphore.withPermit {
+                                try {
+                                    val varText = fetchString(vi.url, seg)
+                                    val segs = parseVariantSegments(varText, vi.url)
+                                    if (segs.isNotEmpty()) {
+                                        LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs)
+                                    } else {
+                                        null
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    loge("resolveEchoVideo: variant ${vi.quality} fetch FAILED: ${e.message}")
+                                    null
+                                }
+                            }
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+
+                if (variantDataList.isEmpty()) return null
+                logi("resolveEchoVideo: SUCCESS hoster=$hosterName audio=$audioLabel variants=${variantDataList.size} subs=${subtitles.size}")
+                LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, subtitles, seg)
+            }
+        } catch (e: Exception) {
+            loge("resolveEchoVideo: FAILED hoster=$hosterName audio=$audioType", e)
+            null
+        }
+    }
 }
+
