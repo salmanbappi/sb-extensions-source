@@ -371,7 +371,7 @@ class AnimePahe : Source() {
             if ((currentData.currentPage ?: 0) >= (currentData.lastPage ?: 0)) break
 
             val nextUrl = requestUrl.newBuilder()
-                .setQueryParameter("page", (currentData.currentPage + 1).toString())
+                .setQueryParameter("page", ((currentData.currentPage ?: 0) + 1).toString())
                 .build()
 
             currentData = client.newCall(GET(nextUrl)).execute().use { it.parseAs() }
@@ -608,7 +608,7 @@ class AnimePahe : Source() {
                 val matchedAnime = if (animeId != null) {
                     searchData.items.firstOrNull { it.id.toString() == animeId }
                 } else if (normalizedTitle != null) {
-                    searchData.items.firstOrNull { normalizeTitle(it.title) == normalizedTitle }
+                    searchData.items.firstOrNull { normalizeTitle(it.title.orEmpty()) == normalizedTitle }
                 } else {
                     null
                 }
