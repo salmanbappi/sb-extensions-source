@@ -47,13 +47,11 @@ class Anikage : Source() {
 
     // ============================== Popular ===============================
 
-    override suspend fun getPopularAnime(page: Int): AnimesPage =
-        browse(page, sort = "popularity")
+    override suspend fun getPopularAnime(page: Int): AnimesPage = browse(page, sort = "popularity")
 
     // ============================== Latest ================================
 
-    override suspend fun getLatestUpdates(page: Int): AnimesPage =
-        browse(page, sort = "updated")
+    override suspend fun getLatestUpdates(page: Int): AnimesPage = browse(page, sort = "updated")
 
     // =============================== Search ===============================
 
@@ -171,10 +169,8 @@ class Anikage : Source() {
         return hosters
     }
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        return runCatching { megaPlayVideos(hoster.hosterName, hoster.hosterUrl) }
-            .getOrDefault(emptyList())
-    }
+    override suspend fun getVideoList(hoster: Hoster): List<Video> = runCatching { megaPlayVideos(hoster.hosterName, hoster.hosterUrl) }
+        .getOrDefault(emptyList())
 
     private fun megaPlayVideos(label: String, embedUrl: String): List<Video> {
         val embedHost = embedUrl.toHttpUrl().let { "${it.scheme}://${it.host}" }
