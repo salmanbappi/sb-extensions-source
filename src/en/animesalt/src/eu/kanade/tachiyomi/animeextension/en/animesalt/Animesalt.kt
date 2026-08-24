@@ -239,7 +239,7 @@ class Animesalt : Source() {
                         name = epName
                         episode_number = epNum
                         val encodedServers = Base64.encodeToString(serversJson.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-                        url = "${anime.url}#${epSlug}|${encodedServers}"
+                        url = "${anime.url}#$epSlug|$encodedServers"
                     },
                 )
             }
@@ -333,7 +333,9 @@ class Animesalt : Source() {
             val encodedServers = episode.url.substringAfter("|")
             val serversJson = try {
                 String(Base64.decode(encodedServers, Base64.DEFAULT), Charsets.UTF_8)
-            } catch (_: Exception) { "" }
+            } catch (_: Exception) {
+                ""
+            }
 
             if (serversJson.startsWith("[")) {
                 try {
