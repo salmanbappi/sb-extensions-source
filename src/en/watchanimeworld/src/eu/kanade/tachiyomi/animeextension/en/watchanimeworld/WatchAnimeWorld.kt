@@ -72,29 +72,30 @@ class WatchAnimeWorld : Source() {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/series/page/$page/", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/anime/?order=popular&page=$page", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val animeList = document.select(".latest-ep-swiper-slide article.post, article.post.movies, article.post, .swiper-slide article, div.items article.item").map { element ->
+        val animeList = document.select("div.listupd article, div.bsx, .listupd .bsx, div.items article, article.post").map { element ->
             parseAnimeFromElement(element)
         }.distinctBy { it.url }
 
         val url = response.request.url.toString()
-        val page = url.substringAfter("/page/").substringBefore("/").toIntOrNull()
+        val page = url.substringAfter("page=").substringBefore("&").toIntOrNull()
+            ?: url.substringAfter("/page/").substringBefore("/").toIntOrNull()
             ?: url.substringAfter("paged=").substringBefore("&").toIntOrNull()
             ?: 1
 
-        val hasNextPage = document.select(".pagination a, .nav-links a, a.next").any {
+        val hasNextPage = document.select(".pagination a, .nav-links a, a.next, .hpage a.r").any {
             val href = it.attr("href")
-            href.contains("/page/${page + 1}") || href.contains("paged=${page + 1}")
-        }
+            href.contains("/page/${page + 1}") || href.contains("page=${page + 1}") || href.contains("paged=${page + 1}")
+        } || document.selectFirst(".hpage a.r, a.next, .pagination .next") != null
         return AnimesPage(animeList, hasNextPage)
     }
 
     // ============================== Latest ================================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/?post_type=episodes&paged=$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/anime/?order=update&page=$page", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
@@ -286,16 +287,60 @@ class WatchAnimeWorld : Source() {
 
     private fun parseEpisodesFromHtml(document: Document): List<SEpisode> {
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
-        val listItems = if (document.selectFirst("#episode_by_temp") != null) {
-            document.select("#episode_by_temp li")
-        } else {
-            document.select("li")
+        val listItems = document.select("div.eplister ul li, div.eplister li, #episode_by_temp li, ul.bxcl li")
+        if (listItems.isNotEmpty()) {
+            return listItems.mapNotNull { li ->
+                val link = li.selectFirst("a") ?: return@mapNotNull null
+                val numEpi = li.selectFirst("span.num-epi, .epl-num")?.text()?.trim() ?: ""
+                val titleText = li.selectFirst(".entry-title, .epl-title")?.text()?.trim() ?: ""
+
+                val match = EPISODE_NUM_REGEX.find(numEpi)
+                val episodeNum = match?.groupValues?.get(2)?.toFloatOrNull()
+                    ?: numEpi.substringAfter("x").toFloatOrNull()
+                    ?: numEpi.toFloatOrNull()
+                    ?: 0f
+
+                val seasonVal = match?.groupValues?.get(1)?.toIntOrNull()
+                    ?: numEpi.substringBefore("x").toIntOrNull()
+
+                val epInt = episodeNum.toInt()
+                val isWhole = episodeNum == epInt.toFloat()
+                val epPad = if (isWhole) epInt.toString().padStart(2, '0') else episodeNum.toString()
+
+                val displayTitle = when {
+                    titleText.isNotBlank() && !titleText.contains(numEpi, ignoreCase = true) -> {
+                        if (seasonVal != null && seasonVal > 1) "S$seasonVal - Ep. $epPad - $titleText" else "Ep. $epPad - $titleText"
+                    }
+                    seasonVal != null && seasonVal > 1 -> "S$seasonVal - Ep. $epPad"
+                    else -> "Ep. $epPad"
+                }
+
+                SEpisode.create().apply {
+                    val rawHref = link.attr("href").takeIf { it.startsWith("/") }
+                        ?: link.attr("abs:href").substringAfter(baseUrl)
+                    url = rawHref
+                    name = displayTitle
+                    episode_number = episodeNum
+
+                    val img = li.selectFirst("img")
+                    val imgUrl = img?.attr("abs:data-src")?.takeIf { it.isNotBlank() }
+                        ?: img?.attr("abs:src")?.takeIf { it.isNotBlank() }
+                        ?: img?.attr("data-src")?.takeIf { it.isNotBlank() }
+                        ?: img?.attr("src") ?: ""
+                    val finalImgUrl = when {
+                        imgUrl.startsWith("//") -> "https:$imgUrl"
+                        imgUrl.startsWith("/") -> baseUrl + imgUrl
+                        else -> imgUrl
+                    }
+                    preview_url = if (showThumbnails && finalImgUrl.isNotBlank()) finalImgUrl else null
+                }
+            }
         }
-        return listItems.mapNotNull { li ->
-            val article = li.selectFirst("article.episodes") ?: return@mapNotNull null
-            val link = article.selectFirst("a.lnk-blk") ?: return@mapNotNull null
-            val numEpi = article.selectFirst("span.num-epi")?.text()?.trim() ?: ""
-            val titleText = article.selectFirst(".entry-title")?.text()?.trim() ?: ""
+        val oldArticles = document.select("article.episodes, li:has(a[href*='-episode-'])")
+        return oldArticles.mapNotNull { article ->
+            val link = article.selectFirst("a.lnk-blk, a") ?: return@mapNotNull null
+            val numEpi = article.selectFirst("span.num-epi, .epl-num")?.text()?.trim() ?: ""
+            val titleText = article.selectFirst(".entry-title, .epl-title")?.text()?.trim() ?: ""
 
             val match = EPISODE_NUM_REGEX.find(numEpi)
             val episodeNum = match?.groupValues?.get(2)?.toFloatOrNull() ?: 0f
@@ -319,18 +364,6 @@ class WatchAnimeWorld : Source() {
                 url = rawHref
                 name = displayTitle
                 episode_number = episodeNum
-
-                val img = article.selectFirst("img")
-                val imgUrl = img?.attr("abs:data-src")?.takeIf { it.isNotBlank() }
-                    ?: img?.attr("abs:src")?.takeIf { it.isNotBlank() }
-                    ?: img?.attr("data-src")?.takeIf { it.isNotBlank() }
-                    ?: img?.attr("src") ?: ""
-                val finalImgUrl = when {
-                    imgUrl.startsWith("//") -> "https:$imgUrl"
-                    imgUrl.startsWith("/") -> baseUrl + imgUrl
-                    else -> imgUrl
-                }
-                preview_url = if (showThumbnails && finalImgUrl.isNotBlank()) finalImgUrl else null
             }
         }
     }
@@ -347,22 +380,46 @@ class WatchAnimeWorld : Source() {
         val hosters = mutableListOf<Hoster>()
         val episodeUrl = response.request.url.toString()
 
-        // 1. Extract Zephyr / Zephyrix player sources FIRST (fastest HLS CDN streams)
+        // 1. Extract Zephyrix / ZPP Player sources from select.mirror (Base64 encoded iframes)
+        doc.select("select.mirror option, select#mirror option").forEach { option ->
+            val optVal = option.attr("value").trim()
+            val optText = option.text().trim()
+            if (optVal.isNotBlank() && !optText.contains("Select", ignoreCase = true)) {
+                try {
+                    val decodedBytes = android.util.Base64.decode(optVal, android.util.Base64.DEFAULT)
+                    val decodedIframe = String(decodedBytes, Charsets.UTF_8)
+                    val iframeSrc = org.jsoup.Jsoup.parse(decodedIframe).selectFirst("iframe")?.attr("src")
+                    if (!iframeSrc.isNullOrBlank()) {
+                        val finalSrc = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else if (iframeSrc.startsWith("/")) "$baseUrl$iframeSrc" else iframeSrc
+                        hosters.add(
+                            Hoster(
+                                hosterName = optText.ifBlank { "Default Server" },
+                                hosterUrl = "zpp|Multi|$finalSrc|$episodeUrl",
+                            ),
+                        )
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        // 2. Extract Zephyr / Zephyrix player sources
         val zephyrIframes = doc.select("iframe").mapNotNull {
             it.attr("data-src").takeIf { s -> s.isNotBlank() } ?: it.attr("src").takeIf { s -> s.isNotBlank() }
-        }.filter { "zephyr" in it.lowercase() || "zephyrix" in it.lowercase() || "/video/" in it }
+        }.filter { "zephyr" in it.lowercase() || "zephyrix" in it.lowercase() || "/video/" in it || "zpp" in it.lowercase() }
 
         zephyrIframes.forEachIndexed { index, iframeUrl ->
+            val finalIframe = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else if (iframeUrl.startsWith("/")) "$baseUrl$iframeUrl" else iframeUrl
+            val type = if ("zpp" in finalIframe.lowercase()) "zpp" else "zephyr"
             val suffix = if (zephyrIframes.size > 1) " ${index + 1}" else ""
             hosters.add(
                 Hoster(
                     hosterName = "Zephyr$suffix",
-                    hosterUrl = "zephyr|Multi|$iframeUrl|$episodeUrl",
+                    hosterUrl = "$type|Multi|$finalIframe|$episodeUrl",
                 ),
             )
         }
 
-        // 2. Extract /api/player1.php?data= encoded server list
+        // 3. Extract /api/player1.php?data= encoded server list
         val player1Match = PLAYER1_REGEX.find(html)
         if (player1Match != null) {
             try {
@@ -411,6 +468,10 @@ class WatchAnimeWorld : Source() {
 
         return try {
             when (type) {
+                "zpp" -> {
+                    extractZppPlayer(link, episodeUrl)
+                }
+
                 "zephyr", "zephyrflick" -> {
                     extractZephyr(link, episodeUrl, lang)
                 }
@@ -576,6 +637,27 @@ class WatchAnimeWorld : Source() {
         }
     }
 
+    private fun extractZppPlayer(playerUrl: String, episodeUrl: String): List<Video> {
+        return try {
+            val response = client.newCall(
+                GET(playerUrl, headersBuilder().set("Referer", episodeUrl).build()),
+            ).execute()
+            val html = response.bodyString()
+            val hlsMatch = Regex("""SRC\s*=\s*["']([^"']+)["']""").find(html)
+                ?: Regex("""["'](https?://[^"']+/hls/[^"']+)["']""").find(html)
+                ?: Regex("""["'](https?://[^"']+/wp-json/zpp/v1/hls[^"']+)["']""").find(html)
+
+            val hlsUrl = hlsMatch?.groupValues?.get(1)?.replace("\\", "") ?: return emptyList()
+            playlistUtils.extractFromHls(
+                playlistUrl = hlsUrl,
+                referer = playerUrl,
+                videoNameGen = { q -> "WatchAnimeWorld - $q" },
+            )
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         val server = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
@@ -655,29 +737,20 @@ class WatchAnimeWorld : Source() {
     // ============================ Utilities ===============================
 
     private fun parseAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val titleElement = element.selectFirst(".entry-title, h2, h3")
-        title = titleElement?.text()?.trim() ?: ""
-
+        val titleElement = element.selectFirst(".entry-title, h2, h3, .tt")
         val linkElement = element.selectFirst("a.lnk-blk, a")
+        title = titleElement?.text()?.trim() ?: linkElement?.attr("title")?.trim() ?: ""
+
         val relativeUrl = linkElement?.attr("href")?.takeIf { it.startsWith("/") }
             ?: (linkElement?.attr("abs:href") ?: "").substringAfter(baseUrl)
 
-        if (relativeUrl.contains("/episode/")) {
-            val slug = relativeUrl.trim('/').substringAfterLast('/')
-            val match = EPISODE_SLUG_REGEX.find(slug)
-            if (match != null) {
-                val animeSlug = match.groupValues[1]
-                url = "/series/$animeSlug/"
-            } else {
-                url = relativeUrl
-            }
-        } else {
-            url = relativeUrl
-        }
+        url = relativeUrl
 
         val imgElement = element.selectFirst("img")
         thumbnail_url = imgElement?.attr("abs:data-src")?.takeIf { it.isNotBlank() }
-            ?: imgElement?.attr("abs:src") ?: ""
+            ?: imgElement?.attr("abs:src")?.takeIf { it.isNotBlank() }
+            ?: imgElement?.attr("data-src")?.takeIf { it.isNotBlank() }
+            ?: imgElement?.attr("src") ?: ""
     }
 
     companion object {
