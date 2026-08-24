@@ -5,3 +5,4 @@ plugins {
 dependencies {
     implementation(project(":lib:playlist-utils"))
 }
+
