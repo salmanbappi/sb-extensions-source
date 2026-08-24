@@ -96,6 +96,32 @@ class AnimePahe : Source() {
 
     override fun animeDetailsRequest(anime: SAnime): Request = GET(getAnimeUrl(anime), headers)
 
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        val request = animeDetailsRequest(anime)
+        val response = client.newCall(request).await()
+
+        if (response.isSuccessful) {
+            return response.use { animeDetailsParse(it) }
+        }
+        response.close()
+
+        val animeId = anime.getId()
+        val result = fetchSessionAndId(animeId, anime.title)
+
+        if (result != null) {
+            val (newId, newSession) = result
+            saveSessionToCache(newId, newSession)
+            val newRequest = GET("$baseUrl/anime/$newSession", headers)
+            val newResponse = client.newCall(newRequest).await()
+            if (newResponse.isSuccessful) {
+                return newResponse.use { animeDetailsParse(it) }
+            }
+            newResponse.close()
+            throw IOException("HTTP ${newResponse.code} fetching details for '${anime.title}' (ID: $newId) at ${newRequest.url}")
+        }
+        throw IOException("HTTP error fetching details for '${anime.title}' (ID: ${animeId ?: "N/A"}) at ${request.url}")
+    }
+
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.useAsJsoup()
         val animeId = document.selectFirst("meta[name=id]")?.attr("content")
@@ -104,7 +130,9 @@ class AnimePahe : Source() {
             if (animeId != null) {
                 url = "/a/$animeId"
             }
-            title = document.selectFirst("div.title-wrapper > h1 > span")!!.text()
+            title = document.selectFirst("div.title-wrapper > h1 > span")?.text()
+                ?: document.selectFirst("h1")?.text()
+                ?: "Unknown"
             author = document.selectFirst("div.col-sm-4.anime-info p:contains(Studios:)")
                 ?.text()
                 ?.replace("Studios: ", "")
