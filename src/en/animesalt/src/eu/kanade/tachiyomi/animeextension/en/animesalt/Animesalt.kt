@@ -535,7 +535,7 @@ class Animesalt : Source() {
             hosterUrl.contains("abyss.to", ignoreCase = true) ||
             hosterUrl.contains("player.abyssplayer.com", ignoreCase = true)
         ) {
-            return abyssExtractor.videosFromUrl(hosterUrl, headers)
+            return abyssExtractor.videosFromUrl(hosterUrl, hosterUrl)
         }
 
         // VidMoly extraction
