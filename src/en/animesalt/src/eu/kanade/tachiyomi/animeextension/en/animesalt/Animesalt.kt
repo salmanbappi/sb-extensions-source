@@ -15,6 +15,8 @@ import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
+import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
+import eu.kanade.tachiyomi.animeextension.en.animesalt.extractors.AbyssExtractor
 import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -61,6 +63,8 @@ class Animesalt : Source() {
     private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
+    private val abyssExtractor by lazy { AbyssExtractor(client, playlistUtils) }
+    private val vidmolyExtractor by lazy { VidMolyExtractor(client, headers) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     // ============================== Popular ===============================
@@ -253,14 +257,14 @@ class Animesalt : Source() {
         val genres = doc.select("a[href*='/category/genre/'], a[href*='/genre/']").map { it.text().trim() }.filter { it.isNotBlank() }.distinct().joinToString(", ")
         val statusRaw = doc.select(".status, .Qlty, a[href*='/status/'], .anime-meta-v2").text()
 
-        // The detail page has a single <img class="hero-poster-mini"> with a TMDB src.
+        // The detail page has a single <img class="hero-poster-mini"> with a TMDB or AniList CDN src.
         // Check for .hero-poster-mini first (highest confidence on the new theme),
         // then fall back to broader selectors.
         val posterImg = doc.selectFirst(
             ".hero-poster-mini, .anime-hero-minimal img, " +
                 ".poster-wrap img, article.post .poster img, .single-series .poster img, .s-top .poster img, .poster img, " +
                 ".bd img:not(.custom-logo):not(.cn-icon), img[alt^='Image ']:not(.TPostBg), " +
-                "img[src*='tmdb.org'], img[data-src*='tmdb.org'], .thumb img.wp-post-image",
+                "img[src*='tmdb.org'], img[src*='anilist.co'], img[data-src*='tmdb.org'], img[data-src*='anilist.co'], .thumb img.wp-post-image",
         )
 
         val thumb = posterImg?.let {
@@ -524,6 +528,19 @@ class Animesalt : Source() {
         // MegaPlay extraction: fetch page → extract stream ID → call getSources API
         if (hosterUrl.contains("megaplay.buzz", ignoreCase = true)) {
             return extractMegaPlay(hosterUrl, hoster.hosterName)
+        }
+
+        // AbyssPlayer extraction: encrypted media payload with HLS/MP4 sources
+        if (hosterUrl.contains("abyssplayer.com", ignoreCase = true) ||
+            hosterUrl.contains("abyss.to", ignoreCase = true) ||
+            hosterUrl.contains("player.abyssplayer.com", ignoreCase = true)
+        ) {
+            return abyssExtractor.videosFromUrl(hosterUrl, headers)
+        }
+
+        // VidMoly extraction
+        if (hosterUrl.contains("vidmoly", ignoreCase = true)) {
+            return vidmolyExtractor.videosFromUrl(hosterUrl)
         }
 
         val isFirePlayer = hosterUrl.contains("as-cdn", ignoreCase = true) ||
