@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
@@ -64,16 +65,22 @@ class Animesalt : Source() {
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val url = if (page == 1) "$baseUrl/type/popular/" else "$baseUrl/type/popular/page/$page/"
-        val response = client.newCall(GET(url, headers)).execute()
-        return parseAnimeListPage(response)
+        if (page == 1) {
+            val url = "$baseUrl/type/popular/"
+            val response = client.newCall(GET(url, headers)).execute()
+            return parseAnimeListPage(response, ajaxTaxonomy = "type", ajaxTerm = "popular", ajaxPostType = "tv")
+        }
+        return ajaxLoadMore(page, taxonomy = "type", term = "popular", postType = "tv")
     }
 
     // ============================== Latest ================================
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val url = if (page == 1) "$baseUrl/tv/" else "$baseUrl/tv/page/$page/"
-        val response = client.newCall(GET(url, headers)).execute()
-        return parseAnimeListPage(response)
+        if (page == 1) {
+            val url = "$baseUrl/tv/"
+            val response = client.newCall(GET(url, headers)).execute()
+            return parseAnimeListPage(response, ajaxTaxonomy = "", ajaxTerm = "", ajaxPostType = "tv")
+        }
+        return ajaxLoadMore(page, taxonomy = "", term = "", postType = "tv")
     }
 
     // =============================== Search ===============================
@@ -134,15 +141,76 @@ class Animesalt : Source() {
         Filters.GenreFilter(),
     )
 
-    private fun parseAnimeListPage(response: Response): AnimesPage {
+    /**
+     * Makes an AJAX POST to the WordPress Load More endpoint and returns the next page of results.
+     */
+    private suspend fun ajaxLoadMore(page: Int, taxonomy: String, term: String, postType: String): AnimesPage {
+        val formBody = FormBody.Builder()
+            .add("action", "animesalt_load_more")
+            .add("page", page.toString())
+            .add("taxonomy", taxonomy)
+            .add("term", term)
+            .add("post_type", postType)
+            .add("search", "")
+            .build()
+
+        val ajaxHeaders = headers.newBuilder()
+            .set("X-Requested-With", "XMLHttpRequest")
+            .build()
+
+        val response = client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", ajaxHeaders, formBody)).execute()
+        val body = response.bodyString()
+        if (body.isBlank()) {
+            return AnimesPage(emptyList(), hasNext = false)
+        }
+
+        val doc = org.jsoup.Jsoup.parseBodyFragment(body)
+        val animes = doc.select("article").mapNotNull { element ->
+            val link = element.selectFirst("a.card-link, a") ?: return@mapNotNull null
+            val href = link.attr("abs:href").ifBlank { link.attr("href") }
+            if (href.isBlank() || href.endsWith("/#")) return@mapNotNull null
+
+            val titleText = element.selectFirst(".card-details h3, .entry-title, h3, h2")?.text()?.trim()
+                ?: link.text().trim()
+            if (titleText.isBlank()) return@mapNotNull null
+
+            val img = element.selectFirst(".poster-wrap img, figure img, img")
+            val thumb = img?.let {
+                it.attr("abs:src").ifBlank {
+                    it.attr("abs:data-src").ifBlank {
+                        it.attr("abs:data-lazy-src")
+                    }
+                }
+            }?.takeIf { !it.startsWith("data:") }
+
+            SAnime.create().apply {
+                title = titleText
+                setUrlWithoutDomain(href)
+                thumbnail_url = thumb?.let { UrlUtils.fixUrl(it, baseUrl) }
+                fetch_type = FetchType.Episodes
+            }
+        }.distinctBy { it.url }
+
+        // The AJAX endpoint doesn't tell us total pages; try next page to see if it returns data.
+        // As a heuristic, if we got 10 items (the standard page size), there's likely more.
+        val hasNext = animes.size >= 10
+        return AnimesPage(animes, hasNext)
+    }
+
+    private fun parseAnimeListPage(
+        response: Response,
+        ajaxTaxonomy: String? = null,
+        ajaxTerm: String? = null,
+        ajaxPostType: String? = null,
+    ): AnimesPage {
         val doc = response.asJsoup()
-        val animes = doc.select("article.anime-card, article.post, article.type-tv, .movies-list article, .post.dfx, article.inside-article").mapNotNull { element ->
+        val animes = doc.select("article.anime-card, article.post, article.type-tv, .movies-list article, article.inside-article").mapNotNull { element ->
             val link = element.selectFirst("a.card-link, .entry-title a, a.lnk-blk, a") ?: return@mapNotNull null
             val href = link.attr("abs:href").ifBlank { link.attr("href") }
             if (href.isBlank() || href.endsWith("/#")) return@mapNotNull null
 
             val titleText = element.selectFirst(".card-details h3, .entry-title, h3, h2")?.text()?.trim() ?: link.text().trim()
-            if (titleText.isBlank() || titleText.contains("\${item.title}")) return@mapNotNull null
+            if (titleText.isBlank()) return@mapNotNull null
 
             val img = element.selectFirst(".poster-wrap img, .post-thumbnail img, figure img, img")
             val thumb = img?.let {
@@ -160,9 +228,20 @@ class Animesalt : Source() {
                 fetch_type = FetchType.Episodes
             }
         }.distinctBy { it.url }
-        val hasNext = doc.select(".pag a, .pagination a, nav a, a.next, a.page-numbers").any {
-            it.text().trim().equals("NEXT", ignoreCase = true) || it.attr("class").contains("next")
-        } || doc.selectFirst(".pagination .next, a.next, .nav-links .next, a:containsOwn(NEXT)") != null
+
+        // Detect the WordPress Load More button to determine if there are more pages.
+        val loadMoreBtn = doc.selectFirst("#load-more-btn")
+        val hasNext = if (loadMoreBtn != null) {
+            val currentPage = loadMoreBtn.attr("data-page").toIntOrNull() ?: 1
+            val maxPages = loadMoreBtn.attr("data-max").toIntOrNull() ?: 1
+            currentPage < maxPages
+        } else {
+            // Fallback: check for traditional pagination links
+            doc.select(".pag a, .pagination a, nav a, a.next, a.page-numbers").any {
+                it.text().trim().equals("NEXT", ignoreCase = true) || it.attr("class").contains("next")
+            } || doc.selectFirst(".pagination .next, a.next, .nav-links .next, a:containsOwn(NEXT)") != null
+        }
+
         return AnimesPage(animes, hasNext)
     }
 
@@ -174,8 +253,12 @@ class Animesalt : Source() {
         val genres = doc.select("a[href*='/category/genre/'], a[href*='/genre/']").map { it.text().trim() }.filter { it.isNotBlank() }.distinct().joinToString(", ")
         val statusRaw = doc.select(".status, .Qlty, a[href*='/status/'], .anime-meta-v2").text()
 
+        // The detail page has a single <img class="hero-poster-mini"> with a TMDB src.
+        // Check for .hero-poster-mini first (highest confidence on the new theme),
+        // then fall back to broader selectors.
         val posterImg = doc.selectFirst(
-            ".poster-wrap img, article.post .poster img, .single-series .poster img, .s-top .poster img, .poster img, " +
+            ".hero-poster-mini, .anime-hero-minimal img, " +
+                ".poster-wrap img, article.post .poster img, .single-series .poster img, .s-top .poster img, .poster img, " +
                 ".bd img:not(.custom-logo):not(.cn-icon), img[alt^='Image ']:not(.TPostBg), " +
                 "img[src*='tmdb.org'], img[data-src*='tmdb.org'], .thumb img.wp-post-image",
         )
@@ -189,8 +272,16 @@ class Animesalt : Source() {
         }?.takeIf {
             !it.startsWith("data:") &&
                 !it.contains("AnimeSaltLong", ignoreCase = true) &&
-                !it.contains("custom-logo", ignoreCase = true)
-        } ?: doc.selectFirst("meta[property=og:image], meta[name=twitter:image]")?.attr("abs:content")
+                !it.contains("Anime-Salt-Long", ignoreCase = true) &&
+                !it.contains("custom-logo", ignoreCase = true) &&
+                !it.contains("/wp-content/uploads/", ignoreCase = true) // never use site-uploaded assets
+        } ?: doc.selectFirst("meta[property=og:image], meta[name=twitter:image]")?.attr("abs:content")?.takeIf {
+            // Only use og:image if it actually looks like an anime poster, not the site logo
+            !it.contains("AnimeSaltLong", ignoreCase = true) &&
+                !it.contains("Anime-Salt-Long", ignoreCase = true) &&
+                !it.contains("custom-logo", ignoreCase = true) &&
+                !it.contains("/wp-content/uploads/", ignoreCase = true)
+        }
 
         return SAnime.create().apply {
             title = titleText
@@ -227,7 +318,7 @@ class Animesalt : Source() {
             tiles.forEachIndexed { idx, tile ->
                 val onclick = tile.attr("onclick")
                 val text = tile.text().trim()
-                val match = Regex("""triggerEpisode\s*\(\s*(\[.*?\])\s*,\s*["']([^"']*)['"]\s*,\s*["']([^"']*)['"]\s*""").find(onclick)
+                val match = Regex("""triggerEpisode\s*\(\s*(\[.*?])\s*,\s*["']([^"']*)['"]\s*,\s*["']([^"']*)['"]""").find(onclick)
 
                 // Skip tiles that don't have a triggerEpisode call (e.g. deferred/loading tiles)
                 if (match == null && tile.attr("data-slug").isBlank()) return@forEachIndexed
@@ -321,7 +412,7 @@ class Animesalt : Source() {
         }
 
         return title
-            .replace(Regex("""\[[A-Fa-f0-9]{8}\]"""), "")
+            .replace(Regex("""\[[A-Fa-f0-9]{8}]"""), "")
             .replace(Regex("""\[?(?:1080p|720p|480p|360p|240p|4k|hd|fhd|uhd)\]?""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""\[?(?:x264|x265|h264|h265|hevc|avc|10bit|8bit|aac|ac3|dts|web-?dl|bluray|bdrip|dvdrip)\]?""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""\[?(?:dual audio|multi audio|multi-sub|sub|dub|softsub)\]?""", RegexOption.IGNORE_CASE), "")
@@ -329,7 +420,7 @@ class Animesalt : Source() {
             .replace(Regex("""\b\d+x\d+\b""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""Season\s*\d+\s*Episode\s*\d+""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""Episode\s*\d+""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""\[\s*\]|\(\s*\)"""), "")
+            .replace(Regex("""\[\s*]|\(\s*)"""), "")
             .trim(' ', '-', ':', '_', '|')
     }
 
@@ -430,6 +521,11 @@ class Animesalt : Source() {
         val hosterUrl = hoster.hosterUrl
         val videos = mutableListOf<Video>()
 
+        // MegaPlay extraction: fetch page → extract stream ID → call getSources API
+        if (hosterUrl.contains("megaplay.buzz", ignoreCase = true)) {
+            return extractMegaPlay(hosterUrl, hoster.hosterName)
+        }
+
         val isFirePlayer = hosterUrl.contains("as-cdn", ignoreCase = true) ||
             hosterUrl.contains("firevideoplayer.com", ignoreCase = true) ||
             Regex("""as-cdn\d+\.top""").containsMatchIn(hosterUrl)
@@ -483,6 +579,70 @@ class Animesalt : Source() {
             val extracted = universalExtractor.videosFromUrl(hosterUrl, headers)
             videos.addAll(extracted)
         }
+
+        return videos.sortVideos()
+    }
+
+    /**
+     * Extracts videos from megaplay.buzz URLs.
+     * Flow: fetch the stream page → extract file/stream ID → call getSources API → parse HLS + subtitles.
+     */
+    private fun extractMegaPlay(url: String, hosterName: String): List<Video> {
+        // 1. Fetch the megaplay stream page
+        val pageHeaders = headers.newBuilder()
+            .set("Referer", "$baseUrl/")
+            .build()
+        val pageRes = client.newCall(GET(url, pageHeaders)).execute()
+        if (!pageRes.isSuccessful) return emptyList()
+        val pageHtml = pageRes.bodyString()
+
+        // 2. Extract the stream file ID from the page
+        val streamId = Regex("""<title>File (\d+)""").find(pageHtml)?.groupValues?.get(1)
+            ?: Regex("""data-id="(\d+)"""").find(pageHtml)?.groupValues?.get(1)
+            ?: return emptyList()
+
+        // 3. Call the getSources API
+        val sourcesUrl = "https://megaplay.buzz/stream/getSources?id=$streamId&id=$streamId"
+        val sourcesHeaders = headers.newBuilder()
+            .set("Referer", url)
+            .add("X-Requested-With", "XMLHttpRequest")
+            .build()
+        val sourcesRes = client.newCall(GET(sourcesUrl, sourcesHeaders)).execute()
+        if (!sourcesRes.isSuccessful) return emptyList()
+        val sourcesBody = sourcesRes.bodyString()
+
+        val sourcesJson = runCatching { json.parseToJsonElement(sourcesBody).jsonObject }.getOrNull()
+            ?: return emptyList()
+
+        val masterUrl = sourcesJson["sources"]?.jsonObject?.get("file")?.jsonPrimitive?.content
+            ?: return emptyList()
+
+        // 4. Parse subtitle tracks
+        val subtitleTracks = sourcesJson["tracks"]?.jsonArray
+            ?.filter {
+                it.jsonObject["kind"]?.jsonPrimitive?.content == "captions" &&
+                    !it.jsonObject["file"]?.jsonPrimitive?.content.isNullOrBlank()
+            }
+            ?.map {
+                Track(
+                    it.jsonObject["file"]?.jsonPrimitive?.content ?: "",
+                    it.jsonObject["label"]?.jsonPrimitive?.content ?: "",
+                )
+            }
+            ?: emptyList()
+
+        // 5. Extract HLS streams
+        val refHeaders = headers.newBuilder()
+            .set("Referer", "https://megaplay.buzz/")
+            .build()
+
+        val videos = playlistUtils.extractFromHls(
+            playlistUrl = masterUrl,
+            masterHeaders = refHeaders,
+            videoHeaders = refHeaders,
+            subtitleList = subtitleTracks,
+            videoNameGen = { quality -> "$hosterName - $quality" },
+        )
 
         return videos.sortVideos()
     }
