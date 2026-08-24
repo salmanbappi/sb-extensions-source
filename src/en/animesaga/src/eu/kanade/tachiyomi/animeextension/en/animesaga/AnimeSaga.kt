@@ -1073,7 +1073,7 @@ class LocalProxy(private val client: OkHttpClient) {
 @Serializable
 data class GraphQLRequest(
     val query: String? = null,
-    val variables: GraphQLVariables? = null
+    val variables: GraphQLVariables? = null,
 )
 
 @Serializable
@@ -1086,29 +1086,29 @@ data class GraphQLVariables(
     val status: List<String>? = null,
     val season: String? = null,
     val seasonYear: Int? = null,
-    val id: Int? = null
+    val id: Int? = null,
 )
 
 @Serializable
 data class AnilistGraphQLResponse(
-    val data: AnilistData? = null
+    val data: AnilistData? = null,
 )
 
 @Serializable
 data class AnilistData(
     val Page: AnilistPage? = null,
-    val Media: AnilistMedia? = null
+    val Media: AnilistMedia? = null,
 )
 
 @Serializable
 data class AnilistPage(
     val pageInfo: AnilistPageInfo? = null,
-    val media: List<AnilistMedia> = emptyList()
+    val media: List<AnilistMedia> = emptyList(),
 )
 
 @Serializable
 data class AnilistPageInfo(
-    val hasNextPage: Boolean? = null
+    val hasNextPage: Boolean? = null,
 )
 
 @Serializable
@@ -1125,36 +1125,36 @@ data class AnilistMedia(
     val episodes: Int? = null,
     val format: String? = null,
     val source: String? = null,
-    val studios: AnilistStudios? = null
+    val studios: AnilistStudios? = null,
 )
 
 @Serializable
 data class AnilistTitle(
     val english: String? = null,
     val romaji: String? = null,
-    val native: String? = null
+    val native: String? = null,
 )
 
 @Serializable
 data class AnilistCoverImage(
     val large: String? = null,
-    val extraLarge: String? = null
+    val extraLarge: String? = null,
 )
 
 @Serializable
 data class AnilistStudios(
-    val nodes: List<AnilistStudioNode> = emptyList()
+    val nodes: List<AnilistStudioNode> = emptyList(),
 )
 
 @Serializable
 data class AnilistStudioNode(
-    val name: String? = null
+    val name: String? = null,
 )
 
 @Serializable
 data class CipherResponse(
     val success: Boolean = false,
-    val ciphertext: String? = null
+    val ciphertext: String? = null,
 )
 
 @Serializable
@@ -1162,7 +1162,7 @@ data class EpisodesResponse(
     val success: Boolean = false,
     val provider: String? = null,
     val animeId: kotlinx.serialization.json.JsonElement? = null,
-    val episodes: List<EpisodeItem> = emptyList()
+    val episodes: List<EpisodeItem> = emptyList(),
 )
 
 @Serializable
@@ -1173,7 +1173,7 @@ data class EpisodeItem(
     val url: String? = null,
     val description: String? = null,
     val img: String? = null,
-    val airDate: String? = null
+    val airDate: String? = null,
 )
 
 @Serializable
@@ -1183,7 +1183,7 @@ data class StreamResponse(
     val embedUrl: String? = null,
     val isM3U8: Boolean = false,
     val tracks: List<TrackItem> = emptyList(),
-    val servers: ServerMap? = null
+    val servers: ServerMap? = null,
 )
 
 @Serializable
@@ -1191,14 +1191,14 @@ data class TrackItem(
     val file: String? = null,
     val label: String? = null,
     val kind: String? = null,
-    val default: Boolean = false
+    val default: Boolean = false,
 )
 
 @Serializable
 data class ServerMap(
     val sub: List<ServerItem> = emptyList(),
     val dub: List<ServerItem> = emptyList(),
-    val raw: List<ServerItem> = emptyList()
+    val raw: List<ServerItem> = emptyList(),
 )
 
 @Serializable
@@ -1206,7 +1206,7 @@ data class ServerItem(
     val name: String? = null,
     val label: String? = null,
     val url: String? = null,
-    val linkId: String? = null
+    val linkId: String? = null,
 )
 
 @Serializable
@@ -1217,5 +1217,5 @@ data class EpisodePayload(
     val title: String? = null,
     val romaji: String? = null,
     val anilistId: Int? = null,
-    val malId: Int? = null
+    val malId: Int? = null,
 )
