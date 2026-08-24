@@ -356,20 +356,44 @@ class ExtensionAstFixer:
 
         # 15. Fix bare `return ...` inside `runCatching { ... }` blocks to `return@runCatching ...`
         def fix_runcatching_returns(text: str) -> Tuple[str, bool]:
-            pattern = re.compile(r'(\brunCatching\s*\{)(.*?)(\}\s*\.getOr)', re.DOTALL)
             changed = False
-            def repl(m):
-                nonlocal changed
-                head = m.group(1)
-                body = m.group(2)
-                tail = m.group(3)
-                new_body = re.sub(r'(?<!@)(?<!return)\breturn\s+([^;\n]+)', r'return@runCatching \1', body)
-                if new_body != body:
-                    changed = True
-                    return f"{head}{new_body}{tail}"
-                return m.group(0)
-            result = pattern.sub(repl, text)
-            return result, changed
+            out = []
+            idx = 0
+            while idx < len(text):
+                rc_match = re.search(r'\brunCatching\s*\{', text[idx:])
+                if not rc_match:
+                    out.append(text[idx:])
+                    break
+
+                brace_start = idx + rc_match.end() - 1
+                out.append(text[idx:brace_start])
+
+                depth = 0
+                body_start = brace_start + 1
+                body_end = -1
+                for i in range(brace_start, len(text)):
+                    if text[i] == '{':
+                        depth += 1
+                    elif text[i] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            body_end = i
+                            break
+
+                if body_end != -1:
+                    body = text[body_start:body_end]
+                    following = text[body_end + 1:body_end + 30]
+                    if re.match(r'\s*\.getOr', following):
+                        new_body = re.sub(r'(?<!@)(?<!return)\breturn\s+([^;\n]+)', r'return@runCatching \1', body)
+                        if new_body != body:
+                            changed = True
+                            body = new_body
+                    out.append('{' + body + '}')
+                    idx = body_end + 1
+                else:
+                    out.append('{')
+                    idx = brace_start + 1
+            return "".join(out), changed
 
         new_content, rc_fixed = fix_runcatching_returns(content)
         if rc_fixed:

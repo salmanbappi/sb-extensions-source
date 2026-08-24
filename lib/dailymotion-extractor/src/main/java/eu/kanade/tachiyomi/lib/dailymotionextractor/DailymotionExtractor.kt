@@ -6,49 +6,47 @@ import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.parseAs
-import kotlinx.serialization.json.Json
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
-import uy.kohesive.injekt.injectLazy
 
 class DailymotionExtractor(private val client: OkHttpClient, private val headers: Headers) {
 
     companion object {
         private const val DAILYMOTION_URL = "https://www.dailymotion.com"
         private const val GRAPHQL_URL = "https://graphql.api.dailymotion.com"
+        private val TS_REGEX = Regex(""""ts"\s*:\s*(\d+)""")
+        private val V1ST_REGEX = Regex(""""v1st"\s*:\s*"([^"]+)"""")
+        private val DMVK_REGEX = Regex(""""dmvk"\s*:\s*"([^"]+)"""")
     }
 
     private fun headersBuilder(block: Headers.Builder.() -> Unit = {}) = headers.newBuilder()
-        .add("Accept", "*/*")
+        .set("Accept", "*/*")
         .set("Referer", "$DAILYMOTION_URL/")
         .set("Origin", DAILYMOTION_URL)
         .apply { block() }
         .build()
 
-    private val json: Json by injectLazy()
-
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     fun videosFromUrl(url: String, prefix: String = "Dailymotion - ", baseUrl: String = "", password: String? = null): List<Video> {
-        val htmlString = client.newCall(GET(url)).execute().body.string()
+        val htmlString = client.newCall(GET(url, headersBuilder())).execute().body.string()
 
-        val internalData = htmlString.substringAfter("\"dmInternalData\":").substringBefore("</script>")
-        val ts = internalData.substringAfter("\"ts\":").substringBefore(",")
-        val v1st = internalData.substringAfter("\"v1st\":\"").substringBefore("\",")
+        val ts = TS_REGEX.find(htmlString)?.groupValues?.get(1) ?: ""
+        val v1st = V1ST_REGEX.find(htmlString)?.groupValues?.get(1) ?: ""
 
         val videoQuery = url.toHttpUrl().run {
             queryParameter("video") ?: pathSegments.last()
         }
 
         val jsonUrl = "$DAILYMOTION_URL/player/metadata/video/$videoQuery?locale=en-US&dmV1st=$v1st&dmTs=$ts&is_native_app=0"
-        val parsed = client.newCall(GET(jsonUrl)).execute().parseAs<DailyQuality>()
+        val parsed = client.newCall(GET(jsonUrl, headersBuilder())).execute().parseAs<DailyQuality>()
 
         return when {
-            parsed.qualities != null && parsed.error == null -> videosFromDailyResponse(parsed, prefix)
+            parsed.qualities != null && parsed.error == null -> videosFromDailyResponse(parsed, prefix, ts, v1st)
 
             parsed.error?.type == "password_protected" && parsed.id != null -> {
                 videosFromProtectedUrl(url, prefix, parsed.id, htmlString, ts, v1st, baseUrl, password)
@@ -88,7 +86,7 @@ class DailymotionExtractor(private val client: OkHttpClient, private val headers
         val idUrl = "$GRAPHQL_URL/"
         val idHeaders = headersBuilder {
             set("Accept", "application/json, text/plain, */*")
-            add("Authorization", "${tokenParsed.token_type} ${tokenParsed.access_token}")
+            set("Authorization", "${tokenParsed.token_type} ${tokenParsed.access_token}")
         }
 
         val idData = """
@@ -104,32 +102,48 @@ class DailymotionExtractor(private val client: OkHttpClient, private val headers
         val idResponse = client.newCall(POST(idUrl, idHeaders, idData)).execute()
         val idParsed = idResponse.parseAs<ProtectedResponse>().data.video
 
-        val dmvk = htmlString.substringAfter("\"dmvk\":\"").substringBefore('"')
+        val dmvk = DMVK_REGEX.find(htmlString)?.groupValues?.get(1) ?: ""
         val getVideoIdUrl = "$DAILYMOTION_URL/player/metadata/video/${idParsed.xid}?embedder=${"$baseUrl/"}&locale=en-US&dmV1st=$v1st&dmTs=$ts&is_native_app=0"
         val getVideoIdHeaders = headersBuilder {
-            add("Cookie", "dmvk=$dmvk; ts=$ts; v1st=$v1st; usprivacy=1---; client_token=${tokenParsed.access_token}")
+            set("Cookie", "dmvk=$dmvk; ts=$ts; v1st=$v1st; usprivacy=1---; client_token=${tokenParsed.access_token}")
             set("Referer", url)
         }
 
         val parsed = client.newCall(GET(getVideoIdUrl, getVideoIdHeaders)).execute()
             .parseAs<DailyQuality>()
 
-        return videosFromDailyResponse(parsed, prefix, getVideoIdHeaders)
+        return videosFromDailyResponse(parsed, prefix, ts, v1st, getVideoIdHeaders)
     }
 
-    private fun videosFromDailyResponse(parsed: DailyQuality, prefix: String, playlistHeaders: Headers? = null): List<Video> {
+    private fun videosFromDailyResponse(
+        parsed: DailyQuality,
+        prefix: String,
+        ts: String,
+        v1st: String,
+        fetchHeaders: Headers? = null,
+    ): List<Video> {
         val masterUrl = parsed.qualities?.auto?.firstOrNull()?.url
-            ?: return emptyList<Video>()
+            ?: return emptyList()
 
         val subtitleList = parsed.subtitles?.data?.map {
             Track(it.urls.first(), it.label)
-        } ?: emptyList<Track>()
+        } ?: emptyList()
 
-        val masterHeaders = playlistHeaders ?: headersBuilder()
+        // The master M3U8 URL has a short-lived sec= signed token (expires ~30s).
+        // Fetch and parse the master NOW (server-side) so we can extract the
+        // long-lived variant and audio playlist URLs from vod3.cf.dmcdn.net,
+        // which are accessible without any special headers or cookies.
+        val masterHeaders = (fetchHeaders?.newBuilder() ?: headers.newBuilder())
+            .set("Accept", "*/*")
+            .set("Referer", "$DAILYMOTION_URL/")
+            .set("Cookie", "ts=$ts; v1st=$v1st")
+            .build()
 
         return playlistUtils.extractFromHls(
-            masterUrl,
+            playlistUrl = masterUrl,
             masterHeadersGen = { _, _ -> masterHeaders },
+            // Variant/audio URLs at vod3.cf.dmcdn.net need no special auth
+            videoHeadersGen = { _, _, _ -> headers },
             subtitleList = subtitleList,
             videoNameGen = { "$prefix$it" },
         )

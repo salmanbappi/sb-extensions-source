@@ -772,7 +772,7 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                     issues.append(f"Legacy class 'ParsedAnimeHttpSource' found in {kt.name} (v16 Rule: Must extend extensions.utils.Source)")
 
                 # Check deprecated Video constructors & properties
-                has_deprecated_named = re.search(r"Video\s*\(\s*url\s*=", content) or re.search(r"Video\s*\([^)]*quality\s*=", content)
+                has_deprecated_named = re.search(r"\bVideo\s*\(\s*url\s*=", content) or re.search(r"\bVideo\s*\([^)]*quality\s*=", content)
                 has_positional_4arg = re.search(r'\bVideo\s*\([^)]*,[^)]*,[^)]*,[^)]*\)', content) and not re.search(r'\bVideo\s*\(\s*videoUrl\s*=', content)
                 if has_deprecated_named or has_positional_4arg:
                     issues.append(f"Deprecated Video constructor in {kt.name} (v16 Rule: Use Video(videoUrl=, videoTitle=, headers=))")
