@@ -127,6 +127,7 @@ class AnimePahe : Source() {
         val animeId = document.selectFirst("meta[name=id]")?.attr("content")
 
         return SAnime.create().apply {
+            initialized = true
             if (animeId != null) {
                 url = "/a/$animeId"
             }
