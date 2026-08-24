@@ -423,7 +423,7 @@ class Animesalt : Source() {
 
     companion object {
         private const val PREF_BASE_URL_KEY = "pref_base_url"
-        private const val PREF_BASE_URL_DEFAULT = "https://animesalt.link"
+        private const val PREF_BASE_URL_DEFAULT = "https://animesalt.me"
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
     }
