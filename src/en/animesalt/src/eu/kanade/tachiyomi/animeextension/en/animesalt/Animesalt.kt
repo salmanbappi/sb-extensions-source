@@ -64,14 +64,14 @@ class Animesalt : Source() {
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val url = if (page == 1) "$baseUrl/series/" else "$baseUrl/series/page/$page/"
+        val url = if (page == 1) "$baseUrl/type/popular/" else "$baseUrl/type/popular/page/$page/"
         val response = client.newCall(GET(url, headers)).execute()
         return parseAnimeListPage(response)
     }
 
     // ============================== Latest ================================
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val url = if (page == 1) "$baseUrl/category/status/ongoing/" else "$baseUrl/category/status/ongoing/page/$page/"
+        val url = if (page == 1) "$baseUrl/tv/" else "$baseUrl/tv/page/$page/"
         val response = client.newCall(GET(url, headers)).execute()
         return parseAnimeListPage(response)
     }
@@ -94,7 +94,7 @@ class Animesalt : Source() {
 
                     is Filters.LanguageFilter -> {
                         if (!filter.isDefault()) {
-                            targetPath = "category/${filter.toUriPart()}"
+                            targetPath = "audio/${filter.toUriPart()}"
                             break
                         }
                     }
@@ -102,7 +102,7 @@ class Animesalt : Source() {
                     is Filters.TypeFilter -> {
                         if (!filter.isDefault()) {
                             val part = filter.toUriPart()
-                            targetPath = if (part.startsWith("type/")) "category/$part" else part
+                            targetPath = "type/$part"
                             break
                         }
                     }
@@ -112,23 +112,13 @@ class Animesalt : Source() {
             }
 
             if (targetPath.isBlank()) {
-                if (page == 1) "$baseUrl/series/" else "$baseUrl/series/page/$page/"
+                if (page == 1) "$baseUrl/type/popular/" else "$baseUrl/type/popular/page/$page/"
             } else {
-                if (targetPath.contains("?")) {
-                    val pathPart = targetPath.substringBefore("?")
-                    val queryPart = targetPath.substringAfter("?")
-                    if (page == 1) {
-                        "$baseUrl/$pathPart?$queryPart"
-                    } else {
-                        "$baseUrl/$pathPart" + "page/$page/?$queryPart"
-                    }
+                val normalizedPath = targetPath.trimEnd('/')
+                if (page == 1) {
+                    "$baseUrl/$normalizedPath/"
                 } else {
-                    val normalizedPath = targetPath.trimEnd('/')
-                    if (page == 1) {
-                        "$baseUrl/$normalizedPath/"
-                    } else {
-                        "$baseUrl/$normalizedPath/page/$page/"
-                    }
+                    "$baseUrl/$normalizedPath/page/$page/"
                 }
             }
         }
@@ -146,19 +136,19 @@ class Animesalt : Source() {
 
     private fun parseAnimeListPage(response: Response): AnimesPage {
         val doc = response.asJsoup()
-        val animes = doc.select("article.post, .movies-list article, .post.dfx").mapNotNull { element ->
-            val link = element.selectFirst(".entry-title a, a.lnk-blk, a") ?: return@mapNotNull null
+        val animes = doc.select("article.anime-card, article.post, article.type-tv, .movies-list article, .post.dfx, article.inside-article").mapNotNull { element ->
+            val link = element.selectFirst("a.card-link, .entry-title a, a.lnk-blk, a") ?: return@mapNotNull null
             val href = link.attr("abs:href").ifBlank { link.attr("href") }
-            if (href.isBlank()) return@mapNotNull null
+            if (href.isBlank() || href.endsWith("/#")) return@mapNotNull null
 
-            val titleText = element.selectFirst(".entry-title, h2, h3")?.text()?.trim() ?: link.text().trim()
+            val titleText = element.selectFirst(".card-details h3, .entry-title, h3, h2")?.text()?.trim() ?: link.text().trim()
             if (titleText.isBlank() || titleText.contains("\${item.title}")) return@mapNotNull null
 
-            val img = element.selectFirst(".post-thumbnail img, figure img, img")
+            val img = element.selectFirst(".poster-wrap img, .post-thumbnail img, figure img, img")
             val thumb = img?.let {
-                it.attr("abs:data-src").ifBlank {
-                    it.attr("abs:data-lazy-src").ifBlank {
-                        it.attr("abs:src")
+                it.attr("abs:src").ifBlank {
+                    it.attr("abs:data-src").ifBlank {
+                        it.attr("abs:data-lazy-src")
                     }
                 }
             }?.takeIf { !it.startsWith("data:") }
@@ -169,9 +159,10 @@ class Animesalt : Source() {
                 thumbnail_url = thumb?.let { UrlUtils.fixUrl(it, baseUrl) }
                 fetch_type = FetchType.Episodes
             }
-        }
-        val hasNext = doc.select(".pag a, .pagination a, nav a, a").any { it.text().trim().equals("NEXT", ignoreCase = true) } ||
-            doc.selectFirst(".pagination .next, a.next, .nav-links .next, a:containsOwn(NEXT)") != null
+        }.distinctBy { it.url }
+        val hasNext = doc.select(".pag a, .pagination a, nav a, a.next, a.page-numbers").any {
+            it.text().trim().equals("NEXT", ignoreCase = true) || it.attr("class").contains("next")
+        } || doc.selectFirst(".pagination .next, a.next, .nav-links .next, a:containsOwn(NEXT)") != null
         return AnimesPage(animes, hasNext)
     }
 
@@ -179,29 +170,26 @@ class Animesalt : Source() {
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val doc = client.newCall(GET("$baseUrl${anime.url}", headers)).execute().asJsoup()
         val titleText = doc.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: anime.title
-        val synopsis = doc.selectFirst("#overview-text p, #overview-text, .overviewCss, .description")?.text()?.trim()
-        val genres = doc.select("a[href*='/category/genre/']").map { it.text().trim() }.filter { it.isNotBlank() }.distinct().joinToString(", ")
-        val statusRaw = doc.select(".status, .Qlty, a[href*='/category/status/']").text()
+        val synopsis = doc.selectFirst("#overview-text p, #overview-text, .overviewCss, .description, .meta-summary")?.text()?.trim()
+        val genres = doc.select("a[href*='/category/genre/'], a[href*='/genre/']").map { it.text().trim() }.filter { it.isNotBlank() }.distinct().joinToString(", ")
+        val statusRaw = doc.select(".status, .Qlty, a[href*='/status/'], .anime-meta-v2").text()
 
         val posterImg = doc.selectFirst(
-            "article.post .poster img, .single-series .poster img, .s-top .poster img, .poster img, " +
+            ".poster-wrap img, article.post .poster img, .single-series .poster img, .s-top .poster img, .poster img, " +
                 ".bd img:not(.custom-logo):not(.cn-icon), img[alt^='Image ']:not(.TPostBg), " +
-                "img[data-src*='tmdb.org']:not(.TPostBg), .thumb img.wp-post-image",
+                "img[src*='tmdb.org'], img[data-src*='tmdb.org'], .thumb img.wp-post-image",
         )
 
         val thumb = posterImg?.let {
-            it.attr("abs:data-src").ifBlank {
-                it.attr("abs:data-lazy-src").ifBlank {
-                    it.attr("abs:data-original").ifBlank {
-                        it.attr("abs:src")
-                    }
+            it.attr("abs:src").ifBlank {
+                it.attr("abs:data-src").ifBlank {
+                    it.attr("abs:data-lazy-src")
                 }
             }
         }?.takeIf {
             !it.startsWith("data:") &&
                 !it.contains("AnimeSaltLong", ignoreCase = true) &&
-                !it.contains("custom-logo", ignoreCase = true) &&
-                !it.contains("crunchyroll", ignoreCase = true)
+                !it.contains("custom-logo", ignoreCase = true)
         } ?: doc.selectFirst("meta[property=og:image], meta[name=twitter:image]")?.attr("abs:content")
 
         return SAnime.create().apply {
@@ -210,7 +198,7 @@ class Animesalt : Source() {
             genre = genres.ifBlank { null }
             description = synopsis
             status = when {
-                statusRaw.contains("Ongoing", ignoreCase = true) || doc.select("a[href*='/category/status/ongoing']").isNotEmpty() -> SAnime.ONGOING
+                statusRaw.contains("Ongoing", ignoreCase = true) || doc.select("a[href*='/ongoing']").isNotEmpty() -> SAnime.ONGOING
                 statusRaw.contains("Completed", ignoreCase = true) -> SAnime.COMPLETED
                 else -> SAnime.UNKNOWN
             }
@@ -231,8 +219,34 @@ class Animesalt : Source() {
         }
 
         val doc = client.newCall(GET("$baseUrl${anime.url}", headers)).execute().asJsoup()
-        val seasonButtons = doc.select(".season-buttons .season-btn[data-post][data-season]")
         val episodes = mutableListOf<SEpisode>()
+
+        // 1. New theme: .ep-tile / .quick-ep-card
+        val tiles = doc.select(".ep-tile, .quick-ep-card")
+        if (tiles.isNotEmpty()) {
+            tiles.forEachIndexed { idx, tile ->
+                val onclick = tile.attr("onclick")
+                val text = tile.text().trim()
+                val match = Regex("""triggerEpisode\s*\(\s*(\[.*?\])\s*,\s*["']([^"']*)["']\s*,\s*["']([^"']*)["']""").find(onclick)
+
+                val epName = match?.groupValues?.get(2)?.ifBlank { text } ?: text.ifBlank { "Episode ${idx + 1}" }
+                val epSlug = match?.groupValues?.get(3) ?: tile.attr("data-slug").ifBlank { "ep-${idx + 1}" }
+                val serversJson = match?.groupValues?.get(1) ?: "[]"
+                val epNum = Regex("""\d+""").find(epName)?.value?.toFloatOrNull() ?: (idx + 1).toFloat()
+
+                episodes.add(
+                    SEpisode.create().apply {
+                        name = epName
+                        episode_number = epNum
+                        val encodedServers = Base64.encodeToString(serversJson.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+                        url = "${anime.url}#${epSlug}|${encodedServers}"
+                    },
+                )
+            }
+            return episodes.reversed()
+        }
+
+        val seasonButtons = doc.select(".season-buttons .season-btn[data-post][data-season]")
         val hasMultipleSeasons = seasonButtons.size > 1
 
         if (seasonButtons.isNotEmpty()) {
@@ -313,8 +327,39 @@ class Animesalt : Source() {
 
     // ============================ Video Links =============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val doc = client.newCall(GET("$baseUrl${episode.url}", headers)).execute().asJsoup()
         val hosters = mutableListOf<Hoster>()
+
+        if (episode.url.contains("|")) {
+            val encodedServers = episode.url.substringAfter("|")
+            val serversJson = try {
+                String(Base64.decode(encodedServers, Base64.DEFAULT), Charsets.UTF_8)
+            } catch (_: Exception) { "" }
+
+            if (serversJson.startsWith("[")) {
+                try {
+                    val rootArray = json.parseToJsonElement(serversJson).jsonArray
+                    rootArray.forEachIndexed { idx, element ->
+                        val obj = element.jsonObject
+                        val sUrl = obj["url"]?.jsonPrimitive?.content?.trim() ?: return@forEachIndexed
+                        val sLang = obj["lang"]?.jsonPrimitive?.content?.trim() ?: ""
+                        val sName = obj["name"]?.jsonPrimitive?.content?.trim() ?: ""
+                        val displayName = listOf(sName, sLang).filter { it.isNotBlank() }.joinToString(" - ").ifBlank { "Server ${idx + 1}" }
+                        hosters.add(
+                            Hoster(
+                                hosterName = displayName,
+                                hosterUrl = sUrl,
+                            ),
+                        )
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        if (hosters.isNotEmpty()) {
+            return hosters
+        }
+
+        val doc = client.newCall(GET("$baseUrl${episode.url.substringBefore('#')}", headers)).execute().asJsoup()
 
         // Direct AS-CDN / FirePlayer iframes
         val cdnIframes = doc.select(".video.aa-tb iframe, iframe[src*='as-cdn'], iframe[data-src*='as-cdn'], iframe[src*='/video/'], iframe[data-src*='/video/']")
@@ -355,7 +400,7 @@ class Animesalt : Source() {
         if (hosterUrl.contains("/video/") || hosterUrl.contains("as-cdn")) {
             // AS-CDN / FirePlayer extractor
             val videoId = Regex("""/video/([a-zA-Z0-9]+)""").find(hosterUrl)?.groupValues?.get(1)
-            val host = runCatching { hosterUrl.toHttpUrl().host }.getOrNull() ?: "as-cdn21.top"
+            val host = runCatching { hosterUrl.toHttpUrl().host }.getOrNull() ?: "as-cdn26.top"
             val scheme = runCatching { hosterUrl.toHttpUrl().scheme }.getOrNull() ?: "https"
             val playerBaseUrl = "$scheme://$host"
 
@@ -388,7 +433,7 @@ class Animesalt : Source() {
             }
         } else {
             // Generic fallback
-            val extracted = universalExtractor.videosFromUrl(hosterUrl, headers, prefix = "${hoster.hosterName} - ")
+            val extracted = universalExtractor.videosFromUrl(hosterUrl, headers)
             videos.addAll(extracted)
         }
 
