@@ -311,7 +311,9 @@ class WatchAnimeWorld : Source() {
                     titleText.isNotBlank() && !titleText.contains(numEpi, ignoreCase = true) -> {
                         if (seasonVal != null && seasonVal > 1) "S$seasonVal - Ep. $epPad - $titleText" else "Ep. $epPad - $titleText"
                     }
+
                     seasonVal != null && seasonVal > 1 -> "S$seasonVal - Ep. $epPad"
+
                     else -> "Ep. $epPad"
                 }
 
@@ -390,7 +392,13 @@ class WatchAnimeWorld : Source() {
                     val decodedIframe = String(decodedBytes, Charsets.UTF_8)
                     val iframeSrc = org.jsoup.Jsoup.parse(decodedIframe).selectFirst("iframe")?.attr("src")
                     if (!iframeSrc.isNullOrBlank()) {
-                        val finalSrc = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else if (iframeSrc.startsWith("/")) "$baseUrl$iframeSrc" else iframeSrc
+                        val finalSrc = if (iframeSrc.startsWith("//")) {
+                            "https:$iframeSrc"
+                        } else if (iframeSrc.startsWith("/")) {
+                            "$baseUrl$iframeSrc"
+                        } else {
+                            iframeSrc
+                        }
                         hosters.add(
                             Hoster(
                                 hosterName = optText.ifBlank { "Default Server" },
@@ -408,7 +416,13 @@ class WatchAnimeWorld : Source() {
         }.filter { "zephyr" in it.lowercase() || "zephyrix" in it.lowercase() || "/video/" in it || "zpp" in it.lowercase() }
 
         zephyrIframes.forEachIndexed { index, iframeUrl ->
-            val finalIframe = if (iframeUrl.startsWith("//")) "https:$iframeUrl" else if (iframeUrl.startsWith("/")) "$baseUrl$iframeUrl" else iframeUrl
+            val finalIframe = if (iframeUrl.startsWith("//")) {
+                "https:$iframeUrl"
+            } else if (iframeUrl.startsWith("/")) {
+                "$baseUrl$iframeUrl"
+            } else {
+                iframeUrl
+            }
             val type = if ("zpp" in finalIframe.lowercase()) "zpp" else "zephyr"
             val suffix = if (zephyrIframes.size > 1) " ${index + 1}" else ""
             hosters.add(
