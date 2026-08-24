@@ -12,7 +12,7 @@ data class ResponseDto<T>(
     val lastPage: Int? = null,
     @EncodeDefault
     @SerialName("data")
-    val items: List<T> = emptyList()
+    val items: List<T> = emptyList(),
 )
 
 @Serializable
@@ -23,7 +23,7 @@ data class LatestAnimeDto(
     @SerialName("anime_id")
     val id: Int? = null,
     val session: String? = null,
-    val fansub: String? = null
+    val fansub: String? = null,
 )
 
 @Serializable
@@ -31,7 +31,7 @@ data class SearchResultDto(
     val title: String? = null,
     val poster: String? = null,
     val id: Int? = null,
-    val session: String? = null
+    val session: String? = null,
 )
 
 @Serializable
@@ -42,5 +42,5 @@ data class EpisodeDto(
     @SerialName("episode")
     val episodeNumber: Float? = null,
     @SerialName("anime_id")
-    val animeId: Int = 0
+    val animeId: Int = 0,
 )
