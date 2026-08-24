@@ -1,12 +1,15 @@
 ext {
     extName = 'AnimePahe'
     extClass = '.AnimePahe'
-    extVersionCode = 74
+    extVersionCode = 76
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
+    implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:vidhide-extractor"))
+    implementation(project(":lib:voe-extractor"))
     implementation(project(":lib:unpacker"))
     implementation("com.github.NanoHttpd.nanohttpd:nanohttpd:nanohttpd-project-2.3.1")
 }

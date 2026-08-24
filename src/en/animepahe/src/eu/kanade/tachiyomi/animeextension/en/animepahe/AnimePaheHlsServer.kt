@@ -161,16 +161,12 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
     private fun Video.copyWithLocalUrl(localUrl: String): Video = Video(
         videoUrl = localUrl,
         videoTitle = videoTitle,
-        subtitleTracks = subtitleTracks,
-        audioTracks = audioTracks,
         headers = headers,
     )
 
     private fun Video.copyWithLocalMp4Url(localUrl: String): Video = Video(
         videoUrl = localUrl,
         videoTitle = videoTitle,
-        subtitleTracks = subtitleTracks,
-        audioTracks = audioTracks,
         headers = headers,
     )
 
