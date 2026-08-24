@@ -144,14 +144,16 @@ class AnimePahe : Source() {
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val latestData = response.parseAs<ResponseDto<LatestAnimeDto>>()
-        val hasNextPage = latestData.currentPage < latestData.lastPage
-        val animeList = latestData.items.map { anime ->
-            saveSessionToCache(anime.id.toString(), anime.session)
+        val hasNextPage = (latestData.currentPage ?: 0) < (latestData.lastPage ?: 0)
+        val animeList = latestData.items.mapNotNull { anime ->
+            val id = anime.id ?: return@mapNotNull null
+            val session = anime.session ?: return@mapNotNull null
+            saveSessionToCache(id.toString(), session)
 
             SAnime.create().apply {
-                title = anime.title
+                title = anime.title.orEmpty()
                 thumbnail_url = anime.snapshot
-                setUrlWithoutDomain("/a/${anime.id}")
+                setUrlWithoutDomain("/a/$id")
                 artist = anime.fansub
             }
         }
@@ -366,7 +368,7 @@ class AnimePahe : Source() {
 
         while (true) {
             episodeList.addAll(parseEpisodePage(currentData.items, session))
-            if (currentData.currentPage >= currentData.lastPage) break
+            if ((currentData.currentPage ?: 0) >= (currentData.lastPage ?: 0)) break
 
             val nextUrl = requestUrl.newBuilder()
                 .setQueryParameter("page", (currentData.currentPage + 1).toString())
@@ -390,12 +392,12 @@ class AnimePahe : Source() {
         }.reversed()
     }
 
-    private fun parseEpisodePage(episodes: List<EpisodeDto>, animeSession: String): MutableList<SEpisode> = episodes.map { episode ->
+    private fun parseEpisodePage(episodes: List<EpisodeDto>, animeSession: String): MutableList<SEpisode> = episodes.mapNotNull { episode ->
+        val session = episode.session ?: return@mapNotNull null
+        val epNum = episode.episodeNumber ?: return@mapNotNull null
         SEpisode.create().apply {
-            date_upload = episode.createdAt.let { DATE_FORMATTER.tryParse(it) }
-            val session = episode.session
-            setUrlWithoutDomain("/play/$animeSession/$session?anime_id=${episode.animeId}")
-            val epNum = episode.episodeNumber
+            date_upload = episode.createdAt?.let { DATE_FORMATTER.tryParse(it) } ?: 0L
+            setUrlWithoutDomain("/play/$animeSession/$session?anime_id=${episode.animeId ?: 0}")
             episode_number = epNum
             val epName = if (floor(epNum) == ceil(epNum)) {
                 epNum.toInt().toString()
