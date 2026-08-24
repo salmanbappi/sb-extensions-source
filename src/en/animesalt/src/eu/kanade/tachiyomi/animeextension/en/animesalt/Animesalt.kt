@@ -161,7 +161,7 @@ class Animesalt : Source() {
         val response = client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", ajaxHeaders, formBody)).execute()
         val body = response.bodyString()
         if (body.isBlank()) {
-            return AnimesPage(emptyList(), hasNext = false)
+            return AnimesPage(emptyList(), hasNextPage = false)
         }
 
         val doc = org.jsoup.Jsoup.parseBodyFragment(body)
@@ -193,8 +193,8 @@ class Animesalt : Source() {
 
         // The AJAX endpoint doesn't tell us total pages; try next page to see if it returns data.
         // As a heuristic, if we got 10 items (the standard page size), there's likely more.
-        val hasNext = animes.size >= 10
-        return AnimesPage(animes, hasNext)
+        val hasNextPage = animes.size >= 10
+        return AnimesPage(animes, hasNextPage)
     }
 
     private fun parseAnimeListPage(
@@ -231,7 +231,7 @@ class Animesalt : Source() {
 
         // Detect the WordPress Load More button to determine if there are more pages.
         val loadMoreBtn = doc.selectFirst("#load-more-btn")
-        val hasNext = if (loadMoreBtn != null) {
+        val hasNextPage = if (loadMoreBtn != null) {
             val currentPage = loadMoreBtn.attr("data-page").toIntOrNull() ?: 1
             val maxPages = loadMoreBtn.attr("data-max").toIntOrNull() ?: 1
             currentPage < maxPages
@@ -242,7 +242,7 @@ class Animesalt : Source() {
             } || doc.selectFirst(".pagination .next, a.next, .nav-links .next, a:containsOwn(NEXT)") != null
         }
 
-        return AnimesPage(animes, hasNext)
+        return AnimesPage(animes, hasNextPage)
     }
 
     // =========================== Anime Details ============================
