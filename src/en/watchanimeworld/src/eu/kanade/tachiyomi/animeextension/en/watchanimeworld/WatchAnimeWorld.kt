@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.EpisodeMetadataFetcher
 import extensions.utils.Source
 import extensions.utils.asJsoup
+import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.addSwitchPreference
