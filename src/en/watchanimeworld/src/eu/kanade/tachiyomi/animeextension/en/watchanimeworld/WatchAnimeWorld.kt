@@ -45,7 +45,7 @@ class WatchAnimeWorld : Source() {
 
     override val name = "WatchAnimeWorld"
 
-    override val baseUrl = "https://watchanimeworld.net"
+    override val baseUrl = "https://watchanimeworld.ro"
 
     override val lang = "en"
 
@@ -218,7 +218,7 @@ class WatchAnimeWorld : Source() {
                     }
                     if (loadTitles && !meta.title.isNullOrBlank()) {
                         val seasonPrefix = if (name.startsWith("S")) name.substringBefore(" - ") + " - " else ""
-                        val epPad = if (num > 0) num.toString().padStart(2, '0') else episode.episode_number.toString()
+                        val epPad = if (num > 0) num.toString().padStart(2, '0') else num.toString()
                         name = "${seasonPrefix}Ep. $epPad - ${meta.title}"
                     }
                 }
@@ -517,7 +517,7 @@ class WatchAnimeWorld : Source() {
                 .build(),
         ).execute()
 
-        val zephyrData = json.decodeFromString<ZephyrResponse>(zephyrResponse.bodyString())
+        val zephyrData = zephyrResponse.parseAs<ZephyrResponse>()
         val streamUrl = zephyrData.videoSource ?: return emptyList()
 
         val subtitles = mutableListOf<Track>()
