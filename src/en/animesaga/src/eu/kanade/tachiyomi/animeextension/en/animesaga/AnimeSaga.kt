@@ -167,9 +167,9 @@ class AnimeSaga :
                 url = "/anime/${media.id}"
                 val titleLang = preferences.getString(PREF_TITLE_LANG_KEY, "english") ?: "english"
                 title = when (titleLang) {
-                    "romaji" -> media.title.romaji ?: media.title.english ?: media.title.native ?: "Unknown Title"
-                    "native" -> media.title.native ?: media.title.english ?: media.title.romaji ?: "Unknown Title"
-                    else -> media.title.english ?: media.title.romaji ?: media.title.native ?: "Unknown Title"
+                    "romaji" -> media.title?.romaji ?: media.title?.english ?: media.title?.native ?: "Unknown Title"
+                    "native" -> media.title?.native ?: media.title?.english ?: media.title?.romaji ?: "Unknown Title"
+                    else -> media.title?.english ?: media.title?.romaji ?: media.title?.native ?: "Unknown Title"
                 }
                 thumbnail_url = media.coverImage?.extraLarge ?: media.coverImage?.large
                 description = media.description
@@ -246,9 +246,9 @@ class AnimeSaga :
             url = anime.url
             val titleLang = preferences.getString(PREF_TITLE_LANG_KEY, "english") ?: "english"
             title = when (titleLang) {
-                "romaji" -> media.title.romaji ?: media.title.english ?: media.title.native ?: anime.title
-                "native" -> media.title.native ?: media.title.english ?: media.title.romaji ?: anime.title
-                else -> media.title.english ?: media.title.romaji ?: media.title.native ?: anime.title
+                "romaji" -> media.title?.romaji ?: media.title?.english ?: media.title?.native ?: anime.title
+                "native" -> media.title?.native ?: media.title?.english ?: media.title?.romaji ?: anime.title
+                else -> media.title?.english ?: media.title?.romaji ?: media.title?.native ?: anime.title
             }
             thumbnail_url = media.coverImage?.extraLarge ?: media.coverImage?.large ?: anime.thumbnail_url
             genre = media.genres.joinToString()
@@ -282,8 +282,8 @@ class AnimeSaga :
         val anilistId = anime.url.substringAfter("/anime/").toIntOrNull() ?: return emptyList()
 
         val media = fetchAnilistMedia(anilistId) ?: return emptyList()
-        val titleVal = media.title.english ?: media.title.romaji ?: media.title.native ?: ""
-        val romajiVal = media.title.romaji ?: media.title.english ?: media.title.native ?: ""
+        val titleVal = media.title?.english ?: media.title?.romaji ?: media.title?.native ?: ""
+        val romajiVal = media.title?.romaji ?: media.title?.english ?: media.title?.native ?: ""
         val totalEps = media.episodes ?: 12
         val malId = media.idMal
 
