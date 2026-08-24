@@ -221,22 +221,30 @@ class Animesalt : Source() {
         val doc = client.newCall(GET("$baseUrl${anime.url}", headers)).execute().asJsoup()
         val episodes = mutableListOf<SEpisode>()
 
-        // 1. New theme: .ep-tile / .quick-ep-card
-        val tiles = doc.select(".ep-tile, .quick-ep-card")
+        // 1. New theme: .ep-tile only (NOT .quick-ep-card — those use playQuickEp() with no server data)
+        val tiles = doc.select(".ep-tile")
         if (tiles.isNotEmpty()) {
             tiles.forEachIndexed { idx, tile ->
                 val onclick = tile.attr("onclick")
                 val text = tile.text().trim()
-                val match = Regex("""triggerEpisode\s*\(\s*(\[.*?\])\s*,\s*["']([^"']*)["']\s*,\s*["']([^"']*)["']""").find(onclick)
+                val match = Regex("""triggerEpisode\s*\(\s*(\[.*?\])\s*,\s*["']([^"']*)['"]\s*,\s*["']([^"']*)['"]\s*""").find(onclick)
+
+                // Skip tiles that don't have a triggerEpisode call (e.g. deferred/loading tiles)
+                if (match == null && tile.attr("data-slug").isBlank()) return@forEachIndexed
 
                 val epName = match?.groupValues?.get(2)?.ifBlank { text } ?: text.ifBlank { "Episode ${idx + 1}" }
                 val epSlug = match?.groupValues?.get(3) ?: tile.attr("data-slug").ifBlank { "ep-${idx + 1}" }
                 val serversJson = match?.groupValues?.get(1) ?: "[]"
-                val epNum = Regex("""\d+""").find(epName)?.value?.toFloatOrNull() ?: (idx + 1).toFloat()
+                val epNum = Regex("""\d+""").find(epName)?.value?.toFloatOrNull()
+                    ?: Regex("""\d+""").find(epSlug)?.value?.toFloatOrNull()
+                    ?: (idx + 1).toFloat()
+
+                // Only add episode if it has server data OR a valid slug
+                if (serversJson == "[]" && epSlug.isBlank()) return@forEachIndexed
 
                 episodes.add(
                     SEpisode.create().apply {
-                        name = epName
+                        name = epName.ifBlank { "Episode ${epNum.toInt()}" }
                         episode_number = epNum
                         val encodedServers = Base64.encodeToString(serversJson.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
                         url = "${anime.url}#$epSlug|$encodedServers"
@@ -340,12 +348,25 @@ class Animesalt : Source() {
             if (serversJson.startsWith("[")) {
                 try {
                     val rootArray = json.parseToJsonElement(serversJson).jsonArray
+                    // Deduplicate by URL — videasy often sends duplicate Japanese/English entries
+                    val seenUrls = mutableSetOf<String>()
                     rootArray.forEachIndexed { idx, element ->
                         val obj = element.jsonObject
                         val sUrl = obj["url"]?.jsonPrimitive?.content?.trim() ?: return@forEachIndexed
+                        if (sUrl.isBlank()) return@forEachIndexed
+                        // Skip videasy.net — requires encrypted JS API not reproducible without JS
+                        if (sUrl.contains("videasy.net", ignoreCase = true)) return@forEachIndexed
+                        if (!seenUrls.add(sUrl)) return@forEachIndexed // skip duplicate URLs
                         val sLang = obj["lang"]?.jsonPrimitive?.content?.trim() ?: ""
                         val sName = obj["name"]?.jsonPrimitive?.content?.trim() ?: ""
-                        val displayName = listOf(sName, sLang).filter { it.isNotBlank() }.joinToString(" - ").ifBlank { "Server ${idx + 1}" }
+                        val displayName = buildString {
+                            if (sName.isNotBlank()) append(sName)
+                            if (sLang.isNotBlank()) {
+                                if (isNotEmpty()) append(" · ")
+                                append(sLang)
+                            }
+                            if (isEmpty()) append("Server ${idx + 1}")
+                        }
                         hosters.add(
                             Hoster(
                                 hosterName = displayName,
@@ -361,16 +382,21 @@ class Animesalt : Source() {
             return hosters
         }
 
-        val doc = client.newCall(GET("$baseUrl${episode.url.substringBefore('#')}", headers)).execute().asJsoup()
+        // Fallback: scrape the episode/series page for iframes
+        val pageUrl = "$baseUrl${episode.url.substringBefore('#').trimEnd('/')}"
+        val doc = client.newCall(GET(pageUrl, headers)).execute().asJsoup()
 
         // Direct AS-CDN / FirePlayer iframes
-        val cdnIframes = doc.select(".video.aa-tb iframe, iframe[src*='as-cdn'], iframe[data-src*='as-cdn'], iframe[src*='/video/'], iframe[data-src*='/video/']")
+        val cdnIframes = doc.select(
+            ".video.aa-tb iframe, iframe[src*='as-cdn'], iframe[data-src*='as-cdn'], " +
+                "iframe[src*='/video/'], iframe[data-src*='/video/']",
+        )
         cdnIframes.forEachIndexed { idx, iframe ->
             val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-            if (src.isNotBlank() && !src.contains("multi-lang-plyr")) {
+            if (src.isNotBlank() && !src.contains("multi-lang-plyr") && !src.contains("videasy")) {
                 hosters.add(
                     Hoster(
-                        hosterName = if (cdnIframes.size == 1) "FirePlayer (Multi-Audio)" else "FirePlayer Server ${idx + 1}",
+                        hosterName = if (cdnIframes.size == 1) "FirePlayer" else "FirePlayer ${idx + 1}",
                         hosterUrl = src,
                     ),
                 )
@@ -378,10 +404,15 @@ class Animesalt : Source() {
         }
 
         if (hosters.isEmpty()) {
-            // Fallback: check any functional iframe on page (excluding dead multi-lang-plyr)
+            // Broad iframe fallback (exclude known dead/unextractable iframes)
             doc.select("iframe").forEachIndexed { idx, iframe ->
                 val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-                if (src.isNotBlank() && !src.startsWith("about:") && !src.startsWith("javascript:") && !src.contains("multi-lang-plyr")) {
+                if (src.isNotBlank() &&
+                    !src.startsWith("about:") &&
+                    !src.startsWith("javascript:") &&
+                    !src.contains("multi-lang-plyr") &&
+                    !src.contains("videasy.net")
+                ) {
                     hosters.add(
                         Hoster(
                             hosterName = "Server ${idx + 1}",
@@ -399,14 +430,19 @@ class Animesalt : Source() {
         val hosterUrl = hoster.hosterUrl
         val videos = mutableListOf<Video>()
 
-        if (hosterUrl.contains("/video/") || hosterUrl.contains("as-cdn")) {
-            // AS-CDN / FirePlayer extractor
-            val videoId = Regex("""/video/([a-zA-Z0-9]+)""").find(hosterUrl)?.groupValues?.get(1)
-            val host = runCatching { hosterUrl.toHttpUrl().host }.getOrNull() ?: "as-cdn26.top"
-            val scheme = runCatching { hosterUrl.toHttpUrl().scheme }.getOrNull() ?: "https"
+        val isFirePlayer = hosterUrl.contains("as-cdn", ignoreCase = true) ||
+            hosterUrl.contains("firevideoplayer.com", ignoreCase = true) ||
+            Regex("""as-cdn\d+\.top""").containsMatchIn(hosterUrl)
+
+        if (isFirePlayer && hosterUrl.contains("/video/")) {
+            // AS-CDN / FirePlayer extractor — POST to /player/index.php?data=HASH&do=getVideo
+            val videoId = Regex("""/video/([a-fA-F0-9]{16,})""").find(hosterUrl)?.groupValues?.get(1)
+            val httpUrl = runCatching { hosterUrl.toHttpUrl() }.getOrNull()
+            val host = httpUrl?.host ?: "as-cdn26.top"
+            val scheme = httpUrl?.scheme ?: "https"
             val playerBaseUrl = "$scheme://$host"
 
-            if (videoId != null) {
+            if (!videoId.isNullOrBlank()) {
                 val postUrl = "$playerBaseUrl/player/index.php?data=$videoId&do=getVideo"
                 val formBody = FormBody.Builder()
                     .add("hash", videoId)
@@ -422,19 +458,28 @@ class Animesalt : Source() {
                 val res = client.newCall(POST(postUrl, playerHeaders, formBody)).execute()
                 val resBody = res.bodyString()
                 val jsonObj = runCatching { json.parseToJsonElement(resBody).jsonObject }.getOrNull()
-                val masterUrl = jsonObj?.get("videoSource")?.jsonPrimitive?.content ?: jsonObj?.get("securedLink")?.jsonPrimitive?.content
+                val masterUrl = jsonObj?.get("videoSource")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                    ?: jsonObj?.get("securedLink")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
 
                 if (!masterUrl.isNullOrBlank()) {
+                    val hlsReferer = "$playerBaseUrl/"
                     val hlsVideos = playlistUtils.extractFromHls(
                         playlistUrl = masterUrl,
-                        referer = "$playerBaseUrl/",
-                        videoNameGen = { quality -> quality },
+                        masterHeaders = headers.newBuilder()
+                            .set("Referer", hlsReferer)
+                            .set("Origin", playerBaseUrl)
+                            .build(),
+                        videoHeaders = headers.newBuilder()
+                            .set("Referer", hlsReferer)
+                            .set("Origin", playerBaseUrl)
+                            .build(),
+                        videoNameGen = { quality -> quality.ifBlank { "HLS" } },
                     )
                     videos.addAll(hlsVideos)
                 }
             }
         } else {
-            // Generic fallback
+            // Generic fallback for any other hoster URL
             val extracted = universalExtractor.videosFromUrl(hosterUrl, headers)
             videos.addAll(extracted)
         }
