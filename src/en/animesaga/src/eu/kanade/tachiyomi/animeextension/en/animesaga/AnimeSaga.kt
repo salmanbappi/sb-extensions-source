@@ -22,7 +22,6 @@ import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
-import extensions.utils.parseAs
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -48,7 +47,7 @@ class AnimeSaga :
 
     override val name = "AnimeSaga"
 
-    override val baseUrl = "https://animesalt.me"
+    override val baseUrl = "https://www.animesaga.net"
 
     override val lang = "en"
 
@@ -156,7 +155,8 @@ class AnimeSaga :
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val anilistRes = response.parseAs<AnilistGraphQLResponse>()
+        val responseBody = response.body.string()
+        val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
         val pageInfo = anilistRes.data?.Page
         if (pageInfo == null || pageInfo.media.isEmpty()) {
             return AnimesPage(emptyList(), false)
@@ -167,9 +167,9 @@ class AnimeSaga :
                 url = "/anime/${media.id}"
                 val titleLang = preferences.getString(PREF_TITLE_LANG_KEY, "english") ?: "english"
                 title = when (titleLang) {
-                    "romaji" -> media.title?.romaji ?: media.title?.english ?: media.title?.native ?: "Unknown Title"
-                    "native" -> media.title?.native ?: media.title?.english ?: media.title?.romaji ?: "Unknown Title"
-                    else -> media.title?.english ?: media.title?.romaji ?: media.title?.native ?: "Unknown Title"
+                    "romaji" -> media.title.romaji ?: media.title.english ?: media.title.native ?: "Unknown Title"
+                    "native" -> media.title.native ?: media.title.english ?: media.title.romaji ?: "Unknown Title"
+                    else -> media.title.english ?: media.title.romaji ?: media.title.native ?: "Unknown Title"
                 }
                 thumbnail_url = media.coverImage?.extraLarge ?: media.coverImage?.large
                 description = media.description
@@ -228,7 +228,8 @@ class AnimeSaga :
                 response.close()
                 return null
             }
-            val anilistRes = response.parseAs<AnilistGraphQLResponse>()
+            val responseBody = response.body.string()
+            val anilistRes = json.decodeFromString<AnilistGraphQLResponse>(responseBody)
             return anilistRes.data?.Media
         } catch (e: Exception) {
             return null
@@ -246,9 +247,9 @@ class AnimeSaga :
             url = anime.url
             val titleLang = preferences.getString(PREF_TITLE_LANG_KEY, "english") ?: "english"
             title = when (titleLang) {
-                "romaji" -> media.title?.romaji ?: media.title?.english ?: media.title?.native ?: anime.title
-                "native" -> media.title?.native ?: media.title?.english ?: media.title?.romaji ?: anime.title
-                else -> media.title?.english ?: media.title?.romaji ?: media.title?.native ?: anime.title
+                "romaji" -> media.title.romaji ?: media.title.english ?: media.title.native ?: anime.title
+                "native" -> media.title.native ?: media.title.english ?: media.title.romaji ?: anime.title
+                else -> media.title.english ?: media.title.romaji ?: media.title.native ?: anime.title
             }
             thumbnail_url = media.coverImage?.extraLarge ?: media.coverImage?.large ?: anime.thumbnail_url
             genre = media.genres.joinToString()
@@ -282,8 +283,8 @@ class AnimeSaga :
         val anilistId = anime.url.substringAfter("/anime/").toIntOrNull() ?: return emptyList()
 
         val media = fetchAnilistMedia(anilistId) ?: return emptyList()
-        val titleVal = media.title?.english ?: media.title?.romaji ?: media.title?.native ?: ""
-        val romajiVal = media.title?.romaji ?: media.title?.english ?: media.title?.native ?: ""
+        val titleVal = media.title.english ?: media.title.romaji ?: media.title.native ?: ""
+        val romajiVal = media.title.romaji ?: media.title.english ?: media.title.native ?: ""
         val totalEps = media.episodes ?: 12
         val malId = media.idMal
 
@@ -1113,9 +1114,9 @@ data class AnilistPageInfo(
 
 @Serializable
 data class AnilistMedia(
-    val id: Int? = null,
+    val id: Int,
     val idMal: Int? = null,
-    val title: AnilistTitle? = null,
+    val title: AnilistTitle,
     val coverImage: AnilistCoverImage? = null,
     val bannerImage: String? = null,
     val description: String? = null,

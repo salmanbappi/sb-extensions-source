@@ -1,14 +1,13 @@
 ext {
     extName = 'AnimeSaga'
     extClass = '.AnimeSaga'
-    extVersionCode = 8
+    extVersionCode = 6
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
-    implementation(project(":lib:unpacker"))
     implementation(project(":lib:playlist-utils"))
     implementation(project(":lib:dood-extractor"))
     implementation(project(":lib:vidhide-extractor"))
