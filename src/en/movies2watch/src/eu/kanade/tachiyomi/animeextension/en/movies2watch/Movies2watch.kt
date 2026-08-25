@@ -353,7 +353,8 @@ class Movies2watch : Source() {
             val resolvedUrl = runCatching {
                 val req = GET(rawUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())
                 client.newCall(req).execute().use { resp ->
-                    resp.request.url.toString()
+                    val loc = resp.header("Location")
+                    if (!loc.isNullOrBlank()) loc else resp.request.url.toString()
                 }
             }.getOrDefault(rawUrl)
 
@@ -363,24 +364,22 @@ class Movies2watch : Source() {
 
             when {
                 // Vidmoly: Pure native HLS extraction with multi-language subtitle tracks attached
-                resolvedUrl.contains("vidmoly", ignoreCase = true) || rawUrl.contains("vidmoly", ignoreCase = true) -> {
+                rawUrl.contains("/vmf/") || resolvedUrl.contains("vidmoly", true) || resolvedUrl.contains("kaembed", true) || hoster.hosterName.contains("Vidmoly", true) -> {
                     extractVidmoly(rawUrl, resolvedUrl, prefix, embedHeaders)
                 }
 
                 // Videasy: Native API + custom Murmur3 keystream decryption with HLS & subtitles
-                resolvedUrl.contains("videasy", ignoreCase = true) || rawUrl.contains("videasy", ignoreCase = true) -> {
+                rawUrl.contains("videasy", true) || resolvedUrl.contains("videasy", true) || hoster.hosterName.contains("Videasy", true) -> {
                     extractVideasy(rawUrl, resolvedUrl, prefix, embedHeaders, hoster.hosterName)
                 }
 
                 // UpCloud: Pure native Byse AES-GCM decryption & HLS extraction with subtitles
-                hoster.hosterName.contains("UpCloud", ignoreCase = true) ||
-                    rawUrl.contains("/mv/") || rawUrl.contains("/pl/") ||
-                    resolvedUrl.contains("gn1r5n.org") || resolvedUrl.contains("vsembed.ru") -> {
+                rawUrl.contains("/mv/") || rawUrl.contains("/pl/") || resolvedUrl.contains("gn1r5n.org") || hoster.hosterName.contains("UpCloud", true) -> {
                     extractUpCloud(rawUrl, resolvedUrl, prefix, embedHeaders, hoster.hosterName)
                 }
 
                 // Vidfast: Direct HLS playlist resolution with subtitles
-                resolvedUrl.contains("vidfast", ignoreCase = true) || rawUrl.contains("vidfast", ignoreCase = true) -> {
+                rawUrl.contains("vidfast", true) || resolvedUrl.contains("vidfast", true) || hoster.hosterName.contains("Vidfast", true) -> {
                     extractVidfast(rawUrl, resolvedUrl, prefix, embedHeaders, hoster.hosterName)
                 }
 
@@ -420,6 +419,7 @@ class Movies2watch : Source() {
         prefix: String,
         embedHeaders: Headers,
     ): List<Video> {
+        val targetUrl = if (resolvedUrl.contains("kaembed", true) || resolvedUrl.contains("vidmoly", true)) resolvedUrl else rawUrl
         val subUrl = runCatching {
             resolvedUrl.toHttpUrl().queryParameter("subget")
                 ?: resolvedUrl.toHttpUrl().queryParameter("sub.info")
@@ -429,35 +429,38 @@ class Movies2watch : Source() {
 
         val subTracks = fetchSubtitles(subUrl)
 
+        // Try direct HTML extraction from kaembed/vidmoly
+        val directVideos = runCatching {
+            val resp = client.newCall(GET(targetUrl, embedHeaders)).execute()
+            val html = resp.body.string()
+            val m3u8Match = Regex("""(?:file|src)\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""").find(html)
+                ?: Regex("""['"](https?://[^'"]+\.m3u8[^'"]*)['"]""").find(html)
+            if (m3u8Match != null) {
+                val m3u8Url = m3u8Match.groupValues[1]
+                playlistUtils.extractFromHls(
+                    playlistUrl = m3u8Url,
+                    referer = targetUrl,
+                    masterHeaders = embedHeaders,
+                    videoHeaders = embedHeaders,
+                    videoNameGen = { q -> "$prefix$q" },
+                    subtitleList = subTracks,
+                )
+            } else {
+                emptyList()
+            }
+        }.getOrDefault(emptyList())
+
+        if (directVideos.isNotEmpty()) {
+            return directVideos
+        }
+
         val videos = runCatching { vidmolyExtractor.videosFromUrl(resolvedUrl, prefix) }
             .getOrElse {
                 runCatching { vidmolyExtractor.videosFromUrl(rawUrl, prefix) }
                     .getOrDefault(emptyList())
             }
 
-        val finalVideos = if (videos.isEmpty()) {
-            runCatching {
-                val targetUrl = if (resolvedUrl.contains("vidmoly", true) || resolvedUrl.contains("kaembed", true)) resolvedUrl else rawUrl
-                val html = client.newCall(GET(targetUrl, embedHeaders)).execute().body.string()
-                val m3u8Match = Regex("""sources\s*:\s*\[\{\s*file\s*:\s*['"]([^'"]+)['"]""").find(html)
-                    ?: Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""").find(html)
-                if (m3u8Match != null) {
-                    val m3u8Url = m3u8Match.groupValues[1]
-                    playlistUtils.extractFromHls(
-                        playlistUrl = m3u8Url,
-                        referer = targetUrl,
-                        videoNameGen = { q -> "$prefix$q" },
-                        subtitleList = subTracks,
-                    )
-                } else {
-                    emptyList()
-                }
-            }.getOrDefault(emptyList())
-        } else {
-            videos
-        }
-
-        return finalVideos.map { v ->
+        return videos.map { v ->
             Video(
                 videoUrl = v.videoUrl,
                 videoTitle = v.videoTitle,
@@ -475,8 +478,10 @@ class Movies2watch : Source() {
         prefix: String,
         embedHeaders: Headers,
         hosterName: String,
-    ): List<Video> = videasyExtractor.extract(resolvedUrl, title = "", prefix = prefix)
-        .ifEmpty { videasyExtractor.extract(rawUrl, title = "", prefix = prefix) }
+    ): List<Video> {
+        return videasyExtractor.extract(resolvedUrl, title = "", prefix = prefix)
+            .ifEmpty { videasyExtractor.extract(rawUrl, title = "", prefix = prefix) }
+    }
 
     // ============================ UpCloud Extractor ========================
     private suspend fun extractUpCloud(
