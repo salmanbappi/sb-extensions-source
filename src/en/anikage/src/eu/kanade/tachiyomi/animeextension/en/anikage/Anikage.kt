@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.anikage
 
+import android.util.Base64
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -17,8 +18,10 @@ import extensions.utils.addListPreference
 import extensions.utils.addSwitchPreference
 import extensions.utils.parseAs
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import kotlin.time.Duration.Companion.seconds
 
@@ -136,55 +139,111 @@ class Anikage : Source() {
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val (slug, epNum) = parseEpisodeUrl(episode.url)
 
-        val serversResponse = client.newCall(
+        val serverData = client.newCall(
             GET("$apiUrl/anime/$slug/episodes/$epNum/servers", headers),
-        ).execute()
-        val serverData = serversResponse.parseAs<ServersResponseDto>()
+        ).execute().parseAs<ServersResponseDto>()
 
-        // One hoster folder per streaming provider, with SUB and DUB streams grouped inside.
-        // Entries are encoded as "lang|embedUrl" pairs separated by commas.
-        val hosters = serverData.servers.mapNotNull { server ->
+        // Every provider/audio pair is fetched up front: each source carries an obfuscated
+        // `url` token that decodes to a directly playable stream plus the referer it needs,
+        // so no embed page has to be scraped for any provider.
+        val fetched = serverData.servers.mapNotNull { server ->
             val serverId = server.id ?: return@mapNotNull null
-            val entries = mutableListOf<String>()
-
-            server.subTypes.forEach { lang ->
-                val sources = runCatching {
+            val byLang = server.subTypes.mapNotNull { lang ->
+                val dto = runCatching {
                     client.newCall(
                         GET("$apiUrl/anime/$slug/episodes/$epNum/sources?provider=$serverId&lang=$lang&server=$serverId", headers),
                     ).execute().use { it.parseAs<SourcesResponseDto>() }
-                }.getOrNull() ?: return@forEach
+                }.getOrNull() ?: return@mapNotNull null
+                lang to dto
+            }
+            if (byLang.isEmpty()) null else serverId to byLang
+        }
 
-                sources.sources
-                    .mapNotNull { it.embedUrl }
-                    .filter { it.startsWith("http") }
-                    .distinct()
-                    .forEach { url -> entries.add("$lang|$url") }
+        // `uwu` mirrors the other providers' streams but reports an empty referer for them,
+        // so reuse whatever referer another provider gave for the same host.
+        val refererByHost = mutableMapOf<String, String>()
+        fetched.forEach { (_, byLang) ->
+            byLang.forEach { (_, dto) ->
+                dto.sources.forEach { src ->
+                    val decoded = decodeStreamToken(src.url) ?: return@forEach
+                    if (decoded.referer.isEmpty()) return@forEach
+                    val host = decoded.url.hostOrEmpty()
+                    if (host.isNotEmpty() && host !in refererByHost) {
+                        refererByHost[host] = decoded.referer
+                    }
+                }
+            }
+        }
+
+        return fetched.mapNotNull { (serverId, byLang) ->
+            val entries = byLang.flatMap { (lang, dto) -> dto.toStreamEntries(lang, refererByHost) }
+            if (entries.isEmpty()) return@mapNotNull null
+            Hoster(
+                hosterName = serverId.replaceFirstChar { it.uppercase() },
+                hosterUrl = json.encodeToString(entries),
+            )
+        }
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val entries = runCatching { hoster.hosterUrl.parseAs<List<StreamEntry>>(json) }
+            .getOrNull() ?: return emptyList()
+
+        return entries
+            .flatMap { entry -> runCatching { resolveEntry(hoster.hosterName, entry) }.getOrDefault(emptyList()) }
+            .distinctBy { it.videoUrl }
+    }
+
+    private suspend fun resolveEntry(providerLabel: String, entry: StreamEntry): List<Video> {
+        val prefix = listOf(providerLabel, entry.lang, entry.label)
+            .filter { it.isNotBlank() }
+            .joinToString(" - ")
+        val tracks = entry.subtitles.map { Track(it.url, it.label) }
+        val candidates = entry.refererCandidates()
+
+        if (entry.url.isNotBlank()) {
+            // `megg` hands out a progressive MP4 instead of a playlist.
+            if (!entry.isM3U8) {
+                return listOf(
+                    Video(
+                        videoUrl = entry.url,
+                        videoTitle = prefix,
+                        headers = refererHeaders(candidates.first()),
+                        subtitleTracks = tracks,
+                    ),
+                )
             }
 
-            if (entries.isEmpty()) return@mapNotNull null
-            val label = serverId.replaceFirstChar { it.uppercase() }
-            Hoster(hosterName = label, hosterUrl = entries.joinToString(","))
+            // Most CDNs here reject a wrong Referer, and a handful of sources ship none at
+            // all, so walk the candidates until one actually returns a playlist.
+            candidates.forEach { referer ->
+                val streamHeaders = refererHeaders(referer)
+                val videos = runCatching {
+                    playlistUtils.extractFromHls(
+                        playlistUrl = entry.url,
+                        referer = referer,
+                        masterHeaders = streamHeaders,
+                        videoHeaders = streamHeaders,
+                        subtitleList = tracks,
+                        videoNameGen = { quality -> "$prefix - $quality" },
+                    )
+                }.getOrDefault(emptyList())
+                if (videos.isNotEmpty()) return videos
+            }
         }
 
-        return hosters
-    }
-
-    override suspend fun getVideoList(hoster: Hoster): List<Video> = hoster.hosterUrl.split(",")
-        .mapNotNull { entry ->
-            val parts = entry.split("|", limit = 2)
-            if (parts.size == 2) parts[0] to parts[1] else null
-        }
-        .flatMap { (lang, url) ->
-            runCatching { resolveEmbed(hoster.hosterName, lang, url) }.getOrDefault(emptyList())
-        }
-
-    private suspend fun resolveEmbed(providerLabel: String, lang: String, url: String): List<Video> {
-        val audio = lang.uppercase() // SUB / DUB
+        // Safety net in case the token key is rotated: scrape the embed page like before.
         return when {
-            "megaplay.buzz" in url || "vidtube.site" in url -> megaPlayVideos("$providerLabel $audio", url)
-            else -> vibePlayerVideos(providerLabel, audio, url)
+            entry.embedUrl.isEmpty() -> emptyList()
+            "megaplay.buzz" in entry.embedUrl || "vidtube.site" in entry.embedUrl ->
+                megaPlayVideos(prefix, entry.embedUrl)
+            else -> vibePlayerVideos(prefix, entry.embedUrl)
         }
     }
+
+    private fun refererHeaders(referer: String): Headers = headers.newBuilder()
+        .apply { if (referer.isBlank()) removeAll("Referer") else set("Referer", referer) }
+        .build()
 
     /**
      * Resolves VibePlayer-style embeds (vivibebe.site, bibiemb.xyz, ...).
@@ -192,10 +251,9 @@ class Anikage : Source() {
      * `const src = "https://<host>/public/stream/<id>/master.m3u8"`
      * plus an optional external subtitle passed through the `?sub=` query parameter.
      */
-    private suspend fun vibePlayerVideos(providerLabel: String, audio: String, embedUrl: String): List<Video> {
+    private suspend fun vibePlayerVideos(label: String, embedUrl: String): List<Video> {
         val embedHost = embedUrl.toHttpUrl().let { "${it.scheme}://${it.host}" }
-        val pageHeaders = headers.newBuilder().set("Referer", "$baseUrl/").build()
-        val html = client.newCall(GET(embedUrl, pageHeaders)).execute().body.string()
+        val html = client.newCall(GET(embedUrl, refererHeaders("$baseUrl/"))).execute().body.string()
 
         val masterUrl = VIBE_SRC_REGEX.find(html)?.groupValues?.get(1)
             ?: M3U8_REGEX.find(html)?.groupValues?.get(1)
@@ -206,7 +264,7 @@ class Anikage : Source() {
             ?.let { listOf(Track(it, "English")) }
             ?: emptyList()
 
-        val streamHeaders = headers.newBuilder().set("Referer", "$embedHost/").build()
+        val streamHeaders = refererHeaders("$embedHost/")
 
         return playlistUtils.extractFromHls(
             playlistUrl = masterUrl,
@@ -214,14 +272,13 @@ class Anikage : Source() {
             masterHeaders = streamHeaders,
             videoHeaders = streamHeaders,
             subtitleList = subtitles,
-            videoNameGen = { quality -> "$providerLabel - $audio - $quality" },
+            videoNameGen = { quality -> "$label - $quality" },
         )
     }
 
     private fun megaPlayVideos(label: String, embedUrl: String): List<Video> {
         val embedHost = embedUrl.toHttpUrl().let { "${it.scheme}://${it.host}" }
-        val pageHeaders = headers.newBuilder().set("Referer", "$baseUrl/").build()
-        val html = client.newCall(GET(embedUrl, pageHeaders)).execute().body.string()
+        val html = client.newCall(GET(embedUrl, refererHeaders("$baseUrl/"))).execute().body.string()
 
         val dataId = DATA_ID_REGEX.find(html)?.groupValues?.get(1) ?: return emptyList()
 
@@ -239,7 +296,7 @@ class Anikage : Source() {
             .filter { it.kind == "captions" && !it.file.isNullOrBlank() }
             .map { Track(it.file!!, it.label ?: "Subtitle") }
 
-        val streamHeaders = headers.newBuilder().set("Referer", "$embedHost/").build()
+        val streamHeaders = refererHeaders("$embedHost/")
 
         return runCatching {
             playlistUtils.extractFromHls(
@@ -321,6 +378,85 @@ class Anikage : Source() {
         private const val PREF_ADULT_KEY = "show_adult"
     }
 }
+
+// ==============================================================================
+// Stream Token Decoding
+// ==============================================================================
+
+/**
+ * Repeating XOR key the site's stream proxy uses for the `url`/`file` tokens. Recovered
+ * from a known-plaintext pair: an encoded subtitle token against the very same subtitle
+ * url that a `?sub=` embed parameter exposes in the clear.
+ */
+private val TOKEN_KEY = "dj5D455Lzl2LKJXEtFwb5gy2oGFSYPnBKp7PTgFPm6Gn2MGb".toByteArray()
+
+/** The decoded plaintext is `url<NUL>referer<NUL>providerTag`. */
+private const val TOKEN_SEPARATOR = '\u0000'
+
+data class DecodedStream(
+    val url: String,
+    val referer: String,
+)
+
+/**
+ * Decodes the obfuscated `url`/`file` tokens the sources endpoint returns. A token is
+ * base64url over a repeating-key XOR, and the plaintext holds the playable stream url
+ * together with the referer that host expects — which is why none of the providers need
+ * their embed page scraped.
+ */
+fun decodeStreamToken(token: String?): DecodedStream? {
+    if (token.isNullOrBlank()) return null
+    val raw = runCatching {
+        Base64.decode(token.replace('-', '+').replace('_', '/'), Base64.DEFAULT)
+    }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return null
+
+    val plain = String(
+        ByteArray(raw.size) { i -> (raw[i].toInt() xor TOKEN_KEY[i % TOKEN_KEY.size].toInt()).toByte() },
+    )
+    val parts = plain.split(TOKEN_SEPARATOR)
+    val url = parts.firstOrNull()?.trim().orEmpty()
+    if (!url.startsWith("http")) return null
+
+    return DecodedStream(url = url, referer = parts.getOrNull(1)?.trim().orEmpty())
+}
+
+fun String.hostOrEmpty(): String = toHttpUrlOrNull()?.host.orEmpty()
+
+/**
+ * A single playable stream, resolved while the hoster list is built and carried to
+ * [Anikage.getVideoList] as JSON inside `Hoster.hosterUrl`.
+ */
+@Serializable
+data class StreamEntry(
+    val lang: String,
+    val url: String,
+    val referer: String,
+    val isM3U8: Boolean,
+    val label: String,
+    val embedUrl: String,
+    val subtitles: List<SubtitleEntry> = emptyList(),
+) {
+    /**
+     * Referers to try, in order. Most sources name their own, but the aggregator servers
+     * ship an empty one, and those CDNs answer 403/404 without a matching Referer: some
+     * accept the stream host itself, others only the registrable domain above it.
+     */
+    fun refererCandidates(): List<String> = buildList {
+        if (referer.isNotBlank()) add(referer)
+        url.toHttpUrlOrNull()?.let { httpUrl ->
+            add("${httpUrl.scheme}://${httpUrl.host}/")
+            val apex = httpUrl.host.split('.').takeLast(2).joinToString(".")
+            add("${httpUrl.scheme}://$apex/")
+        }
+        add("")
+    }.distinct()
+}
+
+@Serializable
+data class SubtitleEntry(
+    val url: String,
+    val label: String,
+)
 
 // ==============================================================================
 // Null-Safe DTO Data Classes (v16 Compliant)
@@ -448,6 +584,75 @@ data class ServerDto(
 @Serializable
 data class SourcesResponseDto(
     val sources: List<SourceItemDto> = emptyList(),
+    val subtitles: List<ApiSubtitleDto> = emptyList(),
+    val embeds: List<EmbedDto> = emptyList(),
+    val embedOptions: List<EmbedOptionDto> = emptyList(),
+) {
+    /**
+     * Labels the site shows for each embed. `embedOptions` wins over `embeds` because it
+     * carries the player names users actually see (E-Koto, E-Wish, E-Neko, E-Ken).
+     */
+    private fun labelsByUrl(): Map<String, String> = buildMap {
+        embeds.forEach { embed ->
+            val url = embed.url ?: return@forEach
+            embed.server?.takeIf { it.isNotBlank() }?.let { put(url, it) }
+        }
+        embedOptions.forEach { option ->
+            val url = option.url ?: return@forEach
+            option.label?.takeIf { it.isNotBlank() }?.let { put(url, it) }
+        }
+    }
+
+    private fun captionTracks(): List<ApiSubtitleDto> = subtitles.filter {
+        val kind = it.kind?.lowercase()
+        kind == null || kind == "captions" || kind == "subtitles"
+    }
+
+    fun toStreamEntries(lang: String, refererByHost: Map<String, String>): List<StreamEntry> {
+        val labels = labelsByUrl()
+        val tracks = captionTracks().mapNotNull { sub ->
+            val url = decodeStreamToken(sub.file ?: sub.url)?.url ?: return@mapNotNull null
+            SubtitleEntry(url = url, label = sub.label ?: "English")
+        }
+
+        return sources.mapNotNull { src ->
+            val decoded = decodeStreamToken(src.url)
+            val streamUrl = decoded?.url.orEmpty()
+            val embedUrl = src.embedUrl?.takeIf { it.startsWith("http") }.orEmpty()
+            if (streamUrl.isEmpty() && embedUrl.isEmpty()) return@mapNotNull null
+
+            StreamEntry(
+                lang = lang.uppercase(),
+                url = streamUrl,
+                referer = decoded?.referer?.takeIf { it.isNotEmpty() }
+                    ?: refererByHost[streamUrl.hostOrEmpty()].orEmpty(),
+                isM3U8 = src.isM3U8 ?: true,
+                label = src.embedUrl?.let { labels[it] } ?: src.server ?: src.quality.orEmpty(),
+                embedUrl = embedUrl,
+                subtitles = tracks,
+            )
+        }
+    }
+}
+
+@Serializable
+data class ApiSubtitleDto(
+    val file: String? = null,
+    val url: String? = null,
+    val label: String? = null,
+    val kind: String? = null,
+)
+
+@Serializable
+data class EmbedDto(
+    val url: String? = null,
+    val server: String? = null,
+)
+
+@Serializable
+data class EmbedOptionDto(
+    val url: String? = null,
+    val label: String? = null,
 )
 
 @Serializable
@@ -456,6 +661,7 @@ data class SourceItemDto(
     val url: String? = null,
     val quality: String? = null,
     val isM3U8: Boolean? = null,
+    val server: String? = null,
 )
 
 @Serializable
