@@ -1,7 +1,7 @@
 ext {
     extName = 'Anikage'
     extClass = '.Anikage'
-    extVersionCode = 2
+    extVersionCode = 3
     isNsfw = false
 }
 
@@ -9,4 +9,5 @@ apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:universal-extractor"))
 }
