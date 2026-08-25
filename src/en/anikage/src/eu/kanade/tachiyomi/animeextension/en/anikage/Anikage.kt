@@ -169,16 +169,14 @@ class Anikage : Source() {
         return hosters
     }
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        return hoster.hosterUrl.split(",")
-            .mapNotNull { entry ->
-                val parts = entry.split("|", limit = 2)
-                if (parts.size == 2) parts[0] to parts[1] else null
-            }
-            .flatMap { (lang, url) ->
-                runCatching { resolveEmbed(hoster.hosterName, lang, url) }.getOrDefault(emptyList())
-            }
-    }
+    override suspend fun getVideoList(hoster: Hoster): List<Video> = hoster.hosterUrl.split(",")
+        .mapNotNull { entry ->
+            val parts = entry.split("|", limit = 2)
+            if (parts.size == 2) parts[0] to parts[1] else null
+        }
+        .flatMap { (lang, url) ->
+            runCatching { resolveEmbed(hoster.hosterName, lang, url) }.getOrDefault(emptyList())
+        }
 
     private suspend fun resolveEmbed(providerLabel: String, lang: String, url: String): List<Video> {
         val audio = lang.uppercase() // SUB / DUB
