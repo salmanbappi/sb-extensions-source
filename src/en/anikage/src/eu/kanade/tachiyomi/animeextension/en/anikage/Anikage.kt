@@ -141,36 +141,84 @@ class Anikage : Source() {
         ).execute()
         val serverData = serversResponse.parseAs<ServersResponseDto>()
 
-        // Only the "koto" provider exposes resolvable MegaPlay embeds.
-        val koto = serverData.servers.firstOrNull { it.id == "koto" } ?: return emptyList()
+        // One hoster folder per streaming provider, with SUB and DUB streams grouped inside.
+        // Entries are encoded as "lang|embedUrl" pairs separated by commas.
+        val hosters = serverData.servers.mapNotNull { server ->
+            val serverId = server.id ?: return@mapNotNull null
+            val entries = mutableListOf<String>()
 
-        val hosters = koto.subTypes.flatMap { lang ->
-            val srcResponse = client.newCall(
-                GET("$apiUrl/anime/$slug/episodes/$epNum/sources?provider=koto&lang=$lang&server=koto", headers),
-            ).execute()
-            val sources = runCatching { srcResponse.parseAs<SourcesResponseDto>() }.getOrNull()
-                ?: return@flatMap emptyList<Hoster>()
+            server.subTypes.forEach { lang ->
+                val sources = runCatching {
+                    client.newCall(
+                        GET("$apiUrl/anime/$slug/episodes/$epNum/sources?provider=$serverId&lang=$lang&server=$serverId", headers),
+                    ).execute().use { it.parseAs<SourcesResponseDto>() }
+                }.getOrNull() ?: return@forEach
 
-            sources.sources
-                .mapNotNull { it.embedUrl }
-                .filter { "megaplay.buzz" in it }
-                .distinct()
-                .map { embed ->
-                    val variant = when {
-                        embed.endsWith("/hsub") -> "Hardsub"
-                        embed.endsWith("/dub") -> "Dub"
-                        else -> "Softsub"
-                    }
-                    val display = "MegaPlay - ${lang.uppercase()} ($variant)"
-                    Hoster(hosterName = display, hosterUrl = embed)
-                }
-        }.distinctBy { it.hosterUrl }
+                sources.sources
+                    .mapNotNull { it.embedUrl }
+                    .filter { it.startsWith("http") }
+                    .distinct()
+                    .forEach { url -> entries.add("$lang|$url") }
+            }
+
+            if (entries.isEmpty()) return@mapNotNull null
+            val label = serverId.replaceFirstChar { it.uppercase() }
+            Hoster(hosterName = label, hosterUrl = entries.joinToString(","))
+        }
 
         return hosters
     }
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> = runCatching { megaPlayVideos(hoster.hosterName, hoster.hosterUrl) }
-        .getOrDefault(emptyList())
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        return hoster.hosterUrl.split(",")
+            .mapNotNull { entry ->
+                val parts = entry.split("|", limit = 2)
+                if (parts.size == 2) parts[0] to parts[1] else null
+            }
+            .flatMap { (lang, url) ->
+                runCatching { resolveEmbed(hoster.hosterName, lang, url) }.getOrDefault(emptyList())
+            }
+    }
+
+    private suspend fun resolveEmbed(providerLabel: String, lang: String, url: String): List<Video> {
+        val audio = lang.uppercase() // SUB / DUB
+        return when {
+            "megaplay.buzz" in url || "vidtube.site" in url -> megaPlayVideos("$providerLabel $audio", url)
+            else -> vibePlayerVideos(providerLabel, audio, url)
+        }
+    }
+
+    /**
+     * Resolves VibePlayer-style embeds (vivibebe.site, bibiemb.xyz, ...).
+     * The player page exposes a plain master playlist in its source:
+     * `const src = "https://<host>/public/stream/<id>/master.m3u8"`
+     * plus an optional external subtitle passed through the `?sub=` query parameter.
+     */
+    private suspend fun vibePlayerVideos(providerLabel: String, audio: String, embedUrl: String): List<Video> {
+        val embedHost = embedUrl.toHttpUrl().let { "${it.scheme}://${it.host}" }
+        val pageHeaders = headers.newBuilder().set("Referer", "$baseUrl/").build()
+        val html = client.newCall(GET(embedUrl, pageHeaders)).execute().body.string()
+
+        val masterUrl = VIBE_SRC_REGEX.find(html)?.groupValues?.get(1)
+            ?: M3U8_REGEX.find(html)?.groupValues?.get(1)
+            ?: return emptyList()
+
+        val subtitles = embedUrl.toHttpUrl().queryParameter("sub")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { listOf(Track(it, "English")) }
+            ?: emptyList()
+
+        val streamHeaders = headers.newBuilder().set("Referer", "$embedHost/").build()
+
+        return playlistUtils.extractFromHls(
+            playlistUrl = masterUrl,
+            referer = "$embedHost/",
+            masterHeaders = streamHeaders,
+            videoHeaders = streamHeaders,
+            subtitleList = subtitles,
+            videoNameGen = { quality -> "$providerLabel - $audio - $quality" },
+        )
+    }
 
     private fun megaPlayVideos(label: String, embedUrl: String): List<Video> {
         val embedHost = embedUrl.toHttpUrl().let { "${it.scheme}://${it.host}" }
@@ -261,6 +309,10 @@ class Anikage : Source() {
 
     companion object {
         private val DATA_ID_REGEX by lazy { Regex("""data-id=["']?(\d+)""") }
+
+        // VibePlayer-style pages embed the master playlist in plain source.
+        private val VIBE_SRC_REGEX by lazy { Regex("""const\s+src\s*=\s*"([^"]+\.m3u8[^"]*)"""") }
+        private val M3U8_REGEX by lazy { Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""") }
 
         private const val PREF_TYPE_KEY = "preferred_type"
         private const val PREF_TYPE_DEFAULT = "SUB"
@@ -403,6 +455,7 @@ data class SourcesResponseDto(
 @Serializable
 data class SourceItemDto(
     val embedUrl: String? = null,
+    val url: String? = null,
     val quality: String? = null,
     val isM3U8: Boolean? = null,
 )
