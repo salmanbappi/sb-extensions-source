@@ -58,7 +58,11 @@ class VideasyExtractor(
         val raw = try {
             Base64.decode(b64, Base64.DEFAULT)
         } catch (_: Exception) {
-            return null
+            try {
+                Base64.decode(clean, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            } catch (_: Exception) {
+                return null
+            }
         }
         val length = raw.size
         if (length < 4) return null
@@ -167,17 +171,19 @@ class VideasyExtractor(
 
             val playlistUrl = jsonObj["playlist"]?.jsonPrimitive?.content
             if (!playlistUrl.isNullOrBlank()) {
-                val hlsVideos = playlistUtils.extractFromHls(
-                    playlistUrl = playlistUrl,
-                    referer = "$PLAYER_ORIGIN/",
-                    masterHeaders = headers,
-                    videoHeaders = headers,
-                    videoNameGen = { q -> "$prefix$q" },
-                    subtitleList = subtitles,
-                )
+                val hlsVideos = runCatching {
+                    playlistUtils.extractFromHls(
+                        playlistUrl = playlistUrl,
+                        referer = "$PLAYER_ORIGIN/",
+                        masterHeaders = headers,
+                        videoHeaders = headers,
+                        videoNameGen = { q -> "$prefix$q" },
+                        subtitleList = subtitles,
+                    )
+                }.getOrDefault(emptyList())
+
                 if (hlsVideos.isNotEmpty()) {
                     videos.addAll(hlsVideos)
-                    break
                 }
             }
 
@@ -187,21 +193,12 @@ class VideasyExtractor(
                 val srcUrl = srcObj["url"]?.jsonPrimitive?.content ?: return@forEach
                 val quality = srcObj["quality"]?.jsonPrimitive?.content ?: "Auto"
 
-                if (srcUrl.contains(".m3u8", ignoreCase = true)) {
-                    val hlsVideos = playlistUtils.extractFromHls(
-                        playlistUrl = srcUrl,
-                        referer = "$PLAYER_ORIGIN/",
-                        masterHeaders = headers,
-                        videoHeaders = headers,
-                        videoNameGen = { q -> "$prefix$quality ($q)" },
-                        subtitleList = subtitles,
-                    )
-                    videos.addAll(hlsVideos)
-                } else {
+                val videoTitle = "$prefix$quality"
+                if (videos.none { it.videoUrl == srcUrl || it.videoTitle == videoTitle }) {
                     videos.add(
                         Video(
                             videoUrl = srcUrl,
-                            videoTitle = "$prefix$quality",
+                            videoTitle = videoTitle,
                             headers = headers,
                             subtitleTracks = subtitles,
                         ),
