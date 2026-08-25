@@ -235,8 +235,10 @@ class Anikage : Source() {
         // Safety net in case the token key is rotated: scrape the embed page like before.
         return when {
             entry.embedUrl.isEmpty() -> emptyList()
+
             "megaplay.buzz" in entry.embedUrl || "vidtube.site" in entry.embedUrl ->
                 megaPlayVideos(prefix, entry.embedUrl)
+
             else -> vibePlayerVideos(prefix, entry.embedUrl)
         }
     }
