@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.en.anikage
 
 import android.util.Base64
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8ServerManager
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -47,6 +48,8 @@ class Anikage : Source() {
         .set("Referer", "$baseUrl/")
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+
+    private val m3u8Server by lazy { M3u8ServerManager(client) }
 
     // ============================== Popular ===============================
 
@@ -228,7 +231,9 @@ class Anikage : Source() {
                         videoNameGen = { quality -> "$prefix - $quality" },
                     )
                 }.getOrDefault(emptyList())
-                if (videos.isNotEmpty()) return videos
+                if (videos.isNotEmpty()) {
+                    return if (entry.url.needsLocalProxy()) videos.viaLocalProxy(referer) else videos
+                }
             }
         }
 
@@ -240,6 +245,40 @@ class Anikage : Source() {
                 megaPlayVideos(prefix, entry.embedUrl)
 
             else -> vibePlayerVideos(prefix, entry.embedUrl)
+        }
+    }
+
+    /**
+     * Re-serves already-resolved media playlists through the bundled local HLS proxy.
+     *
+     * Two hosts cannot be handed to the player directly. `vivibebe.site` keeps its segments
+     * on an image CDN that only answers when the Referer is re-issued on every segment
+     * request, and `echovideo.to` returns each playlist as `image/jpeg` from an
+     * extension-less URL, so the player never recognises it as HLS in the first place. The
+     * proxy re-fetches with our headers, strips any fake image header off the segments, and
+     * serves both playlist and segments under the content types the player expects.
+     *
+     * Called with the per-quality playlists [PlaylistUtils] already resolved, so everything
+     * below the proxied URL is a segment.
+     */
+    private fun List<Video>.viaLocalProxy(referer: String): List<Video> {
+        if (isEmpty()) return this
+        runCatching { if (!m3u8Server.isRunning()) m3u8Server.startServer() }
+        if (!m3u8Server.isRunning()) return this
+
+        val userAgent = headers["User-Agent"]
+        return map { video ->
+            val proxied = runCatching {
+                m3u8Server.processM3u8Url(video.videoUrl, referer.takeIf { it.isNotBlank() }, userAgent)
+            }.getOrNull() ?: return@map video
+
+            Video(
+                videoUrl = proxied,
+                videoTitle = video.videoTitle,
+                headers = video.headers,
+                subtitleTracks = video.subtitleTracks,
+                audioTracks = video.audioTracks,
+            )
         }
     }
 
@@ -423,6 +462,20 @@ fun decodeStreamToken(token: String?): DecodedStream? {
 }
 
 fun String.hostOrEmpty(): String = toHttpUrlOrNull()?.host.orEmpty()
+
+/**
+ * Stream hosts that have to go through the local HLS proxy rather than straight to the
+ * player. Measured per host, not guessed: `vivibebe.site` serves its segments from an image
+ * CDN that 403s unless the Referer is re-sent on each segment, `echovideo.to` labels every
+ * playlist `image/jpeg` on an extension-less URL, and `krussdomi.com` spreads its segments
+ * across rotating hosts behind a Referer check.
+ */
+private val PROXY_HOSTS = setOf("vivibebe.site", "echovideo.to", "krussdomi.com")
+
+fun String.needsLocalProxy(): Boolean {
+    val host = hostOrEmpty()
+    return PROXY_HOSTS.any { host == it || host.endsWith(".$it") }
+}
 
 /**
  * A single playable stream, resolved while the hoster list is built and carried to
