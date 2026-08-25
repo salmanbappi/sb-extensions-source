@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.animeextension.en.mkissa.EpisodeResult.DataEpisode.Ep
 import eu.kanade.tachiyomi.animeextension.en.mkissa.extractors.MkissaExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -28,6 +29,7 @@ import keiyoushi.utils.graphQLPost
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.toJsonString
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -276,18 +278,66 @@ class Mkissa : Source() {
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val streamwishExtractor by lazy { StreamWishExtractor(client, headers) }
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val sourceUrls = fetchSourceUrls(episode)
+    /**
+     * One folder per provider. The site hands out several streams per provider — a sub and a dub
+     * lane, an internal path and an iframe player — and those belong together under the provider's
+     * own name rather than spread across sibling folders.
+     */
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val servers = serversFrom(fetchSourceUrls(episode))
+        val prefServer = preferences.prefServer
 
+        return servers.groupBy(Server::hosterName)
+            .entries
+            .sortedWith(
+                compareByDescending<Map.Entry<String, List<Server>>> {
+                    prefServer != PREF_SERVER_DEFAULT && it.key.equals(prefServer, true)
+                }.thenByDescending { entry -> entry.value.maxOf(Server::priority) },
+            )
+            .map { (hosterName, group) ->
+                Hoster(
+                    hosterName = hosterName,
+                    // The player only carries the two strings, so the group rides along as JSON and
+                    // its extractors stay unrun until the folder is opened.
+                    hosterUrl = HosterPayload(group).toJsonString(),
+                )
+            }
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val servers = runCatching { hoster.hosterUrl.parseAs<HosterPayload>().servers }
+            .getOrNull()
+            ?: return emptyList()
+
+        return servers.parallelCatchingFlatMap { server ->
+            videosFrom(server).map { video -> Pair(video, server.priority) }
+        }.let(::prioritySort)
+    }
+
+    /** Kept for callers that want every provider's streams as one flat list. */
+    override suspend fun getVideoList(episode: SEpisode): List<Video> =
+        serversFrom(fetchSourceUrls(episode))
+            .parallelCatchingFlatMap { server ->
+                videosFrom(server).map { video -> Pair(video, server.priority) }
+            }
+            .let(::prioritySort)
+
+    /** Drops the sources whose host is switched off, and labels each survivor with its provider. */
+    private fun serversFrom(sourceUrls: List<SourceUrl>): List<Server> {
         val hosterSelection = preferences.getHosters
         val altHosterSelection = preferences.getAltHosters
 
-        val serverList = mutableListOf<Server>()
-        sourceUrls.forEach { video ->
-            val rawSourceUrl = video.sourceUrl ?: return@forEach
+        return sourceUrls.mapNotNull { video ->
+            val rawSourceUrl = video.sourceUrl ?: return@mapNotNull null
             val videoUrl = rawSourceUrl.decryptSource()
             val rawSourceName = video.sourceName ?: ""
             val sourceName = rawSourceName.lowercase()
+
+            // The canonical name, not the site's raw one: it tags the lane ("Ac-Hls sub"), and
+            // folding those variants together is what puts one provider in one folder.
+            val internalHoster = INTERNAL_HOSTER_MATCHERS.firstOrNull {
+                hosterSelection.contains(it.key) && it.pattern.containsMatchIn(sourceName)
+            }
 
             val matchingMapping = HOSTER_MAPPINGS.firstOrNull { (altHoster, urlMatches) ->
                 // Fm-Hls lives in the Hoster selection (lowercased); the rest are Alternative Hosts.
@@ -296,80 +346,76 @@ class Mkissa : Source() {
             }
 
             when {
-                videoUrl.startsWith("/apivtwo/") && INTERNAL_HOSTER_MATCHERS.any { (name, pattern) ->
-                    hosterSelection.contains(name) && pattern.containsMatchIn(sourceName)
-                } ->
-                    Server(videoUrl, "internal $rawSourceName", video.priority)
-                        .let(serverList::add)
+                videoUrl.startsWith("/apivtwo/") && internalHoster != null ->
+                    Server(videoUrl, "internal $rawSourceName", video.priority, internalHoster.displayName)
 
                 altHosterSelection.contains("player") && video.type == "player" ->
-                    Server(videoUrl, "player@$rawSourceName", video.priority)
-                        .let(serverList::add)
+                    Server(videoUrl, "player@$rawSourceName", video.priority, rawSourceName.ifBlank { "Player" })
 
                 matchingMapping != null ->
-                    Server(videoUrl, matchingMapping.first, video.priority)
-                        .let(serverList::add)
+                    Server(videoUrl, matchingMapping.first, video.priority, matchingMapping.first)
+
+                else -> null
             }
         }
+    }
 
-        val iframeEndpoint = PLAYER_DOMAIN
+    private suspend fun videosFrom(server: Server): List<Video> {
+        val sName = server.sourceName
+        return when {
+            sName.startsWith("internal ") -> {
+                mkissaExtractor.videoFromUrl(server.sourceUrl, server.sourceName, PLAYER_DOMAIN)
+            }
 
-        return serverList.parallelCatchingFlatMap { server ->
-            val sName = server.sourceName
-            when {
-                sName.startsWith("internal ") -> {
-                    mkissaExtractor.videoFromUrl(server.sourceUrl, server.sourceName, iframeEndpoint)
-                }
+            sName.startsWith("player@") -> {
+                // These Yt sources live on the site's CDN (tools.fast4speed.rsvp), which is
+                // Cloudflare-gated: it streams with a legacy allanime.day Referer and 403s on
+                // any mkissa one. `set` replaces the base mkissa Referer instead of appending,
+                // while keeping the client's configured headers (user agent, etc.).
+                val videoHeaders = headers.newBuilder().apply {
+                    add("Accept", "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5")
+                    set("Referer", "$PLAYER_DOMAIN/")
+                }.build()
 
-                sName.startsWith("player@") -> {
-                    // These Yt sources live on the site's CDN (tools.fast4speed.rsvp), which is
-                    // Cloudflare-gated: it streams with a legacy allanime.day Referer and 403s on
-                    // any mkissa one. `set` replaces the base mkissa Referer instead of appending,
-                    // while keeping the client's configured headers (user agent, etc.).
-                    val videoHeaders = headers.newBuilder().apply {
-                        add("Accept", "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5")
-                        set("Referer", "$PLAYER_DOMAIN/")
-                    }.build()
+                Video(
+                    videoUrl = server.sourceUrl,
+                    videoTitle = "Original (player ${sName.substringAfter("player@")})",
+                    headers = videoHeaders,
+                ).let(::listOf)
+            }
 
-                    Video(
-                        videoUrl = server.sourceUrl,
-                        videoTitle = "Original (player ${server.sourceName.substringAfter("player@")})",
-                        headers = videoHeaders,
-                    ).let(::listOf)
-                }
+            sName == "vidstreaming" -> {
+                gogoStreamExtractor.videosFromUrl(server.sourceUrl.replace(Regex("^//"), "https://"))
+            }
 
-                sName == "vidstreaming" -> {
-                    gogoStreamExtractor.videosFromUrl(server.sourceUrl.replace(Regex("^//"), "https://"))
-                }
+            // The mapping's name, not "dood": the old dispatch never matched, so every DoodStream
+            // source silently produced nothing.
+            sName == "doodstream" -> {
+                doodExtractor.videosFromUrl(server.sourceUrl)
+            }
 
-                sName == "dood" -> {
-                    doodExtractor.videosFromUrl(server.sourceUrl)
-                }
+            sName == "okru" -> {
+                okruExtractor.videosFromUrl(server.sourceUrl)
+            }
 
-                sName == "okru" -> {
-                    okruExtractor.videosFromUrl(server.sourceUrl)
-                }
+            sName == "mp4upload" -> {
+                mp4uploadExtractor.videosFromUrl(server.sourceUrl, headers)
+            }
 
-                sName == "mp4upload" -> {
-                    mp4uploadExtractor.videosFromUrl(server.sourceUrl, headers)
-                }
+            sName == "streamlare" -> {
+                streamlareExtractor.videosFromUrl(server.sourceUrl)
+            }
 
-                sName == "streamlare" -> {
-                    streamlareExtractor.videosFromUrl(server.sourceUrl)
-                }
+            sName == "Fm-Hls" -> {
+                filemoonExtractor.videosFromUrl(server.sourceUrl, prefix = "Fm-Hls:")
+            }
 
-                sName == "Fm-Hls" -> {
-                    filemoonExtractor.videosFromUrl(server.sourceUrl, prefix = "Fm-Hls:")
-                }
+            sName == "streamwish" -> {
+                streamwishExtractor.videosFromUrl(server.sourceUrl, videoNameGen = { "StreamWish:$it" })
+            }
 
-                sName == "streamwish" -> {
-                    streamwishExtractor.videosFromUrl(server.sourceUrl, videoNameGen = { "StreamWish:$it" })
-                }
-
-                else -> emptyList()
-            }.map { v -> Pair(v, server.priority) }
+            else -> emptyList()
         }
-            .let(::prioritySort)
     }
 
     // ============================= Utilities ==============================
@@ -437,10 +483,19 @@ class Mkissa : Source() {
         variables = variables,
     )
 
+    @Serializable
     data class Server(
         val sourceUrl: String,
+        // Tags which extractor handles it ("internal Ac", "player@Yt", "Fm-Hls").
         val sourceName: String,
         val priority: Float,
+        // The provider folder it belongs to; several sourceNames can share one.
+        val hosterName: String,
+    )
+
+    @Serializable
+    class HosterPayload(
+        val servers: List<Server> = emptyList(),
     )
 
     private fun parseStatus(string: String?): Int = when (string) {
@@ -557,11 +612,18 @@ class Mkissa : Source() {
             "Si-Hls", "S-mp4", "Ac-Hls", "Uv-mp4", "Pn-Hls",
         )
 
+        private class InternalHoster(val key: String, val pattern: Regex, val displayName: String)
+
         // Compiled once: the source-name match used to run through a freshly built Regex for every
         // internal hoster, for every source, on every episode.
-        private val INTERNAL_HOSTER_MATCHERS = INTERNAL_HOSTER_NAMES.map {
-            it.lowercase() to Regex("""\b${Regex.escape(it.lowercase())}\b""")
-        }
+        //
+        // Longest name first, because `-` is a word boundary: `\bac\b` also matches "ac-hls", so
+        // without this an Ac-Hls source would be filed under Ac.
+        private val INTERNAL_HOSTER_MATCHERS = INTERNAL_HOSTER_NAMES
+            .sortedByDescending(String::length)
+            .map {
+                InternalHoster(it.lowercase(), Regex("""\b${Regex.escape(it.lowercase())}\b"""), it)
+            }
 
         private val HOSTER_MAPPINGS = listOf(
             "vidstreaming" to listOf("vidstreaming", "https://gogo", "playgo1.cc", "playtaku", "vidcloud"),
