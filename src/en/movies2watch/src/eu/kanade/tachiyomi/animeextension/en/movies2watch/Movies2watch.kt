@@ -475,10 +475,8 @@ class Movies2watch : Source() {
         prefix: String,
         embedHeaders: Headers,
         hosterName: String,
-    ): List<Video> {
-        return videasyExtractor.extract(resolvedUrl, title = "", prefix = prefix)
-            .ifEmpty { videasyExtractor.extract(rawUrl, title = "", prefix = prefix) }
-    }
+    ): List<Video> = videasyExtractor.extract(resolvedUrl, title = "", prefix = prefix)
+        .ifEmpty { videasyExtractor.extract(rawUrl, title = "", prefix = prefix) }
 
     // ============================ UpCloud Extractor ========================
     private suspend fun extractUpCloud(
