@@ -364,7 +364,7 @@ class Movies2watch : Source() {
 
             when {
                 // Vidmoly: Pure native HLS extraction with multi-language subtitle tracks attached
-                rawUrl.contains("/vmf/") || resolvedUrl.contains("vidmoly", true) || resolvedUrl.contains("kaembed", true) || hoster.hosterName.contains("Vidmoly", true) -> {
+                rawUrl.contains("/vmf/") || rawUrl.contains("/vms/") || resolvedUrl.contains("vidmoly", true) || resolvedUrl.contains("kaembed", true) || hoster.hosterName.contains("Vidmoly", true) -> {
                     extractVidmoly(rawUrl, resolvedUrl, prefix, embedHeaders)
                 }
 
