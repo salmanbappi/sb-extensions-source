@@ -51,56 +51,33 @@ class VideasyExtractor(
         return e
     }
 
-    private fun decryptPayload(encPayload: String, seed: String, tmdbId: String): String? {
+    private fun decryptPayload(encPayload: String, seed: String, tmdbId: Int): String? {
+        val clean = encPayload.trim().trim('"').replace('-', '+').replace('_', '/')
+        val pad = (4 - (clean.length % 4)) % 4
+        val b64 = clean + "=".repeat(pad)
         val raw = try {
-            Base64.decode(encPayload.trim().trim('"'), Base64.DEFAULT)
+            Base64.decode(b64, Base64.DEFAULT)
         } catch (_: Exception) {
             return null
         }
         val length = raw.size
         if (length < 4) return null
 
-        val isOdd = ((seed.length.toLong() * (seed.length + 1).toLong()) and 1L) == 1L
-        val sArr: IntArray
-        var acc: Int
-
-        if (isOdd) {
-            sArr = IntArray(256) { it }
-            var j = 0
-            for (i in 0 until 256) {
-                j = (j + sArr[i] + seed[i % seed.length].code) and 255
-                val tmp = sArr[i]
-                sArr[i] = sArr[j]
-                sArr[j] = tmp
-            }
-            var tAcc = 1732584193
-            for (i in seed.indices) {
-                val mixed = (seed[i].code.toLong() * F[i and 15].toLong()).toInt()
-                tAcc = rotl(tAcc xor mixed, 5)
-            }
-            acc = mixMurmur(tAcc)
-        } else {
-            sArr = IntArray(61)
-            var fnv = 2166136261L.toInt()
-            for (i in seed.indices) {
-                fnv = (fnv xor seed[i].code).toLong().let { (it * 16777619L).toInt() }
-            }
-            val tmdbNum = tmdbId.toLongOrNull() ?: 0L
-            val tmdbHash = (tmdbNum.toInt()) xor 2654435769L.toInt()
-            var state = mixMurmur(mixMurmur(fnv) xor mixMurmur(tmdbHash))
-
-            for (i in 0 until 8) {
-                if (((i.toLong() * (i + 1).toLong()) and 1L) == 0L) {
-                    val modIdx = (state.toUInt() % 61u).toInt()
-                    state = rotl(state + 2654435769L.toInt(), 7 + (7 and i))
-                    sArr[modIdx] = state xor mixMurmur(state)
-                    state = mixMurmur(state + modIdx)
-                } else {
-                    sArr[i] = F[15 and i]
-                }
-            }
-            acc = mixMurmur(2779096485L.toInt() xor state)
+        val sArr = IntArray(61)
+        var fnv = 2166136261L.toInt()
+        for (i in seed.indices) {
+            fnv = (fnv xor seed[i].code).toLong().let { (it * 16777619L).toInt() }
         }
+        val tmdbHash = tmdbId xor 2654435769L.toInt()
+        var state = mixMurmur(mixMurmur(fnv) xor mixMurmur(tmdbHash))
+
+        for (i in 0 until 8) {
+            val modIdx = (state.toUInt() % 61u).toInt()
+            state = rotl(state + 2654435769L.toInt(), 7 + (7 and i))
+            sArr[modIdx] = state xor mixMurmur(state)
+            state = mixMurmur(state + modIdx)
+        }
+        var acc = mixMurmur(2779096485L.toInt() xor state)
 
         val keyStream = ByteArray(length)
         var step = 0
@@ -140,11 +117,8 @@ class VideasyExtractor(
         val uri = runCatching { url.toHttpUrl() }.getOrNull() ?: return emptyList()
         val pathSegments = uri.pathSegments
         val isMovie = url.contains("/movie/")
-        val tmdbId = if (isMovie) {
-            pathSegments.getOrNull(1) ?: return emptyList()
-        } else {
-            pathSegments.getOrNull(1) ?: return emptyList()
-        }
+        val tmdbStr = pathSegments.getOrNull(1) ?: return emptyList()
+        val tmdbId = tmdbStr.toIntOrNull() ?: return emptyList()
         val season = if (!isMovie) pathSegments.getOrNull(2) ?: "1" else "1"
         val episode = if (!isMovie) pathSegments.getOrNull(3) ?: "1" else "1"
 
@@ -160,6 +134,7 @@ class VideasyExtractor(
         val encodedTitle = URLEncoder.encode(title.ifBlank { "Media" }, "UTF-8")
         val endpoints = listOf(
             "/cdn/sources-with-title",
+            "/vsrc/sources-with-title",
             "/m4uhd/sources-with-title",
         )
 
