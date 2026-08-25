@@ -315,12 +315,11 @@ class Mkissa : Source() {
     }
 
     /** Kept for callers that want every provider's streams as one flat list. */
-    override suspend fun getVideoList(episode: SEpisode): List<Video> =
-        serversFrom(fetchSourceUrls(episode))
-            .parallelCatchingFlatMap { server ->
-                videosFrom(server).map { video -> Pair(video, server.priority) }
-            }
-            .let(::prioritySort)
+    override suspend fun getVideoList(episode: SEpisode): List<Video> = serversFrom(fetchSourceUrls(episode))
+        .parallelCatchingFlatMap { server ->
+            videosFrom(server).map { video -> Pair(video, server.priority) }
+        }
+        .let(::prioritySort)
 
     /** Drops the sources whose host is switched off, and labels each survivor with its provider. */
     private fun serversFrom(sourceUrls: List<SourceUrl>): List<Server> {
