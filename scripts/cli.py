@@ -8,6 +8,7 @@ lint, migrate domains, bump version, and manage individual and multi-source exte
 import argparse
 import base64
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -16,6 +17,7 @@ import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import List, Tuple
 
 # Ensure repo root and scripts directory are in sys.path for cross-module imports
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -526,6 +528,123 @@ def list_extensions(repo_root: Path):
                         ver = m_ver.group(1)
                 print(f"  • {m.name:25s} (v{ver}) -> src/{lang_dir.name}/{m.name}")
     print(f"\nTotal: {total} extension module(s) installed.")
+
+def repo_stats(repo_root: Path) -> bool:
+    """Prints repository-wide statistics: modules per language, extractors, themes, and Kotlin code volume."""
+    src_dir = repo_root / "src"
+    lib_dir = repo_root / "lib"
+    multisrc_dir = repo_root / "lib-multisrc"
+
+    print("📊 Repository Statistics & Health Metrics:\n" + "=" * 60)
+
+    total_modules = 0
+    total_kt_files = 0
+    total_kt_lines = 0
+    lang_counts: List[Tuple[str, int]] = []
+    biggest: List[Tuple[str, int]] = []
+
+    if src_dir.exists():
+        for lang_dir in sorted(src_dir.iterdir()):
+            if not lang_dir.is_dir():
+                continue
+            modules = [d for d in lang_dir.iterdir() if d.is_dir()]
+            lang_counts.append((lang_dir.name, len(modules)))
+            total_modules += len(modules)
+            for m in modules:
+                kt_files = list(m.rglob("*.kt"))
+                lines = 0
+                for kt in kt_files:
+                    try:
+                        lines += sum(1 for _ in kt.open("rb"))
+                    except OSError:
+                        pass
+                total_kt_files += len(kt_files)
+                total_kt_lines += lines
+                biggest.append((f"src/{lang_dir.name}/{m.name}", len(kt_files)))
+
+    print(f"  • Extension modules: {total_modules} across {len(lang_counts)} language(s)")
+    for lang, cnt in sorted(lang_counts, key=lambda x: -x[1])[:8]:
+        print(f"      - {lang}: {cnt}")
+
+    lib_count = len([d for d in lib_dir.iterdir() if d.is_dir()]) if lib_dir.exists() else 0
+    theme_count = len([d for d in multisrc_dir.iterdir() if d.is_dir()]) if multisrc_dir.exists() else 0
+    print(f"  • Shared extractor libs (lib/): {lib_count}")
+    print(f"  • Multi-source themes (lib-multisrc/): {theme_count}")
+    print(f"  • Kotlin files: {total_kt_files} ({total_kt_lines:,} lines)")
+
+    if biggest:
+        biggest.sort(key=lambda x: -x[1])
+        print("\n  Largest modules by source files:")
+        for path, n in biggest[:5]:
+            print(f"      - {path}: {n} .kt file(s)")
+    return True
+
+def search_extensions(repo_root: Path, query: str) -> bool:
+    """Searches all extension modules by name, display name, base URL, or package substring."""
+    if not query:
+        print("❌ Search query is required (e.g. `cli.py search anikage`).")
+        return False
+
+    q = query.lower()
+    src_dir = repo_root / "src"
+    matches = []
+    for lang_name, ext_name, gradle_path in _iter_extension_gradles(src_dir):
+        gradle_txt = gradle_path.read_text(encoding="utf-8", errors="ignore")
+        ext_display_m = re.search(r"extName\s*=\s*['\"]([^'\"]+)['\"]", gradle_txt)
+        ver_m = re.search(r"(?:extVersionCode|overrideVersionCode)\s*=\s*(\d+)", gradle_txt)
+        haystacks = [
+            ext_name.lower(),
+            (ext_display_m.group(1).lower() if ext_display_m else ""),
+        ]
+        # Also search baseUrl inside Kotlin sources
+        for kt in (src_dir / lang_name / ext_name).rglob("*.kt"):
+            m = re.search(r'override\s+val\s+baseUrl\s*=\s*["\']([^"\']+)["\']', kt.read_text(encoding="utf-8", errors="ignore"))
+            if m:
+                haystacks.append(m.group(1).lower())
+                break
+        if any(q in h for h in haystacks):
+            matches.append((lang_name, ext_name, ext_display_m.group(1) if ext_display_m else ext_name, ver_m.group(1) if ver_m else "?"))
+
+    print(f"🔎 Search results for '{query}' ({len(matches)} match(es)):\n" + "=" * 60)
+    for lang, folder, display, ver in matches:
+        print(f"  • {display} [{lang}] (v{ver}) -> src/{lang}/{folder}")
+    return True
+
+def show_deps(repo_root: Path, target: str = None) -> bool:
+    """Shows extension dependencies. With a target: its direct lib/theme deps.
+    Without: reverse-dependency usage matrix ranking shared libs by consumer count."""
+    src_dir = repo_root / "src"
+    dep_re = re.compile(r"implementation\(project\(['\"]([^'\"]+)['\"]\)\)")
+
+    if target:
+        lang, name = resolve_extension_target(repo_root, target=target)
+        gradle_file = src_dir / (lang or "_") / (name or "_") / "build.gradle"
+        if not gradle_file.exists():
+            print(f"❌ Extension not found: {target}")
+            return False
+        deps = dep_re.findall(gradle_file.read_text(encoding="utf-8", errors="ignore"))
+        print(f"🔗 Dependencies of src/{lang}/{name}:\n" + "=" * 60)
+        if deps:
+            for d in deps:
+                print(f"  • {d}")
+        else:
+            print("  (no project dependencies — standalone module)")
+        return True
+
+    usage: dict = {}
+    consumers: dict = {}
+    for lang_name, ext_name, gradle_path in _iter_extension_gradles(src_dir):
+        txt = gradle_path.read_text(encoding="utf-8", errors="ignore")
+        for d in dep_re.findall(txt):
+            usage[d] = usage.get(d, 0) + 1
+            consumers.setdefault(d, []).append(f"{lang_name}/{ext_name}")
+
+    print("🔗 Shared Library Reverse-Dependency Matrix (most-consumed first):\n" + "=" * 60)
+    for dep, cnt in sorted(usage.items(), key=lambda x: -x[1]):
+        preview = ", ".join(consumers[dep][:6]) + (f", +{cnt - 6} more" if cnt > 6 else "")
+        print(f"  • {dep:35s} {cnt:3d} module(s): {preview}")
+    print(f"\nTip: run `cli.py bump-lib <lib-name>` to cascade version bumps to these consumers.")
+    return True
 
 def get_changed_extensions(repo_root: Path) -> List[Tuple[str, str]]:
     """Discovers extensions modified in git working tree, index, or HEAD commit."""
@@ -1598,6 +1717,18 @@ def main():
             "hash-query": {
                 "script": None,
                 "desc": "Calculate SHA-256 Apollo Persisted Query (APQ) dynamic hash and Kotlin snippet."
+            },
+            "stats": {
+                "script": None,
+                "desc": "Print repository-wide statistics: modules per language, libs, themes, Kotlin LOC."
+            },
+            "search": {
+                "script": None,
+                "desc": "Search all extension modules by name, display name, or base URL substring."
+            },
+            "deps": {
+                "script": None,
+                "desc": "Show extension project dependencies, or rank shared libs by reverse-dependency usage."
             }
         }
 
@@ -1663,6 +1794,9 @@ def main():
                 ("vendor", "Vendor an isolated copy of an extractor from lib/ into an extension."),
                 ("sync-vendor", "Scan and sync managed vendored extractor copies across extensions."),
                 ("clean", "Purge temporary build caches, pyc files, and temporary artifacts."),
+                ("stats", "Repository-wide statistics: modules, languages, libs, themes, LOC."),
+                ("search", "Search extension modules by name, display name, or base URL."),
+                ("deps", "Show module dependencies or shared-lib reverse-dependency matrix."),
             ]),
         ]
 
@@ -1684,6 +1818,10 @@ def main():
             "  python3 scripts/cli.py json-to-dto https://api.site.com/anime/1",
             "  python3 scripts/cli.py validate <module> --fix",
             "  python3 scripts/cli.py publish <module> -m 'fix episode parsing'",
+            "  python3 scripts/cli.py search anikage",
+            "  python3 scripts/cli.py deps en/anikage    # or omit target for reverse-dep matrix",
+            "  python3 scripts/cli.py format --changed --check",
+            "  python3 scripts/cli.py stats",
             "  python3 scripts/cli.py audit-all"
         ])
 
@@ -1744,13 +1882,43 @@ def main():
             success = bump_lib_dependents(repo_root, bl_args.lib_name)
             sys.exit(0 if success else 1)
 
+        if args.command == "stats":
+            success = repo_stats(repo_root)
+            sys.exit(0 if success else 1)
+
+        if args.command == "search":
+            search_parser = argparse.ArgumentParser(prog="cli.py search")
+            search_parser.add_argument("query", help="Substring to match against module names, display names, or base URLs")
+            search_args = search_parser.parse_args(args.args)
+            success = search_extensions(repo_root, search_args.query)
+            sys.exit(0 if success else 1)
+
+        if args.command == "deps":
+            deps_parser = argparse.ArgumentParser(prog="cli.py deps")
+            deps_parser.add_argument("target", nargs="?", help="Optional extension module (e.g. 'anikage' or 'en/anikage'); omit for reverse-dependency matrix")
+            deps_args = deps_parser.parse_args(args.args)
+            success = show_deps(repo_root, deps_args.target)
+            sys.exit(0 if success else 1)
+
         if args.command == "format":
             fmt_parser = argparse.ArgumentParser(prog="cli.py format")
             fmt_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
             fmt_parser.add_argument("--lang", help="Target extension lang")
             fmt_parser.add_argument("--name", help="Target extension directory name")
+            fmt_parser.add_argument("--changed", action="store_true", help="Format all extensions modified in git status")
             fmt_parser.add_argument("--check", action="store_true", help="Check formatting status without modifying files")
             fmt_args = fmt_parser.parse_args(args.args)
+            if fmt_args.changed:
+                changed = get_changed_extensions(repo_root)
+                if not changed:
+                    print("✨ No modified extensions detected in git working tree.")
+                    sys.exit(0)
+                print(f"✨ Formatting {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
+                all_ok = True
+                for l, n in changed:
+                    if not format_codebase(repo_root, l, n, check_only=fmt_args.check):
+                        all_ok = False
+                sys.exit(0 if all_ok else 1)
             lang, name = resolve_extension_target(repo_root, fmt_args.target, fmt_args.lang, fmt_args.name)
             success = format_codebase(repo_root, lang, name, check_only=fmt_args.check)
             sys.exit(0 if success else 1)
@@ -1772,8 +1940,20 @@ def main():
             lint_parser.add_argument("target", nargs="?", help="Target extension name (e.g. <module> or <lang>/<module>)")
             lint_parser.add_argument("--lang", help="Target extension lang")
             lint_parser.add_argument("--name", help="Target extension directory name")
+            lint_parser.add_argument("--changed", action="store_true", help="Lint all extensions modified in git status")
             lint_parser.add_argument("--fix", action="store_true", help="Auto-fix AST smells and v16 invariants before linting")
             lint_args = lint_parser.parse_args(args.args)
+            if lint_args.changed:
+                changed = get_changed_extensions(repo_root)
+                if not changed:
+                    print("✨ No modified extensions detected in git working tree.")
+                    sys.exit(0)
+                print(f"🔍 Linting {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
+                all_ok = True
+                for l, n in changed:
+                    if not lint_codebase(repo_root, l, n):
+                        all_ok = False
+                sys.exit(0 if all_ok else 1)
             lang, name = resolve_extension_target(repo_root, lint_args.target, lint_args.lang, lint_args.name)
             if lint_args.fix:
                 from scripts.ast_fixer import fix_codebase
