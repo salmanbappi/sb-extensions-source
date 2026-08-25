@@ -642,8 +642,9 @@ class Mkissa : Source() {
         private const val PREF_SUB_KEY = "preferred_sub"
         private const val PREF_SUB_DEFAULT = "sub"
 
-        // How many key attempts fetchSourceUrls will try before giving up.
-        private const val MAX_KEY_ATTEMPTS = 2
+        // How many key attempts fetchSourceUrls will try before giving up. A rebuild can invalidate
+        // the cached material and the re-scraped build in one go, so it needs a third try.
+        private const val MAX_KEY_ATTEMPTS = 3
 
         private val RESOLUTION_REGEX = Regex("""\b\d{3,4}\b""")
 

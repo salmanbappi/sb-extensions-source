@@ -10,15 +10,29 @@ object MkissaBundle {
     class BuildInfo(val buildId: String, val seeds: List<String>)
 
     fun parse(js: String): BuildInfo? {
-        val buildId = BUILD_ID_REGEX.find(js)?.groupValues?.get(1) ?: return null
-        val seeds = extractSeeds(js) ?: return null
+        // Older bundles keep the literal: `!== "string" ? "12345" : ""`.
+        BUILD_ID_REGEX.find(js)?.groupValues?.get(1)?.let { literalId ->
+            extractSeeds(js)?.let { seeds -> return BuildInfo(literalId, seeds) }
+        }
+
+        // Newer ones route it through the same rotated table as the seeds (`const Mm=zt(520,520)`),
+        // so it needs the same brute-forced rotation.
+        val (tables, bases, aliases) = decodersFrom(js)
+        val buildId = extractRotatedBuildId(js, tables, bases, aliases) ?: return null
+        val seeds = extractSeedsWithTables(js, tables, bases, aliases) ?: return null
         return BuildInfo(buildId, seeds)
     }
 
     private class Base(val table: String, val offset: Int)
     private class Alias(val base: String, val argIndex: Int, val delta: Int)
 
-    private fun extractSeeds(js: String): List<String>? {
+    private data class Decoders(
+        val tables: Map<String, List<String>>,
+        val bases: Map<String, Base>,
+        val aliases: Map<String, Alias>,
+    )
+
+    private fun decodersFrom(js: String): Decoders {
         val tables = readTables(js)
         val bases = BASE_DECODER_REGEX.findAll(js).associate { m ->
             m.groupValues[1] to Base(m.groupValues[4], fold(m.groupValues[3]))
@@ -33,7 +47,100 @@ object MkissaBundle {
                 put(name, Alias(callee, if (arg == firstParam) 0 else 1, if (delta.isEmpty()) 0 else fold(delta)))
             }
         }
+        return Decoders(tables, bases, aliases)
+    }
 
+    /**
+     * Finds the decoder call that yields `buildId`, narrowing from the most specific site pattern to
+     * a full scan. Every candidate is confirmed by requiring the seeds to resolve under the same
+     * rotation, which rules out unrelated numeric strings such as the mask salts.
+     */
+    private fun extractRotatedBuildId(
+        js: String,
+        tables: Map<String, List<String>>,
+        bases: Map<String, Base>,
+        aliases: Map<String, Alias>,
+    ): String? {
+        val candidates = LinkedHashSet<String>()
+
+        // The mask function takes the buildId as its default argument: `function F_(e=Mm)`.
+        val maskDefaultVar = DEFAULT_PARAM_REGEX.findAll(js)
+            .map { it.groupValues[2] }
+            .filter(String::isNotEmpty)
+            .firstOrNull { name -> Regex("""\b${Regex.escape(name)}\s*=\s*$CALL_PATTERN""").containsMatchIn(js) }
+
+        if (maskDefaultVar != null) {
+            Regex("""\b${Regex.escape(maskDefaultVar)}\s*=\s*($CALL_PATTERN)""").findAll(js)
+                .forEach { candidates.add(it.groupValues[1]) }
+        }
+
+        // Otherwise the assignment sits just above the seed array.
+        val seedArray = SEED_ARRAY_REGEX.find(js)
+        if (seedArray != null) {
+            val start = seedArray.range.first
+            val window = js.substring((start - SEED_WINDOW).coerceAtLeast(0), start)
+            ASSIGNED_CALL_REGEX.findAll(window)
+                .map { it.groupValues[1] }
+                // A `+` means the seed array's own concatenated halves, not a lone buildId.
+                .filterNot { it.contains('+') }
+                .forEach(candidates::add)
+        }
+
+        if (candidates.isEmpty()) {
+            ASSIGNED_CALL_REGEX.findAll(js)
+                .map { it.groupValues[1] }
+                .filterNot { it.contains('+') }
+                .forEach(candidates::add)
+        }
+
+        candidates.firstNotNullOfOrNull { call ->
+            decodeDigits(call, js, tables, bases, aliases)
+        }?.let { return it }
+
+        // Last resort: any call at all that decodes to a plausible buildId, skipping the seed array
+        // itself so its halves are never mistaken for one.
+        val seedRange = seedArray?.range
+        for (match in CALL_REGEX.findAll(js)) {
+            if (seedRange != null && match.range.first in seedRange) continue
+            decodeDigits(match.value, js, tables, bases, aliases)?.let { return it }
+        }
+        return null
+    }
+
+    /** Decodes [call] under every rotation, keeping the one that also resolves the seeds. */
+    private fun decodeDigits(
+        call: String,
+        js: String,
+        tables: Map<String, List<String>>,
+        bases: Map<String, Base>,
+        aliases: Map<String, Alias>,
+    ): String? {
+        val aliasName = CALL_REGEX.find(call)?.groupValues?.get(1) ?: return null
+        val alias = aliases[aliasName] ?: return null
+        val base = bases[alias.base] ?: return null
+        val table = tables[base.table] ?: return null
+
+        for (rotation in table.indices) {
+            val decoded = resolve(call, rotation, tables, bases, aliases) ?: continue
+            if (!decoded.matches(BUILD_ID_DIGITS_REGEX)) continue
+            if (extractSeedsWithTables(js, tables, bases, aliases, forcedRotation = rotation) == null) continue
+            return decoded
+        }
+        return null
+    }
+
+    private fun extractSeeds(js: String): List<String>? {
+        val (tables, bases, aliases) = decodersFrom(js)
+        return extractSeedsWithTables(js, tables, bases, aliases)
+    }
+
+    private fun extractSeedsWithTables(
+        js: String,
+        tables: Map<String, List<String>>,
+        bases: Map<String, Base>,
+        aliases: Map<String, Alias>,
+        forcedRotation: Int? = null,
+    ): List<String>? {
         for (match in SEED_ARRAY_REGEX.findAll(js)) {
             val calls = CALL_REGEX.findAll(match.groupValues[1]).map(MatchResult::value).toList()
             if (calls.size != MkissaCrypto.SEED_COUNT * 2) continue
@@ -42,6 +149,11 @@ object MkissaBundle {
                 ?.let { aliases[it.groupValues[1]] }
                 ?.let { tables[bases[it.base]?.table] }
                 ?: continue
+
+            if (forcedRotation != null) {
+                seedsAt(calls, forcedRotation, tables, bases, aliases)?.let { return it }
+                continue
+            }
 
             val matches = table.indices.mapNotNull { rotation ->
                 seedsAt(calls, rotation, tables, bases, aliases)
@@ -128,7 +240,13 @@ object MkissaBundle {
         return null
     }
 
-    /** Folds the `2935+-1459*2` arithmetic every integer is hidden behind; signs stack. */
+    /**
+     * Folds the `2935+-1459*2` arithmetic every integer is hidden behind; signs stack.
+     *
+     * The obfuscator also emits negative factors (`2461*-4`). The old term scan split those
+     * mid-product and read the `-4` as a separate addition, which zeroed every decoder offset and
+     * made the seed rotation unresolvable.
+     */
     private fun fold(expression: String): Int {
         var total = 0
         for (term in TERM_REGEX.findAll(expression.replace(" ", "")).map(MatchResult::value)) {
@@ -138,14 +256,35 @@ object MkissaBundle {
                 if (body.startsWith('-')) sign = -sign
                 body = body.substring(1)
             }
-            var value = 1
-            for (factor in body.split('*')) value *= factor.toIntOrNull() ?: return 0
-            total += sign * value
+
+            // The term's sign folds into the first factor so Int.MIN_VALUE survives parsing.
+            var value = parseFactor(sign, body.substringBefore('*')) ?: return 0
+            val rest = body.substringAfter('*', "")
+            if (rest.isNotEmpty()) {
+                for (factor in rest.split('*')) value *= parseFactor(1, factor) ?: return 0
+            }
+            total += value
         }
         return total
     }
 
+    /** Signs stack before the digits, so parity decides the result ("2*--4"). */
+    private fun parseFactor(sign: Int, factor: String): Int? {
+        var negative = sign < 0
+        var digits = factor
+        while (digits.startsWith('+') || digits.startsWith('-')) {
+            if (digits.startsWith('-')) negative = !negative
+            digits = digits.substring(1)
+        }
+        val magnitude = digits.toLongOrNull() ?: return null
+        val signed = if (negative) -magnitude else magnitude
+        return if (signed in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) signed.toInt() else null
+    }
+
     private val BUILD_ID_REGEX = Regex("""!==\s*["']string["']\s*\?\s*["'](\d+)["']\s*:\s*["']["']""")
+
+    // A decoded buildId is only ever digits; the length bound keeps table noise out.
+    private val BUILD_ID_DIGITS_REGEX = Regex("""\d{2,10}""")
 
     // The obfuscator names functions with `$` too (`$l`, `Cr`), which `\w` excludes. The `${'$'}`
     // interpolation yields the literal dollar sign without starting a template.
@@ -161,10 +300,19 @@ object MkissaBundle {
     private val CALL_PATTERN = """($IDENT)\(\s*(-?\d+)\s*(?:,\s*(-?\d+)\s*)?\)"""
     private val CALL_REGEX = Regex(CALL_PATTERN)
 
+    // `function F_(e=Mm)`: the mask builder defaults its first parameter to the decoded buildId.
+    private val DEFAULT_PARAM_REGEX = Regex("""function\s+($IDENT)\s*\(\s*$IDENT\s*=\s*($IDENT)\s*[,)]""")
+
+    private val ASSIGNED_CALL_REGEX = Regex("""\b$IDENT\s*=\s*($CALL_PATTERN)""")
+
+    // How far above the seed array to look for the buildId assignment.
+    private const val SEED_WINDOW = 2000
+
     private val SEED_ARRAY_REGEX = Regex("""=\[((?:$CALL_PATTERN\+$CALL_PATTERN,){3}$CALL_PATTERN\+$CALL_PATTERN)]""")
 
     private val SEED_REGEX = Regex("""[A-Za-z0-9+/]{11}=""")
 
-    // Leading signs matched greedily; `fold` counts them.
-    private val TERM_REGEX = Regex("""[-+]*[^-+]+""")
+    // Leading signs matched greedily; `fold` counts them. A product stays inside one term
+    // (`2461*-4`) instead of splitting at every sign, so negative factors keep their place.
+    private val TERM_REGEX = Regex("""[-+]*\d+(?:\*[-+]*\d+)*""")
 }

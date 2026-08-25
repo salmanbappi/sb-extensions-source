@@ -123,31 +123,40 @@ class MkissaKeyManager(
     private class BootstrapResult(
         val bootstrap: AaCryptoBootstrap?,
         val stale: Boolean,
+        // Which of the candidate masks the server accepted; the key derives from that one only.
+        val mask: ByteArray? = null,
     )
 
     /** Re-scraping starts at the Cloudflare-gated HTML, so cheaper causes are ruled out first. */
     private suspend fun handshake(): Handshake? {
         val cached = cachedBuild()
-        val mask = cached?.let { MkissaCrypto.deriveMask(it.buildId, it.seeds) }
+        val cachedMasks = cached?.let { MkissaCrypto.maskCandidates(it.buildId, it.seeds) }.orEmpty()
 
-        if (cached != null && mask != null) {
-            val first = bootstrap(cached.buildId, mask, MkissaCrypto.epochCandidates())
-            first.bootstrap?.let { return Handshake(cached, mask, it) }
+        if (cached != null && cachedMasks.isNotEmpty()) {
+            val first = bootstrap(cached.buildId, cachedMasks, MkissaCrypto.epochCandidates())
+            first.bootstrap?.let { return Handshake(cached, first.mask!!, it) }
             if (!first.stale) return null
 
             // A clock off by more than the grace window looks exactly like a stale build.
-            bootstrap(cached.buildId, mask, MkissaCrypto.skewedEpochCandidates()).bootstrap
-                ?.let { return Handshake(cached, mask, it) }
+            val skewed = bootstrap(cached.buildId, cachedMasks, MkissaCrypto.skewedEpochCandidates())
+            skewed.bootstrap?.let { return Handshake(cached, skewed.mask!!, it) }
         }
 
         val fresh = resolveBuild() ?: return null
-        val freshMask = MkissaCrypto.deriveMask(fresh.buildId, fresh.seeds) ?: return null
-        return bootstrap(fresh.buildId, freshMask, MkissaCrypto.epochCandidates())
-            .bootstrap?.let { Handshake(fresh, freshMask, it) }
+        val freshMasks = MkissaCrypto.maskCandidates(fresh.buildId, fresh.seeds)
+        if (freshMasks.isEmpty()) return null
+
+        val result = bootstrap(fresh.buildId, freshMasks, MkissaCrypto.epochCandidates())
+        return result.bootstrap?.let { Handshake(fresh, result.mask!!, it) }
     }
 
-    /** `GET /client-crypto/v1/bootstrap?buildId=&k=`, gated by an HMAC of the client mask. */
-    private suspend fun bootstrap(buildId: String, mask: ByteArray, epochs: List<Long>): BootstrapResult {
+    /**
+     * `GET /client-crypto/v1/bootstrap?buildId=&k=`, gated by an HMAC of the client mask.
+     *
+     * Both the mask salts and the token layout rotate on a site rebuild and neither is visible in
+     * the response, so every (mask, epoch, token) combination is tried until one is minted `partB`.
+     */
+    private suspend fun bootstrap(buildId: String, masks: List<ByteArray>, epochs: List<Long>): BootstrapResult {
         val host = siteUrl.toHttpUrl().host
         val url = "${apiUrl.trimEnd('/')}$BOOTSTRAP_PATH".toHttpUrl().newBuilder()
             .addQueryParameter("buildId", buildId)
@@ -155,30 +164,36 @@ class MkissaKeyManager(
             .build()
 
         var sawStale = false
-        for (epoch in epochs) {
-            val requestHeaders = headers.newBuilder()
-                .set("x-build-id", buildId)
-                .set("x-aa-boot", MkissaCrypto.bootToken(mask, buildId, epoch, KEY_GROUP, host, ANIME_LANE))
-                .set("Origin", siteUrl)
-                .set("Referer", "$siteUrl/")
-                .build()
+        for (mask in masks) {
+            for (epoch in epochs) {
+                val tokens = MkissaCrypto.bootTokenCandidates(mask, buildId, epoch, KEY_GROUP, host, ANIME_LANE)
+                for (token in tokens) {
+                    val requestHeaders = headers.newBuilder()
+                        .set("x-build-id", buildId)
+                        .set("x-aa-boot", token)
+                        .set("Origin", siteUrl)
+                        .set("Referer", "$siteUrl/")
+                        .build()
 
-            val response = runCatching { client.newCall(GET(url, requestHeaders)).await() }.getOrNull()
-                ?: return BootstrapResult(null, stale = false)
+                    val response = runCatching { client.newCall(GET(url, requestHeaders)).await() }.getOrNull()
+                        ?: return BootstrapResult(null, stale = false)
 
-            if (!response.isSuccessful) {
-                response.close()
-                if (response.code in STALE_CODES) sawStale = true
-                continue
+                    if (!response.isSuccessful) {
+                        response.close()
+                        // A rejected token is indistinguishable from a stale build, so keep going.
+                        if (response.code in STALE_CODES) sawStale = true
+                        continue
+                    }
+
+                    val bootstrap = runCatching { response.parseAs<AaCryptoBootstrap>() }.getOrNull()
+                        ?: continue
+
+                    // A partB from another lane would silently derive the wrong key.
+                    if (bootstrap.k != null && bootstrap.k != ANIME_LANE) continue
+
+                    return BootstrapResult(bootstrap, stale = false, mask = mask)
+                }
             }
-
-            val bootstrap = runCatching { response.parseAs<AaCryptoBootstrap>() }.getOrNull()
-                ?: return BootstrapResult(null, stale = false)
-
-            // A partB from another lane would silently derive the wrong key.
-            if (bootstrap.k != null && bootstrap.k != ANIME_LANE) continue
-
-            return BootstrapResult(bootstrap, stale = false)
         }
         return BootstrapResult(null, stale = sawStale)
     }

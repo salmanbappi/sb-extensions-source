@@ -41,29 +41,51 @@ object MkissaCrypto {
         .digest(value.toByteArray(Charsets.UTF_8))
         .toHex()
 
-    /** `seeds XOR f(buildId) XOR f(position)`; both inputs change on every site rebuild. */
-    fun deriveMask(buildId: String, seeds: List<String>): ByteArray? {
-        if (buildId.isEmpty() || seeds.size != SEED_COUNT) return null
+    private data class MaskParams(val saltMul: Int, val saltAdd: Int, val fragMul: Int, val fragAdd: Int)
 
-        val stream = ByteArray(KEY_SIZE) { i ->
-            (buildId[i % buildId.length].code xor ((i * 17 + 31) and 0xFF)).toByte()
-        }
+    private val MASK_PARAMS = listOf(
+        MaskParams(250, 54, 16, 217),
+        MaskParams(211, 222, 200, 176),
+        MaskParams(17, 31, 41, 7),
+    )
 
-        val mask = ByteArray(KEY_SIZE)
-        seeds.forEachIndexed { index, seed ->
-            val bytes = runCatching { Base64.decode(seed, Base64.DEFAULT) }.getOrNull() ?: return null
-            if (bytes.size < SEED_SIZE) return null
+    /**
+     * `seeds XOR f(buildId) XOR f(position)`; both inputs change on every site rebuild.
+     *
+     * The salts themselves rotate too (`Fd={saltMul:250,saltAdd:54,...}` in the crypto chunk), so
+     * every known set is returned newest-first and the caller keeps whichever one the bootstrap
+     * endpoint accepts. Older sets stay in the list for the grace window after a rotation.
+     */
+    fun maskCandidates(buildId: String, seeds: List<String>): List<ByteArray> {
+        if (buildId.isEmpty() || seeds.size != SEED_COUNT) return emptyList()
 
-            val base = index * SEED_SIZE
-            for (offset in 0 until SEED_SIZE) {
-                mask[base + offset] = (
-                    (bytes[offset].toInt() and 0xFF) xor
-                        (stream[base + offset].toInt() and 0xFF) xor
-                        ((index * 41 + offset * 7) and 0xFF)
-                    ).toByte()
+        val candidates = mutableListOf<ByteArray>()
+        for (params in MASK_PARAMS) {
+            val stream = ByteArray(KEY_SIZE) { i ->
+                (buildId[i % buildId.length].code xor ((i * params.saltMul + params.saltAdd) and 0xFF)).toByte()
             }
+
+            val mask = ByteArray(KEY_SIZE)
+            var ok = true
+            seeds.forEachIndexed { index, seed ->
+                val bytes = runCatching { Base64.decode(seed, Base64.DEFAULT) }.getOrNull()
+                if (bytes == null || bytes.size < SEED_SIZE) {
+                    ok = false
+                    return@forEachIndexed
+                }
+
+                val base = index * SEED_SIZE
+                for (offset in 0 until SEED_SIZE) {
+                    mask[base + offset] = (
+                        (bytes[offset].toInt() and 0xFF) xor
+                            (stream[base + offset].toInt() and 0xFF) xor
+                            ((index * params.fragMul + offset * params.fragAdd) and 0xFF)
+                        ).toByte()
+                }
+            }
+            if (ok && mask.any { it != 0.toByte() }) candidates.add(mask)
         }
-        return mask
+        return candidates
     }
 
     fun deriveKey(mask: ByteArray, partB: ByteArray): SecretKeySpec {
@@ -73,8 +95,41 @@ object MkissaCrypto {
         return SecretKeySpec(keyBytes, KEY_TYPE)
     }
 
-    /** `x-aa-boot`, checked by the bootstrap endpoint before it hands out `partB`. */
-    fun bootToken(
+    /**
+     * `x-aa-boot`, checked by the bootstrap endpoint before it hands out `partB`.
+     *
+     * Current scheme: `Fd={bootPrefix:"4X2PsZc2r:",join:".",parts:[group,host,lane,buildId,epoch]}`.
+     * `omitEmptyLane` is false, so the lane is always joined in even when empty.
+     */
+    private fun bootTokenCurrent(
+        mask: ByteArray,
+        buildId: String,
+        epoch: Long,
+        keyGroup: String,
+        refererHost: String,
+        lane: String,
+    ): String {
+        val inner = hmac(mask, "4X2PsZc2r:$buildId")
+        val message = listOf(keyGroup, refererHost, lane, buildId, epoch.toString()).joinToString(".")
+        return hmac(inner, message).toHex()
+    }
+
+    /** Previous scheme, kept for the grace window after a rebuild. */
+    private fun bootTokenPrevious(
+        mask: ByteArray,
+        buildId: String,
+        epoch: Long,
+        keyGroup: String,
+        refererHost: String,
+        lane: String,
+    ): String {
+        val inner = hmac(mask, "kNk1YgwkSI:$buildId")
+        val message = listOf(epoch.toString(), keyGroup, refererHost, buildId, lane).joinToString(".")
+        return hmac(inner, message).toHex()
+    }
+
+    /** Oldest known scheme: colon-joined and the lane dropped when empty. */
+    private fun bootTokenLegacy(
         mask: ByteArray,
         buildId: String,
         epoch: Long,
@@ -90,6 +145,20 @@ object MkissaCrypto {
         }
         return hmac(inner, message).toHex()
     }
+
+    /** Newest first: the bootstrap endpoint rejects every token but the one it currently mints. */
+    fun bootTokenCandidates(
+        mask: ByteArray,
+        buildId: String,
+        epoch: Long,
+        keyGroup: String,
+        refererHost: String,
+        lane: String,
+    ): List<String> = listOf(
+        bootTokenCurrent(mask, buildId, epoch, keyGroup, refererHost, lane),
+        bootTokenPrevious(mask, buildId, epoch, keyGroup, refererHost, lane),
+        bootTokenLegacy(mask, buildId, epoch, keyGroup, refererHost, lane),
+    )
 
     /** Oldest first: during the grace window the server still mints `partB` for the previous. */
     fun epochCandidates(now: Long = System.currentTimeMillis()): List<Long> {
