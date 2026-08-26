@@ -17,10 +17,17 @@ import java.net.URLEncoder
 class VideasyExtractor(
     private val client: OkHttpClient,
     private val playlistUtils: PlaylistUtils,
+    private val localProxy: LocalProxy = LocalProxy(client),
 ) {
     companion object {
         private const val API_BASE = "https://api.speedracelight.com"
         private const val PLAYER_ORIGIN = "https://player.videasy.to"
+        private val F = intArrayOf(
+            1116352408, 1899447441, 3049323471L.toInt(), 3921009573L.toInt(),
+            961987163, 1508970993, 2453635748L.toInt(), 2870763221L.toInt(),
+            3624381080L.toInt(), 310598401, 607225278, 1426881987,
+            1925078388, 2162078206L.toInt(), 2614888103L.toInt(), 3248222580L.toInt(),
+        )
         private val H = byteArrayOf(109, 118, 109, 49) // "mvm1"
     }
 
@@ -190,9 +197,10 @@ class VideasyExtractor(
                 val quality = srcObj["quality"]?.jsonPrimitive?.content ?: "Auto"
 
                 val videoTitle = "$prefix$quality"
+                val playUrl = localProxy.getProxyUrl(srcUrl, headers)
                 videos.add(
                     Video(
-                        videoUrl = srcUrl,
+                        videoUrl = playUrl,
                         videoTitle = videoTitle,
                         headers = headers,
                         subtitleTracks = subtitles,
@@ -203,18 +211,15 @@ class VideasyExtractor(
             if (videos.isEmpty()) {
                 val playlistUrl = jsonObj["playlist"]?.jsonPrimitive?.content
                 if (!playlistUrl.isNullOrBlank()) {
-                    val hlsVideos = runCatching {
-                        playlistUtils.extractFromHls(
-                            playlistUrl = playlistUrl,
-                            referer = "$PLAYER_ORIGIN/",
-                            masterHeaders = headers,
-                            videoHeaders = headers,
-                            videoNameGen = { q -> "$prefix$q" },
-                            subtitleList = subtitles,
-                        )
-                    }.getOrDefault(emptyList())
-
-                    videos.addAll(hlsVideos)
+                    val playUrl = localProxy.getProxyUrl(playlistUrl, headers)
+                    videos.add(
+                        Video(
+                            videoUrl = playUrl,
+                            videoTitle = "${prefix}Auto",
+                            headers = headers,
+                            subtitleTracks = subtitles,
+                        ),
+                    )
                 }
             }
 
