@@ -8,6 +8,7 @@ import okhttp3.Request
 import okhttp3.Response
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -22,7 +23,7 @@ class LocalProxy(private val client: OkHttpClient) {
 
     init {
         try {
-            serverSocket = ServerSocket(0)
+            serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
             port = serverSocket!!.localPort
             executor.execute {
                 while (serverSocket?.isClosed == false) {
@@ -142,7 +143,8 @@ class LocalProxy(private val client: OkHttpClient) {
             modifiedContentBytes = modifiedContent.toByteArray(Charsets.UTF_8)
         }
 
-        out.write("HTTP/1.1 ${response.code} ${response.message}\r\n".toByteArray(Charsets.UTF_8))
+        val msg = response.message.ifBlank { if (response.code == 200) "OK" else "Error" }
+        out.write("HTTP/1.1 ${response.code} $msg\r\n".toByteArray(Charsets.UTF_8))
 
         val headers = response.headers
         for (i in 0 until headers.size) {
@@ -151,7 +153,7 @@ class LocalProxy(private val client: OkHttpClient) {
             if (name.equals("Connection", ignoreCase = true) ||
                 name.equals("Transfer-Encoding", ignoreCase = true) ||
                 name.equals("Content-Type", ignoreCase = true) ||
-                (name.equals("Content-Length", ignoreCase = true) && isM3u8)
+                name.equals("Content-Length", ignoreCase = true)
             ) {
                 continue
             }
@@ -164,7 +166,11 @@ class LocalProxy(private val client: OkHttpClient) {
             out.write("Connection: close\r\n\r\n".toByteArray(Charsets.UTF_8))
             out.write(modifiedContentBytes)
         } else {
-            val contentType = response.header("Content-Type") ?: "video/mp2t"
+            val cl = response.body.contentLength()
+            if (cl > 0) {
+                out.write("Content-Length: $cl\r\n".toByteArray(Charsets.UTF_8))
+            }
+            val contentType = response.header("Content-Type") ?: "video/mp4"
             val mime = if (contentType.contains("html", true)) "video/mp2t" else contentType
             out.write("Content-Type: $mime\r\n".toByteArray(Charsets.UTF_8))
             out.write("Connection: close\r\n\r\n".toByteArray(Charsets.UTF_8))
