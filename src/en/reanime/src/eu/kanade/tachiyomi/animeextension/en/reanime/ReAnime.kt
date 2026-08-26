@@ -696,6 +696,8 @@ class ReAnime : Source() {
                 xorMask = loadSavedXorMask() ?: hardcodedFallback
             }
 
+            val server = getProxyServer(headers, xorMask)
+
             val dataMatch = EMBED_DATA_REGEX.find(html) ?: return emptyList()
 
             val rawJson = json5ToJson(dataMatch.groupValues[1])
@@ -710,7 +712,8 @@ class ReAnime : Source() {
             val subtitleTracks = embedDataDto.subtitles
                 ?.mapNotNull { sub ->
                     val subUrl = sub.url ?: return@mapNotNull null
-                    Track(subUrl, sub.language ?: "Unknown")
+                    val proxiedSubUrl = server.createSubtitleUrl(subUrl)
+                    Track(proxiedSubUrl, sub.language ?: "Unknown")
                 } ?: emptyList()
 
             val skipTimes = embedDataDto.toSkipTimes()
@@ -772,7 +775,6 @@ class ReAnime : Source() {
                 ?: return emptyList()
 
             // Step 5: Build local proxy URL
-            val server = getProxyServer(headers, xorMask)
             val localManifestUrl = server.createProxyUrl(streamUrl, wPayload)
 
             // Cache skip times for this episode (keyed by the local proxy URL)
