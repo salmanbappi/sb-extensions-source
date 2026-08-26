@@ -44,6 +44,17 @@ class FlixProxyServer(
         return "http://127.0.0.1:$listeningPort/proxy?$params"
     }
 
+    fun createSubtitleUrl(originalUrl: String): String {
+        val ext = when {
+            originalUrl.contains(".ass", ignoreCase = true) -> ".ass"
+            originalUrl.contains(".vtt", ignoreCase = true) -> ".vtt"
+            originalUrl.contains(".srt", ignoreCase = true) -> ".srt"
+            else -> ""
+        }
+        val encodedUrl = URLEncoder.encode(originalUrl, "UTF-8")
+        return "http://127.0.0.1:$listeningPort/sub$ext?url=$encodedUrl"
+    }
+
     fun wrapInDecApi(originalUrl: String, wPayload: String): String {
         if (originalUrl.contains(encDecUrl)) return originalUrl
         val encodedUrl = URLEncoder.encode(originalUrl, "UTF-8").replace("+", "%20")
@@ -76,11 +87,17 @@ class FlixProxyServer(
     }
 
     override fun serve(session: IHTTPSession): Response {
+        val uri = session.uri
         val params = session.parameters
         val url = params["url"]?.firstOrNull() ?: return newFixedLengthResponse(Status.BAD_REQUEST, "text/plain", "Missing url")
         val wPayload = params["w_payload"]?.firstOrNull() ?: ""
 
         return try {
+            val isSubtitle = uri.startsWith("/sub") || url.contains(".ass", ignoreCase = true) || url.contains(".srt", ignoreCase = true) || url.contains(".vtt", ignoreCase = true)
+            if (isSubtitle) {
+                return serveSubtitle(url)
+            }
+
             val isManifest = url.contains(".m3u8")
             val finalUrl = if (isManifest) wrapInDecApi(url, wPayload) else url
 
@@ -114,6 +131,46 @@ class FlixProxyServer(
                 Status.INTERNAL_ERROR
             }
             newFixedLengthResponse(status, "text/plain", e.toString())
+        }
+    }
+
+    private fun serveSubtitle(url: String): Response {
+        val proxyHeaders = headers.newBuilder()
+            .set("Accept", "*/*")
+            .removeAll("Origin").removeAll("Referer")
+            .removeAll("Sec-Fetch-Dest").removeAll("Sec-Fetch-Mode")
+            .removeAll("Sec-Fetch-Site").removeAll("Accept-Encoding")
+            .add("Origin", flixCloudUrl)
+            .add("Referer", "$flixCloudUrl/")
+            .build()
+
+        val request = Request.Builder().url(url).headers(proxyHeaders).build()
+        val response = proxyClient.newCall(request).execute()
+
+        if (!response.isSuccessful) {
+            val code = response.code
+            response.close()
+            return newFixedLengthResponse(
+                Status.lookup(code) ?: Status.INTERNAL_ERROR,
+                "text/plain",
+                "Subtitle CDN Error: $code",
+            )
+        }
+
+        val body = response.body
+        val contentType = when {
+            url.contains(".ass", ignoreCase = true) -> "text/x-ssa"
+            url.contains(".vtt", ignoreCase = true) -> "text/vtt"
+            url.contains(".srt", ignoreCase = true) -> "application/x-subrip"
+            else -> response.header("Content-Type") ?: "text/plain"
+        }
+        val length = body.contentLength()
+        val inputStream = body.byteStream()
+
+        return if (length > 0) {
+            newFixedLengthResponse(Status.OK, contentType, inputStream, length)
+        } else {
+            newChunkedResponse(Status.OK, contentType, inputStream)
         }
     }
 
@@ -251,7 +308,7 @@ class FlixProxyServer(
     companion object {
         const val flixCloudUrl = "https://flixcloud.cc"
         const val encDecUrl = "https://enc-dec.app"
-        const val decApi = "$encDecUrl/api"
+        val decApi = "$encDecUrl/api"
         private val URI_REGEX = Regex("URI=\"(.*?)\"")
         private val BANDWIDTH_REGEX = Regex("""BANDWIDTH=(\d+)""")
         private val AVERAGE_BANDWIDTH_REGEX = Regex("""AVERAGE-BANDWIDTH=(\d+)""")

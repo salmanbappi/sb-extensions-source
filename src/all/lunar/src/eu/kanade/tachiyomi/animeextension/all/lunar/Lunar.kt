@@ -810,10 +810,13 @@ class Lunar : Source() {
                 json.decodeFromString<FlixcloudEmbedDataDto>(rawJson)
             }.getOrDefault(FlixcloudEmbedDataDto())
 
+            val server = getFlixProxyServer(headers, xorMask!!)
+
             val subtitleTracks = embedDataDto.subtitles
                 ?.mapNotNull { sub ->
                     val subUrl = sub.url ?: return@mapNotNull null
-                    Track(subUrl, sub.language ?: "Unknown")
+                    val proxiedSubUrl = server.createSubtitleUrl(subUrl)
+                    Track(proxiedSubUrl, sub.language ?: "Unknown")
                 } ?: emptyList()
 
             val embedData = runCatching {
@@ -861,7 +864,6 @@ class Lunar : Source() {
             val streamUrl = streamDto.result.stream
             val wPayload = streamDto.result.context["w_payload"]?.jsonPrimitive?.content ?: return emptyList()
 
-            val server = getFlixProxyServer(headers, xorMask!!)
             val localManifestUrl = server.createProxyUrl(streamUrl, wPayload)
 
             val videoList = mutableListOf<Video>()
