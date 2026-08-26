@@ -434,7 +434,7 @@ class Cinejoy : Source() {
         return capturedUrl
     }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(quality, ignoreCase = true) }
@@ -459,26 +459,28 @@ class Cinejoy : Source() {
         screen.addListPreference(
             key = PREF_SERVER_KEY,
             title = "Preferred Server",
-            defaultValue = PREF_SERVER_DEFAULT,
-            entries = serverList.map { "$it Server" }.toTypedArray(),
-            entryValues = serverList.toTypedArray(),
+            summary = "%s",
+            entries = serverList.map { "$it Server" },
+            entryValues = serverList,
+            default = PREF_SERVER_DEFAULT,
         )
 
         screen.addSetPreference(
             key = PREF_EXCLUDE_SERVERS_KEY,
             title = "Exclude Servers",
             summary = "Select servers to exclude from hoster list",
-            defaultValue = emptySet(),
-            entries = serverList.toTypedArray(),
-            entryValues = serverList.toTypedArray(),
+            entries = serverList,
+            entryValues = serverList,
+            default = emptySet(),
         )
 
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
             title = "Preferred Quality",
-            defaultValue = PREF_QUALITY_DEFAULT,
-            entries = arrayOf("2160p (4K)", "1080p (FHD)", "720p (HD)", "360p (SD)"),
-            entryValues = arrayOf("2160", "1080", "720", "360"),
+            summary = "%s",
+            entries = listOf("2160p (4K)", "1080p (FHD)", "720p (HD)", "360p (SD)"),
+            entryValues = listOf("2160", "1080", "720", "360"),
+            default = PREF_QUALITY_DEFAULT,
         )
     }
 
