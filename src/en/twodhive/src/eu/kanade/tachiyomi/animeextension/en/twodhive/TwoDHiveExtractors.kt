@@ -35,7 +35,7 @@ class TwoDHiveExtractors(
             client.newCall(GET(embedUrl, embedHeaders)).execute().body.string()
         }.getOrNull() ?: return emptyList()
 
-        val cfgJsonStr = Regex("var\\s+CFG\\s*=\\s*(\\{.*?\\});").find(embedHtml)?.groupValues?.get(1)
+        val cfgJsonStr = Regex("""var\s+CFG\s*=\s*(\{.*?\});""").find(embedHtml)?.groupValues?.get(1)
             ?: return emptyList()
 
         val cfg = runCatching { cfgJsonStr.parseAs<BabaConfigDto>() }.getOrNull()
@@ -44,8 +44,8 @@ class TwoDHiveExtractors(
         val pk = cfg.pk ?: return emptyList()
         val sid = cfg.sid ?: return emptyList()
 
-        val encryptedPayload = TwoDHiveCrypto.encryptAesGcm(pk, "{\"ts\":${System.currentTimeMillis()}}")
-        val postBody = "{\"s\":\"$sid\",\"d\":\"$encryptedPayload\"}"
+        val encryptedPayload = TwoDHiveCrypto.encryptAesGcm(pk, """{"ts":${System.currentTimeMillis()}}""")
+        val postBody = """{"s":"$sid","d":"$encryptedPayload"}"""
             .toRequestBody("application/json".toMediaType())
 
         val resolveHeaders = headers.newBuilder()
@@ -84,7 +84,7 @@ class TwoDHiveExtractors(
                 payload.u?.let { embedTarget ->
                     if (embedTarget.contains("ok.ru")) {
                         videos.addAll(
-                            okruExtractor.videosFromUrl(embedTarget, prefix = "BabaStream (OK.ru) - ", suffix = " ($typeTag)"),
+                            okruExtractor.videosFromUrl(embedTarget, prefix = "BabaStream (OK.ru) ($typeTag) - "),
                         )
                     }
                 }
@@ -100,7 +100,7 @@ class TwoDHiveExtractors(
             if (vidaraPayload.t == "vidara" && !vidaraPayload.u.isNullOrBlank()) {
                 val vUrl = vidaraPayload.u!!
                 if (vUrl.contains("ok.ru")) {
-                    videos.addAll(okruExtractor.videosFromUrl(vUrl, prefix = "Vidara (OK.ru) - ", suffix = " ($typeTag)"))
+                    videos.addAll(okruExtractor.videosFromUrl(vUrl, prefix = "Vidara (OK.ru) ($typeTag) - "))
                 }
             }
         }
@@ -119,8 +119,8 @@ class TwoDHiveExtractors(
             client.newCall(GET(streamPageUrl, pageHeaders)).execute().body.string()
         }.getOrNull() ?: return emptyList()
 
-        val streamId = Regex("<title>File (\\d+)").find(pageHtml)?.groupValues?.get(1)
-            ?: Regex("data-id=\"(\\d+)\"").find(pageHtml)?.groupValues?.get(1)
+        val streamId = Regex("""<title>File (\d+)""").find(pageHtml)?.groupValues?.get(1)
+            ?: Regex("""data-id="(\d+)"""").find(pageHtml)?.groupValues?.get(1)
             ?: return emptyList()
 
         val sourcesUrl = "https://megaplay.buzz/stream/getSources?id=$streamId&id=$streamId"

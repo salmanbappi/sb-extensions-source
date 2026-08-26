@@ -7,6 +7,7 @@ lint, migrate domains, bump version, and manage individual and multi-source exte
 
 import argparse
 import base64
+import difflib
 import importlib.util
 import json
 import os
@@ -14,10 +15,11 @@ import re
 import shutil
 import subprocess
 import sys
+import traceback
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 # Ensure repo root and scripts directory are in sys.path for cross-module imports
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +27,36 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+# Set CLI_DEBUG=1 to re-raise unexpected exceptions with a full traceback
+# instead of collapsing them into a one-line summary.
+DEBUG = os.environ.get("CLI_DEBUG", "").strip().lower() not in ("", "0", "false", "no")
+
+# Semantic version for the CLI tool itself, surfaced via `--version`.
+CLI_VERSION = "1.1.0"
+
+# Commands that read stdin or stream indefinitely (interactive prompts, REPLs,
+# live FFmpeg playback, log tails). These must never be killed by a wall-clock
+# timeout — see SUBPROCESS_TIMEOUT usage in main().
+INTERACTIVE_COMMANDS = {
+    "create", "test-scraper", "sandbox", "probe-stream",
+    "test-extractor", "test-pipeline", "canary-monitor",
+}
+SUBPROCESS_TIMEOUT = 300
+
+def _atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Safely write text to a file using an atomic replace to prevent partial corruption."""
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp_{os.getpid()}")
+    try:
+        tmp_path.write_text(text, encoding=encoding)
+        tmp_path.replace(path)
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
 
 _EXTENSION_TARGET_CACHE: dict = {}
 
@@ -40,58 +72,112 @@ def _iter_extension_gradles(src_dir: Path):
                     if bg.is_file():
                         yield lang_dir.name, ext_dir.name, bg
 
-def resolve_extension_target(repo_root: Path, target: str = None, lang: str = None, name: str = None) -> tuple[str, str]:
-    """Helper to resolve (lang, name) with in-memory caching."""
-    cache_key = f"{target}:{lang}:{name}"
+def resolve_extension_target(repo_root: Path, target: str = None, lang: str = None, name: str = None) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve a CLI target into (lang, name).
+
+    Accepts '<lang>/<module>' in any of target/lang/name, or a bare module name
+    which is searched across src/*/. An explicitly supplied --lang is always
+    authoritative and is never silently replaced by a same-named module in a
+    different language.
+
+    Returns (None, None) or (None, name) when the target cannot be resolved.
+    Callers MUST pass the result through require_module() before building paths.
+    """
+    cache_key = (target, lang, name)
     if cache_key in _EXTENSION_TARGET_CACHE:
         return _EXTENSION_TARGET_CACHE[cache_key]
 
+    def _cache(res: Tuple[Optional[str], Optional[str]]) -> Tuple[Optional[str], Optional[str]]:
+        _EXTENSION_TARGET_CACHE[cache_key] = res
+        return res
+
     src_dir = repo_root / "src"
 
-    if target and "/" in target:
-        parts = target.split("/", 1)
-        res = (parts[0], parts[1])
-        _EXTENSION_TARGET_CACHE[cache_key] = res
-        return res
-
-    if lang and "/" in lang:
-        parts = lang.split("/", 1)
-        res = (parts[0], parts[1])
-        _EXTENSION_TARGET_CACHE[cache_key] = res
-        return res
-
-    if name and "/" in name:
-        parts = name.split("/", 1)
-        res = (parts[0], parts[1])
-        _EXTENSION_TARGET_CACHE[cache_key] = res
-        return res
+    for candidate in (target, lang, name):
+        if candidate and "/" in candidate:
+            parts = candidate.split("/", 1)
+            return _cache((parts[0], parts[1]))
 
     resolved_name = name or target
     resolved_lang = lang
 
+    # An explicit --lang wins even when the directory is missing: the caller
+    # reports the exact missing path instead of us guessing a different module.
+    if resolved_name and resolved_lang:
+        return _cache((resolved_lang, resolved_name))
+
     if resolved_name:
-        if resolved_lang and (src_dir / resolved_lang / resolved_name).exists():
-            res = (resolved_lang, resolved_name)
-            _EXTENSION_TARGET_CACHE[cache_key] = res
-            return res
         matches = []
-        if src_dir.exists():
+        if src_dir.is_dir():
             for lang_dir in sorted(src_dir.iterdir()):
-                if lang_dir.is_dir() and (lang_dir / resolved_name).exists():
+                if lang_dir.is_dir() and (lang_dir / resolved_name).is_dir():
                     matches.append(lang_dir.name)
         if len(matches) == 1:
-            res = (matches[0], resolved_name)
-            _EXTENSION_TARGET_CACHE[cache_key] = res
-            return res
-        elif len(matches) > 1:
+            return _cache((matches[0], resolved_name))
+        if len(matches) > 1:
             print(f"⚠️ Ambiguous target '{resolved_name}' found in multiple languages: {matches}. Defaulting to '{matches[0]}'. (Specify as '{matches[0]}/{resolved_name}' to avoid ambiguity)")
-            res = (matches[0], resolved_name)
-            _EXTENSION_TARGET_CACHE[cache_key] = res
-            return res
+            return _cache((matches[0], resolved_name))
 
-    res = (resolved_lang, resolved_name)
-    _EXTENSION_TARGET_CACHE[cache_key] = res
-    return res
+    return _cache((resolved_lang, resolved_name))
+
+def require_module(repo_root: Path, lang: Optional[str], name: Optional[str], command: str) -> bool:
+    """Assert that a resolved (lang, name) pair points at a real extension module.
+
+    Every command that takes a target must call this before touching the
+    filesystem — otherwise an unresolved target silently degrades into a
+    repo-wide operation or a vacuously successful no-op.
+    """
+    if not name:
+        print(f"❌ {command}: no target extension module resolved. Specify '<module>' or '<lang>/<module>'.")
+        return False
+    if not lang:
+        print(f"❌ {command}: module '{name}' was not found in any language under src/. Specify it explicitly as '<lang>/{name}'.")
+        return False
+    if not (repo_root / "src" / lang / name).is_dir():
+        print(f"❌ {command}: extension module not found: src/{lang}/{name}")
+        return False
+    return True
+
+def find_v16_model_violations(content: str, joined_content: str = None) -> list:
+    """Single source of truth for Aniyomi-v16 Kotlin model-invariant checks.
+
+    Used by both validate_extensions() (blocking gate) and lint_codebase()
+    (advisory) so the two commands cannot drift apart or double-report the same
+    violation with different wording. Returns human-readable findings; callers
+    attach their own file attribution. Pass *joined_content* (continuation-line-
+    collapsed source) to also catch multi-line Video(...) constructor calls.
+    """
+    scan_text = joined_content if joined_content else content
+    violations = []
+
+    # 'companion {' missing the 'object' keyword
+    if re.search(r'\bcompanion\s*\{', scan_text):
+        violations.append("Syntax error 'companion {' — must be 'companion object {'")
+
+    # getAnimeDetails must mark the model initialized
+    if (
+        "getAnimeDetails" in content
+        and "initialized = true" not in content
+        and "abstract class" not in content
+        and "interface " not in content
+    ):
+        violations.append("Missing 'initialized = true' inside getAnimeDetails — causes continuous detail re-fetch loops in Aniyomi v16")
+
+    # Legacy manga-side base class
+    if "ParsedAnimeHttpSource" in content:
+        violations.append("Legacy class 'ParsedAnimeHttpSource' found (v16 Rule: must extend extensions.utils.Source)")
+
+    # Deprecated Video constructors
+    has_deprecated_named = re.search(r"\bVideo\s*\(\s*url\s*=", content) or re.search(r"\bVideo\s*\([^)]*quality\s*=", content)
+    has_positional_4arg = re.search(r'\bVideo\s*\([^)]*,[^)]*,[^)]*,[^)]*\)', scan_text) and not re.search(r'\bVideo\s*\(\s*videoUrl\s*=', scan_text)
+    if has_deprecated_named or has_positional_4arg:
+        violations.append("Deprecated Video constructor (v16 Rule: use Video(videoUrl=, videoTitle=, headers=))")
+
+    # Deprecated quality property
+    if "it.quality" in content:
+        violations.append("Deprecated Video property 'it.quality' — use it.videoTitle (v16 API)")
+
+    return violations
 
 def fetch_icon(url: str, output_path: Path) -> bool:
     """Fetches high-resolution brand logo or favicon from target URL and converts it to 192x192 PNG launcher icons across all Android res densities."""
@@ -162,9 +248,10 @@ def fetch_icon(url: str, output_path: Path) -> bool:
 
     fav_candidates = high_res_candidates + standard_candidates
 
-    res_dir = output_path.parent if output_path.parent.name == "res" else output_path.parent.parent
-    if not res_dir.exists():
-        res_dir = output_path.parent
+    # output_path is always <ext>/res/drawable/ic_launcher.png — locate the "res"
+    # ancestor by name rather than guessing with parent/parent.parent, which
+    # produced res/drawable/drawable/... on extensions with no res/ dir yet.
+    res_dir = next((p for p in output_path.parents if p.name == "res"), output_path.parent)
 
     destinations = [
         output_path,
@@ -204,6 +291,13 @@ def fetch_icon(url: str, output_path: Path) -> bool:
                 with urllib.request.urlopen(req, timeout=5) as response:
                     content = response.read()
                     if len(content) > 100:
+                        # Reject HTML error pages served with a 200 — otherwise a
+                        # soft-404 gets written out as ic_launcher.png and only
+                        # surfaces later as a `validate` PNG-magic failure.
+                        head = content[:512].lstrip().lower()
+                        if head.startswith(b"<!doctype html") or head.startswith(b"<html"):
+                            print("     (skipped: server returned an HTML page, not an image)")
+                            continue
                         if b"<svg" in content[:200] or ".svg" in fav_url:
                             ext = ".svg"
                         elif ".ico" in fav_url:
@@ -232,7 +326,16 @@ def fetch_icon(url: str, output_path: Path) -> bool:
 
     if conv:
         try:
-            id_cmd = ["identify", "-format", "%w %h", str(temp_file) + ("[0]" if temp_file.suffix == ".ico" else "")]
+            # ImageMagick 7 ships only the `magick` driver — a bare `identify`
+            # raises FileNotFoundError there and aborted the whole conversion
+            # block, silently downgrading to the raw-copy fallback.
+            if Path(conv).name.startswith("magick"):
+                identify_cmd = [conv, "identify"]
+            elif shutil.which("identify"):
+                identify_cmd = [shutil.which("identify")]
+            else:
+                identify_cmd = [conv, "identify"]
+            id_cmd = identify_cmd + ["-format", "%w %h", str(temp_file) + ("[0]" if temp_file.suffix == ".ico" else "")]
             id_res = subprocess.run(id_cmd, capture_output=True, text=True, timeout=5)
             w, h = 0, 0
             if id_res.returncode == 0 and id_res.stdout.strip():
@@ -283,7 +386,7 @@ def fetch_icon(url: str, output_path: Path) -> bool:
                 subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
             if temp_file.exists():
                 temp_file.unlink()
-            print(f"✅ Successfully converted 192x192 launcher icons using ffmpeg.")
+            print("✅ Successfully converted 192x192 launcher icons using ffmpeg.")
             return True
         except Exception:
             pass
@@ -296,18 +399,22 @@ def fetch_icon(url: str, output_path: Path) -> bool:
             dest.write_bytes(raw_bytes)
         if temp_file.exists():
             temp_file.unlink()
-        print(f"✅ Deployed launcher icons to all resource directories.")
+        print("✅ Deployed launcher icons to all resource directories.")
         return True
     except Exception:
         pass
 
+    # Every conversion path failed — emit placeholders and report failure so the
+    # caller's exit code reflects that no real branding was applied. (Previously
+    # this path returned True while the earlier placeholder path returned False.)
     from scripts.create_extension import create_minimal_png
+    print("❌ All icon conversion paths failed — wrote placeholder launcher icons.")
     for dest in destinations:
         dest.parent.mkdir(parents=True, exist_ok=True)
         create_minimal_png(dest, 192, 192)
     if temp_file and temp_file.exists():
         temp_file.unlink()
-    return True
+    return False
 
 def bump_version(repo_root: Path, lang: str, name: str) -> bool:
     """Increments the extVersionCode or overrideVersionCode in build.gradle."""
@@ -324,7 +431,7 @@ def bump_version(repo_root: Path, lang: str, name: str) -> bool:
         old_ver = int(m_ext.group(1))
         new_ver = old_ver + 1
         new_content = re.sub(r"(?m)^((?![ \t]*//).*?)extVersionCode\s*=\s*\d+", lambda mo: mo.group(1) + f"extVersionCode = {new_ver}", content, count=1)
-        gradle_file.write_text(new_content, encoding="utf-8")
+        _atomic_write_text(gradle_file, new_content)
         print(f"🚀 Bumped {name} (src/{lang}/{name}) extVersionCode: {old_ver} -> {new_ver}")
         return True
 
@@ -334,7 +441,7 @@ def bump_version(repo_root: Path, lang: str, name: str) -> bool:
         old_ver = int(m_over.group(1))
         new_ver = old_ver + 1
         new_content = re.sub(r"(?m)^((?![ \t]*//).*?)overrideVersionCode\s*=\s*\d+", lambda mo: mo.group(1) + f"overrideVersionCode = {new_ver}", content, count=1)
-        gradle_file.write_text(new_content, encoding="utf-8")
+        _atomic_write_text(gradle_file, new_content)
         print(f"🚀 Bumped {name} (src/{lang}/{name}) overrideVersionCode: {old_ver} -> {new_ver}")
         return True
 
@@ -351,40 +458,67 @@ def bump_theme(repo_root: Path, theme_name: str, mode: str = "base") -> bool:
         print(f"❌ Theme build.gradle.kts not found at {theme_gradle}")
         return False
 
+    bumped_base = False
+    bumped_variants = 0
+
     if mode in ("base", "all"):
         content = theme_gradle.read_text(encoding="utf-8")
-        m_base = re.search(r"baseVersionCode\s*=\s*(\d+)", content)
+        # Skip commented-out declarations and only rewrite the first real one.
+        m_base = re.search(r"(?m)^(?![ \t]*//).*?baseVersionCode\s*=\s*(\d+)", content)
         if m_base:
             old_v = int(m_base.group(1))
             new_v = old_v + 1
-            new_content = re.sub(r"baseVersionCode\s*=\s*\d+", f"baseVersionCode = {new_v}", content)
-            theme_gradle.write_text(new_content, encoding="utf-8")
+            new_content = re.sub(
+                r"(?m)^((?![ \t]*//).*?)baseVersionCode\s*=\s*\d+",
+                lambda mo: mo.group(1) + f"baseVersionCode = {new_v}",
+                content,
+                count=1,
+            )
+            _atomic_write_text(theme_gradle, new_content)
             print(f"🚀 Bumped theme :lib-multisrc:{theme_clean} baseVersionCode: {old_v} -> {new_v}")
+            bumped_base = True
         else:
             print(f"⚠️ No baseVersionCode found in {theme_gradle}")
 
     if mode in ("variants", "all"):
         src_dir = repo_root / "src"
-        count = 0
         for lang_name, ext_name, g_file in _iter_extension_gradles(src_dir):
             g_txt = g_file.read_text(encoding="utf-8", errors="ignore")
             if re.search(rf"themePkg\s*=\s*['\"]{re.escape(theme_clean)}['\"]", g_txt):
                 bump_version(repo_root, lang_name, ext_name)
-                count += 1
-        print(f"✅ Bumped {count} variant module(s) for theme '{theme_clean}'.")
+                bumped_variants += 1
+        print(f"✅ Bumped {bumped_variants} variant module(s) for theme '{theme_clean}'.")
 
-    return True
+    # Report failure when the requested bump was a no-op, so CI and `&&` chains
+    # do not treat "nothing found to bump" as success.
+    if mode == "base":
+        return bumped_base
+    if mode == "variants":
+        return bumped_variants > 0
+    return bumped_base or bumped_variants > 0
 
 def bump_lib_dependents(repo_root: Path, lib_name: str) -> bool:
     """Cascades version bumps to all extension modules that depend on :lib:<lib_name>."""
     clean_lib = lib_name.replace("lib:", "").replace(":", "").strip()
-    dep_pattern = f':lib:{clean_lib}'
+    if not (repo_root / "lib" / clean_lib).is_dir():
+        available = sorted(d.name for d in (repo_root / "lib").iterdir() if d.is_dir()) if (repo_root / "lib").is_dir() else []
+        near = [c for c in available if clean_lib in c or c in clean_lib]
+        print(f"❌ No such shared library: lib/{clean_lib}")
+        if near:
+            print(f"   Did you mean: {', '.join(near)}")
+        return False
+
+    # Anchor the match so `bump-lib dood` cannot also bump consumers of
+    # `:lib:dood-extractor`, and so commented-out dependencies are ignored.
+    dep_re = re.compile(
+        rf"(?m)^(?![ \t]*//).*implementation\(project\(['\"]:lib:{re.escape(clean_lib)}['\"]\)\)"
+    )
     src_dir = repo_root / "src"
 
     bumped = []
     for lang_name, ext_name, g_file in _iter_extension_gradles(src_dir):
         txt = g_file.read_text(encoding="utf-8", errors="ignore")
-        if dep_pattern in txt:
+        if dep_re.search(txt):
             bump_version(repo_root, lang_name, ext_name)
             bumped.append(f"src/{lang_name}/{ext_name}")
 
@@ -394,19 +528,41 @@ def bump_lib_dependents(repo_root: Path, lib_name: str) -> bool:
         print(f"ℹ️ No extension modules found directly depending on :lib:{clean_lib}.")
     return True
 
-def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachability: bool = True, dry_run: bool = False) -> bool:
+def _normalize_domain(raw: str) -> Optional[str]:
+    """Normalize a --new-domain value into an absolute http(s) origin.
+
+    Returns None when the value cannot be made into a valid URL. A scheme-less
+    value is upgraded to https:// rather than being written into Kotlin as-is,
+    which used to produce a source file that compiles but throws
+    'Expected URL scheme http or https' at runtime.
+    """
+    candidate = (raw or "").strip().rstrip("/")
+    if not candidate:
+        return None
+    if "://" not in candidate:
+        candidate = f"https://{candidate}"
+    parsed = urllib.parse.urlparse(candidate)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    if any(ch.isspace() for ch in candidate):
+        return None
+    return candidate
+
+def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachability: bool = True, dry_run: bool = False, force: bool = False) -> bool:
     """Automates base URL domain migrations, updates preference defaults, bumps version, and checks live connectivity."""
     lang, name = resolve_extension_target(repo_root, target=target)
-    if not lang or not name:
-        print("❌ Could not resolve target extension module.")
+    if not require_module(repo_root, lang, name, "migrate-domain"):
         return False
 
     ext_path = repo_root / "src" / lang / name
-    if not ext_path.exists():
-        print(f"❌ Extension src/{lang}/{name} not found.")
-        return False
 
-    new_domain_clean = new_domain.rstrip("/")
+    new_domain_clean = _normalize_domain(new_domain)
+    if not new_domain_clean:
+        print(f"❌ Invalid --new-domain value: '{new_domain}'. Expected an http(s) origin, e.g. 'https://example.com'.")
+        return False
+    if new_domain_clean != new_domain.strip().rstrip("/"):
+        print(f"ℹ️ Normalized --new-domain to: {new_domain_clean}")
+
     mode_label = "[DRY RUN] " if dry_run else ""
     print(f"🌐 {mode_label}Migrating domain for src/{lang}/{name} to: {new_domain_clean}\n" + "=" * 60)
 
@@ -421,7 +577,13 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
             with urllib.request.urlopen(req, timeout=6) as resp:
                 print(f"  ✓ Reached {new_domain_clean} (HTTP Status: {resp.status})")
         except Exception as e:
-            print(f"  ⚠️ Warning: Live HTTP check encountered: {e}")
+            # Writing an unreachable baseUrl into Kotlin ships a broken
+            # extension, so this is fatal unless explicitly overridden.
+            print(f"  ❌ Could not reach {new_domain_clean}: {e}")
+            if not force:
+                print("     Aborting. Re-run with --force to migrate anyway, or --no-test to skip the check.")
+                return False
+            print("     Continuing anyway (--force).")
 
     # 2. Update Kotlin & Gradle files
     action_verb = "Would update" if dry_run else "Updating"
@@ -438,7 +600,7 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
 
             if txt != new_txt:
                 if not dry_run:
-                    kt_file.write_text(new_txt, encoding="utf-8")
+                    _atomic_write_text(kt_file, new_txt)
                 updated_files += 1
                 verb = "Would update" if dry_run else "Updated"
                 print(f"  ✓ {verb} {kt_file.name}")
@@ -453,7 +615,7 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
         )
         if g_txt != new_g_txt:
             if not dry_run:
-                gradle_file.write_text(new_g_txt, encoding="utf-8")
+                _atomic_write_text(gradle_file, new_g_txt)
             updated_files += 1
             verb = "Would update" if dry_run else "Updated"
             print(f"  ✓ {verb} build.gradle")
@@ -472,14 +634,10 @@ def migrate_domain(repo_root: Path, target: str, new_domain: str, test_reachabil
 def show_info(repo_root: Path, target_lang: str = None, target_name: str = None) -> bool:
     """Displays detailed summary of an extension module."""
     lang, name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
-    if not lang or not name:
-        print("❌ Could not resolve target extension module.")
+    if not require_module(repo_root, lang, name, "info"):
         return False
 
     ext_path = repo_root / "src" / lang / name
-    if not ext_path.exists():
-        print(f"❌ Extension src/{lang}/{name} not found.")
-        return False
 
     print(f"ℹ️ Module Info: src/{lang}/{name}\n" + "=" * 50)
     gradle_file = ext_path / "build.gradle"
@@ -498,19 +656,49 @@ def show_info(repo_root: Path, target_lang: str = None, target_name: str = None)
     icon_file = ext_path / "res" / "drawable" / "ic_launcher.png"
     manifest_file = ext_path / "AndroidManifest.xml"
     kt_dir = ext_path / "src" / "eu" / "kanade" / "tachiyomi" / "animeextension" / lang / name
-    kt_files = list(kt_dir.glob("*.kt")) if kt_dir.exists() else []
+    # rglob so files in sub-packages are counted, matching validate_extensions.
+    kt_files = sorted(kt_dir.rglob("*.kt")) if kt_dir.is_dir() else []
 
     print(f"  • Manifest: {'✓ Present' if manifest_file.exists() else '❌ Missing'}")
     print(f"  • Launcher Icon: {'✓ Present' if icon_file.exists() else '❌ Missing'}")
     print(f"  • Kotlin Source Files ({len(kt_files)}): {', '.join(f.name for f in kt_files)}")
     return True
 
-def list_extensions(repo_root: Path):
+def list_extensions(repo_root: Path, quiet: bool = False, as_json: bool = False) -> bool:
     """Lists all available extensions with language, version code, and path."""
     src_dir = repo_root / "src"
     if not src_dir.exists():
-        print("❌ src/ directory not found.")
-        return
+        if as_json:
+            print(json.dumps({"success": False, "error": "src/ directory not found"}))
+        else:
+            print("❌ src/ directory not found.")
+        return False
+
+    ext_list = []
+    for lang_dir in sorted(src_dir.iterdir()):
+        if lang_dir.is_dir():
+            for m in sorted([d for d in lang_dir.iterdir() if d.is_dir()]):
+                gradle_file = m / "build.gradle"
+                ver = "?"
+                if gradle_file.exists():
+                    txt = gradle_file.read_text(encoding="utf-8", errors="ignore")
+                    m_ver = re.search(r"(?:extVersionCode|overrideVersionCode)\s*=\s*(\d+)", txt)
+                    if m_ver:
+                        ver = m_ver.group(1)
+                ext_list.append({
+                    "name": m.name,
+                    "lang": lang_dir.name,
+                    "version": ver,
+                    "path": f"src/{lang_dir.name}/{m.name}"
+                })
+
+    if as_json:
+        print(json.dumps({"success": True, "total": len(ext_list), "extensions": ext_list}, indent=2))
+        return True
+    if quiet:
+        print(f"Total: {len(ext_list)} extension module(s) installed")
+        return True
+
     print("📦 Installed Extension Modules Catalog:\n" + "=" * 60)
     total = 0
     for lang_dir in sorted(src_dir.iterdir()):
@@ -528,14 +716,13 @@ def list_extensions(repo_root: Path):
                         ver = m_ver.group(1)
                 print(f"  • {m.name:25s} (v{ver}) -> src/{lang_dir.name}/{m.name}")
     print(f"\nTotal: {total} extension module(s) installed.")
+    return True
 
-def repo_stats(repo_root: Path) -> bool:
+def repo_stats(repo_root: Path, quiet: bool = False, as_json: bool = False) -> bool:
     """Prints repository-wide statistics: modules per language, extractors, themes, and Kotlin code volume."""
     src_dir = repo_root / "src"
     lib_dir = repo_root / "lib"
     multisrc_dir = repo_root / "lib-multisrc"
-
-    print("📊 Repository Statistics & Health Metrics:\n" + "=" * 60)
 
     total_modules = 0
     total_kt_files = 0
@@ -555,19 +742,40 @@ def repo_stats(repo_root: Path) -> bool:
                 lines = 0
                 for kt in kt_files:
                     try:
-                        lines += sum(1 for _ in kt.open("rb"))
+                        with kt.open("rb") as fh:
+                            lines += sum(1 for _ in fh)
                     except OSError:
                         pass
                 total_kt_files += len(kt_files)
                 total_kt_lines += lines
                 biggest.append((f"src/{lang_dir.name}/{m.name}", len(kt_files)))
 
+    lib_count = len([d for d in lib_dir.iterdir() if d.is_dir()]) if lib_dir.exists() else 0
+    theme_count = len([d for d in multisrc_dir.iterdir() if d.is_dir()]) if multisrc_dir.exists() else 0
+
+    if as_json:
+        data = {
+            "success": True,
+            "total_modules": total_modules,
+            "languages": dict(lang_counts),
+            "shared_extractors": lib_count,
+            "multisrc_themes": theme_count,
+            "kotlin_files": total_kt_files,
+            "kotlin_lines": total_kt_lines,
+            "largest_modules": [{"module": p, "files": n} for p, n in sorted(biggest, key=lambda x: -x[1])[:5]]
+        }
+        print(json.dumps(data, indent=2))
+        return True
+
+    if quiet:
+        print(f"Stats: {total_modules} modules ({len(lang_counts)} langs), {lib_count} extractors, {theme_count} themes, {total_kt_files} files ({total_kt_lines:,} lines)")
+        return True
+
+    print("📊 Repository Statistics & Health Metrics:\n" + "=" * 60)
     print(f"  • Extension modules: {total_modules} across {len(lang_counts)} language(s)")
     for lang, cnt in sorted(lang_counts, key=lambda x: -x[1])[:8]:
         print(f"      - {lang}: {cnt}")
 
-    lib_count = len([d for d in lib_dir.iterdir() if d.is_dir()]) if lib_dir.exists() else 0
-    theme_count = len([d for d in multisrc_dir.iterdir() if d.is_dir()]) if multisrc_dir.exists() else 0
     print(f"  • Shared extractor libs (lib/): {lib_count}")
     print(f"  • Multi-source themes (lib-multisrc/): {theme_count}")
     print(f"  • Kotlin files: {total_kt_files} ({total_kt_lines:,} lines)")
@@ -579,11 +787,18 @@ def repo_stats(repo_root: Path) -> bool:
             print(f"      - {path}: {n} .kt file(s)")
     return True
 
-def search_extensions(repo_root: Path, query: str) -> bool:
+def search_extensions(repo_root: Path, query: str, quiet: bool = False, as_json: bool = False) -> bool:
     """Searches all extension modules by name, display name, base URL, or package substring."""
     if not query:
-        print("❌ Search query is required (e.g. `cli.py search anikage`).")
+        if as_json:
+            print(json.dumps({"success": False, "error": "Search query is required"}))
+        else:
+            print("❌ Search query is required (e.g. `cli.py search anikage`).")
         return False
+
+    base_url_re = re.compile(
+        r'(?:override\s+val\s+baseUrl|PREF_BASE_URL_DEFAULT|PREF_DOMAIN_DEFAULT|DOMAIN(?:_DEFAULT)?)\s*=\s*["\']([^"\']+)["\']'
+    )
 
     q = query.lower()
     src_dir = repo_root / "src"
@@ -596,21 +811,40 @@ def search_extensions(repo_root: Path, query: str) -> bool:
             ext_name.lower(),
             (ext_display_m.group(1).lower() if ext_display_m else ""),
         ]
-        # Also search baseUrl inside Kotlin sources
         for kt in (src_dir / lang_name / ext_name).rglob("*.kt"):
-            m = re.search(r'override\s+val\s+baseUrl\s*=\s*["\']([^"\']+)["\']', kt.read_text(encoding="utf-8", errors="ignore"))
+            m = base_url_re.search(kt.read_text(encoding="utf-8", errors="ignore"))
             if m:
                 haystacks.append(m.group(1).lower())
                 break
         if any(q in h for h in haystacks):
             matches.append((lang_name, ext_name, ext_display_m.group(1) if ext_display_m else ext_name, ver_m.group(1) if ver_m else "?"))
 
+    if as_json:
+        results = [
+            {"lang": lang, "name": folder, "display": display, "version": ver, "path": f"src/{lang}/{folder}"}
+            for lang, folder, display, ver in matches
+        ]
+        print(json.dumps({"success": bool(matches), "query": query, "count": len(results), "results": results}, indent=2))
+        return bool(matches)
+
+    if quiet:
+        if matches:
+            summary = ", ".join(f"{d} [{l}]" for l, _, d, _ in matches[:5])
+            if len(matches) > 5:
+                summary += f" (+{len(matches) - 5} more)"
+            print(f"Found {len(matches)} match(es) for '{query}': {summary}")
+        else:
+            print(f"No matches for '{query}'")
+        return bool(matches)
+
     print(f"🔎 Search results for '{query}' ({len(matches)} match(es)):\n" + "=" * 60)
     for lang, folder, display, ver in matches:
         print(f"  • {display} [{lang}] (v{ver}) -> src/{lang}/{folder}")
-    return True
+    if not matches:
+        print("  (no matching extension modules)")
+    return bool(matches)
 
-def show_deps(repo_root: Path, target: str = None) -> bool:
+def show_deps(repo_root: Path, target: str = None, quiet: bool = False, as_json: bool = False) -> bool:
     """Shows extension dependencies. With a target: its direct lib/theme deps.
     Without: reverse-dependency usage matrix ranking shared libs by consumer count."""
     src_dir = repo_root / "src"
@@ -618,11 +852,24 @@ def show_deps(repo_root: Path, target: str = None) -> bool:
 
     if target:
         lang, name = resolve_extension_target(repo_root, target=target)
-        gradle_file = src_dir / (lang or "_") / (name or "_") / "build.gradle"
+        if not require_module(repo_root, lang, name, "deps"):
+            if as_json:
+                print(json.dumps({"success": False, "error": f"Module '{target}' not found"}))
+            return False
+        gradle_file = src_dir / lang / name / "build.gradle"
         if not gradle_file.exists():
-            print(f"❌ Extension not found: {target}")
+            if as_json:
+                print(json.dumps({"success": False, "error": f"src/{lang}/{name}/build.gradle not found"}))
+            else:
+                print(f"❌ deps: src/{lang}/{name}/build.gradle not found.")
             return False
         deps = dep_re.findall(gradle_file.read_text(encoding="utf-8", errors="ignore"))
+        if as_json:
+            print(json.dumps({"success": True, "module": f"src/{lang}/{name}", "dependencies": deps}, indent=2))
+            return True
+        if quiet:
+            print(f"src/{lang}/{name}: {len(deps)} dependencies ({', '.join(deps) if deps else 'none'})")
+            return True
         print(f"🔗 Dependencies of src/{lang}/{name}:\n" + "=" * 60)
         if deps:
             for d in deps:
@@ -639,55 +886,118 @@ def show_deps(repo_root: Path, target: str = None) -> bool:
             usage[d] = usage.get(d, 0) + 1
             consumers.setdefault(d, []).append(f"{lang_name}/{ext_name}")
 
+    if as_json:
+        data = {
+            "success": True,
+            "matrix": [
+                {"dependency": dep, "consumers_count": cnt, "consumers": consumers[dep]}
+                for dep, cnt in sorted(usage.items(), key=lambda x: -x[1])
+            ]
+        }
+        print(json.dumps(data, indent=2))
+        return True
+
+    if quiet:
+        top_deps = ", ".join(f"{d} ({c})" for d, c in sorted(usage.items(), key=lambda x: -x[1])[:5])
+        print(f"Deps matrix: {len(usage)} shared libs used across repo (Top: {top_deps})")
+        return True
+
     print("🔗 Shared Library Reverse-Dependency Matrix (most-consumed first):\n" + "=" * 60)
     for dep, cnt in sorted(usage.items(), key=lambda x: -x[1]):
         preview = ", ".join(consumers[dep][:6]) + (f", +{cnt - 6} more" if cnt > 6 else "")
         print(f"  • {dep:35s} {cnt:3d} module(s): {preview}")
-    print(f"\nTip: run `cli.py bump-lib <lib-name>` to cascade version bumps to these consumers.")
+    print("\nTip: run `cli.py bump-lib <lib-name>` to cascade version bumps to these consumers.")
     return True
 
-def get_changed_extensions(repo_root: Path) -> List[Tuple[str, str]]:
-    """Discovers extensions modified in git working tree, index, or HEAD commit."""
-    changed = set()
-    # 1. Uncommitted changes in working tree / index
-    res = subprocess.run(["git", "status", "--porcelain"], cwd=repo_root, capture_output=True, text=True)
-    if res.returncode == 0 and res.stdout:
-        for line in res.stdout.splitlines():
-            parts = line.strip().split()
-            if len(parts) >= 2:
-                path_str = parts[-1]
-                m = re.match(r"src/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)/", path_str)
-                if m:
-                    changed.add((m.group(1), m.group(2)))
+def get_changed_extensions(repo_root: Path) -> Tuple[List[Tuple[str, str]], List[str]]:
+    """Discover extensions modified in the git working tree, index, or HEAD commit.
 
-    # 2. If nothing uncommitted, check last commit (HEAD~1..HEAD)
-    if not changed:
+    Returns (extension_targets, shared_paths) where *shared_paths* lists changed
+    files outside src/ (lib/, lib-multisrc/, core/, common.gradle, ...). Callers
+    must surface shared_paths: a change to a shared extractor affects every
+    consumer but resolves to zero extension targets, which previously made
+    `--changed` gates pass without checking anything.
+    """
+    changed: set = set()
+    shared: set = set()
+    ext_re = re.compile(r"^src/([^/]+)/([^/]+)/")
+    shared_prefixes = ("lib/", "lib-multisrc/", "core/", "common.gradle", "build.gradle.kts", "settings.gradle.kts")
+
+    def _record(path_str: str) -> None:
+        path_str = path_str.strip()
+        if not path_str:
+            return
+        m = ext_re.match(path_str)
+        if m:
+            changed.add((m.group(1), m.group(2)))
+        elif path_str.startswith(shared_prefixes):
+            shared.add(path_str)
+
+    # 1. Uncommitted changes in working tree / index. -z gives NUL-separated,
+    #    unquoted paths, so filenames containing spaces are no longer dropped.
+    res = subprocess.run(["git", "status", "--porcelain", "-z"], cwd=repo_root, capture_output=True, text=True)
+    if res.returncode == 0 and res.stdout:
+        fields = res.stdout.split("\0")
+        i = 0
+        while i < len(fields):
+            entry = fields[i]
+            i += 1
+            if len(entry) < 4:
+                continue
+            status, path_str = entry[:2], entry[3:]
+            _record(path_str)
+            # Renames/copies emit the source path as the following NUL field.
+            if status[0] in ("R", "C"):
+                if i < len(fields):
+                    _record(fields[i])
+                    i += 1
+
+    # 2. If nothing uncommitted, fall back to the last commit.
+    if not changed and not shared:
         res = subprocess.run(["git", "diff", "--name-only", "HEAD~1", "HEAD"], cwd=repo_root, capture_output=True, text=True)
         if res.returncode == 0 and res.stdout:
             for path_str in res.stdout.splitlines():
-                m = re.match(r"src/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)/", path_str)
-                if m:
-                    changed.add((m.group(1), m.group(2)))
+                _record(path_str)
 
-    return sorted(list(changed))
+    # Drop modules that no longer exist on disk (fully deleted extensions):
+    # they cannot be linted or validated, and silently keeping them made the
+    # gate report success for a module it never inspected.
+    live = []
+    for lang, name in sorted(changed):
+        if (repo_root / "src" / lang / name).is_dir():
+            live.append((lang, name))
+        else:
+            print(f"ℹ️  Skipping deleted module src/{lang}/{name} (no longer on disk).")
 
-def publish_extension(repo_root: Path, target_lang: str = None, target_name: str = None, commit_msg: str = None, no_bump: bool = False, watch: bool = False) -> bool:
+    return live, sorted(shared)
+
+def _report_shared_changes(shared: List[str]) -> None:
+    """Warn that changed shared code is outside the scope of a --changed run."""
+    if not shared:
+        return
+    print(f"⚠️  {len(shared)} changed file(s) live outside src/ and are NOT covered by --changed:")
+    for p in shared[:8]:
+        print(f"      - {p}")
+    if len(shared) > 8:
+        print(f"      ... and {len(shared) - 8} more")
+    print("      Consumers of changed shared code are not re-checked. Run the gate on the")
+    print("      affected modules explicitly, or use `cli.py deps` to list them.\n")
+
+def publish_extension(repo_root: Path, target_lang: str = None, target_name: str = None, commit_msg: str = None, no_bump: bool = False, watch: bool = False, strict: bool = False, apply_fixes: bool = False) -> bool:
     """Validates extension, formats files, bumps version code, stages git files, commits, and pushes to remote GitHub repository."""
     lang, name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
-    if not lang or not name:
-        print("❌ Could not resolve target extension module. Usage: cli.py publish <name> [-m 'msg']")
+    if not require_module(repo_root, lang, name, "publish"):
         return False
 
     ext_path = repo_root / "src" / lang / name
-    if not ext_path.exists():
-        print(f"❌ Extension directory {ext_path} not found.")
-        return False
 
     print(f"🚀 Publishing extension: src/{lang}/{name}...\n" + "=" * 60)
 
-    # 1. Run Master Pre-Flight Quality Gate (Format, AST Remediation, Dependencies, Linting, Validation)
+    # 1. Run Master Pre-Flight Quality Gate. Read-only by default — auto-fixing
+    #    source in the same command that commits and pushes it means an
+    #    unreviewed rewrite can reach the remote.
     print("1️⃣ Running Master Pre-Flight Quality Gate...")
-    if not preflight_extension(repo_root, lang, name):
+    if not preflight_extension(repo_root, lang, name, strict=strict, apply_fixes=apply_fixes):
         print("❌ Master Pre-Flight quality gate failed. Fix reported errors before publishing.")
         return False
 
@@ -710,7 +1020,24 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
         settings_diff = subprocess.run(["git", "diff", "--name-only", str(settings_file)], cwd=repo_root, capture_output=True, text=True)
         if settings_file.name in settings_diff.stdout:
             cmd_add.append(str(settings_file))
-    subprocess.run(cmd_add, cwd=repo_root, check=True, timeout=30)
+    add_res = subprocess.run(cmd_add, cwd=repo_root, capture_output=True, text=True, timeout=30)
+    if add_res.returncode != 0:
+        print(f"❌ git add failed: {add_res.stderr.strip() or add_res.stdout.strip()}")
+        return False
+
+    # Warn about changed shared code that this commit will NOT include — the
+    # remote build will fail if the extension depends on it.
+    status_res = subprocess.run(["git", "status", "--porcelain", "-z"], cwd=repo_root, capture_output=True, text=True)
+    if status_res.returncode == 0:
+        unstaged_shared = sorted({
+            entry[3:] for entry in status_res.stdout.split("\0")
+            if len(entry) >= 4 and entry[3:].startswith(("lib/", "lib-multisrc/", "core/", "common.gradle"))
+        })
+        if unstaged_shared:
+            print(f"  ⚠️  {len(unstaged_shared)} changed shared file(s) will NOT be included in this commit:")
+            for p in unstaged_shared[:6]:
+                print(f"        - {p}")
+            print("      If src/{}/{} depends on them, the remote build will fail.".format(lang, name))
 
     git_env = os.environ.copy()
     git_env["GIT_TERMINAL_PROMPT"] = "0"
@@ -746,7 +1073,18 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
                 print("  -> Rebase succeeded. Retrying push...")
                 push_res = subprocess.run(["git", "push", "origin", current_branch], cwd=repo_root, capture_output=True, text=True, env=git_env, timeout=60)
             else:
-                print(f"❌ Git pull --rebase failed: {pull_res.stderr}")
+                print(f"❌ Git pull --rebase failed: {pull_res.stderr.strip()}")
+                # Never leave the working tree mid-rebase: an interrupted rebase
+                # blocks every later git command and is easy to miss in output.
+                in_rebase = any((repo_root / ".git" / d).exists() for d in ("rebase-merge", "rebase-apply"))
+                if in_rebase:
+                    abort_res = subprocess.run(["git", "rebase", "--abort"], cwd=repo_root, capture_output=True, text=True, timeout=30)
+                    if abort_res.returncode == 0:
+                        print("  ↩️  Rebase aborted — your branch and working tree are back to their pre-pull state.")
+                        print("      Your commit is intact locally. Resolve the divergence manually, then re-run publish with --no-bump.")
+                    else:
+                        print(f"  ⚠️  Could not abort the rebase automatically: {abort_res.stderr.strip()}")
+                        print("      The repository is mid-rebase. Run `git rebase --abort` before continuing.")
                 return False
         if push_res.returncode != 0:
             print(f"❌ Git push failed: {push_res.stderr}")
@@ -757,30 +1095,42 @@ def publish_extension(repo_root: Path, target_lang: str = None, target_name: str
     # 6. Stream remote CI if requested
     if watch:
         try:
-            from ci_monitor import watch_ci
+            # Import through the package path so this is the same module object
+            # as the ci-status/ci-watch dispatch uses, not a second copy.
+            from scripts.ci_monitor import watch_ci
+        except ImportError as e:
+            print(f"  ⚠️  Could not import scripts.ci_monitor ({e}) — skipping CI watch.")
+        else:
             print("\n6️⃣ Streaming remote GitHub Actions CI progress...")
             watch_ci()
-        except ImportError:
-            pass
 
     return True
 
-def validate_extensions(repo_root: Path, target_lang: str = None, target_name: str = None) -> bool:
+def validate_extensions(repo_root: Path, target_lang: str = None, target_name: str = None, quiet: bool = False, as_json: bool = False) -> bool:
     """Performs rigorous static analysis validation on extension modules without building APKs."""
     src_dir = repo_root / "src"
     lib_dir = repo_root / "lib"
     if not src_dir.exists():
-        print("❌ src/ directory not found.")
+        if as_json:
+            print(json.dumps({"success": False, "error": "src/ directory not found"}))
+        else:
+            print("❌ src/ directory not found.")
         return False
 
     if target_lang or target_name:
         target_lang, target_name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
+        if not require_module(repo_root, target_lang, target_name, "validate"):
+            if as_json:
+                print(json.dumps({"success": False, "error": f"Target {target_lang}/{target_name} does not exist"}))
+            return False
 
     target_desc = f"src/{target_lang}/{target_name}" if (target_lang and target_name) else "all extension modules"
-    print(f"🔎 Validating {target_desc}...\n" + "=" * 60)
+    if not quiet and not as_json:
+        print(f"🔎 Validating {target_desc}...\n" + "=" * 60)
 
     issue_count = 0
     valid_count = 0
+    failures = []
 
     langs_to_check = [target_lang] if target_lang else [d.name for d in src_dir.iterdir() if d.is_dir()]
 
@@ -797,7 +1147,10 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
         for ext_name in sorted(ext_dirs):
             ext_path = lang_dir / ext_name
             if not ext_path.exists():
-                print(f"❌ Module src/{lang}/{ext_name} not found.")
+                if not quiet and not as_json:
+                    print(f"❌ Module src/{lang}/{ext_name} not found.")
+                failures.append({"module": f"src/{lang}/{ext_name}", "issues": ["Directory not found"]})
+                issue_count += 1
                 continue
 
             issues = []
@@ -817,8 +1170,8 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                     issues.append(f"Invalid extClass '{ext_class_m.group(1)}' — must start with a dot (e.g. '.{ext_class_m.group(1)}')")
 
                 # Check common.gradle inclusion
-                if "common.gradle" not in gradle_txt:
-                    issues.append("Missing common.gradle application (apply from: \"$rootDir/common.gradle\")")
+                if not re.search(r'apply\s+from:\s*["\']\$rootDir/common\.gradle["\']', gradle_txt):
+                    issues.append("Missing or invalid common.gradle application — must be exactly: apply from: \"$rootDir/common.gradle\"")
 
                 # Check dangling :lib dependencies
                 lib_deps = re.findall(r"implementation\(project\(['\"]:lib:([^'\"]+)['\"]\)\)", gradle_txt)
@@ -883,29 +1236,35 @@ def validate_extensions(repo_root: Path, target_lang: str = None, target_name: s
                 pkg_match = re.search(r"^\s*package\s+([^\s;]+)", content, re.MULTILINE)
                 if not pkg_match or not (pkg_match.group(1) == expected_pkg or pkg_match.group(1).startswith(f"{expected_pkg}.")):
                     issues.append(f"Mismatched package declaration in {kt.name} (Expected: package {expected_pkg})")
-                if "companion {" in content and "companion object {" not in content:
-                    issues.append(f"Syntax error in {kt.name}: 'companion {{' missing 'object' keyword (must be 'companion object {{')")
-                if "getAnimeDetails" in content and "initialized = true" not in content:
-                    issues.append(f"Missing 'initialized = true' inside getAnimeDetails in {kt.name}")
-                if "ParsedAnimeHttpSource" in content:
-                    issues.append(f"Legacy class 'ParsedAnimeHttpSource' found in {kt.name} (v16 Rule: Must extend extensions.utils.Source)")
-
-                # Check deprecated Video constructors & properties
-                has_deprecated_named = re.search(r"\bVideo\s*\(\s*url\s*=", content) or re.search(r"\bVideo\s*\([^)]*quality\s*=", content)
-                has_positional_4arg = re.search(r'\bVideo\s*\([^)]*,[^)]*,[^)]*,[^)]*\)', content) and not re.search(r'\bVideo\s*\(\s*videoUrl\s*=', content)
-                if has_deprecated_named or has_positional_4arg:
-                    issues.append(f"Deprecated Video constructor in {kt.name} (v16 Rule: Use Video(videoUrl=, videoTitle=, headers=))")
-                if "it.quality" in content:
-                    issues.append(f"Deprecated Video property 'it.quality' in {kt.name} (v16 Rule: Use it.videoTitle)")
+                for violation in find_v16_model_violations(content):
+                    issues.append(f"{violation} ({kt.name})")
 
             if issues:
                 issue_count += 1
-                print(f"❌ src/{lang}/{ext_name}:")
-                for iss in issues:
-                    print(f"   • {iss}")
+                failures.append({"module": f"src/{lang}/{ext_name}", "issues": issues})
+                if not quiet and not as_json:
+                    print(f"❌ src/{lang}/{ext_name}:")
+                    for iss in issues:
+                        print(f"   • {iss}")
             else:
                 valid_count += 1
-                print(f"  ✓ src/{lang}/{ext_name} - OK")
+                if not quiet and not as_json:
+                    print(f"  ✓ src/{lang}/{ext_name} - OK")
+
+    if as_json:
+        val_report = {
+            "success": issue_count == 0,
+            "valid_count": valid_count,
+            "issue_count": issue_count,
+            "failures": failures,
+            "error": None if issue_count == 0 else f"{issue_count} module(s) failed static validation"
+        }
+        print(json.dumps(val_report, indent=2))
+        return issue_count == 0
+
+    if quiet:
+        print(f"Validation: {valid_count} passed, {issue_count} failed")
+        return issue_count == 0
 
     print(f"\nSummary: {valid_count} extension module(s) passed static validation. {issue_count} module(s) had issues.")
     return issue_count == 0
@@ -960,10 +1319,52 @@ def generate_doc(repo_root: Path) -> bool:
         print(f"| `{lang}` | {name} | `src/{lang}/{folder}` | `{ver}` |")
     return True
 
-def format_codebase(repo_root: Path, target_lang: str = None, target_name: str = None, check_only: bool = False) -> bool:
-    """Formats Kotlin, Gradle, and XML files by stripping trailing whitespace, normalizing CRLF to LF,
-    ensuring a single final newline, and collapsing excessive blank lines.
+def _collapse_blank_lines(lines: List[str], protect_raw_strings: bool) -> List[str]:
+    """Collapse runs of 2+ blank lines to 1, skipping Kotlin raw-string bodies.
+
+    Blank lines and indentation inside a `\"\"\"...\"\"\"` block are significant —
+    they carry embedded GraphQL queries, JS payloads and player scripts — so
+    text between an odd and even triple-quote delimiter is passed through
+    untouched.
     """
+    collapsed: List[str] = []
+    empty_count = 0
+    in_raw = False
+    for line in lines:
+        if protect_raw_strings:
+            if in_raw:
+                collapsed.append(line)
+                if line.count('"""') % 2 == 1:
+                    in_raw = False
+                continue
+            if line.count('"""') % 2 == 1:
+                in_raw = True
+                empty_count = 0
+                collapsed.append(line)
+                continue
+        if not line:
+            empty_count += 1
+            if empty_count <= 1:
+                collapsed.append(line)
+        else:
+            empty_count = 0
+            collapsed.append(line)
+    return collapsed
+
+def format_codebase(repo_root: Path, target_lang: str = None, target_name: str = None, check_only: bool = False) -> bool:
+    """Normalizes whitespace in Kotlin, Gradle and XML sources: strips trailing
+    whitespace, converts CRLF to LF, collapses blank-line runs outside raw
+    strings, and ensures a single final newline.
+
+    This is a lightweight pre-commit-style pass, NOT a replacement for
+    `./gradlew spotlessApply`, which remains the canonical Kotlin formatter.
+    Python sources are deliberately excluded — collapsing blank lines there
+    breaks PEP 8's two-blank-lines-between-top-level-definitions rule.
+    """
+    if target_lang or target_name:
+        if not require_module(repo_root, target_lang, target_name, "format"):
+            return False
+
     target_desc = f"src/{target_lang}/{target_name}" if (target_lang and target_name) else "entire repository"
     mode_desc = "Checking" if check_only else "Formatting"
     print(f"✨ {mode_desc} code style & formatting across {target_desc}...\n" + "=" * 60)
@@ -971,9 +1372,10 @@ def format_codebase(repo_root: Path, target_lang: str = None, target_name: str =
     if target_lang and target_name:
         scan_paths = [repo_root / "src" / target_lang / target_name]
     else:
-        scan_paths = [repo_root / "src", repo_root / "lib", repo_root / "lib-multisrc", repo_root / "scripts", repo_root / "core"]
+        scan_paths = [repo_root / "src", repo_root / "lib", repo_root / "lib-multisrc", repo_root / "core"]
 
-    file_extensions = {".kt", ".kts", ".gradle", ".xml", ".properties", ".py"}
+    file_extensions = {".kt", ".kts", ".gradle", ".xml", ".properties"}
+    raw_string_extensions = {".kt", ".kts", ".gradle"}
     modified_count = 0
     checked_count = 0
 
@@ -988,20 +1390,8 @@ def format_codebase(repo_root: Path, target_lang: str = None, target_name: str =
                 continue
 
             checked_count += 1
-            lines = raw_text.splitlines()
-            cleaned_lines = [line.rstrip(" \t") for line in lines]
-
-            # Collapse 2+ consecutive empty lines to 1 (ktlint allows at most 1 blank line)
-            collapsed = []
-            empty_count = 0
-            for line in cleaned_lines:
-                if not line:
-                    empty_count += 1
-                    if empty_count <= 1:
-                        collapsed.append(line)
-                else:
-                    empty_count = 0
-                    collapsed.append(line)
+            cleaned_lines = [line.rstrip(" \t") for line in raw_text.splitlines()]
+            collapsed = _collapse_blank_lines(cleaned_lines, f.suffix in raw_string_extensions)
 
             new_text = "\n".join(collapsed).strip() + "\n"
             if not collapsed or not any(collapsed):
@@ -1013,7 +1403,7 @@ def format_codebase(repo_root: Path, target_lang: str = None, target_name: str =
                 if check_only:
                     print(f"  ⚠️  Formatting violation: {rel}")
                 else:
-                    f.write_text(new_text, encoding="utf-8")
+                    _atomic_write_text(f, new_text)
                     print(f"  ✓ Formatted: {rel}")
 
     if check_only:
@@ -1027,11 +1417,23 @@ def format_codebase(repo_root: Path, target_lang: str = None, target_name: str =
         print(f"\n🎉 Formatting complete: {modified_count} of {checked_count} file(s) updated.")
         return True
 
-def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = None) -> bool:
-    """Scans Kotlin code for code smells, blocking calls, anti-patterns, companion object placement, and DTO null-safety."""
+def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = None, quiet: bool = False, as_json: bool = False) -> bool:
+    """Scans Kotlin code for code smells, blocking calls, anti-patterns, companion object placement, and DTO null-safety.
+
+    Findings are advisory heuristics. `preflight`/`publish` report them but gate
+    on `validate` instead; use --strict there to make them blocking.
+    """
+    if target_lang or target_name:
+        if not require_module(repo_root, target_lang, target_name, "lint"):
+            if as_json:
+                print(json.dumps({"success": False, "error": f"Target {target_lang}/{target_name} does not exist"}))
+            return False
+
     target_desc = f"src/{target_lang}/{target_name}" if (target_lang and target_name) else "Extension Codebase"
-    print(f"🔍 Running Linter & Code Quality Inspection across {target_desc}...\n" + "=" * 60)
+    if not quiet and not as_json:
+        print(f"🔍 Running Linter & Code Quality Inspection across {target_desc}...\n" + "=" * 60)
     warnings = 0
+    warning_list = []
 
     # Kotlin continuation-line suffixes: if a line ends with any of these,
     # it is joined with the following line(s) until a closing )/}/; is found.
@@ -1120,31 +1522,22 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
             if re.search(r'(?:cf_clearance|PHPSESSID|__cfduid)["\']', joined_content):
                 file_warnings.append("Hardcoded session/CF cookie literal found — cookies should be fetched dynamically")
 
-            # 8. Deprecated it.quality Video property
-            if "it.quality" in content:
-                file_warnings.append("Deprecated Video property 'it.quality' — use it.videoTitle (v16 API)")
-
-            # 9. Deprecated positional Video constructor — use joined_content so
-            #    multi-line Video( calls are caught.
-            _warn_on_joined(
-                logical_lines, file_warnings,
-                r'\bVideo\s*\([^)]*,[^)]*,[^)]*,[^)]*\)',
-                "Deprecated 4-arg positional Video(...) constructor — use Video(videoUrl=, videoTitle=, headers=)",
-            )
-            # Suppress if named form is already used
-            if any("[L" in w and "4-arg positional Video" in w for w in file_warnings):
-                if re.search(r'\bVideo\s*\(\s*videoUrl\s*=', joined_content):
-                    file_warnings = [w for w in file_warnings if "4-arg positional Video" not in w]
-
-            # 10. Companion object syntax mistake
-            if re.search(r'\bcompanion\s*\{', joined_content):
-                file_warnings.append("Syntax error 'companion {' — must be 'companion object {'")
+            # 8-10. v16 model invariants — shared rule set with validate_extensions()
+            #       (see find_v16_model_violations for the canonical wording).
+            for violation in find_v16_model_violations(content, joined_content):
+                file_warnings.append(violation)
 
             # 11. DTO Null-Safety
             if "@Serializable" in content and "data class" in content:
-                for match in re.finditer(r'@Serializable(?:\([^)]*\))?\s+(?:private\s+|protected\s+|internal\s+|public\s+)?data\s+class\s+(\w+)\s*\([\s\S]*?\)', content):
+                for match in re.finditer(
+                    r'@Serializable(?:\([^)]*\))?\s+'
+                    r'(?:private\s+|protected\s+|internal\s+|public\s+)?'
+                    r'data\s+class\s+(\w+)\s*\(([\s\S]*?)\n\s*\)',
+                    content,
+                ):
                     cls_name = match.group(1)
-                    param_block = match.group(2) if match.lastindex and match.lastindex >= 2 else ""
+                    param_block = match.group(2)
+                    strict_fields = []
                     for line in param_block.splitlines():
                         clean_line = line.strip().rstrip(",")
                         # Strip annotations like @SerialName("...") or @Transient
@@ -1152,22 +1545,23 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
                         if clean_line.startswith("val ") or clean_line.startswith("var "):
                             prop = clean_line.split(":")[0].replace("val ", "").replace("var ", "").strip()
                             if "=" not in clean_line and not clean_line.endswith("?"):
-                                file_warnings.append(f"DTO null-safety violation in {cls_name}.{prop} — missing default fallback (e.g. `? = null`)")
+                                strict_fields.append(prop)
                             # Check if votes/rating/score are typed as Int/Long instead of Double/Float
                             if re.search(r'\b(?:votes|rating|score|stars|rank)\b', prop, re.IGNORECASE):
                                 if re.search(r':\s*(?:Int|Long)\??', clean_line):
                                     file_warnings.append(f"DTO field {cls_name}.{prop} is typed as Int/Long — consider Double? to prevent JsonDecodingException on decimal JSON payloads (e.g. 0.0)")
+                    # Aggregate per class: one finding listing the fields, rather
+                    # than one per field, which buried every other rule in noise.
+                    if strict_fields:
+                        shown = ", ".join(strict_fields[:6])
+                        more = f" (+{len(strict_fields) - 6} more)" if len(strict_fields) > 6 else ""
+                        file_warnings.append(f"DTO null-safety: {cls_name} has {len(strict_fields)} required field(s) with no default — {shown}{more}. kotlinx throws MissingFieldException if the key is absent; prefer `? = null` or a default")
 
             # 12. Dynamic / Ephemeral tokens in SEpisode.url
             if "SEpisode" in content and "setUrlWithoutDomain" in content:
                 if re.search(r'setUrlWithoutDomain\([^)]*(?:\?token=|\?session=|\?sig=|\?expires=)', joined_content):
                     file_warnings.append("Ephemeral / dynamic token embedded in SEpisode.url — use stable permanent anchor URL (e.g. ${anime.url}#season=$s&ep=$e)")
 
-            # 13. Subclassing extensions.utils.Source while redeclaring inherited json or preferences
-            if "class " in content and ": Source()" in content:
-                if re.search(r'(?:private|val)\s+json\s*(?::\s*Json)?\s*by\s+', content):
-                    file_warnings.append("Redundant 'json' property declaration in Source subclass — 'json' is already provided by extensions.utils.Source")
-                if re.search(r'(?:private|val)\s+preferences\s*(?::\s*SharedPreferences)?\s*by\s+', content):
                     file_warnings.append("Redundant 'preferences' property declaration in Source subclass — 'preferences' is already provided by extensions.utils.Source")
 
             # 14. setUrlWithoutDomain inside helper DTO classes
@@ -1178,9 +1572,8 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
             if re.search(r'\(\s*(?:globalSeason|seasonNum|seasonVal|season\.season_number|s)\s*\*\s*1000', joined_content):
                 file_warnings.append("Episode numbering offset bug (season * 1000) — triggers false 'Missing 1000 items' badge in AniZen. Use epNum.toFloat() or ((season - 1) * 100 + ep).toFloat()")
 
-            # 16. Missing initialized = true in getAnimeDetails
-            if "getAnimeDetails" in content and "initialized = true" not in content and "abstract class" not in content and "interface " not in content:
-                file_warnings.append("Missing 'initialized = true' inside getAnimeDetails — causes continuous detail re-fetch loops in Aniyomi v16")
+            # (Former rule 16 — missing 'initialized = true' in getAnimeDetails —
+            # is now part of find_v16_model_violations above.)
 
             # 17. Preference keys declared outside companion object
             if re.search(r'private\s+const\s+val\s+PREF_', content):
@@ -1268,8 +1661,24 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
 
             if file_warnings:
                 for w in file_warnings:
-                    print(f"  ⚠️  {rel_path}: {w}")
+                    warning_list.append({"file": str(rel_path), "warning": w})
+                    if not quiet and not as_json:
+                        print(f"  ⚠️  {rel_path}: {w}")
                 warnings += len(file_warnings)
+
+    if as_json:
+        lint_report = {
+            "success": warnings == 0,
+            "warning_count": warnings,
+            "warnings": warning_list,
+            "error": None if warnings == 0 else f"{warnings} lint warning(s) found"
+        }
+        print(json.dumps(lint_report, indent=2))
+        return warnings == 0
+
+    if quiet:
+        print(f"Lint: {warnings} warning(s) across {target_desc}")
+        return warnings == 0
 
     if warnings == 0:
         print("  ✓ No lint warnings or code smells detected across codebase.")
@@ -1279,10 +1688,11 @@ def lint_codebase(repo_root: Path, target_lang: str = None, target_name: str = N
 
 def inspect_hosters(repo_root: Path, target_lang: str, target_name: str) -> bool:
     """Inspects and audits hoster folder architecture, server grouping, and stream quality sorting."""
-    target_src = repo_root / "src" / (target_lang or "all") / target_name
-    if not target_src.exists():
-        print(f"❌ Target extension directory not found: {target_src}")
+    # `(target_lang or "all")` used to silently read src/all/<name> — a real
+    # directory in this repo — whenever the language failed to resolve.
+    if not require_module(repo_root, target_lang, target_name, "inspect-hosters"):
         return False
+    target_src = repo_root / "src" / target_lang / target_name
 
     print(f"📁 Inspecting Hoster Folder Architecture for src/{target_lang}/{target_name}...\n" + "=" * 60)
 
@@ -1323,190 +1733,352 @@ def inspect_hosters(repo_root: Path, target_lang: str, target_name: str) -> bool
     print("  4. Provide a 'Preferred Server' ListPreference for custom user prioritization.")
     return True
 
-def preflight_extension(repo_root: Path, target_lang: str, target_name: str) -> bool:
-    """Chains the entire quality gate pipeline for a single extension before PR or release."""
+def run_detect_extractors(repo_root: Path, lang: Optional[str], name: Optional[str]) -> bool:
+    """Run detect_extractors.py --fix against a single module.
+
+    detect_extractors.py requires --url, --html, or BOTH --lang and --name; given
+    only --fix it prints its help to stdout and exits 1. Callers used to invoke
+    it with no target during `validate --all --fix`, which produced an empty
+    "exited with code 1:" warning and silently skipped dependency injection.
+    """
+    detect_script = repo_root / "scripts" / "detect_extractors.py"
+    if not detect_script.exists():
+        print("  ⚠️  scripts/detect_extractors.py not found — skipping dependency resolution.")
+        return False
+    if not (lang and name):
+        print("  ℹ️  Skipping extractor dependency resolution: it needs a single target module.")
+        print("      Run `cli.py detect-extractors <lang>/<module> --fix` per module instead.")
+        return False
+
+    res = subprocess.run(
+        [sys.executable, str(detect_script), "--lang", lang, "--name", name, "--fix"],
+        cwd=repo_root, capture_output=True, text=True, timeout=60,
+    )
+    if res.stdout.strip():
+        print(res.stdout.rstrip())
+    if res.returncode != 0:
+        # Surface stdout too — this script writes its diagnostics there, so
+        # reporting stderr alone produced a blank error message.
+        detail = res.stderr.strip()
+        if not detail:
+            stdout_lines = res.stdout.strip().splitlines()
+            detail = stdout_lines[-1] if stdout_lines else "no output"
+        print(f"  ⚠️  detect_extractors exited with code {res.returncode}: {detail}")
+        return False
+    return True
+
+def preflight_extension(repo_root: Path, target_lang: str, target_name: str, strict: bool = False, apply_fixes: bool = False) -> bool:
+    """Chains the entire quality gate pipeline for a single extension before PR or release.
+
+    Read-only by default. A gate must report on the code as it stands: the
+    auto-remediation step rewrites Kotlin (it nullifies DTO fields and strips
+    trailing commas), which can turn a compiling module into a broken one right
+    before `publish` commits it. Pass *apply_fixes* (--fix) to opt into the
+    mutating format / AST / dependency-injection steps.
+
+    Gating policy: `validate` findings (manifest, gradle, assets, package layout,
+    v16 model invariants) are blocking. `lint` findings are heuristic code smells,
+    reported but non-blocking unless *strict* is set — otherwise style advisories
+    such as "prefer parseAs<T>()" make a module unpublishable.
+    """
     target_lang, target_name = resolve_extension_target(repo_root, lang=target_lang, name=target_name)
-    if not target_lang or not target_name:
-        print("❌ Could not resolve target extension module. Specify as '<module>' or '<lang>/<module>'.")
+    # Fail before any step runs: previously a typo'd or deleted module scanned
+    # nothing and still printed "PASSED ... 100% ready for PR and release".
+    if not require_module(repo_root, target_lang, target_name, "preflight"):
         return False
     mod_path = f"src/{target_lang}/{target_name}"
-    print(f"🚀 Running Master Pre-Flight Quality Gate on {mod_path}...\n" + "=" * 70)
+    mode = "auto-fix" if apply_fixes else "read-only"
+    print(f"🚀 Running Master Pre-Flight Quality Gate on {mod_path} ({mode})...\n" + "=" * 70)
 
-    # 1. Format
-    print("Step 1/5: Formatting Codebase...")
-    format_codebase(repo_root, target_lang, target_name)
-    print("\n" + "-" * 70)
+    f_ok = True
+    if apply_fixes:
+        # 1. Format
+        print("Step 1/5: Formatting Codebase...")
+        format_codebase(repo_root, target_lang, target_name)
+        print("\n" + "-" * 70)
 
-    # 2. AST Auto-Remediation
-    print("Step 2/5: AST Model & Invariant Remediation...")
-    from scripts.ast_fixer import auto_fix_target
-    auto_fix_target(repo_root, target_lang, target_name)
-    print("\n" + "-" * 70)
+        # 2. AST Auto-Remediation
+        print("Step 2/5: AST Model & Invariant Remediation...")
+        from scripts.ast_fixer import auto_fix_target
+        auto_fix_target(repo_root, target_lang, target_name)
+        print("  ⚠️  Source was rewritten — re-read the diff and rebuild before publishing.")
+        print("\n" + "-" * 70)
 
-    # 3. Detect & Patch Missing Extractor Dependencies
-    print("Step 3/5: Extractor & Transitive Dependency Resolution...")
-    detect_script = repo_root / "scripts" / "detect_extractors.py"
-    if detect_script.exists():
-        subprocess.run(
-            [sys.executable, str(detect_script), "--lang", target_lang, "--name", target_name, "--fix"],
-            cwd=repo_root,
-            timeout=20
-        )
-    print("\n" + "-" * 70)
+        # 3. Detect & Patch Missing Extractor Dependencies
+        print("Step 3/5: Extractor & Transitive Dependency Resolution...")
+        run_detect_extractors(repo_root, target_lang, target_name)
+        print("\n" + "-" * 70)
+    else:
+        print("Step 1/5: Formatting Check (read-only)...")
+        f_ok = format_codebase(repo_root, target_lang, target_name, check_only=True)
+        print("\n" + "-" * 70)
+        print("Step 2/5: AST Remediation — skipped (pass --fix to rewrite sources).")
+        print("\n" + "-" * 70)
+        print("Step 3/5: Extractor Dependency Injection — skipped (pass --fix to patch build.gradle).")
+        print("\n" + "-" * 70)
 
-    # 4. Lint Code Quality
+    # 4. Lint Code Quality (advisory)
     print("Step 4/5: Static AST & Rule Quality Linting...")
     l_ok = lint_codebase(repo_root, target_lang, target_name)
     print("\n" + "-" * 70)
 
-    # 5. Static Manifest & Gradle Validation
+    # 5. Static Manifest & Gradle Validation (blocking)
     print("Step 5/5: Static Manifest, Gradle, and Asset Validation...")
     v_ok = validate_extensions(repo_root, target_lang, target_name)
     print("\n" + "=" * 70)
 
-    success = l_ok and v_ok
+    success = v_ok and f_ok and (l_ok or not strict)
     if success:
-        print(f"🎉 Pre-Flight Check PASSED for {mod_path}! Module is 100% ready for PR and release.")
+        if not l_ok:
+            print("ℹ️  Lint reported advisory warnings (non-blocking). Re-run with --strict to treat them as failures.")
+        print(f"🎉 Pre-Flight Check PASSED for {mod_path}! Module is ready for PR and release.")
     else:
-        print(f"❌ Pre-Flight Check FAILED for {mod_path}. Resolve the issues reported above.")
+        if not v_ok:
+            print(f"❌ Pre-Flight Check FAILED for {mod_path}: blocking validation errors above.")
+        elif not f_ok:
+            print(f"❌ Pre-Flight Check FAILED for {mod_path}: formatting violations above. Run `cli.py format {target_lang}/{target_name}`.")
+        else:
+            print(f"❌ Pre-Flight Check FAILED for {mod_path}: lint warnings above (--strict).")
     return success
 
-def audit_all(repo_root: Path) -> bool:
-    """Runs a full repository audit: static validation, code linting, workspace cleaning, and catalog doc generation."""
-    print("🛡️ Running Master Repository Audit & Health Check...\n" + "=" * 60)
-    print("Step 1/4: Static Extension Validation")
-    v_ok = validate_extensions(repo_root)
-    print("\n" + "-" * 60)
+def audit_all(repo_root: Path, do_clean: bool = False, quiet: bool = False, as_json: bool = False) -> bool:
+    """Runs a read-only repository audit: static validation, code linting, and catalog doc generation.
 
-    print("Step 2/4: Kotlin Codebase Quality Linting")
-    l_ok = lint_codebase(repo_root)
-    print("\n" + "-" * 60)
+    Cache cleaning is opt-in (--clean): an audit that silently deletes files is
+    surprising, and made `audit-all` unusable as a pure health check.
+    """
+    total_steps = 4 if do_clean else 3
+    if not quiet and not as_json:
+        print("🛡️ Running Master Repository Audit & Health Check...\n" + "=" * 60)
+        print(f"Step 1/{total_steps}: Static Extension Validation")
+    v_ok = validate_extensions(repo_root, quiet=(quiet or as_json))
+    if not quiet and not as_json:
+        print("\n" + "-" * 60)
+        print(f"Step 2/{total_steps}: Kotlin Codebase Quality Linting (advisory)")
+    l_ok = lint_codebase(repo_root, quiet=(quiet or as_json))
+    if not quiet and not as_json:
+        print("\n" + "-" * 60)
 
-    print("Step 3/4: Workspace Cache & Artifact Cleaning")
-    c_ok = clean_workspace(repo_root)
-    print("\n" + "-" * 60)
+    c_ok = True
+    step = 3
+    if do_clean:
+        if not quiet and not as_json:
+            print(f"Step {step}/{total_steps}: Workspace Cache & Artifact Cleaning")
+        c_ok = clean_workspace(repo_root)
+        if not quiet and not as_json:
+            print("\n" + "-" * 60)
+        step += 1
 
-    print("Step 4/4: Extension Catalog Documentation Sync")
+    if not quiet and not as_json:
+        print(f"Step {step}/{total_steps}: Extension Catalog Documentation Sync")
     d_ok = generate_doc(repo_root)
-    print("\n" + "=" * 60)
+    if not quiet and not as_json:
+        print("\n" + "=" * 60)
 
-    success = v_ok and l_ok and c_ok and d_ok
-    if success:
+    # Lint findings are advisory and do not fail the audit; validation does.
+    success = v_ok and c_ok and d_ok
+
+    if as_json:
+        audit_report = {
+            "success": success,
+            "healthy": success,
+            "validation": v_ok,
+            "lint": l_ok,
+            "cache_cleaned": c_ok if do_clean else None,
+            "doc": d_ok,
+            "error": None if success else "Master repository audit found blocking validation issues"
+        }
+        print(json.dumps(audit_report, indent=2))
+        return success
+
+    if quiet:
+        status_label = "PASSED" if success else "FAILED"
+        print(f"Audit: {status_label} (Validation: {'OK' if v_ok else 'FAIL'}, Lint: {'OK' if l_ok else 'WARN'})")
+        return success
+
+    if success and l_ok:
         print("🎉 Master Repository Audit Passed Cleanly!")
+    elif success:
+        print("✅ Master Repository Audit Passed — validation clean, lint reported advisory warnings above.")
     else:
-        print("⚠️ Master Repository Audit Completed with Warnings/Issues.")
+        print("⚠️ Master Repository Audit found blocking validation issues (see above).")
     return success
 
-def doctor(repo_root: Path) -> bool:
+def doctor(repo_root: Path, quiet: bool = False, as_json: bool = False) -> bool:
     """Diagnoses developer environment: Python, Git, ImageMagick, Java/Gradle, Android SDK, and lib/ health."""
-    print("🩺 Running Aniyomi Developer Environment Doctor & Diagnostic Health Check...\n" + "=" * 70)
     all_ok = True
     warnings = 0
     errors = 0
 
+    if not quiet and not as_json:
+        print("🩺 Running Aniyomi Developer Environment Doctor & Diagnostic Health Check...\n" + "=" * 70)
+
     # 1. Python Environment Check
-    print("1️⃣  Python Runtime Environment:")
+    if not quiet and not as_json:
+        print("1️⃣  Python Runtime Environment:")
     py_ver = sys.version_info
     py_str = f"{py_ver.major}.{py_ver.minor}.{py_ver.micro}"
     if py_ver >= (3, 10):
-        print(f"  ✅ Python {py_str} ({sys.executable})")
+        if not quiet and not as_json:
+            print(f"  ✅ Python {py_str} ({sys.executable})")
     else:
-        print(f"  ❌ Python {py_str} is outdated (Python 3.10+ required)")
+        if not quiet and not as_json:
+            print(f"  ❌ Python {py_str} is outdated (Python 3.10+ required)")
         all_ok = False
         errors += 1
 
-    # Check optional packages (F-28: expanded from just bs4/PIL)
     opt_pkgs = {
         "bs4": "BeautifulSoup4 (HTML DOM parsing)",
         "PIL": "Pillow (Icon processing)",
         "requests": "requests (HTTP client for site-recon/probe-stream)",
         "lxml": "lxml (fast HTML/XML parser)",
     }
+    opt_status = {}
     for mod, desc in opt_pkgs.items():
-        if importlib.util.find_spec(mod) is not None:
-            print(f"  ✅ Optional Package: {desc} is available")
-        else:
-            print(f"  ℹ️  Optional Package: {desc} not installed (some CLI commands may not work)")
+        avail = importlib.util.find_spec(mod) is not None
+        opt_status[mod] = avail
+        if not quiet and not as_json:
+            if avail:
+                print(f"  ✅ Optional Package: {desc} is available")
+            else:
+                print(f"  ℹ️  Optional Package: {desc} not installed (some CLI commands may not work)")
 
     # 2. Git Version Control Check
-    print("\n2️⃣  Git Version Control System:")
+    if not quiet and not as_json:
+        print("\n2️⃣  Git Version Control System:")
     git_bin = shutil.which("git")
+    git_ver_out = ""
+    active_branch = "unknown"
+    remote_url = "none"
     if git_bin:
         try:
             git_ver_out = subprocess.run(["git", "--version"], capture_output=True, text=True, check=True).stdout.strip()
-            print(f"  ✅ {git_ver_out} ({git_bin})")
+            if not quiet and not as_json:
+                print(f"  ✅ {git_ver_out} ({git_bin})")
             branch_res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root, capture_output=True, text=True)
             active_branch = branch_res.stdout.strip() if branch_res.returncode == 0 else "unknown"
             remote_res = subprocess.run(["git", "remote", "get-url", "origin"], cwd=repo_root, capture_output=True, text=True)
             remote_url = remote_res.stdout.strip() if remote_res.returncode == 0 else "No remote origin configured"
-            print(f"  ℹ️  Active Branch: `{active_branch}` | Origin: `{remote_url}`")
+            remote_url = re.sub(r"(?<=://)[^/@\s]+@", "***@", remote_url)
+            if not quiet and not as_json:
+                print(f"  ℹ️  Active Branch: `{active_branch}` | Origin: `{remote_url}`")
         except Exception as e:
-            print(f"  ⚠️  Git installed but repository query encountered issue: {e}")
+            if not quiet and not as_json:
+                print(f"  ⚠️  Git installed but repository query encountered issue: {e}")
             warnings += 1
     else:
-        print("  ❌ Git is not installed or not found on PATH.")
+        if not quiet and not as_json:
+            print("  ❌ Git is not installed or not found on PATH.")
         all_ok = False
         errors += 1
 
-    # GitHub CLI check (F-26)
     gh_bin = shutil.which("gh")
     if gh_bin:
         try:
             gh_ver = subprocess.run(["gh", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
-            print(f"  ✅ GitHub CLI: {gh_ver} ({gh_bin})")
+            if not quiet and not as_json:
+                print(f"  ✅ GitHub CLI: {gh_ver} ({gh_bin})")
         except Exception:
-            print(f"  ✅ GitHub CLI found ({gh_bin})")
+            if not quiet and not as_json:
+                print(f"  ✅ GitHub CLI found ({gh_bin})")
     else:
-        print("  ⚠️  GitHub CLI (gh) not found — required for publish/CI workflow (gh run view, gh run download)")
+        if not quiet and not as_json:
+            print("  ⚠️  GitHub CLI (gh) not found — required for publish/CI workflow (gh run view, gh run download)")
         warnings += 1
 
     # 3. Image Processing (ImageMagick)
-    print("\n3️⃣  Image Processing Tooling:")
+    if not quiet and not as_json:
+        print("\n3️⃣  Image Processing Tooling:")
     img_bin = shutil.which("convert") or shutil.which("magick")
     if img_bin:
-        print(f"  ✅ ImageMagick rasterizer available ({img_bin})")
+        if not quiet and not as_json:
+            print(f"  ✅ ImageMagick rasterizer available ({img_bin})")
     else:
-        print("  ℹ️  ImageMagick (convert/magick) not found on PATH (pure-Python stdlib PNG generator active)")
+        if not quiet and not as_json:
+            print("  ℹ️  ImageMagick (convert/magick) not found on PATH (pure-Python stdlib PNG generator active)")
 
     # 4. Java & Android Environment
-    print("\n4️⃣  Java & Android SDK Environment:")
+    if not quiet and not as_json:
+        print("\n4️⃣  Java & Android SDK Environment:")
     java_bin = shutil.which("java")
+    java_ver_out = ""
     if java_bin:
         try:
             java_ver_out = subprocess.run(["java", "-version"], capture_output=True, text=True).stderr.splitlines()[0]
-            print(f"  ✅ {java_ver_out} ({java_bin})")
+            if not quiet and not as_json:
+                print(f"  ✅ {java_ver_out} ({java_bin})")
         except Exception:
-            print(f"  ✅ Java runtime found ({java_bin})")
+            if not quiet and not as_json:
+                print(f"  ✅ Java runtime found ({java_bin})")
     else:
-        print("  ℹ️  Java runtime not on PATH (Not required for Python CLI developer workflow)")
+        if not quiet and not as_json:
+            print("  ℹ️  Java runtime not on PATH (Not required for Python CLI developer workflow)")
 
     android_home = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
     if android_home and Path(android_home).exists():
-        print(f"  ✅ Android SDK: {android_home}")
+        if not quiet and not as_json:
+            print(f"  ✅ Android SDK: {android_home}")
     else:
-        print("  ℹ️  ANDROID_HOME not set (Remote CI builds handle APK compilation)")
+        if not quiet and not as_json:
+            print("  ℹ️  ANDROID_HOME not set (Remote CI builds handle APK compilation)")
 
-    # ADB check (F-26)
     adb_bin = shutil.which("adb")
     if adb_bin:
-        print(f"  ✅ ADB found ({adb_bin})")
+        if not quiet and not as_json:
+            print(f"  ✅ ADB found ({adb_bin})")
     else:
-        print("  ℹ️  ADB not found on PATH (required for Connected ADB Device Workflow)")
+        if not quiet and not as_json:
+            print("  ℹ️  ADB not found on PATH (required for Connected ADB Device Workflow)")
 
     # 5. Shared Extractors (lib/ health)
-    print("\n5️⃣  Shared Extractor Libraries (`lib/`):")
+    if not quiet and not as_json:
+        print("\n5️⃣  Shared Extractor Libraries (`lib/`):")
     lib_dir = repo_root / "lib"
+    extractors = []
     if lib_dir.exists():
         extractors = [d.name for d in lib_dir.iterdir() if d.is_dir()]
-        print(f"  ✅ Found {len(extractors)} shared extractor modules in lib/")
+        if not quiet and not as_json:
+            print(f"  ✅ Found {len(extractors)} shared extractor modules in lib/")
     else:
-        print("  ❌ lib/ directory missing.")
+        if not quiet and not as_json:
+            print("  ❌ lib/ directory missing.")
         all_ok = False
         errors += 1
 
+    success = (all_ok and errors == 0)
+
+    if as_json:
+        doc_report = {
+            "success": success,
+            "healthy": success,
+            "errors": errors,
+            "warnings": warnings,
+            "python": {"version": py_str, "executable": sys.executable, "ok": py_ver >= (3, 10)},
+            "git": {"available": bool(git_bin), "version": git_ver_out, "branch": active_branch},
+            "gh": {"available": bool(gh_bin)},
+            "imagemagick": {"available": bool(img_bin)},
+            "java": {"available": bool(java_bin), "version": java_ver_out},
+            "android_sdk": {"available": bool(android_home and Path(android_home).exists()), "path": android_home},
+            "adb": {"available": bool(adb_bin)},
+            "lib_count": len(extractors),
+            "lib_ok": lib_dir.exists(),
+            "optional_packages": opt_status,
+            "error": None if success else f"Found {errors} error(s) in doctor check"
+        }
+        print(json.dumps(doc_report, indent=2))
+        return success
+
+    if quiet:
+        status_label = "Healthy" if success else "Unhealthy"
+        print(f"Doctor: {status_label} (Python {py_str}, Git {git_ver_out.split()[-1] if git_ver_out else 'None'}, {len(extractors)} libs | {errors} errors, {warnings} warnings)")
+        return success
+
     print("\n" + "=" * 70)
-    if all_ok and errors == 0:
-        print("🎉 Doctor Diagnosis: System environment is fully operational!")
+    if success:
+        if warnings:
+            print(f"✅ Doctor Diagnosis: System environment is operational with {warnings} warning(s) noted above.")
+        else:
+            print("🎉 Doctor Diagnosis: System environment is fully operational!")
         return True
     else:
         print(f"⚠️ Doctor Diagnosis: Found {errors} error(s) and {warnings} warning(s).")
@@ -1600,7 +2172,7 @@ def main():
             },
             "list-extractors": {
                 "script": None,
-                "desc": "List all 65 pre-built video extractor libraries available in the lib/ directory."
+                "desc": "List every pre-built video extractor library available in the lib/ directory."
             },
             "clean": {
                 "script": None,
@@ -1660,7 +2232,7 @@ def main():
             },
             "preflight": {
                 "script": None,
-                "desc": "One-shot master quality gate chaining format, fix, detect-extractors, lint, and validate."
+                "desc": "Read-only master quality gate: format check, lint (advisory), and static validation. --fix to remediate."
             },
             "inspect-hosters": {
                 "script": None,
@@ -1753,11 +2325,12 @@ def main():
                 ("sandbox", "Zero-APK fast in-memory Kotlin runtime simulator."),
             ]),
             ("🛡️  Code Quality, Auto-Fix & Validation", [
-                ("preflight", "One-shot master quality gate chaining format, fix, deps, lint, and validate (supports --changed)."),
-                ("validate", "Perform static analysis validation without Gradle APK build (supports --fix, --changed)."),
-                ("lint", "Scan for code smells, anti-patterns, and API invariants (supports --fix)."),
-                ("fix", "Auto-remediate Kotlin AST code smells and API v16 invariants."),
-                ("format", "Format Kotlin, Gradle, and XML files (strip whitespace, CRLF normalization)."),
+                ("preflight", "Read-only quality gate: format check, lint, validate (--fix to rewrite, --changed, --strict)."),
+                ("validate", "Perform static analysis validation without Gradle APK build (supports --fix, --all, --changed)."),
+                ("lint", "Scan for code smells, anti-patterns, and API invariants — advisory (supports --fix, --changed)."),
+                ("fix", "Auto-remediate Kotlin AST code smells and API v16 invariants (rewrites source)."),
+                ("detect-extractors", "Detect required video extractors from embed URLs/code and patch build.gradle deps."),
+                ("format", "Normalize whitespace in Kotlin/Gradle/XML — NOT a replacement for ./gradlew spotlessApply."),
                 ("inspect-hosters", "Inspect & audit hoster folder architecture and stream quality sorting."),
             ]),
             ("📡 Media & Stream Diagnostics", [
@@ -1770,7 +2343,7 @@ def main():
                 ("fetch-icon", "Fetch website favicon and convert to 192x192 PNG launcher icon."),
             ]),
             ("🚀 Release & Versioning", [
-                ("publish", "Full master preflight, format, validate, bump version, commit, and push (supports --watch)."),
+                ("publish", "Full master preflight, format, validate, bump version, commit, and push (supports --watch, --strict)."),
                 ("ci-status", "Check remote GitHub Actions CI workflow status & compiler logs."),
                 ("ci-watch", "Watch and stream remote GitHub Actions CI build until completion."),
                 ("bump-version", "Increment extVersionCode in build.gradle."),
@@ -1781,15 +2354,15 @@ def main():
             ]),
             ("🩺 Maintenance & Diagnostics", [
                 ("doctor", "Diagnose developer environment (Python, Git, Java, Android SDK)."),
-                ("audit-all", "Run master repository health audit across all modules."),
-                ("canary-monitor", "Monitor health across all 65+ video extractors in lib/."),
+                ("audit-all", "Run master repository health audit across all modules (--clean to also purge caches)."),
+                ("canary-monitor", "Monitor health across all video extractors in lib/."),
                 ("sync-lib", "Synchronize shared extractors with upstream repositories."),
                 ("sync-ext", "Synchronize extension sources with upstream repositories (Yuzono/Keiyoushi)."),
                 ("verify-extractors", "Empirically test video extractors against live HTTP streams."),
                 ("auto-maintain", "Run automated maintenance (sync, fix dependencies, validate)."),
                 ("info", "Show detailed metadata for a single extension module."),
                 ("list", "List installed extension modules and version codes."),
-                ("list-extractors", "List all 65 pre-built video extractor libraries."),
+                ("list-extractors", "List every pre-built video extractor library in lib/."),
                 ("doc", "Generate markdown extension catalog table."),
                 ("vendor", "Vendor an isolated copy of an extractor from lib/ into an extension."),
                 ("sync-vendor", "Scan and sync managed vendored extractor copies across extensions."),
@@ -1800,7 +2373,22 @@ def main():
             ]),
         ]
 
-        epilog_lines = [f"Available Commands ({len(commands_info)} Total):", "=" * 60]
+        # Aliases intentionally hidden from the grouped listing.
+        HIDDEN_COMMANDS = {"test-extractors"}
+
+        listed = {c for _, cmds in grouped_categories for c, _ in cmds}
+        # Keep --help honest: surface any registered command that no category
+        # mentions instead of silently omitting it (detect-extractors was
+        # invisible in help for exactly this reason).
+        unlisted = sorted(set(commands_info) - listed - HIDDEN_COMMANDS)
+        if unlisted:
+            grouped_categories.append((
+                "📎 Other",
+                [(c, commands_info[c]["desc"]) for c in unlisted],
+            ))
+            listed |= set(unlisted)
+
+        epilog_lines = [f"Available Commands ({len(listed)} listed, {len(commands_info)} registered):", "=" * 60]
         for cat_title, cmds in grouped_categories:
             epilog_lines.append(f"\n{cat_title}:")
             for c_name, c_desc in cmds:
@@ -1817,12 +2405,21 @@ def main():
             "  python3 scripts/cli.py probe-stream 'https://example.com/master.m3u8' --deep",
             "  python3 scripts/cli.py json-to-dto https://api.site.com/anime/1",
             "  python3 scripts/cli.py validate <module> --fix",
-            "  python3 scripts/cli.py publish <module> -m 'fix episode parsing'",
+            "  python3 scripts/cli.py preflight --changed          # read-only gate on every module you touched",
+            "  python3 scripts/cli.py preflight <module> --fix      # opt in to source rewriting",
+            "  python3 scripts/cli.py preflight <module> --strict   # fail on advisory lint warnings too",
+            "  python3 scripts/cli.py publish <module> -m 'fix episode parsing' --watch",
             "  python3 scripts/cli.py search anikage",
             "  python3 scripts/cli.py deps en/anikage    # or omit target for reverse-dep matrix",
             "  python3 scripts/cli.py format --changed --check",
             "  python3 scripts/cli.py stats",
-            "  python3 scripts/cli.py audit-all"
+            "  python3 scripts/cli.py audit-all",
+            "",
+            "Notes:",
+            "  • `preflight` and `publish` are read-only by default; pass --fix to let them rewrite source.",
+            "  • `lint` findings are advisory; `preflight`/`publish` gate on `validate` unless --strict.",
+            "  • `format` is a whitespace pass only — run ./gradlew spotlessApply for canonical Kotlin style.",
+            "  • Set CLI_DEBUG=1 to print full tracebacks on unexpected errors.",
         ])
 
         parser = argparse.ArgumentParser(
@@ -1831,6 +2428,11 @@ def main():
             epilog="\n".join(epilog_lines)
         )
 
+        parser.add_argument(
+            "-V", "--version", action="version",
+            version=f"Aniyomi Extension Engine Master CLI v{CLI_VERSION}",
+            help="Show the CLI tool version and exit.",
+        )
         parser.add_argument("command", choices=list(commands_info.keys()), help="Subcommand to run")
         parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments passed to the subcommand")
 
@@ -1838,12 +2440,39 @@ def main():
             parser.print_help()
             sys.exit(0)
 
+        # Friendlier UX for a mistyped subcommand: before argparse rejects it with
+        # a wall-of-text "invalid choice" error, offer the closest known command(s).
+        first_arg = sys.argv[1]
+        if not first_arg.startswith("-") and first_arg not in commands_info:
+            # Prefer commands whose name starts with, or contains, the typo (so
+            # `validat` -> `validate`, `hoster` -> `inspect-hosters`) before
+            # falling back to fuzzy edit-distance matches.
+            prefix_hits = [c for c in commands_info if c.startswith(first_arg)]
+            substr_hits = [c for c in commands_info if first_arg in c and c not in prefix_hits]
+            fuzzy_hits = [
+                c for c in difflib.get_close_matches(first_arg, commands_info.keys(), n=3, cutoff=0.5)
+                if c not in prefix_hits and c not in substr_hits
+            ]
+            suggestions = (prefix_hits + substr_hits + fuzzy_hits)[:3]
+            print(f"❌ Unknown command: '{first_arg}'")
+            if suggestions:
+                if len(suggestions) == 1:
+                    print(f"   Did you mean '{suggestions[0]}'?")
+                else:
+                    print(f"   Did you mean one of: {', '.join(repr(s) for s in suggestions)}?")
+            print("   Run `python3 scripts/cli.py --help` to see all available commands.")
+            sys.exit(2)
+
         args = parser.parse_args()
         if args.command == "test-extractors":
             args.command = "test-extractor"
 
         if args.command == "doctor":
-            success = doctor(repo_root)
+            doc_parser = argparse.ArgumentParser(prog="cli.py doctor")
+            doc_parser.add_argument("--quiet", "-q", action="store_true", help="Output dense one-line summary")
+            doc_parser.add_argument("--json", action="store_true", help="Output structured JSON envelope")
+            doc_args = doc_parser.parse_args(args.args)
+            success = doctor(repo_root, quiet=doc_args.quiet, as_json=doc_args.json)
             sys.exit(0 if success else 1)
 
         if args.command == "create-theme":
@@ -1859,9 +2488,10 @@ def main():
             mig_parser.add_argument("target", help="Target extension module (e.g. 'vegamovies' or 'en/vegamovies')")
             mig_parser.add_argument("--new-domain", required=True, help="New base URL domain (e.g. 'https://newdomain.com')")
             mig_parser.add_argument("--no-test", action="store_true", help="Skip live HTTP reachability check")
+            mig_parser.add_argument("--force", action="store_true", help="Migrate even if the new domain is unreachable")
             mig_parser.add_argument("--dry-run", action="store_true", help="Preview modifications without writing to disk")
             mig_args = mig_parser.parse_args(args.args)
-            success = migrate_domain(repo_root, mig_args.target, mig_args.new_domain, test_reachability=not mig_args.no_test, dry_run=mig_args.dry_run)
+            success = migrate_domain(repo_root, mig_args.target, mig_args.new_domain, test_reachability=not mig_args.no_test, dry_run=mig_args.dry_run, force=mig_args.force)
             sys.exit(0 if success else 1)
 
         if args.command == "bump-theme":
@@ -1883,21 +2513,29 @@ def main():
             sys.exit(0 if success else 1)
 
         if args.command == "stats":
-            success = repo_stats(repo_root)
+            stats_parser = argparse.ArgumentParser(prog="cli.py stats")
+            stats_parser.add_argument("--quiet", "-q", action="store_true", help="Output dense one-line summary")
+            stats_parser.add_argument("--json", action="store_true", help="Output structured JSON envelope")
+            stats_args = stats_parser.parse_args(args.args)
+            success = repo_stats(repo_root, quiet=stats_args.quiet, as_json=stats_args.json)
             sys.exit(0 if success else 1)
 
         if args.command == "search":
             search_parser = argparse.ArgumentParser(prog="cli.py search")
             search_parser.add_argument("query", help="Substring to match against module names, display names, or base URLs")
+            search_parser.add_argument("--quiet", "-q", action="store_true", help="Output dense one-line summary")
+            search_parser.add_argument("--json", action="store_true", help="Output structured JSON envelope")
             search_args = search_parser.parse_args(args.args)
-            success = search_extensions(repo_root, search_args.query)
+            success = search_extensions(repo_root, search_args.query, quiet=search_args.quiet, as_json=search_args.json)
             sys.exit(0 if success else 1)
 
         if args.command == "deps":
             deps_parser = argparse.ArgumentParser(prog="cli.py deps")
             deps_parser.add_argument("target", nargs="?", help="Optional extension module (e.g. 'anikage' or 'en/anikage'); omit for reverse-dependency matrix")
+            deps_parser.add_argument("--quiet", "-q", action="store_true", help="Output dense one-line summary")
+            deps_parser.add_argument("--json", action="store_true", help="Output structured JSON envelope")
             deps_args = deps_parser.parse_args(args.args)
-            success = show_deps(repo_root, deps_args.target)
+            success = show_deps(repo_root, deps_args.target, quiet=deps_args.quiet, as_json=deps_args.json)
             sys.exit(0 if success else 1)
 
         if args.command == "format":
@@ -1909,11 +2547,13 @@ def main():
             fmt_parser.add_argument("--check", action="store_true", help="Check formatting status without modifying files")
             fmt_args = fmt_parser.parse_args(args.args)
             if fmt_args.changed:
-                changed = get_changed_extensions(repo_root)
+                changed, shared = get_changed_extensions(repo_root)
+                _report_shared_changes(shared)
                 if not changed:
                     print("✨ No modified extensions detected in git working tree.")
                     sys.exit(0)
-                print(f"✨ Formatting {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
+                verb = "Checking" if fmt_args.check else "Formatting"
+                print(f"✨ {verb} {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
                 all_ok = True
                 for l, n in changed:
                     if not format_codebase(repo_root, l, n, check_only=fmt_args.check):
@@ -1924,7 +2564,11 @@ def main():
             sys.exit(0 if success else 1)
 
         if args.command == "list":
-            list_extensions(repo_root)
+            list_parser = argparse.ArgumentParser(prog="cli.py list")
+            list_parser.add_argument("--quiet", "-q", action="store_true", help="Output dense one-line summary")
+            list_parser.add_argument("--json", action="store_true", help="Output structured JSON envelope")
+            list_args = list_parser.parse_args(args.args)
+            list_extensions(repo_root, quiet=list_args.quiet, as_json=list_args.json)
             sys.exit(0)
 
         if args.command == "clean":
@@ -1942,23 +2586,29 @@ def main():
             lint_parser.add_argument("--name", help="Target extension directory name")
             lint_parser.add_argument("--changed", action="store_true", help="Lint all extensions modified in git status")
             lint_parser.add_argument("--fix", action="store_true", help="Auto-fix AST smells and v16 invariants before linting")
+            lint_parser.add_argument("--quiet", "-q", action="store_true", help="Output dense one-line summary")
+            lint_parser.add_argument("--json", action="store_true", help="Output structured JSON envelope")
             lint_args = lint_parser.parse_args(args.args)
             if lint_args.changed:
-                changed = get_changed_extensions(repo_root)
+                changed, shared = get_changed_extensions(repo_root)
+                _report_shared_changes(shared)
                 if not changed:
                     print("✨ No modified extensions detected in git working tree.")
                     sys.exit(0)
-                print(f"🔍 Linting {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
+                if not lint_args.quiet and not lint_args.json:
+                    print(f"🔍 Linting {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
                 all_ok = True
                 for l, n in changed:
-                    if not lint_codebase(repo_root, l, n):
+                    if not lint_codebase(repo_root, l, n, quiet=lint_args.quiet, as_json=lint_args.json):
                         all_ok = False
                 sys.exit(0 if all_ok else 1)
             lang, name = resolve_extension_target(repo_root, lint_args.target, lint_args.lang, lint_args.name)
             if lint_args.fix:
+                if not require_module(repo_root, lang, name, "lint --fix"):
+                    sys.exit(1)
                 from scripts.ast_fixer import fix_codebase
                 fix_codebase(repo_root, lang, name)
-            success = lint_codebase(repo_root, lang, name)
+            success = lint_codebase(repo_root, lang, name, quiet=lint_args.quiet, as_json=lint_args.json)
             sys.exit(0 if success else 1)
 
         if args.command == "preflight":
@@ -1967,16 +2617,19 @@ def main():
             pf_parser.add_argument("--lang", help="Target extension lang")
             pf_parser.add_argument("--name", help="Target extension directory name")
             pf_parser.add_argument("--changed", action="store_true", help="Run preflight across all extensions modified in git status")
+            pf_parser.add_argument("--strict", action="store_true", help="Treat advisory lint warnings as blocking failures")
+            pf_parser.add_argument("--fix", action="store_true", help="Also run the mutating steps (format, AST remediation, dependency injection). Rewrites source.")
             pf_args = pf_parser.parse_args(args.args)
             if pf_args.changed:
-                changed = get_changed_extensions(repo_root)
+                changed, shared = get_changed_extensions(repo_root)
+                _report_shared_changes(shared)
                 if not changed:
                     print("✨ No modified extensions detected in git working tree.")
                     sys.exit(0)
                 print(f"🚀 Running preflight on {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
                 all_ok = True
                 for l, n in changed:
-                    if not preflight_extension(repo_root, l, n):
+                    if not preflight_extension(repo_root, l, n, strict=pf_args.strict, apply_fixes=pf_args.fix):
                         all_ok = False
                 sys.exit(0 if all_ok else 1)
             if not pf_args.target and not (pf_args.lang and pf_args.name):
@@ -1984,7 +2637,7 @@ def main():
                 print("\n❌ Error: Target extension module or --changed is required (e.g. `cli.py preflight <module>` or `cli.py preflight --changed`).")
                 sys.exit(1)
             lang, name = resolve_extension_target(repo_root, pf_args.target, pf_args.lang, pf_args.name)
-            success = preflight_extension(repo_root, lang, name)
+            success = preflight_extension(repo_root, lang, name, strict=pf_args.strict, apply_fixes=pf_args.fix)
             sys.exit(0 if success else 1)
 
         if args.command == "inspect-hosters":
@@ -2002,7 +2655,12 @@ def main():
             sys.exit(0 if success else 1)
 
         if args.command == "audit-all":
-            success = audit_all(repo_root)
+            audit_parser = argparse.ArgumentParser(prog="cli.py audit-all")
+            audit_parser.add_argument("--clean", action="store_true", help="Also purge __pycache__/*.pyc caches (audit is read-only by default)")
+            audit_parser.add_argument("--quiet", "-q", action="store_true", help="Output dense one-line summary")
+            audit_parser.add_argument("--json", action="store_true", help="Output structured JSON envelope")
+            audit_args = audit_parser.parse_args(args.args)
+            success = audit_all(repo_root, do_clean=audit_args.clean, quiet=audit_args.quiet, as_json=audit_args.json)
             sys.exit(0 if success else 1)
 
         if args.command == "list-extractors":
@@ -2024,6 +2682,8 @@ def main():
             vendor_args = vendor_parser.parse_args(args.args)
             from scripts.vendor_extractor import vendor_extractor
             lang, name = resolve_extension_target(repo_root, vendor_args.target, None, None)
+            if not require_module(repo_root, lang, name, "vendor"):
+                sys.exit(1)
             success = vendor_extractor(repo_root, vendor_args.extractor, lang, name)
             sys.exit(0 if success else 1)
 
@@ -2035,6 +2695,8 @@ def main():
             lang, name = None, None
             if sync_args.target:
                 lang, name = resolve_extension_target(repo_root, sync_args.target, None, None)
+                if not require_module(repo_root, lang, name, "sync-vendor"):
+                    sys.exit(1)
             success = sync_vendored_extractors(repo_root, lang, name)
             sys.exit(0 if success else 1)
 
@@ -2046,13 +2708,15 @@ def main():
             pub_parser.add_argument("-m", "--message", help="Commit message")
             pub_parser.add_argument("--no-bump", action="store_true", help="Skip version bump if version code was already incremented")
             pub_parser.add_argument("--watch", action="store_true", help="Stream and monitor remote GitHub Actions CI workflow after pushing")
+            pub_parser.add_argument("--strict", action="store_true", help="Treat advisory lint warnings as blocking failures")
+            pub_parser.add_argument("--fix", action="store_true", help="Let preflight rewrite sources (format, AST remediation) before committing")
             pub_args = pub_parser.parse_args(args.args)
             if not pub_args.target and not (pub_args.lang and pub_args.name):
                 pub_parser.print_help()
                 print("\n❌ Error: Target extension module is required (e.g. `cli.py publish <module>`).")
                 sys.exit(1)
             lang, name = resolve_extension_target(repo_root, pub_args.target, pub_args.lang, pub_args.name)
-            success = publish_extension(repo_root, lang, name, pub_args.message, no_bump=pub_args.no_bump, watch=pub_args.watch)
+            success = publish_extension(repo_root, lang, name, pub_args.message, no_bump=pub_args.no_bump, watch=pub_args.watch, strict=pub_args.strict, apply_fixes=pub_args.fix)
             sys.exit(0 if success else 1)
 
         if args.command == "validate":
@@ -2063,16 +2727,20 @@ def main():
             val_parser.add_argument("--all", action="store_true", help="Validate all extensions")
             val_parser.add_argument("--changed", action="store_true", help="Validate all extensions modified in git status")
             val_parser.add_argument("--fix", action="store_true", help="Auto-fix AST smells and missing dependencies before validating")
+            val_parser.add_argument("--quiet", "-q", action="store_true", help="Output dense one-line summary")
+            val_parser.add_argument("--json", action="store_true", help="Output structured JSON envelope")
             val_args = val_parser.parse_args(args.args)
             if val_args.changed:
-                changed = get_changed_extensions(repo_root)
+                changed, shared = get_changed_extensions(repo_root)
+                _report_shared_changes(shared)
                 if not changed:
                     print("✨ No modified extensions detected in git working tree.")
                     sys.exit(0)
-                print(f"🔎 Validating {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
+                if not val_args.quiet and not val_args.json:
+                    print(f"🔎 Validating {len(changed)} changed extension(s): {', '.join(f'{l}/{n}' for l, n in changed)}\n")
                 all_ok = True
                 for l, n in changed:
-                    if not validate_extensions(repo_root, l, n):
+                    if not validate_extensions(repo_root, l, n, quiet=val_args.quiet, as_json=val_args.json):
                         all_ok = False
                 sys.exit(0 if all_ok else 1)
             elif val_args.all:
@@ -2082,15 +2750,8 @@ def main():
             if val_args.fix:
                 from scripts.ast_fixer import fix_codebase
                 fix_codebase(repo_root, lang, name)
-                detect_script = repo_root / "scripts" / "detect_extractors.py"
-                if detect_script.exists():
-                    d_cmd = [sys.executable, str(detect_script), "--fix"]
-                    if lang and name:
-                        d_cmd.extend(["--lang", lang, "--name", name])
-                    d_res = subprocess.run(d_cmd, cwd=repo_root, capture_output=True, text=True, timeout=20)
-                    if d_res.returncode != 0:
-                        print(f"  ⚠️  detect_extractors exited with code {d_res.returncode}: {d_res.stderr.strip()}")
-            success = validate_extensions(repo_root, lang, name)
+                run_detect_extractors(repo_root, lang, name)
+            success = validate_extensions(repo_root, lang, name, quiet=val_args.quiet, as_json=val_args.json)
             sys.exit(0 if success else 1)
 
         if args.command in ("ci-status", "ci-watch"):
@@ -2137,6 +2798,8 @@ def main():
                 print("\n❌ Error: Target extension module is required (e.g. `cli.py bump-version <module>`).")
                 sys.exit(1)
             lang, name = resolve_extension_target(repo_root, bump_args.target, bump_args.lang, bump_args.name)
+            if not require_module(repo_root, lang, name, "bump-version"):
+                sys.exit(1)
             success = bump_version(repo_root, lang, name)
             sys.exit(0 if success else 1)
 
@@ -2150,28 +2813,33 @@ def main():
             if target.startswith("http://") or target.startswith("https://"):
                 base_url = target
             else:
+                # Resolve through the shared target resolver and search only that
+                # module. The previous `target in kt.name.lower()` scan matched
+                # filenames across all of src/ and could pick an unrelated
+                # module's baseUrl.
+                lang, name = resolve_extension_target(repo_root, target=target)
+                if not require_module(repo_root, lang, name, "test-pipeline"):
+                    sys.exit(1)
+                mod_dir = repo_root / "src" / lang / name
+                base_url_re = re.compile(
+                    r'(?:PREF_BASE_URL_DEFAULT|PREF_DOMAIN_DEFAULT|DOMAIN(?:_DEFAULT)?|override\s+val\s+baseUrl)\s*=\s*["\'](https?://[^"\']+)["\']'
+                )
                 found_base_url = None
-                src_dir = repo_root / "src"
-                for kt in src_dir.rglob("*.kt"):
-                    if kt.parent.name == target or target in kt.name.lower():
-                        content = kt.read_text(encoding="utf-8", errors="ignore")
-                        m = re.search(r'PREF_BASE_URL_DEFAULT\s*=\s*["\']([^"\']+)["\']', content)
-                        if not m:
-                            m = re.search(r'override\s+val\s+baseUrl\s*=\s*["\']([^"\']+)["\']', content)
+                for kt in sorted(mod_dir.rglob("*.kt")):
+                    m = base_url_re.search(kt.read_text(encoding="utf-8", errors="ignore"))
+                    if m:
+                        found_base_url = m.group(1)
+                        break
+                if not found_base_url:
+                    for bg in sorted(mod_dir.glob("build.gradle*")):
+                        m = re.search(r'baseUrl\s*=\s*["\'](https?://[^"\']+)["\']', bg.read_text(encoding="utf-8", errors="ignore"))
                         if m:
                             found_base_url = m.group(1)
                             break
                 if not found_base_url:
-                    for bg in src_dir.rglob("build.gradle*"):
-                        if bg.parent.name == target or target in bg.parent.name.lower():
-                            bg_content = bg.read_text(encoding="utf-8", errors="ignore")
-                            m = re.search(r'baseUrl\s*=\s*["\'](https?://[^"\']+)["\']', bg_content)
-                            if m:
-                                found_base_url = m.group(1)
-                                break
-                if not found_base_url:
-                    print(f"❌ Could not resolve base URL for module: {target}")
+                    print(f"❌ Could not resolve a base URL inside src/{lang}/{name}. Pass the URL directly instead.")
                     sys.exit(1)
+                print(f"ℹ️  Resolved src/{lang}/{name} -> {found_base_url}")
                 base_url = found_base_url
             tester = PipelineTester(base_url)
             success = tester.run(query=pipe_args.query)
@@ -2200,11 +2868,12 @@ def main():
 
             icon_args = fetch_parser.parse_args(args.args)
             lang, name = resolve_extension_target(repo_root, icon_args.target, icon_args.lang, icon_args.name)
-            if not name:
-                print("❌ Error: Target extension name is required (e.g. `cli.py fetch-icon <target>` or `cli.py fetch-icon --url <url> <target>`).")
+            # Previously fell back to `src/en/<name>` when the language failed to
+            # resolve, which silently wrote icons into the wrong module.
+            if not require_module(repo_root, lang, name, "fetch-icon"):
                 sys.exit(1)
 
-            target_src = repo_root / "src" / (lang or "en") / name
+            target_src = repo_root / "src" / lang / name
             target_url = icon_args.url
             if not target_url and target_src.exists():
                 for kt in target_src.rglob("*.kt"):
@@ -2247,7 +2916,7 @@ def main():
             else:
                 extra = args.args
             cmd = [sys.executable, str(script_path), "--aniskip"] + extra
-            result = subprocess.run(cmd, timeout=300)  # F-12: network I/O timeout
+            result = subprocess.run(cmd, timeout=SUBPROCESS_TIMEOUT)
             sys.exit(result.returncode)
 
         if args.command == "agent":
@@ -2319,7 +2988,7 @@ def main():
         if args.command == "cross-map-id":
             script_path = scripts_dir / "fetch_metadata.py"
             cmd = [sys.executable, str(script_path), "--cross-map"] + args.args
-            result = subprocess.run(cmd, timeout=300)
+            result = subprocess.run(cmd, timeout=SUBPROCESS_TIMEOUT)
             sys.exit(result.returncode)
 
         script_name = commands_info[args.command]["script"]
@@ -2334,15 +3003,29 @@ def main():
             print(f"❌ Script not found: {script_path}")
             sys.exit(1)
 
+        # Interactive and streaming commands read stdin or run for as long as the
+        # user watches them (`create -i`, `test-scraper --repl`, `probe-stream
+        # --play`). A wall-clock timeout would SIGKILL them mid-session, so it is
+        # only applied to the non-interactive scripts it was meant to protect.
+        timeout = None if args.command in INTERACTIVE_COMMANDS else SUBPROCESS_TIMEOUT
         cmd = [sys.executable, str(script_path)] + args.args
-        result = subprocess.run(cmd, timeout=300)  # F-13: prevent indefinite hang on network scripts
+        try:
+            result = subprocess.run(cmd, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            print(f"\n⏱️  `{args.command}` exceeded the {SUBPROCESS_TIMEOUT}s timeout and was terminated.")
+            print(f"    Run it directly for an unbounded session: python3 {script_path.relative_to(repo_root)} {' '.join(args.args)}")
+            sys.exit(124)
         sys.exit(result.returncode)
 
     except KeyboardInterrupt:
         print("\n🛑 Operation cancelled by user.")
         sys.exit(130)
     except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
+        if DEBUG:
+            traceback.print_exc()
+        print(f"\n❌ Unexpected error: {type(e).__name__}: {e}")
+        if not DEBUG:
+            print("   Re-run with CLI_DEBUG=1 for a full traceback.")
         sys.exit(1)
 
 if __name__ == "__main__":
