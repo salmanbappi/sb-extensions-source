@@ -197,10 +197,9 @@ class VideasyExtractor(
                 val quality = srcObj["quality"]?.jsonPrimitive?.content ?: "Auto"
 
                 val videoTitle = "$prefix$quality"
-                val playUrl = localProxy.getProxyUrl(srcUrl, headers)
                 videos.add(
                     Video(
-                        videoUrl = playUrl,
+                        videoUrl = srcUrl,
                         videoTitle = videoTitle,
                         headers = headers,
                         subtitleTracks = subtitles,
@@ -211,10 +210,9 @@ class VideasyExtractor(
             if (videos.isEmpty()) {
                 val playlistUrl = jsonObj["playlist"]?.jsonPrimitive?.content
                 if (!playlistUrl.isNullOrBlank()) {
-                    val playUrl = localProxy.getProxyUrl(playlistUrl, headers)
                     videos.add(
                         Video(
-                            videoUrl = playUrl,
+                            videoUrl = playlistUrl,
                             videoTitle = "${prefix}Auto",
                             headers = headers,
                             subtitleTracks = subtitles,

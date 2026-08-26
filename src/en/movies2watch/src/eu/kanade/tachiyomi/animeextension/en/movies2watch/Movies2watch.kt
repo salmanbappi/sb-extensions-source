@@ -60,13 +60,14 @@ class Movies2watch : Source() {
     }
 
     // Shared Video Extractors (Pure Native)
+    private val localProxy by lazy { LocalProxy(client) }
     private val doodExtractor by lazy { DoodExtractor(client) }
     private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val vidmolyExtractor by lazy { VidMolyExtractor(client, headers) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val byseExtractor by lazy { ByseExtractor(client, playlistUtils) }
-    private val videasyExtractor by lazy { VideasyExtractor(client, playlistUtils) }
+    private val videasyExtractor by lazy { VideasyExtractor(client, playlistUtils, localProxy) }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -425,7 +426,7 @@ class Movies2watch : Source() {
                 }
 
                 else -> emptyList()
-            }
+            }.let { localProxy.proxyVideos(it) }
         }.getOrDefault(emptyList())
     }
 

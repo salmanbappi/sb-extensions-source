@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.movies2watch
 
 import android.util.Base64
+import eu.kanade.tachiyomi.animesource.model.Video
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -56,6 +57,19 @@ class LocalProxy(private val client: OkHttpClient) {
         val ext = if (targetUrl.contains(".m3u8", ignoreCase = true) || targetUrl.contains("mpegurl", ignoreCase = true)) "playlist.m3u8" else "segment.ts"
         return "http://127.0.0.1:$port/proxy/$ext?url=$encodedUrl&headers=$encodedHeaders"
     }
+
+    fun proxyVideo(video: Video): Video {
+        val proxiedUrl = getProxyUrl(video.videoUrl, video.headers)
+        return Video(
+            videoUrl = proxiedUrl,
+            videoTitle = video.videoTitle,
+            headers = video.headers,
+            subtitleTracks = video.subtitleTracks,
+            audioTracks = video.audioTracks,
+        )
+    }
+
+    fun proxyVideos(videos: List<Video>): List<Video> = videos.map { proxyVideo(it) }
 
     private fun handleSocket(socket: Socket) {
         try {
