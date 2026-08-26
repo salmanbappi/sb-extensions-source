@@ -34,6 +34,8 @@ class TwoDHive : Source() {
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val extractors by lazy { TwoDHiveExtractors(client, headers, json, playlistUtils) }
 
+    private inline fun <reified T> Response.parseAs(): T = json.decodeFromString(body.string())
+
     // ============================== Popular ==============================
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/?list=top&page=$page#anime-list", headers)
 
@@ -96,9 +98,7 @@ class TwoDHive : Source() {
     override fun searchAnimeParse(response: Response): AnimesPage {
         val contentType = response.header("Content-Type") ?: ""
         if (contentType.contains("application/json") || response.request.url.encodedPath.contains("/api/search")) {
-            val searchDto = runCatching {
-                response.parseAs<SearchResponseDto>()
-            }.getOrNull()
+            val searchDto = runCatching { response.parseAs<SearchResponseDto>() }.getOrNull()
 
             val animeList = searchDto?.results?.mapNotNull { dto ->
                 val malId = dto.id ?: return@mapNotNull null
@@ -127,7 +127,7 @@ class TwoDHive : Source() {
         val title = document.selectFirst("h1")?.text()?.trim() ?: ""
         anime.title = title
 
-        val cover = document.selectFirst("img[alt*='poster'], .aspect-\[2\/3\] img, .aspect-\[3\/4\] img")
+        val cover = document.selectFirst("img[alt*='poster'], div[class*='aspect-'] img")
             ?.let { img -> img.attr("src").ifBlank { img.attr("data-src") } }
         if (!cover.isNullOrBlank()) {
             anime.thumbnail_url = cover
@@ -167,13 +167,10 @@ class TwoDHive : Source() {
             ?.text()?.replace(Regex("""[^\d]"""), "")?.toIntOrNull()
 
         if (totalEpisodes == null || totalEpisodes <= 0) {
-            val trackerResp = runCatching {
-                client.newCall(GET("$baseUrl/api/anime/episodes?id=$malId", headers)).execute().body.string()
+            val trackerDto = runCatching {
+                client.newCall(GET("$baseUrl/api/anime/episodes?id=$malId", headers)).execute().parseAs<EpisodeTrackerDto>()
             }.getOrNull()
-            if (!trackerResp.isNullOrBlank()) {
-                val trackerDto = runCatching { trackerDto }.getOrNull()
-                totalEpisodes = trackerDto?.episodes
-            }
+            totalEpisodes = trackerDto?.episodes
         }
 
         val total = totalEpisodes ?: 1
@@ -219,7 +216,7 @@ class TwoDHive : Source() {
     }
 
     // ============================== Video Sorting & Preferences ==============================
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
