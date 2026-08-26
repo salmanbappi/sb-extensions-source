@@ -21,12 +21,6 @@ class VideasyExtractor(
     companion object {
         private const val API_BASE = "https://api.speedracelight.com"
         private const val PLAYER_ORIGIN = "https://player.videasy.to"
-        private val F = intArrayOf(
-            1116352408, 1899447441, 3049323471L.toInt(), 3921009573L.toInt(),
-            961987163, 1508970993, 2453635748L.toInt(), 2870763221L.toInt(),
-            3624381080L.toInt(), 310598401, 607225278, 1426881987,
-            1925078388, 2162078206L.toInt(), 2614888103L.toInt(), 3248222580L.toInt(),
-        )
         private val H = byteArrayOf(109, 118, 109, 49) // "mvm1"
     }
 
@@ -117,14 +111,34 @@ class VideasyExtractor(
         return String(raw, 4, length - 4, Charsets.UTF_8)
     }
 
-    fun extract(url: String, title: String, prefix: String = "Videasy - "): List<Video> {
-        val uri = runCatching { url.toHttpUrl() }.getOrNull() ?: return emptyList()
-        val pathSegments = uri.pathSegments
-        val isMovie = url.contains("/movie/")
-        val tmdbStr = pathSegments.getOrNull(1) ?: return emptyList()
-        val tmdbId = tmdbStr.toIntOrNull() ?: return emptyList()
-        val season = if (!isMovie) pathSegments.getOrNull(2) ?: "1" else "1"
-        val episode = if (!isMovie) pathSegments.getOrNull(3) ?: "1" else "1"
+    fun extract(url: String, title: String = "", prefix: String = "Videasy - "): List<Video> {
+        val uri = runCatching { url.toHttpUrl() }.getOrNull()
+        val pathSegments = uri?.pathSegments.orEmpty()
+        val isMovie = url.contains("/movie/") || !url.contains("/tv/")
+
+        val tmdbStr = pathSegments.getOrNull(1)?.takeIf { it.isNotBlank() }
+        val tmdbId = tmdbStr?.toIntOrNull()
+            ?: Regex("""/(?:movie|tv)/(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull()
+            ?: Regex("""(?:id|tmdb|mediaId)=(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull()
+            ?: return emptyList()
+
+        val season = if (!isMovie) {
+            pathSegments.getOrNull(2)?.takeIf { it.isNotBlank() }
+                ?: Regex("""/tv/\d+/(\d+)""").find(url)?.groupValues?.get(1)
+                ?: Regex("""(?:season|s)=(\d+)""").find(url)?.groupValues?.get(1)
+                ?: "1"
+        } else {
+            "1"
+        }
+
+        val episode = if (!isMovie) {
+            pathSegments.getOrNull(3)?.takeIf { it.isNotBlank() }
+                ?: Regex("""/tv/\d+/\d+/(\d+)""").find(url)?.groupValues?.get(1)
+                ?: Regex("""(?:episode|e)=(\d+)""").find(url)?.groupValues?.get(1)
+                ?: "1"
+        } else {
+            "1"
+        }
 
         val seedResp = runCatching {
             client.newCall(GET("$API_BASE/seed?mediaId=$tmdbId", headers)).execute()
@@ -169,24 +183,6 @@ class VideasyExtractor(
                 }
             }
 
-            val playlistUrl = jsonObj["playlist"]?.jsonPrimitive?.content
-            if (!playlistUrl.isNullOrBlank()) {
-                val hlsVideos = runCatching {
-                    playlistUtils.extractFromHls(
-                        playlistUrl = playlistUrl,
-                        referer = "$PLAYER_ORIGIN/",
-                        masterHeaders = headers,
-                        videoHeaders = headers,
-                        videoNameGen = { q -> "$prefix$q" },
-                        subtitleList = subtitles,
-                    )
-                }.getOrDefault(emptyList())
-
-                if (hlsVideos.isNotEmpty()) {
-                    videos.addAll(hlsVideos)
-                }
-            }
-
             val sources = jsonObj["sources"]?.jsonArray
             sources?.forEach { srcEl ->
                 val srcObj = srcEl.jsonObject
@@ -194,17 +190,34 @@ class VideasyExtractor(
                 val quality = srcObj["quality"]?.jsonPrimitive?.content ?: "Auto"
 
                 val videoTitle = "$prefix$quality"
-                if (videos.none { it.videoUrl == srcUrl || it.videoTitle == videoTitle }) {
-                    videos.add(
-                        Video(
-                            videoUrl = srcUrl,
-                            videoTitle = videoTitle,
-                            headers = headers,
-                            subtitleTracks = subtitles,
-                        ),
-                    )
+                videos.add(
+                    Video(
+                        videoUrl = srcUrl,
+                        videoTitle = videoTitle,
+                        headers = headers,
+                        subtitleTracks = subtitles,
+                    ),
+                )
+            }
+
+            if (videos.isEmpty()) {
+                val playlistUrl = jsonObj["playlist"]?.jsonPrimitive?.content
+                if (!playlistUrl.isNullOrBlank()) {
+                    val hlsVideos = runCatching {
+                        playlistUtils.extractFromHls(
+                            playlistUrl = playlistUrl,
+                            referer = "$PLAYER_ORIGIN/",
+                            masterHeaders = headers,
+                            videoHeaders = headers,
+                            videoNameGen = { q -> "$prefix$q" },
+                            subtitleList = subtitles,
+                        )
+                    }.getOrDefault(emptyList())
+
+                    videos.addAll(hlsVideos)
                 }
             }
+
             if (videos.isNotEmpty()) break
         }
 

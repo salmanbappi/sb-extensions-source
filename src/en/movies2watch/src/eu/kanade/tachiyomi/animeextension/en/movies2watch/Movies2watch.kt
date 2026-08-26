@@ -342,7 +342,18 @@ class Movies2watch : Source() {
         }
 
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
-        return hosters.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
+        return if (prefServer != "auto") {
+            hosters.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
+        } else {
+            hosters.sortedWith(
+                compareByDescending<Hoster> {
+                    it.hosterName.contains("Vidmoly", ignoreCase = true) ||
+                        it.hosterName.contains("Videasy", ignoreCase = true)
+                }.thenBy {
+                    if (it.hosterName.contains("Vidmoly", true)) 0 else if (it.hosterName.contains("Videasy", true)) 1 else 2
+                },
+            )
+        }
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
