@@ -1,0 +1,14 @@
+ext {
+    extName = 'Cinejoy'
+    pkgNameSuffix = 'en.cinejoy'
+    extClass = '.Cinejoy'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(':lib:playlist-utils'))
+    implementation(project(':lib:m3u8server'))
+}
