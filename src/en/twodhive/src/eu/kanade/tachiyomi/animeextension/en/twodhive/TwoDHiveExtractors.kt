@@ -73,18 +73,17 @@ class TwoDHiveExtractors(
                     videos.add(
                         Video(
                             videoUrl = directUrl,
-                            videoTitle = "BabaStream - Direct MP4 ($typeTag)",
+                            videoTitle = "Direct MP4 ($typeTag)",
                             headers = headers.newBuilder().set("Referer", embedUrl).build(),
                         ),
                     )
                 }
             }
-
             "embed" -> {
                 payload.u?.let { embedTarget ->
                     if (embedTarget.contains("ok.ru")) {
                         videos.addAll(
-                            okruExtractor.videosFromUrl(embedTarget, prefix = "BabaStream (OK.ru) ($typeTag) - "),
+                            okruExtractor.videosFromUrl(embedTarget, prefix = "OK.ru ($typeTag) - "),
                         )
                     }
                 }
@@ -153,7 +152,7 @@ class TwoDHiveExtractors(
             masterHeaders = streamRefHeaders,
             videoHeaders = streamRefHeaders,
             subtitleList = subtitleTracks,
-            videoNameGen = { quality -> "MegaPlay - $quality ($typeTag)" },
+            videoNameGen = { quality -> "$quality ($typeTag)" },
         )
     }
 }
