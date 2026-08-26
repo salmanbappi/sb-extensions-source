@@ -369,11 +369,7 @@ class Cinejoy : Source() {
         var capturedUrl: String? = null
         var webView: WebView? = null
 
-        val scraperHtml = try {
-            applicationContext.assets.open("scraper.html").bufferedReader().use { it.readText() }
-        } catch (_: Exception) {
-            return null
-        }
+        val scraperHtml = CinejoyScraper.HTML
 
         Handler(Looper.getMainLooper()).post {
             try {
