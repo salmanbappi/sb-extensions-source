@@ -35,8 +35,7 @@ class TwoDHive : Source() {
     private val extractors by lazy { TwoDHiveExtractors(client, headers, json, playlistUtils) }
 
     // ============================== Popular ==============================
-    override fun popularAnimeRequest(page: Int): Request =
-        GET("$baseUrl/?list=top&page=$page#anime-list", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/?list=top&page=$page#anime-list", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -63,8 +62,7 @@ class TwoDHive : Source() {
     }
 
     // ============================== Latest ==============================
-    override fun latestUpdatesRequest(page: Int): Request =
-        GET("$baseUrl/?list=latest&page=$page#anime-list", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/?list=latest&page=$page#anime-list", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
