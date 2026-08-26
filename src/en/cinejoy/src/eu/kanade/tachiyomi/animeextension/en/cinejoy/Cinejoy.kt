@@ -329,18 +329,12 @@ class Cinejoy : Source() {
         val ep = parts[3]
         val serverName = parts[4]
 
-        val targetUrl = if (mediaType == "tv") {
-            "$baseUrl/watch/tv/$id/$season/$ep"
-        } else {
-            "$baseUrl/watch/movie/$id"
-        }
-
         val videoHeaders = headersBuilder()
             .set("Referer", "$baseUrl/")
             .set("Origin", baseUrl)
             .build()
 
-        val streamUrl = resolveStreamUrlWithWebView(targetUrl, serverName) ?: return emptyList()
+        val streamUrl = resolveStreamUrlWithWebView(mediaType, id, season, ep, serverName) ?: return emptyList()
 
         val videos = if (streamUrl.contains(".m3u8")) {
             playlistUtils.extractFromHls(
@@ -363,12 +357,23 @@ class Cinejoy : Source() {
         return m3u8Integration.processVideoList(videos)
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun resolveStreamUrlWithWebView(targetUrl: String, serverName: String): String? {
+    @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
+    private fun resolveStreamUrlWithWebView(
+        mediaType: String,
+        id: String,
+        season: String,
+        ep: String,
+        serverName: String,
+    ): String? {
         val latch = CountDownLatch(1)
         var capturedUrl: String? = null
         var webView: WebView? = null
-        val cancelled = AtomicBoolean(false)
+
+        val scraperHtml = try {
+            applicationContext.assets.open("scraper.html").bufferedReader().use { it.readText() }
+        } catch (_: Exception) {
+            return null
+        }
 
         Handler(Looper.getMainLooper()).post {
             try {
@@ -378,46 +383,33 @@ class Cinejoy : Source() {
                     settings.databaseEnabled = true
                     settings.userAgentString = headers["User-Agent"]
 
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldInterceptRequest(
-                            view: WebView?,
-                            request: WebResourceRequest?,
-                        ): WebResourceResponse? {
-                            val reqUrl = request?.url?.toString() ?: return null
-                            if (reqUrl.contains(".m3u8", ignoreCase = true) || reqUrl.contains("/playlist/", ignoreCase = true)) {
-                                if (capturedUrl == null) {
-                                    capturedUrl = reqUrl
-                                    latch.countDown()
-                                }
+                    addJavascriptInterface(
+                        object {
+                            @android.webkit.JavascriptInterface
+                            fun onSuccess(url: String) {
+                                capturedUrl = url
+                                latch.countDown()
                             }
-                            return super.shouldInterceptRequest(view, request)
-                        }
 
+                            @android.webkit.JavascriptInterface
+                            fun onError(err: String) {
+                                latch.countDown()
+                            }
+                        },
+                        "androidBridge",
+                    )
+
+                    webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
-                            view?.evaluateJavascript(
-                                """
-                                (function() {
-                                    try {
-                                        var pref = '$serverName';
-                                        var buttons = document.querySelectorAll('button, div[role="button"]');
-                                        for (var i = 0; i < buttons.length; i++) {
-                                            if (buttons[i].textContent && buttons[i].textContent.trim().toLowerCase() === pref.toLowerCase()) {
-                                                buttons[i].click();
-                                                break;
-                                            }
-                                        }
-                                    } catch(e) {}
-                                })();
-                                """.trimIndent(),
-                                null,
-                            )
+                            val jsCall = "resolveStream('$mediaType', '$id', '$season', '$ep', '$serverName');"
+                            view?.evaluateJavascript(jsCall, null)
                         }
                     }
 
-                    loadUrl(targetUrl, headers.toMap())
+                    loadDataWithBaseURL("https://cinejoy.to", scraperHtml, "text/html", "UTF-8", null)
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 latch.countDown()
             }
         }
