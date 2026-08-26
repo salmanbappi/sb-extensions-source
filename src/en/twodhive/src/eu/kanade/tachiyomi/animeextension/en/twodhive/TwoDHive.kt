@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.animeextension.en.twodhive.TwoDHiveFilters.CatalogFil
 import eu.kanade.tachiyomi.animeextension.en.twodhive.TwoDHiveFilters.GenreFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -189,41 +190,73 @@ class TwoDHive : Source() {
         return episodes
     }
 
-    // ============================== Videos ==============================
-    override fun videoListRequest(episode: SEpisode): Request = GET("$baseUrl${episode.url}", headers)
-
-    override fun videoListParse(response: Response): List<Video> {
-        val requestUrl = response.request.url.toString()
+    // ============================== Hosters & Folders ==============================
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val requestUrl = episode.url
         val malId = Regex("""anime=(\d+)""").find(requestUrl)?.groupValues?.get(1) ?: return emptyList()
         val epNum = Regex("""ep_num=(\d+)""").find(requestUrl)?.groupValues?.get(1) ?: return emptyList()
+
+        return listOf(
+            Hoster(hosterName = "MegaPlay", hosterUrl = "megaplay|$malId|$epNum"),
+            Hoster(hosterName = "BabaStream", hosterUrl = "babastream|$malId|$epNum"),
+        )
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val parts = hoster.hosterUrl.split("|")
+        if (parts.size < 3) return emptyList()
+
+        val provider = parts[0]
+        val malId = parts[1]
+        val epNum = parts[2]
 
         val videos = mutableListOf<Video>()
         val types = listOf("sub", "dub")
 
-        for (type in types) {
-            // 1. BabaStream (Direct MP4 / OK.ru)
-            runCatching {
-                videos.addAll(extractors.extractBabaStream(malId, epNum, type))
+        when (provider) {
+            "megaplay" -> {
+                for (type in types) {
+                    runCatching {
+                        videos.addAll(extractors.extractMegaPlay(malId, epNum, type))
+                    }
+                }
             }
-
-            // 2. MegaPlay (Multi-quality HLS + WebVTT tracks)
-            runCatching {
-                videos.addAll(extractors.extractMegaPlay(malId, epNum, type))
+            "babastream" -> {
+                for (type in types) {
+                    runCatching {
+                        videos.addAll(extractors.extractBabaStream(malId, epNum, type))
+                    }
+                }
             }
         }
 
         return videos.sortVideos()
     }
 
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val hosters = getHosterList(episode)
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val primaryHoster = hosters.firstOrNull { it.hosterName.contains(prefServer, true) } ?: hosters.firstOrNull()
+
+        return if (primaryHoster != null) {
+            val primaryVideos = getVideoList(primaryHoster)
+            if (primaryVideos.isNotEmpty()) {
+                primaryVideos
+            } else {
+                hosters.filter { it != primaryHoster }.flatMap { getVideoList(it) }.sortVideos()
+            }
+        } else {
+            emptyList()
+        }
+    }
+
     // ============================== Video Sorting & Preferences ==============================
     override fun List<Video>.sortVideos(): List<Video> {
-        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
 
         return sortedWith(
             compareBy(
-                { it.videoTitle.contains(prefServer, true).not() },
                 { it.videoTitle.contains(prefAudio, true).not() },
                 { it.videoTitle.contains(prefQuality, true).not() },
             ),

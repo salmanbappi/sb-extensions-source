@@ -1,7 +1,7 @@
 ext {
     extName = '2Dhive'
     extClass = '.TwoDHive'
-    extVersionCode = 1
+    extVersionCode = 2
     isNsfw = false
 }
 
