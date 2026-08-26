@@ -101,19 +101,23 @@ class Cinejoy : Source() {
                         mediaType = filter.toUriPart()
                     }
                 }
+
                 is Filters.SortFilter -> {
                     if (filter.toUriPart().isNotBlank()) {
                         sortBy = filter.toUriPart()
                     }
                 }
+
                 is Filters.YearFilter -> {
                     if (filter.state.isNotBlank()) {
                         year = filter.state.trim()
                     }
                 }
+
                 is Filters.GenreFilter -> {
                     includedGenres.addAll(filter.getIncluded())
                 }
+
                 else -> {}
             }
         }
@@ -309,13 +313,11 @@ class Cinejoy : Source() {
         return sortHostersByPreference(hosters)
     }
 
-    private fun getActiveServers(): List<String> {
-        return runCatching {
-            val response = client.newCall(GET("$sheguApiUrl/servers", headers)).execute()
-            val dto = response.parseAs<SheguServersResponseDto>()
-            dto.servers?.filter { it.status == "ok" }?.mapNotNull { it.name }?.ifEmpty { null }
-        }.getOrNull() ?: listOf("Lisbon", "Nebula", "Solara", "Athens", "Joy", "Castle", "Sakura", "Canaias")
-    }
+    private fun getActiveServers(): List<String> = runCatching {
+        val response = client.newCall(GET("$sheguApiUrl/servers", headers)).execute()
+        val dto = response.parseAs<SheguServersResponseDto>()
+        dto.servers?.filter { it.status == "ok" }?.mapNotNull { it.name }?.ifEmpty { null }
+    }.getOrNull() ?: listOf("Lisbon", "Nebula", "Solara", "Athens", "Joy", "Castle", "Sakura", "Canaias")
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val parts = hoster.hosterUrl.split("|")
