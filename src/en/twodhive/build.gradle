@@ -1,0 +1,13 @@
+ext {
+    extName = '2Dhive'
+    extClass = '.TwoDHive'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:okru-extractor"))
+}
