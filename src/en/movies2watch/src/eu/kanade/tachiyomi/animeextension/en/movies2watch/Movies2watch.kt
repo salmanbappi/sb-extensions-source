@@ -350,7 +350,13 @@ class Movies2watch : Source() {
                     it.hosterName.contains("Vidmoly", ignoreCase = true) ||
                         it.hosterName.contains("Videasy", ignoreCase = true)
                 }.thenBy {
-                    if (it.hosterName.contains("Vidmoly", true)) 0 else if (it.hosterName.contains("Videasy", true)) 1 else 2
+                    if (it.hosterName.contains("Vidmoly", true)) {
+                        0
+                    } else if (it.hosterName.contains("Videasy", true)) {
+                        1
+                    } else {
+                        2
+                    }
                 },
             )
         }
