@@ -1,6 +1,5 @@
 ext {
     extName = 'Cinejoy'
-    pkgNameSuffix = 'en.cinejoy'
     extClass = '.Cinejoy'
     extVersionCode = 1
     isNsfw = false
