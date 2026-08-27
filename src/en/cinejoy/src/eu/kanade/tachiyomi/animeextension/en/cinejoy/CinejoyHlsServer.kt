@@ -138,6 +138,8 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
 
     private fun handleSocket(socket: Socket) {
         try {
+            socket.tcpNoDelay = true
+            socket.setSoLinger(true, 5)
             val input = socket.getInputStream()
             val reader = input.bufferedReader()
             val firstLine = reader.readLine() ?: return
@@ -217,6 +219,9 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
             out.write("Connection: close\r\n\r\n".toByteArray(Charsets.UTF_8))
             out.write(bodyBytes)
             out.flush()
+            try {
+                socket.shutdownOutput()
+            } catch (_: Exception) {}
             return
         }
 
@@ -230,6 +235,9 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
             out.write("Connection: close\r\n\r\n".toByteArray(Charsets.UTF_8))
             out.write(rewritten)
             out.flush()
+            try {
+                socket.shutdownOutput()
+            } catch (_: Exception) {}
             return
         }
 
@@ -241,6 +249,9 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
         out.write("Connection: close\r\n\r\n".toByteArray(Charsets.UTF_8))
         out.write(media)
         out.flush()
+        try {
+            socket.shutdownOutput()
+        } catch (_: Exception) {}
     }
 
     private fun writeStatusAndPassHeaders(out: OutputStream, response: Response) {

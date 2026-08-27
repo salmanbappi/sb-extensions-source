@@ -315,8 +315,8 @@ class Cinejoy : Source() {
     private fun getActiveServers(): List<String> = runCatching {
         val response = client.newCall(GET("$sheguApiUrl/servers", headers)).execute()
         val dto = response.parseAs<SheguServersResponseDto>()
-        dto.servers?.filter { it.status == "ok" }?.mapNotNull { it.name }?.ifEmpty { null }
-    }.getOrNull() ?: listOf("Lisbon", "Nebula", "Solara", "Athens", "Joy", "Castle", "Sakura", "Canaias")
+        dto.servers?.filter { it.status == "ok" && it.name != "Canaias" }?.mapNotNull { it.name }?.ifEmpty { null }
+    }.getOrNull() ?: listOf("Lisbon", "Nebula", "Solara", "Athens", "Joy", "Castle", "Sakura")
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val parts = hoster.hosterUrl.split("|")
@@ -334,11 +334,13 @@ class Cinejoy : Source() {
             .build()
 
         val streamUrl = resolveStreamUrlWithWebView(mediaType, id, season, ep, serverName) ?: return emptyList()
+        if (!streamUrl.startsWith("http")) return emptyList()
 
         if (!streamUrl.contains(".m3u8", ignoreCase = true)) {
+            val proxiedUrl = hlsServer.proxyMasterUrl(streamUrl, videoHeaders, quality = "auto")
             return listOf(
                 Video(
-                    videoUrl = streamUrl,
+                    videoUrl = proxiedUrl,
                     videoTitle = "Default",
                     headers = videoHeaders,
                 ),
@@ -497,7 +499,7 @@ class Cinejoy : Source() {
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        val serverList = listOf("Lisbon", "Nebula", "Solara", "Athens", "Joy", "Castle", "Sakura", "Canaias")
+        val serverList = listOf("Lisbon", "Nebula", "Solara", "Athens", "Joy", "Castle", "Sakura")
 
         screen.addListPreference(
             key = PREF_SERVER_KEY,
