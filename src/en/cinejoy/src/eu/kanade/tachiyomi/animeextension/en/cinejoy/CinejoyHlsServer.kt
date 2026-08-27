@@ -56,9 +56,7 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
     /**
      * Builds a localhost master playlist URL with an optional quality filter.
      */
-    fun proxyMasterUrl(masterUrl: String, headers: Headers?, quality: String? = null): String {
-        return proxyUrl(masterUrl, headers, Kind.PLAYLIST, quality)
-    }
+    fun proxyMasterUrl(masterUrl: String, headers: Headers?, quality: String? = null): String = proxyUrl(masterUrl, headers, Kind.PLAYLIST, quality)
 
     /**
      * Builds a localhost URL wrapping [targetUrl].
@@ -305,6 +303,7 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
                     line.startsWith("#EXT-X-MEDIA") -> {
                         builder.append(rewriteUriAttr(line, playlistUrl, headers, Kind.PLAYLIST)).append("\n")
                     }
+
                     line.startsWith("#EXT-X-STREAM-INF") -> {
                         val streamInf = line
                         i++
@@ -317,6 +316,7 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
                             }
                         }
                     }
+
                     line.startsWith("#EXTM3U") || line.startsWith("#EXT-X-VERSION") || line.startsWith("#EXT-X-INDEPENDENT-SEGMENTS") -> {
                         builder.append(line).append("\n")
                     }
@@ -344,10 +344,13 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
                 when {
                     trimmed.startsWith("#EXT-X-MEDIA") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.PLAYLIST))
+
                     trimmed.startsWith("#EXT-X-MAP") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.SEGMENT_MP4))
+
                     trimmed.startsWith("#EXT-X-KEY") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.RAW))
+
                     else -> builder.append(trimmed)
                 }
                 if (trimmed.startsWith("#EXT-X-STREAM-INF")) nextLineIsVariant = true
