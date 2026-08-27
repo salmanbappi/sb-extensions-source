@@ -344,9 +344,6 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
                 when {
                     trimmed.startsWith("#EXT-X-MEDIA") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.PLAYLIST))
-<<<<<<< HEAD
-
-                    // Init map is a media (fMP4) init segment.
                     trimmed.startsWith("#EXT-X-MAP") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.SEGMENT_MP4))
                     trimmed.startsWith("#EXT-X-KEY") ->
