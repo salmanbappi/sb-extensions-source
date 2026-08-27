@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.lib.dailymotionextractor
 
+import android.util.Base64
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
@@ -129,21 +130,105 @@ class DailymotionExtractor(private val client: OkHttpClient, private val headers
             Track(it.urls.first(), it.label)
         } ?: emptyList()
 
-        // The master M3U8 URL has a short-lived sec= signed token (expires ~30s).
-        // Fetch and parse the master NOW (server-side) so we can extract the
-        // long-lived variant and audio playlist URLs from vod3.cf.dmcdn.net,
-        // which are accessible without any special headers or cookies.
         val masterHeaders = (fetchHeaders?.newBuilder() ?: headers.newBuilder())
             .set("Accept", "*/*")
             .set("Referer", "$DAILYMOTION_URL/")
             .set("Cookie", "ts=$ts; v1st=$v1st")
             .build()
 
+        val masterPlaylist = runCatching {
+            client.newCall(GET(masterUrl, masterHeaders)).execute().body.string()
+        }.getOrNull()
+
+        if (!masterPlaylist.isNullOrBlank() && masterPlaylist.contains("#EXT-X-STREAM-INF")) {
+            if (masterPlaylist.contains("#EXT-X-MEDIA:TYPE=AUDIO")) {
+                return parseMasterPlaylistWithAudio(masterPlaylist, prefix, subtitleList)
+            }
+        }
+
         return playlistUtils.extractFromHls(
             playlistUrl = masterUrl,
             masterHeadersGen = { _, _ -> masterHeaders },
-            // Variant/audio URLs at vod3.cf.dmcdn.net need no special auth
             videoHeadersGen = { _, _, _ -> headers },
+            subtitleList = subtitleList,
+            videoNameGen = { "$prefix$it" },
+        )
+    }
+
+    private fun parseMasterPlaylistWithAudio(
+        masterPlaylist: String,
+        prefix: String,
+        subtitleList: List<Track>,
+    ): List<Video> {
+        val lines = masterPlaylist.lines()
+        val mediaLines = lines.filter {
+            it.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") || it.startsWith("#EXT-X-MEDIA:TYPE=SUBTITLES")
+        }
+
+        val videos = mutableListOf<Video>()
+        val seenQualities = mutableSetOf<String>()
+
+        for (i in lines.indices) {
+            val line = lines[i].trim()
+            if (line.startsWith("#EXT-X-STREAM-INF")) {
+                val nextUrl = lines.getOrNull(i + 1)?.trim() ?: continue
+                if (nextUrl.startsWith("#") || nextUrl.isBlank()) continue
+
+                val resMatch = Regex("""RESOLUTION=\d+x(\d+)""").find(line)
+                val height = resMatch?.groupValues?.get(1)?.toIntOrNull()
+                val nameMatch = Regex("""NAME="([^"]+)"""").find(line)
+                val qualityName = nameMatch?.groupValues?.get(1)
+
+                val qualityLabel = when {
+                    height != null && height >= 2160 -> "2160p (4K)"
+                    height != null -> "${height}p"
+                    !qualityName.isNullOrBlank() -> "${qualityName}p"
+                    else -> "Video"
+                }
+
+                if (qualityLabel in seenQualities) continue
+                seenQualities.add(qualityLabel)
+
+                val miniMaster = buildString {
+                    append("#EXTM3U\n")
+                    append("#EXT-X-VERSION:7\n")
+                    append("#EXT-X-INDEPENDENT-SEGMENTS\n")
+                    mediaLines.forEach { append(it).append("\n") }
+                    append(line).append("\n")
+                    append(nextUrl).append("\n")
+                }
+
+                val dataUri = "data:application/vnd.apple.mpegurl;base64," +
+                    Base64.encodeToString(miniMaster.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+
+                videos.add(
+                    Video(
+                        videoUrl = dataUri,
+                        videoTitle = "$prefix$qualityLabel",
+                        headers = headers,
+                        subtitleTracks = subtitleList,
+                    ),
+                )
+            }
+        }
+
+        if (videos.isNotEmpty()) {
+            val autoDataUri = "data:application/vnd.apple.mpegurl;base64," +
+                Base64.encodeToString(masterPlaylist.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            videos.add(
+                0,
+                Video(
+                    videoUrl = autoDataUri,
+                    videoTitle = "${prefix}Auto (Adaptive)",
+                    headers = headers,
+                    subtitleTracks = subtitleList,
+                ),
+            )
+            return videos
+        }
+
+        return playlistUtils.extractFromHls(
+            playlistUrl = "",
             subtitleList = subtitleList,
             videoNameGen = { "$prefix$it" },
         )
