@@ -17,34 +17,16 @@ import java.util.concurrent.Executors
 /**
  * Self-contained local HLS proxy for Cinejoy.
  *
- * Cinejoy fronts several CDNs (movieboxnoob, nebula, …). They obfuscate HLS in
- * ways that break players directly:
+ * Cinejoy fronts several CDNs (movieboxnoob, nebula, …) that obfuscate HLS:
+ *  * Segments and child playlists are disguised behind bogus extensions (`.html`,
+ *    `.jpg`, `.png`) with fake MIME types (`text/html`, `image/jpeg`).
+ *  * Audio tracks are served as separate `#EXT-X-MEDIA:TYPE=AUDIO` renditions.
+ *    Playing a child video playlist directly in ExoPlayer results in no audio
+ *    because the video playlist only contains video segments.
  *
- *  * Segments and even child playlists are given fake extensions (`.jpg`,
- *    `.png`, `.jpeg`, `.html`) and served with the matching bogus
- *    `Content-Type` (`image/jpeg`, `text/html`), while the actual bytes are
- *    fragmented-MP4 (`ftyp`/`styp`/`moof`) or MPEG-TS. mpv then refuses to
- *    parse the nested playlist ("Not detecting m3u8/hls with non standard
- *    extension and non standard mime type") and tries to decode segments as
- *    still images ("mjpeg: No JPEG data found in image").
- *  * Some segments are wrapped behind a real PNG/JPEG/GIF header that must be
- *    stripped before the media container starts.
- *
- * This proxy fetches every resource server-side (re-issuing the upstream
- * Referer/User-Agent), then decides what a resource is by SNIFFING ITS BYTES,
- * not by its URL or the CDN's mislabeled mime:
- *
- *  * If the body starts with `#EXTM3U`, it is treated as a playlist: every
- *    child playlist / segment / init-map / audio-rendition URI is rewritten to
- *    loop back through this proxy, and it is re-served as
- *    `application/vnd.apple.mpegurl`.
- *  * Otherwise it is a media segment: any leading image/junk header is stripped
- *    and it is re-served with a correct video mime (`video/mp4` for fMP4,
- *    `video/mp2t` for TS).
- *
- * Both [Video.videoUrl] and the [Video.audioTracks]/[Video.subtitleTracks]
- * entries are proxied, so external audio renditions get the identical laundering
- * the video track does — which is what makes audio actually play.
+ * This proxy preserves the Master Playlist structure (including all audio renditions)
+ * while routing all playlist, video, audio, and init-map requests through localhost,
+ * sniffing bytes and re-serving with proper media MIME types and container formats.
  */
 class CinejoyHlsServer(private val client: OkHttpClient) {
 
@@ -69,15 +51,19 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
         } catch (_: Exception) {}
     }
 
-    private enum class Kind { PLAYLIST, SEGMENT, RAW }
+    private enum class Kind { PLAYLIST, SEGMENT_MP4, SEGMENT_TS, RAW }
 
     /**
-     * Builds a localhost URL wrapping [targetUrl]. [kind] records what the
-     * resource is *expected* to be (from its position in a parent playlist) so
-     * the local path carries a sensible extension for the player; the actual
-     * handling is still decided by content sniffing when the bytes arrive.
+     * Builds a localhost master playlist URL with an optional quality filter.
      */
-    private fun proxyUrl(targetUrl: String, headers: Headers?, kind: Kind): String {
+    fun proxyMasterUrl(masterUrl: String, headers: Headers?, quality: String? = null): String {
+        return proxyUrl(masterUrl, headers, Kind.PLAYLIST, quality)
+    }
+
+    /**
+     * Builds a localhost URL wrapping [targetUrl].
+     */
+    private fun proxyUrl(targetUrl: String, headers: Headers?, kind: Kind, quality: String? = null): String {
         if (port == 0) return targetUrl
         val encodedUrl = Base64.encodeToString(
             targetUrl.toByteArray(Charsets.UTF_8),
@@ -96,15 +82,17 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
         )
         val path = when (kind) {
             Kind.PLAYLIST -> "playlist.m3u8"
-            Kind.SEGMENT -> "segment.ts"
+            Kind.SEGMENT_MP4 -> "segment.mp4"
+            Kind.SEGMENT_TS -> "segment.ts"
             Kind.RAW -> "raw.key"
         }
-        return "http://127.0.0.1:$port/proxy/$path?url=$encodedUrl&headers=$encodedHeaders"
+        val qualityParam = if (!quality.isNullOrBlank()) "&quality=$quality" else ""
+        return "http://127.0.0.1:$port/proxy/$path?url=$encodedUrl&headers=$encodedHeaders$qualityParam"
     }
 
     /**
      * Routes the video playlist and every external audio/subtitle rendition of
-     * each [Video] through the local proxy. Non-HLS entries are left untouched.
+     * each [Video] through the local proxy.
      */
     fun proxyVideos(videos: List<Video>): List<Video> = videos.map { video ->
         if (!video.needsProxy()) return@map video
@@ -143,9 +131,6 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
         audioTracks.any { looksLikePlaylistUrl(it.url) } ||
         subtitleTracks.any { looksLikePlaylistUrl(it.url) }
 
-    // A top-level rendition URL is assumed to be an HLS playlist. We keep this
-    // permissive on purpose: these CDNs disguise playlists behind .jpg/.png/etc,
-    // so only obvious non-HLS media containers are excluded.
     private fun looksLikePlaylistUrl(url: String): Boolean {
         if (url.contains(".m3u8", ignoreCase = true) || url.contains("mpegurl", ignoreCase = true)) return true
         val lower = url.substringBefore('?').substringBefore('#').lowercase()
@@ -170,6 +155,7 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
             val httpUrl = ("http://127.0.0.1$path").toHttpUrl()
             val encodedUrl = httpUrl.queryParameter("url")
             val encodedHeaders = httpUrl.queryParameter("headers") ?: ""
+            val quality = httpUrl.queryParameter("quality")
 
             if (encodedUrl.isNullOrEmpty()) {
                 sendError(socket, 400, "Missing url parameter")
@@ -184,8 +170,7 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
 
             val targetHeaders = decodeHeaders(encodedHeaders)?.newBuilder() ?: Headers.Builder()
 
-            // Forward a client Range header only for media segments, never for
-            // playlists/keys (a ranged playlist request breaks parsing).
+            // Forward client Range header only for media segments, never for playlists/keys
             val isPlaylistPath = path.contains("playlist.m3u8")
             var line: String?
             while (reader.readLine().also { line = it } != null) {
@@ -202,7 +187,7 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
                 .build()
 
             client.newCall(request).execute().use { response ->
-                sendResponse(socket, response, targetUrl, encodedHeaders, isKey)
+                sendResponse(socket, response, targetUrl, encodedHeaders, isKey, quality)
             }
         } catch (e: Exception) {
             try {
@@ -221,11 +206,12 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
         targetUrl: String,
         encodedHeaders: String,
         isKey: Boolean,
+        quality: String?,
     ) {
         val out = socket.getOutputStream()
         val bodyBytes = response.body.bytes()
 
-        // Decryption keys and any other opaque blob: pass through verbatim.
+        // Decryption keys: pass through verbatim
         if (isKey) {
             writeStatusAndPassHeaders(out, response)
             out.write("Content-Length: ${bodyBytes.size}\r\n".toByteArray(Charsets.UTF_8))
@@ -236,11 +222,10 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
             return
         }
 
-        // Content sniff: the CDN mislabels playlists as image/html, so trust the
-        // bytes. A playlist always begins with the #EXTM3U tag.
+        // Content sniff: playlists always begin with #EXTM3U
         if (isM3u8Body(bodyBytes)) {
             val text = String(bodyBytes, Charsets.UTF_8)
-            val rewritten = processM3u8(text, targetUrl, encodedHeaders).toByteArray(Charsets.UTF_8)
+            val rewritten = processM3u8(text, targetUrl, encodedHeaders, quality).toByteArray(Charsets.UTF_8)
             writeStatusAndPassHeaders(out, response)
             out.write("Content-Length: ${rewritten.size}\r\n".toByteArray(Charsets.UTF_8))
             out.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray(Charsets.UTF_8))
@@ -250,8 +235,7 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
             return
         }
 
-        // Media segment: strip any disguising image/junk header, then relabel
-        // with a real video mime the player can actually demux.
+        // Media segment: strip any disguising image/junk header
         val media = stripToMedia(bodyBytes)
         writeStatusAndPassHeaders(out, response)
         out.write("Content-Length: ${media.size}\r\n".toByteArray(Charsets.UTF_8))
@@ -280,7 +264,6 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
     }
 
     private fun isM3u8Body(bytes: ByteArray): Boolean {
-        // Skip a UTF-8 BOM / leading whitespace, then look for #EXTM3U.
         var i = 0
         if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) i = 3
         while (i < bytes.size && (
@@ -298,13 +281,56 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
         return true
     }
 
-    private fun processM3u8(content: String, playlistUrl: String, encodedHeaders: String): String {
+    private fun processM3u8(
+        content: String,
+        playlistUrl: String,
+        encodedHeaders: String,
+        targetQuality: String? = null,
+    ): String {
         val lines = content.split(Regex("""\r?\n"""))
-        val builder = StringBuilder(content.length * 2)
         val headers = decodeHeaders(encodedHeaders)
+        val isMaster = lines.any { it.trim().startsWith("#EXT-X-STREAM-INF") }
 
-        // A master playlist declares variant streams; the plain URL line that
-        // follows #EXT-X-STREAM-INF is itself a child playlist, not a segment.
+        // Quality-filtered master playlist: retain all audio and subtitle renditions and keep the matching video variant
+        if (isMaster && !targetQuality.isNullOrBlank() && !targetQuality.equals("auto", ignoreCase = true)) {
+            val builder = StringBuilder(content.length)
+            var i = 0
+            while (i < lines.size) {
+                val line = lines[i].trim()
+                if (line.isEmpty()) {
+                    i++
+                    continue
+                }
+                when {
+                    line.startsWith("#EXT-X-MEDIA") -> {
+                        builder.append(rewriteUriAttr(line, playlistUrl, headers, Kind.PLAYLIST)).append("\n")
+                    }
+                    line.startsWith("#EXT-X-STREAM-INF") -> {
+                        val streamInf = line
+                        i++
+                        if (i < lines.size) {
+                            val variantLine = lines[i].trim()
+                            if (matchesQuality(streamInf, variantLine, targetQuality)) {
+                                builder.append(streamInf).append("\n")
+                                val resolved = resolveUrl(playlistUrl, variantLine)
+                                builder.append(proxyUrl(resolved, headers, Kind.PLAYLIST)).append("\n")
+                            }
+                        }
+                    }
+                    line.startsWith("#EXTM3U") || line.startsWith("#EXT-X-VERSION") || line.startsWith("#EXT-X-INDEPENDENT-SEGMENTS") -> {
+                        builder.append(line).append("\n")
+                    }
+                }
+                i++
+            }
+            val result = builder.toString().trimEnd()
+            if (result.contains("#EXT-X-STREAM-INF")) {
+                return result
+            }
+        }
+
+        val builder = StringBuilder(content.length * 2)
+        val isFmp4 = content.contains("#EXT-X-MAP")
         var nextLineIsVariant = false
 
         for (line in lines) {
@@ -316,30 +342,50 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
 
             if (trimmed.startsWith("#")) {
                 when {
-                    // Audio/subtitle renditions point at child playlists.
                     trimmed.startsWith("#EXT-X-MEDIA") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.PLAYLIST))
+<<<<<<< HEAD
 
                     // Init map is a media (fMP4) init segment.
                     trimmed.startsWith("#EXT-X-MAP") ->
-                        builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.SEGMENT))
-
-                    // Decryption key: opaque bytes, passed through untouched.
+                        builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.SEGMENT_MP4))
                     trimmed.startsWith("#EXT-X-KEY") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.RAW))
-
                     else -> builder.append(trimmed)
                 }
                 if (trimmed.startsWith("#EXT-X-STREAM-INF")) nextLineIsVariant = true
             } else {
                 val resolved = resolveUrl(playlistUrl, trimmed)
-                val kind = if (nextLineIsVariant) Kind.PLAYLIST else Kind.SEGMENT
+                val kind = when {
+                    nextLineIsVariant -> Kind.PLAYLIST
+                    isFmp4 || trimmed.contains(".mp4") || trimmed.contains(".m4s") || trimmed.contains(".html") -> Kind.SEGMENT_MP4
+                    else -> Kind.SEGMENT_TS
+                }
                 builder.append(proxyUrl(resolved, headers, kind))
                 nextLineIsVariant = false
             }
             builder.append("\n")
         }
         return builder.toString()
+    }
+
+    private fun matchesQuality(streamInf: String, variantUrl: String, targetQuality: String): Boolean {
+        val cleanQ = targetQuality.lowercase().replace("p", "").replace(" ", "").replace("(4k)", "")
+        if (cleanQ == "2160" || targetQuality.contains("4k", ignoreCase = true)) {
+            if (streamInf.contains("3840x2160") || streamInf.contains("x2160") ||
+                variantUrl.contains("4k", ignoreCase = true) || variantUrl.contains("2160")
+            ) {
+                return true
+            }
+        }
+        val resMatch = Regex("""RESOLUTION=\d+x(\d+)""").find(streamInf)
+        if (resMatch != null && resMatch.groupValues[1] == cleanQ) {
+            return true
+        }
+        if (streamInf.contains("x$cleanQ") || variantUrl.contains("_${cleanQ}p") || variantUrl.contains("${cleanQ}p")) {
+            return true
+        }
+        return false
     }
 
     private fun rewriteUriAttr(line: String, playlistUrl: String, headers: Headers?, kind: Kind): String {
@@ -354,38 +400,30 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
 
     private fun stripToMedia(data: ByteArray): ByteArray {
         if (data.size < 8) return data
-        // Already a clean container at offset 0.
         if (startsWithMediaContainer(data, 0)) return data
 
-        // Real image wrapper? Scan for the embedded media container start.
         val start = findMediaStart(data)
         return if (start in 1 until data.size) data.copyOfRange(start, data.size) else data
     }
 
     private fun startsWithMediaContainer(data: ByteArray, off: Int): Boolean {
-        // ISO-BMFF box: [4-byte size][4-char type]; accept common HLS fMP4 boxes.
         if (off + 8 <= data.size) {
             val type = String(data, off + 4, 4, Charsets.US_ASCII)
-            if (type == "ftyp" || type == "styp" || type == "moof" || type == "sidx" ||
-                type == "free" || type == "mdat" || type == "moov" || type == "emsg"
-            ) {
+            if (type in listOf("ftyp", "styp", "moof", "sidx", "free", "mdat", "moov", "emsg")) {
                 return true
             }
         }
-        // MPEG-TS: sync byte 0x47 repeating every 188 bytes.
         if (data[off] == 0x47.toByte() && off + 188 < data.size && data[off + 188] == 0x47.toByte()) return true
         return false
     }
 
     private fun findMediaStart(data: ByteArray): Int {
         val limit = minOf(data.size - 8, 64 * 1024)
-        // fMP4 box types.
         val types = listOf("ftyp", "styp", "moof", "sidx", "moov")
         for (i in 4..limit) {
             val t = String(data, i, 4, Charsets.US_ASCII)
             if (t in types) return i - 4
         }
-        // TS sync fallback.
         for (i in 0 until limit) {
             if (data[i] == 0x47.toByte() && i + 188 < data.size && data[i + 188] == 0x47.toByte()) return i
         }
@@ -395,13 +433,14 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
     private fun mediaMime(data: ByteArray): String {
         if (data.size >= 8) {
             val type = String(data, 4, 4, Charsets.US_ASCII)
-            if (type == "ftyp" || type == "styp" || type == "moof" || type == "sidx" ||
-                type == "moov" || type == "mdat" || type == "free" || type == "emsg"
-            ) {
+            if (type in listOf("ftyp", "styp", "moof", "sidx", "moov", "mdat", "free", "emsg")) {
                 return "video/mp4"
             }
         }
         if (data.isNotEmpty() && data[0] == 0x47.toByte()) return "video/mp2t"
+        if (data.size >= 2 && data[0] == 0xFF.toByte() && (data[1].toInt() and 0xF6) in listOf(0xF0, 0xF2)) {
+            return "audio/aac"
+        }
         return "video/mp4"
     }
 
