@@ -335,25 +335,80 @@ class Cinejoy : Source() {
 
         val streamUrl = resolveStreamUrlWithWebView(mediaType, id, season, ep, serverName) ?: return emptyList()
 
-        val videos = if (streamUrl.contains(".m3u8")) {
-            playlistUtils.extractFromHls(
-                playlistUrl = streamUrl,
-                referer = "$baseUrl/",
-                masterHeaders = videoHeaders,
-                videoHeaders = videoHeaders,
-                videoNameGen = { quality -> quality },
-            ).sortVideos()
-        } else {
-            listOf(
+        if (!streamUrl.contains(".m3u8", ignoreCase = true)) {
+            return listOf(
                 Video(
                     videoUrl = streamUrl,
                     videoTitle = "Default",
                     headers = videoHeaders,
                 ),
-            ).sortVideos()
+            )
         }
 
-        return hlsServer.proxyVideos(videos)
+        val videos = mutableListOf<Video>()
+
+        // Discover qualities from the master playlist
+        val masterPlaylist = runCatching {
+            client.newCall(GET(streamUrl, videoHeaders)).execute().body.string()
+        }.getOrNull()
+
+        if (!masterPlaylist.isNullOrBlank() && masterPlaylist.contains("#EXT-X-STREAM-INF")) {
+            val lines = masterPlaylist.lines()
+            val variants = mutableListOf<String>()
+
+            for (i in lines.indices) {
+                val line = lines[i].trim()
+                if (line.startsWith("#EXT-X-STREAM-INF")) {
+                    val resMatch = Regex("""RESOLUTION=\d+x(\d+)""").find(line)
+                    val height = resMatch?.groupValues?.get(1)?.toIntOrNull()
+
+                    val qualityLabel = when {
+                        height != null && height >= 2160 -> "2160p (4K)"
+                        height != null -> "${height}p"
+                        line.contains("4k", ignoreCase = true) -> "2160p (4K)"
+                        else -> "Video"
+                    }
+                    val qualityKey = when {
+                        height != null -> height.toString()
+                        line.contains("4k", ignoreCase = true) -> "2160"
+                        else -> qualityLabel
+                    }
+
+                    if (qualityLabel !in variants) {
+                        variants.add(qualityLabel)
+                        val proxiedUrl = hlsServer.proxyMasterUrl(streamUrl, videoHeaders, quality = qualityKey)
+                        videos.add(
+                            Video(
+                                videoUrl = proxiedUrl,
+                                videoTitle = qualityLabel,
+                                headers = videoHeaders,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            val autoUrl = hlsServer.proxyMasterUrl(streamUrl, videoHeaders, quality = "auto")
+            videos.add(
+                0,
+                Video(
+                    videoUrl = autoUrl,
+                    videoTitle = "Auto (Adaptive)",
+                    headers = videoHeaders,
+                ),
+            )
+        } else {
+            val defaultUrl = hlsServer.proxyMasterUrl(streamUrl, videoHeaders, quality = "auto")
+            videos.add(
+                Video(
+                    videoUrl = defaultUrl,
+                    videoTitle = "Default",
+                    headers = videoHeaders,
+                ),
+            )
+        }
+
+        return videos.sortVideos()
     }
 
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
@@ -425,6 +480,7 @@ class Cinejoy : Source() {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(quality, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains("Auto", ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains("4K", ignoreCase = true) || it.videoTitle.contains("2160p", ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains("1080p", ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains("720p", ignoreCase = true) }
