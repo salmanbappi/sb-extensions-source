@@ -283,8 +283,10 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
         // Skip a UTF-8 BOM / leading whitespace, then look for #EXTM3U.
         var i = 0
         if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) i = 3
-        while (i < bytes.size && (bytes[i] == ' '.code.toByte() || bytes[i] == '\n'.code.toByte() ||
-                bytes[i] == '\r'.code.toByte() || bytes[i] == '\t'.code.toByte())
+        while (i < bytes.size && (
+                bytes[i] == ' '.code.toByte() || bytes[i] == '\n'.code.toByte() ||
+                    bytes[i] == '\r'.code.toByte() || bytes[i] == '\t'.code.toByte()
+                )
         ) {
             i++
         }
@@ -317,12 +319,15 @@ class CinejoyHlsServer(private val client: OkHttpClient) {
                     // Audio/subtitle renditions point at child playlists.
                     trimmed.startsWith("#EXT-X-MEDIA") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.PLAYLIST))
+
                     // Init map is a media (fMP4) init segment.
                     trimmed.startsWith("#EXT-X-MAP") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.SEGMENT))
+
                     // Decryption key: opaque bytes, passed through untouched.
                     trimmed.startsWith("#EXT-X-KEY") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.RAW))
+
                     else -> builder.append(trimmed)
                 }
                 if (trimmed.startsWith("#EXT-X-STREAM-INF")) nextLineIsVariant = true
