@@ -320,7 +320,13 @@ class Fullraces : Source() {
 
         return sortedWith(
             compareByDescending<Video> { if (prefServer != "auto") it.videoTitle.contains(prefServer, ignoreCase = true) else false }
-                .thenByDescending { it.videoTitle.contains(prefQuality, ignoreCase = true) }
+                .thenByDescending {
+                    if (prefQuality.equals("auto", ignoreCase = true)) {
+                        it.videoTitle.contains("Auto", ignoreCase = true)
+                    } else {
+                        it.videoTitle.contains(prefQuality, ignoreCase = true)
+                    }
+                }
                 .thenByDescending { it.resolution },
         )
     }
