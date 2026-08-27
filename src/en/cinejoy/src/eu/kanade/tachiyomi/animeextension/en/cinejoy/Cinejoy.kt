@@ -8,7 +8,6 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
@@ -45,7 +44,7 @@ class Cinejoy : Source() {
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
-    private val m3u8Integration by lazy { M3u8Integration(client) }
+    private val hlsServer by lazy { CinejoyHlsServer(client) }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -354,7 +353,7 @@ class Cinejoy : Source() {
             ).sortVideos()
         }
 
-        return m3u8Integration.processVideoList(videos)
+        return hlsServer.proxyVideos(videos)
     }
 
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
