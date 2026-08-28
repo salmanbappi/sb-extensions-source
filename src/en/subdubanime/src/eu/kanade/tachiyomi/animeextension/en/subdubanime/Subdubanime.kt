@@ -8,15 +8,14 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.util.parseAs
 import extensions.utils.Source
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
-import okhttp3.OkHttpClient
 import kotlin.time.Duration.Companion.seconds
+import okhttp3.OkHttpClient
 
 class Subdubanime : Source() {
 
@@ -37,8 +36,6 @@ class Subdubanime : Source() {
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", "$baseUrl/")
-
-    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     // ============================== Catalog Cache ==============================
 
@@ -269,7 +266,17 @@ class Subdubanime : Source() {
 
     // ============================ Hoster List =============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val url = episode.url
+        return listOf(
+            Hoster(
+                hosterName = "SubDubAnime",
+                hosterUrl = episode.url,
+            ),
+        )
+    }
+
+    // ============================ Video List =============================
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val url = hoster.hosterUrl
         val (tmdbId, type) = parseAnimeUrl(url.substringBefore("#"))
         val anchor = url.substringAfter("#", "")
 
@@ -331,8 +338,9 @@ class Subdubanime : Source() {
             }
         }
 
-        // Build each quality as a separate Hoster entry
-        return qualityList.map { qi ->
+        val videoHeaders = headers.newBuilder().set("Referer", "$SERVER_URL/").build()
+
+        val videoList = qualityList.map { qi ->
             val videoUrl = if (format == "M3U8") {
                 val rangeParam = qi.range?.let { "&r_range=$it" } ?: ""
                 "${CDN_BASE_URL}$dataId.${qi.code}.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl$rangeParam"
@@ -340,49 +348,17 @@ class Subdubanime : Source() {
                 "${CDN_BASE_URL}$dataId.${qi.code}.mp4"
             }
 
-            Hoster(
-                hosterName = "SubDubAnime - ${qi.label}",
-                hosterUrl = "$format|$videoUrl",
+            val resolutionNumber = qi.label.replace("p", "").toIntOrNull()
+
+            Video(
+                videoUrl = videoUrl,
+                videoTitle = qi.label,
+                headers = videoHeaders,
+                resolution = resolutionNumber,
             )
         }
-    }
 
-    // ============================ Video List =============================
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val parts = hoster.hosterUrl.split("|", limit = 2)
-        if (parts.size < 2) return emptyList()
-
-        val format = parts[0]
-        val videoUrl = parts[1]
-        val qualityLabel = hoster.hosterName.substringAfter(" - ")
-
-        return if (format == "M3U8") {
-            playlistUtils.extractFromHls(
-                playlistUrl = videoUrl,
-                referer = "$SERVER_URL/",
-                videoNameGen = { quality -> "$qualityLabel - $quality" },
-            ).ifEmpty {
-                listOf(
-                    Video(
-                        videoUrl = videoUrl,
-                        videoTitle = qualityLabel,
-                        headers = headers.newBuilder()
-                            .set("Referer", "$SERVER_URL/")
-                            .build(),
-                    ),
-                )
-            }
-        } else {
-            listOf(
-                Video(
-                    videoUrl = videoUrl,
-                    videoTitle = qualityLabel,
-                    headers = headers.newBuilder()
-                        .set("Referer", "$SERVER_URL/")
-                        .build(),
-                ),
-            )
-        }
+        return videoList.sortVideos()
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
