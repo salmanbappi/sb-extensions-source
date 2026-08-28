@@ -1,0 +1,13 @@
+ext {
+    extName = 'SubDubAnime'
+    extClass = '.Subdubanime'
+    extVersionCode = 2
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+}
