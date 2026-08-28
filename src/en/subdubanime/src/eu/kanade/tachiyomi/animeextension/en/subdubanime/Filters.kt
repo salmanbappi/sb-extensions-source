@@ -11,40 +11,55 @@ object Filters {
         fun isDefault() = state == 0
     }
 
-    class TypeFilter : UriPartFilter("Type", arrayOf(
-        Pair("All", ""),
-        Pair("Series", "Series"),
-        Pair("Movie", "Movie"),
-        Pair("Drama", "Drama"),
-    ))
+    class TypeFilter :
+        UriPartFilter(
+            "Type",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Series", "Series"),
+                Pair("Movie", "Movie"),
+                Pair("Drama", "Drama"),
+            ),
+        )
 
-    class LanguageFilter : UriPartFilter("Language", arrayOf(
-        Pair("All", ""),
-        Pair("Hindi Dubbed (ORG)", "ORG"),
-        Pair("Hindi Fan Dubbed", "Fandub"),
-        Pair("English Subbed", "English Subbed"),
-        Pair("English Dubbed", "English Dubbed"),
-        Pair("Hindi Subbed", "Hindi Subbed"),
-    ))
+    class LanguageFilter :
+        UriPartFilter(
+            "Language",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Hindi Dubbed (ORG)", "ORG"),
+                Pair("Hindi Fan Dubbed", "Fandub"),
+                Pair("English Subbed", "English Subbed"),
+                Pair("English Dubbed", "English Dubbed"),
+                Pair("Hindi Subbed", "Hindi Subbed"),
+            ),
+        )
 
-    class StatusFilter : UriPartFilter("Status", arrayOf(
-        Pair("All", ""),
-        Pair("Ongoing", "Ongoing"),
-        Pair("Completed", "Completed"),
-        Pair("Released", "Released"),
-    ))
+    class StatusFilter :
+        UriPartFilter(
+            "Status",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Ongoing", "Ongoing"),
+                Pair("Completed", "Completed"),
+                Pair("Released", "Released"),
+            ),
+        )
 
-    class SortFilter : UriPartFilter("Sort By", arrayOf(
-        Pair("Latest Updated", "updated"),
-        Pair("Latest Added", "created"),
-        Pair("Title (A-Z)", "title_asc"),
-        Pair("Title (Z-A)", "title_desc"),
-        Pair("Rating", "rating"),
-    ))
+    class SortFilter :
+        UriPartFilter(
+            "Sort By",
+            arrayOf(
+                Pair("Latest Updated", "updated"),
+                Pair("Latest Added", "created"),
+                Pair("Title (A-Z)", "title_asc"),
+                Pair("Title (Z-A)", "title_desc"),
+                Pair("Rating", "rating"),
+            ),
+        )
 
     class GenreCheckBox(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
-    class GenreFilter(genres: List<Pair<String, String>>) :
-        AnimeFilter.Group<AnimeFilter.CheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) }) {
+    class GenreFilter(genres: List<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) }) {
         fun getIncluded(): List<String> = state.filter { it.state }.map { (it as GenreCheckBox).id }
     }
 

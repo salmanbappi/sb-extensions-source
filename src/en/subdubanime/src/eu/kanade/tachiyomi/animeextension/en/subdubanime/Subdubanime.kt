@@ -15,8 +15,8 @@ import eu.kanade.tachiyomi.util.parseAs
 import extensions.utils.Source
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.OkHttpClient
+import kotlin.time.Duration.Companion.seconds
 
 class Subdubanime : Source() {
 
@@ -174,12 +174,10 @@ class Subdubanime : Source() {
         return AnimesPage(animes, hasNext)
     }
 
-    private fun entryToSAnime(tmdbId: String, entry: AnimeEntry): SAnime {
-        return SAnime.create().apply {
-            title = entry.title ?: "Unknown"
-            url = "/api/entry/$tmdbId/${entry.type ?: "Series"}"
-            thumbnail_url = entry.images?.poster ?: entry.images?.backdrop
-        }
+    private fun entryToSAnime(tmdbId: String, entry: AnimeEntry): SAnime = SAnime.create().apply {
+        title = entry.title ?: "Unknown"
+        url = "/api/entry/$tmdbId/${entry.type ?: "Series"}"
+        thumbnail_url = entry.images?.poster ?: entry.images?.backdrop
     }
 
     // =========================== Anime Details ============================
@@ -337,9 +335,9 @@ class Subdubanime : Source() {
         return qualityList.map { qi ->
             val videoUrl = if (format == "M3U8") {
                 val rangeParam = qi.range?.let { "&r_range=$it" } ?: ""
-                "${CDN_BASE_URL}${dataId}.${qi.code}.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl$rangeParam"
+                "${CDN_BASE_URL}$dataId.${qi.code}.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl$rangeParam"
             } else {
-                "${CDN_BASE_URL}${dataId}.${qi.code}.mp4"
+                "${CDN_BASE_URL}$dataId.${qi.code}.mp4"
             }
 
             Hoster(
@@ -426,12 +424,10 @@ class Subdubanime : Source() {
         return Pair(tmdbId, type)
     }
 
-    private fun findEntry(data: BlakiteData, tmdbId: String, type: String): AnimeEntry? {
-        return when (type) {
-            "Movie" -> data.movies[tmdbId]
-            "Drama" -> data.dramas[tmdbId]
-            else -> data.series[tmdbId]
-        }
+    private fun findEntry(data: BlakiteData, tmdbId: String, type: String): AnimeEntry? = when (type) {
+        "Movie" -> data.movies[tmdbId]
+        "Drama" -> data.dramas[tmdbId]
+        else -> data.series[tmdbId]
     }
 
     companion object {
