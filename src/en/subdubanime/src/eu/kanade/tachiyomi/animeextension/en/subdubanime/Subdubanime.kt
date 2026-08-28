@@ -14,8 +14,8 @@ import eu.kanade.tachiyomi.util.parseAs
 import extensions.utils.Source
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.OkHttpClient
+import kotlin.time.Duration.Companion.seconds
 
 class Subdubanime : Source() {
 
@@ -265,14 +265,12 @@ class Subdubanime : Source() {
     }
 
     // ============================ Hoster List =============================
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        return listOf(
-            Hoster(
-                hosterName = "SubDubAnime",
-                hosterUrl = episode.url,
-            ),
-        )
-    }
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(
+        Hoster(
+            hosterName = "SubDubAnime",
+            hosterUrl = episode.url,
+        ),
+    )
 
     // ============================ Video List =============================
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
