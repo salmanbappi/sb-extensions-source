@@ -32,26 +32,28 @@ object Filters {
 
     data class GenreVal(val name: String, val id: String)
 
-    class MediaTypeFilter : SelectFilter(
-        "Media Type",
-        arrayOf(
-            Pair("All / Trending", "trending"),
-            Pair("Movies", "movie"),
-            Pair("TV Shows", "tv"),
-        ),
-        "trending",
-    )
+    class MediaTypeFilter :
+        SelectFilter(
+            "Media Type",
+            arrayOf(
+                Pair("All / Trending", "trending"),
+                Pair("Movies", "movie"),
+                Pair("TV Shows", "tv"),
+            ),
+            "trending",
+        )
 
-    class SortFilter : SelectFilter(
-        "Sort By",
-        arrayOf(
-            Pair("Popularity", "popularity.desc"),
-            Pair("Release Date", "primary_release_date.desc"),
-            Pair("Rating", "vote_average.desc"),
-            Pair("Title", "original_title.asc"),
-        ),
-        "popularity.desc",
-    )
+    class SortFilter :
+        SelectFilter(
+            "Sort By",
+            arrayOf(
+                Pair("Popularity", "popularity.desc"),
+                Pair("Release Date", "primary_release_date.desc"),
+                Pair("Rating", "vote_average.desc"),
+                Pair("Title", "original_title.asc"),
+            ),
+            "popularity.desc",
+        )
 
     val GENRES = listOf(
         GenreVal("Action", "28"),
