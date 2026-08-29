@@ -98,12 +98,15 @@ class Flixer :
             for (filter in filters) {
                 when (filter) {
                     is Filters.MediaTypeFilter -> mediaType = filter.selected
+
                     is Filters.SortFilter -> sortBy = filter.selected
+
                     is Filters.GenreFilter -> {
                         filter.state.forEach { check ->
                             if (check.state) genreIds.add(check.value)
                         }
                     }
+
                     else -> {}
                 }
             }
@@ -113,10 +116,12 @@ class Flixer :
                     val genreParam = if (genreIds.isNotEmpty()) "&with_genres=${genreIds.joinToString(",")}" else ""
                     "$apiBaseUrl/discover/movie?page=$page&sort_by=$sortBy$genreParam"
                 }
+
                 "tv" -> {
                     val genreParam = if (genreIds.isNotEmpty()) "&with_genres=${genreIds.joinToString(",")}" else ""
                     "$apiBaseUrl/discover/tv?page=$page&sort_by=$sortBy$genreParam"
                 }
+
                 else -> {
                     "$apiBaseUrl/trending/all/day?page=$page"
                 }
