@@ -1,0 +1,14 @@
+ext {
+    extName = 'Cinemaos'
+    extClass = '.Cinemaos'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:vidsrc-extractor"))
+    implementation(project(":lib:universal-extractor"))
+}
