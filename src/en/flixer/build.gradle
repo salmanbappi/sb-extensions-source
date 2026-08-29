@@ -1,7 +1,7 @@
 ext {
     extName = "Flixer"
     extClass = ".Flixer"
-    extVersionCode = 4
+    extVersionCode = 5
     isNsfw = false
 }
 
