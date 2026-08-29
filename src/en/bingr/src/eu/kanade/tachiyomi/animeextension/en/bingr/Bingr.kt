@@ -368,7 +368,7 @@ class Bingr : Source() {
         )
     }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val qualityPref = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(qualityPref) }
