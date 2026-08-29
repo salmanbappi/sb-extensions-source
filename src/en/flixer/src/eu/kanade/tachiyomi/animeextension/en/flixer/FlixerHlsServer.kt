@@ -8,6 +8,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -37,9 +38,10 @@ class FlixerHlsServer(private val client: OkHttpClient) {
         } catch (_: Exception) {}
     }
 
-    private enum class Kind { PLAYLIST, SEGMENT_MP4, SEGMENT_TS, RAW }
+    private enum class Kind { PLAYLIST, SEGMENT_TS, RAW }
 
-    fun proxyMasterUrl(masterUrl: String, headers: Headers?, quality: String? = null): String = proxyUrl(masterUrl, headers, Kind.PLAYLIST, quality)
+    fun proxyMasterUrl(masterUrl: String, headers: Headers?, quality: String? = null): String =
+        proxyUrl(masterUrl, headers, Kind.PLAYLIST, quality)
 
     private fun proxyUrl(targetUrl: String, headers: Headers?, kind: Kind, quality: String? = null): String {
         if (port == 0) return targetUrl
@@ -60,7 +62,6 @@ class FlixerHlsServer(private val client: OkHttpClient) {
         )
         val path = when (kind) {
             Kind.PLAYLIST -> "playlist.m3u8"
-            Kind.SEGMENT_MP4 -> "segment.mp4"
             Kind.SEGMENT_TS -> "segment.ts"
             Kind.RAW -> "raw.key"
         }
@@ -107,6 +108,7 @@ class FlixerHlsServer(private val client: OkHttpClient) {
 
     private fun looksLikePlaylistUrl(url: String): Boolean {
         if (url.contains(".m3u8", ignoreCase = true) || url.contains("mpegurl", ignoreCase = true)) return true
+        if (url.contains(".mp4", ignoreCase = true) || url.contains("streamrk", ignoreCase = true) || url.contains(".mkv", ignoreCase = true)) return false
         val lower = url.substringBefore('?').substringBefore('#').lowercase()
         return !lower.endsWith(".mp4") && !lower.endsWith(".mkv") &&
             !lower.endsWith(".webm") && !lower.endsWith(".ts")
@@ -180,9 +182,7 @@ class FlixerHlsServer(private val client: OkHttpClient) {
             }
         } catch (_: Exception) {
         } finally {
-            try {
-                socket.close()
-            } catch (_: Exception) {}
+            try { socket.close() } catch (_: Exception) {}
         }
     }
 
@@ -302,7 +302,7 @@ class FlixerHlsServer(private val client: OkHttpClient) {
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.PLAYLIST))
 
                     trimmed.startsWith("#EXT-X-MAP") ->
-                        builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.SEGMENT_MP4))
+                        builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.SEGMENT_TS))
 
                     trimmed.startsWith("#EXT-X-KEY") ->
                         builder.append(rewriteUriAttr(trimmed, playlistUrl, headers, Kind.RAW))
@@ -312,11 +312,7 @@ class FlixerHlsServer(private val client: OkHttpClient) {
                 if (trimmed.startsWith("#EXT-X-STREAM-INF")) nextLineIsVariant = true
             } else {
                 val resolved = resolveUrl(playlistUrl, trimmed)
-                val kind = when {
-                    nextLineIsVariant -> Kind.PLAYLIST
-                    isFmp4 || trimmed.contains(".mp4") || trimmed.contains(".m4s") || trimmed.contains(".html") -> Kind.SEGMENT_MP4
-                    else -> Kind.SEGMENT_TS
-                }
+                val kind = if (nextLineIsVariant) Kind.PLAYLIST else Kind.SEGMENT_TS
                 builder.append(proxyUrl(resolved, headers, kind))
                 nextLineIsVariant = false
             }
