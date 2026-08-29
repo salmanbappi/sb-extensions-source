@@ -167,3 +167,20 @@ data class GenreDto(
     val id: Int? = null,
     val name: String? = null,
 )
+
+@Serializable
+data class VidrockServerDto(
+    val url: String? = null,
+    val language: String? = null,
+    val flag: String? = null,
+    val type: String? = null,
+)
+
+@Serializable
+data class SubtitleDto(
+    val file: String? = null,
+    val url: String? = null,
+    val label: String? = null,
+    val display: String? = null,
+    val language: String? = null,
+)
