@@ -80,6 +80,7 @@ data class MovieDetailsDto(
         val fullImageUrl = if (!imagePath.isNullOrBlank()) "$TMDB_IMAGE_BASE$imagePath" else ""
         val releaseYear = (release_date ?: "").take(4)
         val score = vote_average
+        val statusStr = status
         val trailerKey = videos?.results?.firstOrNull {
             it.site.equals("YouTube", true) && it.type.equals("Trailer", true)
         }?.key
@@ -89,7 +90,7 @@ data class MovieDetailsDto(
             this.url = fallbackUrl
             this.thumbnail_url = fullImageUrl
             this.genre = genres?.mapNotNull { it.name }?.joinToString(", ")
-            this.status = when (this@MovieDetailsDto.status) {
+            this.status = when (statusStr) {
                 "Released" -> SAnime.COMPLETED
                 else -> SAnime.UNKNOWN
             }
@@ -103,7 +104,7 @@ data class MovieDetailsDto(
                 if (!overview.isNullOrBlank()) append(overview)
                 if (runtime != null && runtime > 0) append("\n\nDuration: ${runtime}m")
                 if (releaseYear.isNotBlank()) append("\nYear: $releaseYear")
-                if (!status.isNullOrBlank()) append("\nStatus: $status")
+                if (!statusStr.isNullOrBlank()) append("\nStatus: $statusStr")
                 if (!trailerKey.isNullOrBlank()) {
                     append("\n\n[Trailer](https://www.youtube.com/watch?v=$trailerKey)")
                 }
@@ -137,6 +138,7 @@ data class TvDetailsDto(
         val fullImageUrl = if (!imagePath.isNullOrBlank()) "$TMDB_IMAGE_BASE$imagePath" else ""
         val releaseYear = (first_air_date ?: "").take(4)
         val score = vote_average
+        val statusStr = status
         val trailerKey = videos?.results?.firstOrNull {
             it.site.equals("YouTube", true) && it.type.equals("Trailer", true)
         }?.key
@@ -146,7 +148,7 @@ data class TvDetailsDto(
             this.url = fallbackUrl
             this.thumbnail_url = fullImageUrl
             this.genre = genres?.mapNotNull { it.name }?.joinToString(", ")
-            this.status = when (this@TvDetailsDto.status) {
+            this.status = when (statusStr) {
                 "Ended", "Canceled" -> SAnime.COMPLETED
                 "Returning Series", "In Production" -> SAnime.ONGOING
                 else -> SAnime.UNKNOWN
@@ -162,7 +164,7 @@ data class TvDetailsDto(
                 if (number_of_seasons != null) append("\n\nSeasons: $number_of_seasons")
                 if (number_of_episodes != null) append(" • Episodes: $number_of_episodes")
                 if (releaseYear.isNotBlank()) append("\nYear: $releaseYear")
-                if (!status.isNullOrBlank()) append("\nStatus: $status")
+                if (!statusStr.isNullOrBlank()) append("\nStatus: $statusStr")
                 if (!trailerKey.isNullOrBlank()) {
                     append("\n\n[Trailer](https://www.youtube.com/watch?v=$trailerKey)")
                 }
