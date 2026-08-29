@@ -272,6 +272,7 @@ class Bingr : Source() {
                     }
                 }
             }
+
             "animesalt" -> {
                 val title = if (animeTitle.isNotBlank()) animeTitle else getAnimeTitle(animeId)
                 val streamUrl = "$filmuBaseUrl/animesalt/streams".toHttpUrl().newBuilder().apply {
