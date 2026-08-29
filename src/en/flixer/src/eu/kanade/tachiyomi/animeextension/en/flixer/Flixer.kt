@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.en.flixer
 import android.app.Application
 import android.content.SharedPreferences
 import android.net.Uri
+import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -17,7 +18,6 @@ import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
-import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.lib.vidsrcextractor.VidsrcExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
@@ -33,6 +33,10 @@ import okhttp3.Headers
 import okhttp3.OkHttpClient
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.security.Key
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import kotlin.time.Duration.Companion.seconds
 
 class Flixer :
@@ -62,7 +66,6 @@ class Flixer :
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val vidsrcExtractor by lazy { VidsrcExtractor(client, headers) }
-    private val universalExtractor by lazy { UniversalExtractor(client) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val doodExtractor by lazy { DoodExtractor(client) }
     private val streamTapeExtractor by lazy { StreamTapeExtractor(client) }
@@ -99,15 +102,12 @@ class Flixer :
             for (filter in filters) {
                 when (filter) {
                     is Filters.MediaTypeFilter -> mediaType = filter.selected
-
                     is Filters.SortFilter -> sortBy = filter.selected
-
                     is Filters.GenreFilter -> {
                         filter.state.forEach { check ->
                             if (check.state) genreIds.add(check.value)
                         }
                     }
-
                     else -> {}
                 }
             }
@@ -117,12 +117,10 @@ class Flixer :
                     val genreParam = if (genreIds.isNotEmpty()) "&with_genres=${genreIds.joinToString(",")}" else ""
                     "$apiBaseUrl/discover/movie?page=$page&sort_by=$sortBy$genreParam"
                 }
-
                 "tv" -> {
                     val genreParam = if (genreIds.isNotEmpty()) "&with_genres=${genreIds.joinToString(",")}" else ""
                     "$apiBaseUrl/discover/tv?page=$page&sort_by=$sortBy$genreParam"
                 }
-
                 else -> {
                     "$apiBaseUrl/trending/all/day?page=$page"
                 }
@@ -254,28 +252,17 @@ class Flixer :
         val season = parsedUri.getQueryParameter("season") ?: "1"
         val ep = parsedUri.getQueryParameter("episode") ?: "1"
 
-        // 7 distinct server folders
-        val servers = if (isMovie) {
-            listOf(
-                Hoster(hosterName = "Server 1 (Ares - VidSrc)", hosterUrl = "https://vidsrc.to/embed/movie/$id"),
-                Hoster(hosterName = "Server 2 (Balder - VidLink)", hosterUrl = "https://vidlink.pro/movie/$id"),
-                Hoster(hosterName = "Server 3 (Circe - VidFast)", hosterUrl = "https://vidfast.pro/movie/$id"),
-                Hoster(hosterName = "Server 4 (Dionysus - Vidrock)", hosterUrl = "https://vidrock.ru/movie/$id"),
-                Hoster(hosterName = "Server 5 (Eros - 2Embed)", hosterUrl = "https://www.2embed.cc/embed/$id"),
-                Hoster(hosterName = "Server 6 (Freya - Smashy)", hosterUrl = "https://embed.smashystream.com/playere.php?tmdb=$id"),
-                Hoster(hosterName = "Server 7 (Gaia - MultiEmbed)", hosterUrl = "https://multiembed.mov/?video_id=$id&tmdb=1"),
-            )
-        } else {
-            listOf(
-                Hoster(hosterName = "Server 1 (Ares - VidSrc)", hosterUrl = "https://vidsrc.to/embed/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Server 2 (Balder - VidLink)", hosterUrl = "https://vidlink.pro/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Server 3 (Circe - VidFast)", hosterUrl = "https://vidfast.pro/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Server 4 (Dionysus - Vidrock)", hosterUrl = "https://vidrock.ru/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Server 5 (Eros - 2Embed)", hosterUrl = "https://www.2embed.cc/embedtv/$id&s=$season&e=$ep"),
-                Hoster(hosterName = "Server 6 (Freya - Smashy)", hosterUrl = "https://embed.smashystream.com/playere.php?tmdb=$id&season=$season&episode=$ep"),
-                Hoster(hosterName = "Server 7 (Gaia - MultiEmbed)", hosterUrl = "https://multiembed.mov/?video_id=$id&tmdb=1&s=$season&e=$ep"),
-            )
-        }
+        val path = if (isMovie) "movie/$id" else "tv/$id/$season/$ep"
+
+        val servers = listOf(
+            Hoster(hosterName = "Server 1 (Ares - VidSrc)", hosterUrl = "vidsrc:$path"),
+            Hoster(hosterName = "Server 2 (Balder - Luna)", hosterUrl = "vidrock:Luna:$path"),
+            Hoster(hosterName = "Server 3 (Circe - VidFast)", hosterUrl = "vidfast:$path"),
+            Hoster(hosterName = "Server 4 (Dionysus - Nova)", hosterUrl = "vidrock:Nova:$path"),
+            Hoster(hosterName = "Server 5 (Eros - 2Embed)", hosterUrl = "twoembed:$id:$season:$ep:${if (isMovie) "movie" else "tv"}"),
+            Hoster(hosterName = "Server 6 (Freya - Smashy)", hosterUrl = "smashy:$id:$season:$ep:${if (isMovie) "movie" else "tv"}"),
+            Hoster(hosterName = "Server 7 (Gaia - MultiEmbed)", hosterUrl = "multiembed:$id:$season:$ep:${if (isMovie) "movie" else "tv"}"),
+        )
 
         return orderHostersByPref(servers)
     }
@@ -285,63 +272,66 @@ class Flixer :
         return hosters.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
     }
 
-    // ============================ Inside Folder: Quality & Stream Selection =============================
+    // ============================ Inside Folder: 100% Pure OkHttp Stream Extraction =============================
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val embedUrl = hoster.hosterUrl
-        val embedUri = Uri.parse(embedUrl)
-        val host = embedUri.host ?: "flixer.gd"
+        val rawUrl = hoster.hosterUrl
+        val subTracks = mutableListOf<Track>()
 
-        val isMovie = embedUrl.contains("movie") || embedUrl.contains("video_id")
+        // Extract ID and path
+        val path = rawUrl.substringAfter(":")
+        val isMovie = path.startsWith("movie") || rawUrl.endsWith(":movie")
         val id = when {
-            embedUrl.contains("/movie/") -> embedUrl.substringAfter("/movie/").substringBefore("?").substringBefore("/")
-            embedUrl.contains("/tv/") -> embedUrl.substringAfter("/tv/").substringBefore("?").substringBefore("/")
-            embedUrl.contains("tmdb=") -> embedUrl.substringAfter("tmdb=").substringBefore("&")
-            embedUrl.contains("video_id=") -> embedUrl.substringAfter("video_id=").substringBefore("&")
-            embedUrl.contains("/embed/") -> embedUrl.substringAfter("/embed/").substringBefore("?").substringBefore("/")
-            embedUrl.contains("/embedtv/") -> embedUrl.substringAfter("/embedtv/").substringBefore("&").substringBefore("?")
+            path.startsWith("movie/") -> path.substringAfter("movie/")
+            path.startsWith("tv/") -> path.substringAfter("tv/").substringBefore("/")
+            rawUrl.contains(":") -> rawUrl.split(":").getOrNull(1) ?: ""
             else -> ""
         }
 
-        val season = embedUri.getQueryParameter("season") ?: embedUri.getQueryParameter("s") ?: embedUri.pathSegments.getOrNull(2) ?: "1"
-        val ep = embedUri.getQueryParameter("episode") ?: embedUri.getQueryParameter("e") ?: embedUri.pathSegments.getOrNull(3) ?: "1"
-        val path = if (isMovie) "movie/$id" else "tv/$id/$season/$ep"
+        val season = if (!isMovie && path.startsWith("tv/")) {
+            path.split("/").getOrNull(2) ?: "1"
+        } else if (!isMovie && rawUrl.contains(":")) {
+            rawUrl.split(":").getOrNull(2) ?: "1"
+        } else {
+            "1"
+        }
 
-        val serverHeaders = Headers.Builder()
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .add("Referer", "https://$host/")
-            .add("Origin", "https://$host")
-            .build()
+        val ep = if (!isMovie && path.startsWith("tv/")) {
+            path.split("/").getOrNull(3) ?: "1"
+        } else if (!isMovie && rawUrl.contains(":")) {
+            rawUrl.split(":").getOrNull(3) ?: "1"
+        } else {
+            "1"
+        }
 
-        val subTracks = mutableListOf<Track>()
-
-        // 1. Fetch Subtitles from Wyzie
-        try {
-            val wyzieUrl = if (isMovie) {
-                "https://vidfast.pro/wyzie?id=$id"
-            } else {
-                "https://vidfast.pro/wyzie?id=$id&season=$season&episode=$ep"
-            }
-            val subReq = GET(wyzieUrl, Headers.headersOf("User-Agent", serverHeaders["User-Agent"]!!, "Referer", "https://vidfast.pro/"))
-            val subRes = client.newCall(subReq).execute()
-            val subList = subRes.parseAs<List<SubtitleDto>>(json)
-            subList.forEach { sub ->
-                val subUrl = sub.url ?: sub.file
-                val subLabel = sub.display ?: sub.label ?: sub.language ?: "Subtitle"
-                if (!subUrl.isNullOrBlank()) {
-                    subTracks.add(Track(subUrl, subLabel))
-                }
-            }
-        } catch (_: Exception) {}
-
-        // 2. Fetch Subtitles from SubVdrk
+        // Fetch Subtitles from Wyzie
         if (id.isNotBlank()) {
             try {
-                val subReq = GET("https://sub.vdrk.site/v2/$path", Headers.headersOf("User-Agent", serverHeaders["User-Agent"]!!, "Referer", "https://vidrock.ru/"))
+                val wyzieUrl = if (isMovie) {
+                    "https://vidfast.pro/wyzie?id=$id"
+                } else {
+                    "https://vidfast.pro/wyzie?id=$id&season=$season&episode=$ep"
+                }
+                val subReq = GET(wyzieUrl, Headers.headersOf("User-Agent", "Mozilla/5.0", "Referer", "https://vidfast.pro/"))
+                val subRes = client.newCall(subReq).execute()
+                val subList = subRes.parseAs<List<SubtitleDto>>(json)
+                subList.forEach { sub ->
+                    val subUrl = sub.url ?: sub.file
+                    val subLabel = sub.display ?: sub.label ?: sub.language ?: "Subtitle"
+                    if (!subUrl.isNullOrBlank()) {
+                        subTracks.add(Track(subUrl, subLabel))
+                    }
+                }
+            } catch (_: Exception) {}
+
+            // Fetch Subtitles from SubVdrk
+            try {
+                val subPath = if (isMovie) "movie/$id" else "tv/$id/$season/$ep"
+                val subReq = GET("https://sub.vdrk.site/v2/$subPath", Headers.headersOf("User-Agent", "Mozilla/5.0", "Referer", "https://vidrock.ru/"))
                 val subRes = client.newCall(subReq).execute()
                 val subList = subRes.parseAs<List<SubtitleDto>>(json)
                 subList.forEach { sub ->
                     val subUrl = sub.file ?: sub.url
-                    val subLabel = sub.label ?: sub.display ?: sub.language ?: "Subtitle"
+                    val subLabel = sub.display ?: sub.label ?: sub.language ?: "Subtitle"
                     if (!subUrl.isNullOrBlank()) {
                         subTracks.add(Track(subUrl, subLabel))
                     }
@@ -351,29 +341,57 @@ class Flixer :
 
         val videoList = mutableListOf<Video>()
 
-        // Specific Fast Resolvers
         when {
-            host.contains("vidrock") -> {
-                // Try Astra MP4 streams directly
+            // 1. VidSrc
+            rawUrl.startsWith("vidsrc:") -> {
+                val vidsrcPath = rawUrl.removePrefix("vidsrc:")
+                val embedUrl = if (vidsrcPath.startsWith("movie/")) {
+                    "https://vidsrc.to/embed/$vidsrcPath"
+                } else {
+                    "https://vidsrc.to/embed/$vidsrcPath"
+                }
                 try {
-                    val apiReq = GET("https://vidrock.ru/api/$path", serverHeaders)
-                    val apiRes = client.newCall(apiReq).execute()
-                    val serverMap = apiRes.parseAs<Map<String, VidrockServerDto?>>(json)
+                    videoList.addAll(vidsrcExtractor.videosFromUrl(embedUrl, hosterName = "", subtitleList = subTracks))
+                } catch (_: Exception) {}
+            }
 
-                    val astraDto = serverMap["Astra"]
-                    if (astraDto?.url != null) {
-                        val astraUrl = astraDto.url
-                        val astraReq = GET(astraUrl, serverHeaders)
-                        val astraRes = client.newCall(astraReq).execute()
-                        val astraItems = astraRes.parseAs<List<AstraItemDto>>(json)
-                        astraItems.forEach { item ->
-                            if (!item.url.isNullOrBlank()) {
-                                val res = item.resolution ?: 720
+            // 2. Vidrock (Luna / Nova / Astra)
+            rawUrl.startsWith("vidrock:") -> {
+                val parts = rawUrl.removePrefix("vidrock:").split(":", limit = 2)
+                val targetServer = parts.getOrNull(0) ?: "Luna"
+                val vPath = parts.getOrNull(1) ?: ""
+
+                val vidrockHeaders = Headers.Builder()
+                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .add("Referer", "https://vidrock.ru/")
+                    .add("Origin", "https://vidrock.ru")
+                    .build()
+
+                try {
+                    val apiRes = client.newCall(GET("https://vidrock.ru/api/$vPath", vidrockHeaders)).execute()
+                    val serverMap = apiRes.parseAs<Map<String, VidrockServerDto?>>(json)
+                    val serverDto = serverMap[targetServer] ?: serverMap.values.filterNotNull().firstOrNull()
+
+                    if (serverDto?.url != null) {
+                        val streamUrl = decryptVidrock(serverDto.url)
+                        if (streamUrl.isNotBlank()) {
+                            if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+                                videoList.addAll(
+                                    playlistUtils.extractFromHls(
+                                        playlistUrl = streamUrl,
+                                        referer = "https://vidrock.ru/",
+                                        masterHeaders = vidrockHeaders,
+                                        videoHeaders = vidrockHeaders,
+                                        videoNameGen = { q -> q },
+                                        subtitleList = subTracks,
+                                    ),
+                                )
+                            } else {
                                 videoList.add(
                                     Video(
-                                        videoUrl = item.url,
-                                        videoTitle = "${res}p",
-                                        headers = serverHeaders,
+                                        videoUrl = streamUrl,
+                                        videoTitle = "Direct Stream",
+                                        headers = vidrockHeaders,
                                         subtitleTracks = subTracks,
                                     ),
                                 )
@@ -383,66 +401,195 @@ class Flixer :
                 } catch (_: Exception) {}
             }
 
-            host.contains("vidsrc") -> {
+            // 3. VidFast
+            rawUrl.startsWith("vidfast:") -> {
+                val vfPath = rawUrl.removePrefix("vidfast:")
+                val vfHeaders = Headers.Builder()
+                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .add("Referer", "https://vidfast.pro/")
+                    .add("Origin", "https://vidfast.pro")
+                    .build()
+
                 try {
-                    videoList.addAll(vidsrcExtractor.videosFromUrl(embedUrl, hosterName = ""))
+                    val pageHtml = client.newCall(GET("https://vidfast.pro/$vfPath", vfHeaders)).execute().body.string()
+                    val m3u8Match = Regex("""['"]([^'"]+\.m3u8[^'"]*)['"]""").find(pageHtml)
+                    if (m3u8Match != null) {
+                        val streamUrl = m3u8Match.groupValues[1]
+                        videoList.addAll(
+                            playlistUtils.extractFromHls(
+                                playlistUrl = streamUrl,
+                                referer = "https://vidfast.pro/",
+                                masterHeaders = vfHeaders,
+                                videoHeaders = vfHeaders,
+                                videoNameGen = { q -> q },
+                                subtitleList = subTracks,
+                            ),
+                        )
+                    }
                 } catch (_: Exception) {}
             }
 
-            host.contains("filemoon") -> {
-                try {
-                    videoList.addAll(filemoonExtractor.videosFromUrl(embedUrl))
-                } catch (_: Exception) {}
-            }
+            // 4. 2Embed
+            rawUrl.startsWith("twoembed:") -> {
+                val parts = rawUrl.removePrefix("twoembed:").split(":")
+                val twoId = parts.getOrNull(0) ?: ""
+                val twoSeason = parts.getOrNull(1) ?: "1"
+                val twoEp = parts.getOrNull(2) ?: "1"
+                val twoType = parts.getOrNull(3) ?: "movie"
 
-            host.contains("streamtape") -> {
-                try {
-                    videoList.addAll(streamTapeExtractor.videosFromUrl(embedUrl))
-                } catch (_: Exception) {}
-            }
+                val twoHeaders = Headers.Builder()
+                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .add("Referer", "https://www.2embed.cc/")
+                    .build()
 
-            host.contains("dood") -> {
-                try {
-                    videoList.addAll(doodExtractor.videosFromUrl(embedUrl))
-                } catch (_: Exception) {}
-            }
-        }
-
-        // Universal Extractor for all 7 embeds
-        if (videoList.isEmpty()) {
-            try {
-                val extracted = universalExtractor.videosFromUrl(embedUrl, serverHeaders)
-                extracted.forEach { v ->
-                    val cleanTitle = v.videoTitle
-                        .replace(Regex("^(vidfast|vidlink|vidsrc|2embed|smashy|multiembed|vidrock)\\s*-\\s*", RegexOption.IGNORE_CASE), "")
-                        .trim()
-                        .ifBlank { "Auto" }
-
-                    videoList.add(
-                        Video(
-                            videoUrl = v.videoUrl,
-                            videoTitle = cleanTitle,
-                            headers = serverHeaders,
-                            audioTracks = v.audioTracks,
-                            subtitleTracks = (v.subtitleTracks + subTracks).distinctBy { it.url },
-                        ),
-                    )
+                val embedUrl = if (twoType == "movie") {
+                    "https://www.2embed.cc/embed/$twoId"
+                } else {
+                    "https://www.2embed.cc/embedtv/$twoId&s=$twoSeason&e=$twoEp"
                 }
-            } catch (_: Exception) {}
+
+                try {
+                    val html = client.newCall(GET(embedUrl, twoHeaders)).execute().body.string()
+                    val iframes = Regex("""iframe[^>]+src=["']([^"']+)["']""").findAll(html).map { it.groupValues[1] }.toList()
+                    for (src in iframes) {
+                        when {
+                            src.contains("filemoon") -> {
+                                try { videoList.addAll(filemoonExtractor.videosFromUrl(src, headers = twoHeaders)) } catch (_: Exception) {}
+                            }
+                            src.contains("streamtape") -> {
+                                try { streamTapeExtractor.videoFromUrl(src)?.let { videoList.add(it) } } catch (_: Exception) {}
+                            }
+                            src.contains("dood") -> {
+                                try { videoList.addAll(doodExtractor.videosFromUrl(src)) } catch (_: Exception) {}
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // 5. SmashyStream
+            rawUrl.startsWith("smashy:") -> {
+                val parts = rawUrl.removePrefix("smashy:").split(":")
+                val smId = parts.getOrNull(0) ?: ""
+                val smSeason = parts.getOrNull(1) ?: "1"
+                val smEp = parts.getOrNull(2) ?: "1"
+                val smType = parts.getOrNull(3) ?: "movie"
+
+                val smHeaders = Headers.Builder()
+                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .add("Referer", "https://embed.smashystream.com/")
+                    .build()
+
+                val smUrl = if (smType == "movie") {
+                    "https://embed.smashystream.com/playere.php?tmdb=$smId"
+                } else {
+                    "https://embed.smashystream.com/playere.php?tmdb=$smId&season=$smSeason&episode=$smEp"
+                }
+
+                try {
+                    val html = client.newCall(GET(smUrl, smHeaders)).execute().body.string()
+                    val m3u8Match = Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""").find(html)
+                        ?: Regex("""['"](https?://[^'"]+\.m3u8[^'"]*)['"]""").find(html)
+                    if (m3u8Match != null) {
+                        videoList.addAll(
+                            playlistUtils.extractFromHls(
+                                playlistUrl = m3u8Match.groupValues[1],
+                                referer = smUrl,
+                                masterHeaders = smHeaders,
+                                videoHeaders = smHeaders,
+                                videoNameGen = { q -> q },
+                                subtitleList = subTracks,
+                            ),
+                        )
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // 6. MultiEmbed
+            rawUrl.startsWith("multiembed:") -> {
+                val parts = rawUrl.removePrefix("multiembed:").split(":")
+                val multiId = parts.getOrNull(0) ?: ""
+                val multiSeason = parts.getOrNull(1) ?: "1"
+                val multiEp = parts.getOrNull(2) ?: "1"
+                val multiType = parts.getOrNull(3) ?: "movie"
+
+                val multiHeaders = Headers.Builder()
+                    .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .add("Referer", "https://multiembed.mov/")
+                    .build()
+
+                val multiUrl = if (multiType == "movie") {
+                    "https://multiembed.mov/?video_id=$multiId&tmdb=1"
+                } else {
+                    "https://multiembed.mov/?video_id=$multiId&tmdb=1&s=$multiSeason&e=$multiEp"
+                }
+
+                try {
+                    val html = client.newCall(GET(multiUrl, multiHeaders)).execute().body.string()
+                    val iframes = Regex("""(?:iframe|source)[^>]+(?:src|file)=["']([^"']+)["']""").findAll(html).map { it.groupValues[1] }.toList()
+                    for (src in iframes) {
+                        when {
+                            src.contains("filemoon") -> {
+                                try { videoList.addAll(filemoonExtractor.videosFromUrl(src, headers = multiHeaders)) } catch (_: Exception) {}
+                            }
+                            src.contains("streamtape") -> {
+                                try { streamTapeExtractor.videoFromUrl(src)?.let { videoList.add(it) } } catch (_: Exception) {}
+                            }
+                            src.contains("dood") -> {
+                                try { videoList.addAll(doodExtractor.videosFromUrl(src)) } catch (_: Exception) {}
+                            }
+                            src.contains(".m3u8") -> {
+                                try {
+                                    videoList.addAll(
+                                        playlistUtils.extractFromHls(
+                                            playlistUrl = src,
+                                            referer = multiUrl,
+                                            masterHeaders = multiHeaders,
+                                            videoHeaders = multiHeaders,
+                                            videoNameGen = { q -> q },
+                                            subtitleList = subTracks,
+                                        ),
+                                    )
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
         }
 
-        // Ensure subtitle tracks are attached to all videos
-        val finalList = videoList.map { v ->
+        // Attach subtitles to all resolved video streams
+        val cleanedList = videoList.map { v ->
+            val cleanTitle = v.videoTitle
+                .replace(Regex("^(vidfast|vidlink|vidsrc|2embed|smashy|multiembed|vidrock)\\s*-\\s*", RegexOption.IGNORE_CASE), "")
+                .trim()
+                .ifBlank { "Auto" }
+
             Video(
                 videoUrl = v.videoUrl,
-                videoTitle = v.videoTitle,
-                headers = v.headers ?: serverHeaders,
+                videoTitle = cleanTitle,
+                headers = v.headers,
                 audioTracks = v.audioTracks,
-                subtitleTracks = (v.subtitleTracks + subTracks).distinctBy { it.url },
+                subtitleTracks = (v.subtitleTracks.orEmpty() + subTracks).distinctBy { it.url },
             )
         }
 
-        return finalList.sortVideos()
+        return cleanedList.sortVideos()
+    }
+
+    private fun decryptVidrock(b64url: String): String {
+        return runCatching {
+            val decoded = Base64.decode(b64url, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            if (decoded.size < 28) return@runCatching ""
+            val iv = decoded.copyOfRange(0, 12)
+            val ciphertextAndTag = decoded.copyOfRange(12, decoded.size)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            val keySpec = SecretKeySpec(VIDROCK_AES_KEY, "AES")
+            val gcmSpec = GCMParameterSpec(128, iv)
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
+            val plaintext = cipher.doFinal(ciphertextAndTag)
+            String(plaintext, Charsets.UTF_8)
+        }.getOrDefault("")
     }
 
     // ============================== Settings / Preferences ===============================
@@ -453,9 +600,9 @@ class Flixer :
             summary = "%s",
             entries = listOf(
                 "Server 1 (Ares - VidSrc)",
-                "Server 2 (Balder - VidLink)",
+                "Server 2 (Balder - Luna)",
                 "Server 3 (Circe - VidFast)",
-                "Server 4 (Dionysus - Vidrock)",
+                "Server 4 (Dionysus - Nova)",
                 "Server 5 (Eros - 2Embed)",
                 "Server 6 (Freya - Smashy)",
                 "Server 7 (Gaia - MultiEmbed)",
@@ -500,9 +647,12 @@ class Flixer :
 
     companion object {
         private const val PREF_HOSTER_KEY = "preferred_hoster"
-        private const val PREF_HOSTER_DEFAULT = "VidFast"
+        private const val PREF_HOSTER_DEFAULT = "Luna"
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
+
+        private val VIDROCK_AES_KEY = "7f3e9c2a8b5d1f4e6a9c3b7d2e5f8a1c4b6d9e2f5a8c1b4d7e9f2a5c8b1d4e7f"
+            .chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
 }

@@ -1,7 +1,7 @@
 ext {
     extName = "Flixer"
     extClass = ".Flixer"
-    extVersionCode = 3
+    extVersionCode = 4
     isNsfw = false
 }
 
@@ -13,6 +13,5 @@ dependencies {
     implementation(project(":lib:dood-extractor"))
     implementation(project(":lib:filemoon-extractor"))
     implementation(project(":lib:streamtape-extractor"))
-    implementation(project(":lib:universal-extractor"))
     implementation(project(":lib:playlist-utils"))
 }
