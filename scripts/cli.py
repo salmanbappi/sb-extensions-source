@@ -2312,7 +2312,7 @@ def main():
                 ("auto-create", "Autonomous 1-click synthesizer (Recon -> AI/Scrapling Selectors -> Kotlin -> Icon -> Validate)."),
                 ("site-recon", "Parallel full-site reconnaissance, CMS/theme fingerprinting, stealth probe, and scaffold advisor."),
                 ("ai-selectors", "AI-powered HTML reverse engineering, Jsoup CSS selector, and Kotlin parser generator."),
-                ("create", "Scaffold full extension boilerplate (HTML, API, Theme, Movie-Locker)."),
+                ("create", "Scaffold full extension boilerplate (HTML, API, Theme, Movie-Locker, TMDB)."),
                 ("create-theme", "Scaffold a new multi-source theme in lib-multisrc/."),
                 ("json-to-dto", "Ingest JSON API responses or HAR files and generate v16 null-safe DTOs."),
                 ("everythingmoe", "Crawl anime streaming site directory, reviews, and mirrors from EverythingMoe."),

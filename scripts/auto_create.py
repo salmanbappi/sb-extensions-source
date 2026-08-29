@@ -136,9 +136,21 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en",
 
     print(f"[+] Synthesizing Extension Module: src/{lang}/{pkg_name} ({class_name})")
 
-    # Stage 3: CMS / Theme Fast Path or Custom HTML
+    # Stage 3: CMS / Theme Fast Path or Custom HTML / TMDB
     cms = report.get("cms", "")
-    if "DooPlay" in cms:
+    if "TMDB Media Hub" in cms:
+        print("  [✓] TMDB Media Hub detected -> Generating TMDB multi-server scaffold...")
+        generate_extension(
+            ext_name=name,
+            lang=lang,
+            base_url=recon.base_url,
+            site_type="tmdb",
+            repo_root=REPO_ROOT,
+            has_filters=True,
+            has_preferences=True,
+            has_extractors=True,
+        )
+    elif "DooPlay" in cms:
         print("  [✓] DooPlay Theme detected -> Generating DooPlay variant scaffold...")
         generate_extension(
             ext_name=name,
@@ -175,6 +187,7 @@ def synthesize_extension(url: str, name: Optional[str] = None, lang: str = "en",
             has_metadata=True,
             custom_selectors=selectors,
         )
+
 
     # Stage 4: Inject Auto-Detected Video Extractor Dependencies
     libs = report.get("libs", [])

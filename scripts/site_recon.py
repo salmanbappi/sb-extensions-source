@@ -80,8 +80,14 @@ EXTRACTOR_SIGNATURES = {
     "Megaplay": (re.compile(r'https?://(?:www\.)?megaplay\.(?:su|buzz|cc)', re.I), ":lib:playlist-utils"),
     "Megavid": (re.compile(r'https?://(?:www\.)?megavid\.(?:buzz|cc)', re.I), ":lib:playlist-utils"),
     "Vidbasic": (re.compile(r'https?://(?:www\.)?(?:vidb|vidbasic)\.(?:top|live|cc)', re.I), ":lib:playlist-utils"),
+    "Vidrock": (re.compile(r'https?://(?:www\.)?(?:vidrock|vdrk|wyzie)\.[a-z0-9]+', re.I), ":lib:playlist-utils"),
+    "VidSrc": (re.compile(r'https?://(?:www\.)?vidsrc\.[a-z0-9]+', re.I), ":lib:vidsrc-extractor"),
+    "Vidfast": (re.compile(r'https?://(?:www\.)?vidfast\.[a-z0-9]+', re.I), ":lib:universal-extractor"),
+    "MoviesAPI": (re.compile(r'https?://(?:www\.)?moviesapi\.[a-z0-9]+', re.I), ":lib:universal-extractor"),
+    "2Embed": (re.compile(r'https?://(?:www\.)?2embed\.[a-z0-9]+', re.I), ":lib:universal-extractor"),
     "Universal": (re.compile(r'(?:vidbasic\.live|3rdplayer\.html|player-container)', re.I), ":lib:universal-extractor"),
 }
+
 
 def fetch_url(url: str, timeout: int = 8, headers: Optional[Dict[str, str]] = None, stealth: bool = False) -> Tuple[int, str, Dict[str, str], float]:
     """Fetches a URL and returns (status_code, content, headers, latency_ms)."""
@@ -140,6 +146,7 @@ class SiteRecon:
         self.detected_extractors: Set[str] = set()
         self.detected_libs: Set[str] = set()
         self.cms_scores: Dict[str, int] = {
+            "TMDB Media Hub (Next.js / Multi-Server)": 0,
             "DooPlay (WordPress)": 0,
             "ToroTheme (WordPress)": 0,
             "PsychoPlay (WordPress)": 0,
@@ -148,6 +155,7 @@ class SiteRecon:
             "Nuxt.js": 0,
             "Custom HTML / CMS": 0,
         }
+
 
     def run(self, deep_samples: int = 3, use_jina: bool = False, stealth: bool = False) -> Dict[str, Any]:
         """Runs the complete reconnaissance sweep."""
@@ -229,13 +237,21 @@ class SiteRecon:
         if "/wp-content/" in html or "/wp-includes/" in html or "wp-json" in html:
             self.cms_scores["WordPress (Core)"] = 50
 
+        # TMDB Media Hub / Multi-Server Checks
+        if "api.themoviedb.org" in html or "image.tmdb.org" in html or "themoviedb.org" in html:
+            self.cms_scores["TMDB Media Hub (Next.js / Multi-Server)"] += 90
+
         # Next.js Checks
-        if "<script id=\"__NEXT_DATA__\"" in html or "/_next/static/" in html:
-            self.cms_scores["Next.js (SSR / JSON)"] += 80
+        if "<script id=\"__NEXT_DATA__\"" in html or "/_next/static/" in html or "self.__next_f.push" in html:
+            if "tmdb" in html.lower() or "flagsapi.com" in html or "vidrock" in html or "vidsrc" in html:
+                self.cms_scores["TMDB Media Hub (Next.js / Multi-Server)"] += 95
+            else:
+                self.cms_scores["Next.js (SSR / JSON)"] += 80
 
         # Nuxt Checks
         if "window.__NUXT__" in html or "/_nuxt/" in html:
             self.cms_scores["Nuxt.js"] += 80
+
 
     def _extract_sample_links(self, limit: int = 3):
         """Extracts sample movie/anime content links from root HTML, sitemaps, or feed."""
@@ -405,7 +421,9 @@ class SiteRecon:
 
         site_type = "html"
         theme_flag = ""
-        if "DooPlay" in identified_cms:
+        if "TMDB Media Hub" in identified_cms:
+            site_type = "tmdb"
+        elif "DooPlay" in identified_cms:
             site_type = "theme"
             theme_flag = "--theme dooplay"
         elif "ToroTheme" in identified_cms:
@@ -415,6 +433,7 @@ class SiteRecon:
             site_type = "api"
         elif "Next.js" in identified_cms or "Nuxt" in identified_cms:
             site_type = "api"
+
 
         suggested_name = self.domain.split(".")[0].capitalize().replace("-", "")
 
