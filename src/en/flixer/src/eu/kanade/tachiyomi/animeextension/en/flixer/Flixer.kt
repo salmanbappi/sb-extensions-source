@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -14,7 +15,6 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
@@ -63,7 +63,7 @@ class Flixer :
         .add("Accept", "application/json, text/plain, */*")
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-    private val m3u8Integration by lazy { M3u8Integration(client, headers) }
+    private val m3u8Integration by lazy { M3u8Integration(client) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
 
     // ============================== Popular ===============================
