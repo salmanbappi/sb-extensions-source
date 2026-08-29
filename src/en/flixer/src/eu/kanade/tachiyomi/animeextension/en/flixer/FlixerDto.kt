@@ -177,6 +177,12 @@ data class VidrockServerDto(
 )
 
 @Serializable
+data class AstraItemDto(
+    val resolution: Int? = null,
+    val url: String? = null,
+)
+
+@Serializable
 data class SubtitleDto(
     val file: String? = null,
     val url: String? = null,
