@@ -223,38 +223,55 @@ class Bingr : Source() {
         when (serverType) {
             "hikari_sub", "hikari_dub" -> {
                 val type = if (serverType == "hikari_dub") "dub" else "sub"
-                val malId = getMalId(animeId)
+                val malId = getMalId(animeId, animeTitle)
                 val streamUrl = "$filmuBaseUrl/hianime/megaplay?malId=$malId&ep=$epNum&type=$type"
-                val streamHeaders = headers.newBuilder()
+                val apiHeaders = Headers.Builder()
+                    .add("User-Agent", USER_AGENT)
                     .add("x-api-key", token)
                     .build()
 
                 val res = runCatching {
-                    client.newCall(GET(streamUrl, streamHeaders)).execute().parseAs<MegaPlayResponseDto>(json)
+                    client.newCall(GET(streamUrl, apiHeaders)).execute().parseAs<MegaPlayResponseDto>(json)
                 }.getOrNull()
 
                 res?.streams?.forEach { stream ->
                     val m3u8Url = stream.url ?: return@forEach
-                    val referer = stream.referer ?: "https://megaplay.buzz/"
+                    val referer = stream.referer?.takeIf { it.isNotBlank() } ?: "https://megaplay.buzz/"
+                    val origin = runCatching { "https://${referer.toHttpUrl().host}" }.getOrDefault("https://megaplay.buzz")
                     val subTracks = stream.subtitles?.mapNotNull { it.toTrack(filmuBaseUrl, token) } ?: emptyList()
 
-                    val m3u8Headers = headers.newBuilder()
+                    val streamHeaders = Headers.Builder()
+                        .add("User-Agent", USER_AGENT)
                         .add("Referer", referer)
-                        .add("Origin", referer.removeSuffix("/"))
+                        .add("Origin", origin)
                         .build()
 
-                    val extractedVideos = playlistUtils.extractFromHls(
-                        playlistUrl = m3u8Url,
-                        referer = referer,
-                        masterHeaders = m3u8Headers,
-                        videoHeaders = m3u8Headers,
-                        videoNameGen = { quality -> quality },
-                        subtitleList = subTracks,
-                    )
-                    videos.addAll(extractedVideos)
+                    val hlsExtractor = PlaylistUtils(client, streamHeaders)
+                    val extractedVideos = runCatching {
+                        hlsExtractor.extractFromHls(
+                            playlistUrl = m3u8Url,
+                            referer = referer,
+                            masterHeaders = streamHeaders,
+                            videoHeaders = streamHeaders,
+                            videoNameGen = { quality -> quality },
+                            subtitleList = subTracks,
+                        )
+                    }.getOrDefault(emptyList())
+
+                    if (extractedVideos.isNotEmpty()) {
+                        videos.addAll(extractedVideos)
+                    } else {
+                        videos.add(
+                            Video(
+                                videoUrl = m3u8Url,
+                                videoTitle = "1080p",
+                                headers = streamHeaders,
+                                subtitleTracks = subTracks,
+                            ),
+                        )
+                    }
                 }
             }
-
             "animesalt" -> {
                 val title = if (animeTitle.isNotBlank()) animeTitle else getAnimeTitle(animeId)
                 val streamUrl = "$filmuBaseUrl/animesalt/streams".toHttpUrl().newBuilder().apply {
@@ -262,12 +279,13 @@ class Bingr : Source() {
                     addQueryParameter("ep", epNum.toString())
                     addQueryParameter("season", "1")
                 }.build()
-                val streamHeaders = headers.newBuilder()
+                val apiHeaders = Headers.Builder()
+                    .add("User-Agent", USER_AGENT)
                     .add("x-api-key", token)
                     .build()
 
                 val res = runCatching {
-                    client.newCall(GET(streamUrl.toString(), streamHeaders)).execute().parseAs<AnimeSaltResponseDto>(json)
+                    client.newCall(GET(streamUrl.toString(), apiHeaders)).execute().parseAs<AnimeSaltResponseDto>(json)
                 }.getOrNull()
 
                 res?.streams?.forEach { stream ->
@@ -279,24 +297,41 @@ class Bingr : Source() {
                         m3u8Url += if (m3u8Url.contains("?")) "&apiKey=$token" else "?apiKey=$token"
                     }
 
-                    val referer = stream.referer ?: "https://animesalt.cx/"
+                    val referer = stream.referer?.takeIf { it.isNotBlank() } ?: "https://animesalt.cx/"
+                    val origin = runCatching { "https://${referer.toHttpUrl().host}" }.getOrDefault("https://animesalt.cx")
                     val subTracks = stream.subtitles?.mapNotNull { it.toTrack(filmuBaseUrl, token) } ?: emptyList()
 
-                    val m3u8Headers = headers.newBuilder()
+                    val streamHeaders = Headers.Builder()
+                        .add("User-Agent", USER_AGENT)
                         .add("Referer", referer)
-                        .add("Origin", referer.removeSuffix("/"))
+                        .add("Origin", origin)
                         .add("x-api-key", token)
                         .build()
 
-                    val extractedVideos = playlistUtils.extractFromHls(
-                        playlistUrl = m3u8Url,
-                        referer = referer,
-                        masterHeaders = m3u8Headers,
-                        videoHeaders = m3u8Headers,
-                        videoNameGen = { quality -> quality },
-                        subtitleList = subTracks,
-                    )
-                    videos.addAll(extractedVideos)
+                    val hlsExtractor = PlaylistUtils(client, streamHeaders)
+                    val extractedVideos = runCatching {
+                        hlsExtractor.extractFromHls(
+                            playlistUrl = m3u8Url,
+                            referer = referer,
+                            masterHeaders = streamHeaders,
+                            videoHeaders = streamHeaders,
+                            videoNameGen = { quality -> quality },
+                            subtitleList = subTracks,
+                        )
+                    }.getOrDefault(emptyList())
+
+                    if (extractedVideos.isNotEmpty()) {
+                        videos.addAll(extractedVideos)
+                    } else {
+                        videos.add(
+                            Video(
+                                videoUrl = m3u8Url,
+                                videoTitle = "${stream.quality ?: 1080}p",
+                                headers = streamHeaders,
+                                subtitleTracks = subTracks,
+                            ),
+                        )
+                    }
                 }
             }
         }
@@ -304,9 +339,33 @@ class Bingr : Source() {
         return videos.sortVideos()
     }
 
-    private fun getMalId(animeId: String): Long {
+    private fun getMalId(animeId: String, titleFallback: String = ""): Long {
         val details = runCatching { fetchAnimeDetailsDto(animeId) }.getOrNull()
-        return details?.idMal ?: details?.id ?: animeId.toLongOrNull() ?: 0L
+        val directMalId = details?.idMal ?: details?.id ?: animeId.toLongOrNull() ?: 0L
+        if (directMalId > 0L) return directMalId
+
+        val queryTitle = if (titleFallback.isNotBlank()) titleFallback else details?.title ?: ""
+        if (queryTitle.isNotBlank()) {
+            val token = getToken()
+            val searchUrl = "$filmuBaseUrl/search".toHttpUrl().newBuilder().apply {
+                addQueryParameter("q", queryTitle)
+            }.build()
+            val searchHeaders = Headers.Builder()
+                .add("User-Agent", USER_AGENT)
+                .add("x-api-key", token)
+                .build()
+
+            val searchDto = runCatching {
+                client.newCall(GET(searchUrl.toString(), searchHeaders)).execute().parseAs<HikariSearchResponseDto>(json)
+            }.getOrNull()
+
+            val match = searchDto?.results?.firstOrNull()
+            if (match?.malId != null && match.malId > 0L) {
+                return match.malId
+            }
+        }
+
+        return animeId.toLongOrNull() ?: 0L
     }
 
     private fun getAnimeTitle(animeId: String): String {
@@ -561,3 +620,16 @@ data class SubtitleDto(
         return Track(url = fullUrl, lang = displayLang)
     }
 }
+
+@Serializable
+data class HikariSearchResponseDto(
+    val query: String? = null,
+    val results: List<HikariSearchResultDto>? = null,
+)
+
+@Serializable
+data class HikariSearchResultDto(
+    val id: Long? = null,
+    val malId: Long? = null,
+    val title: String? = null,
+)
