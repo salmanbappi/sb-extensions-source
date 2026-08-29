@@ -99,12 +99,15 @@ class Flixer :
             for (filter in filters) {
                 when (filter) {
                     is Filters.MediaTypeFilter -> mediaType = filter.selected
+
                     is Filters.SortFilter -> sortBy = filter.selected
+
                     is Filters.GenreFilter -> {
                         filter.state.forEach { check ->
                             if (check.state) genreIds.add(check.value)
                         }
                     }
+
                     else -> {}
                 }
             }
@@ -114,10 +117,12 @@ class Flixer :
                     val genreParam = if (genreIds.isNotEmpty()) "&with_genres=${genreIds.joinToString(",")}" else ""
                     "$apiBaseUrl/discover/movie?page=$page&sort_by=$sortBy$genreParam"
                 }
+
                 "tv" -> {
                     val genreParam = if (genreIds.isNotEmpty()) "&with_genres=${genreIds.joinToString(",")}" else ""
                     "$apiBaseUrl/discover/tv?page=$page&sort_by=$sortBy$genreParam"
                 }
+
                 else -> {
                     "$apiBaseUrl/trending/all/day?page=$page"
                 }
@@ -435,13 +440,21 @@ class Flixer :
                     for (src in iframes) {
                         when {
                             src.contains("filemoon") -> {
-                                try { videoList.addAll(filemoonExtractor.videosFromUrl(src, headers = twoHeaders)) } catch (_: Exception) {}
+                                try {
+                                    videoList.addAll(filemoonExtractor.videosFromUrl(src, headers = twoHeaders))
+                                } catch (_: Exception) {}
                             }
+
                             src.contains("streamtape") -> {
-                                try { streamTapeExtractor.videoFromUrl(src)?.let { videoList.add(it) } } catch (_: Exception) {}
+                                try {
+                                    streamTapeExtractor.videoFromUrl(src)?.let { videoList.add(it) }
+                                } catch (_: Exception) {}
                             }
+
                             src.contains("dood") -> {
-                                try { videoList.addAll(doodExtractor.videosFromUrl(src)) } catch (_: Exception) {}
+                                try {
+                                    videoList.addAll(doodExtractor.videosFromUrl(src))
+                                } catch (_: Exception) {}
                             }
                         }
                     }
@@ -511,13 +524,21 @@ class Flixer :
                     for (src in iframes) {
                         when {
                             src.contains("filemoon") -> {
-                                try { videoList.addAll(filemoonExtractor.videosFromUrl(src, headers = multiHeaders)) } catch (_: Exception) {}
+                                try {
+                                    videoList.addAll(filemoonExtractor.videosFromUrl(src, headers = multiHeaders))
+                                } catch (_: Exception) {}
                             }
+
                             src.contains("streamtape") -> {
-                                try { streamTapeExtractor.videoFromUrl(src)?.let { videoList.add(it) } } catch (_: Exception) {}
+                                try {
+                                    streamTapeExtractor.videoFromUrl(src)?.let { videoList.add(it) }
+                                } catch (_: Exception) {}
                             }
+
                             src.contains("dood") -> {
-                                try { videoList.addAll(doodExtractor.videosFromUrl(src)) } catch (_: Exception) {}
+                                try {
+                                    videoList.addAll(doodExtractor.videosFromUrl(src))
+                                } catch (_: Exception) {}
                             }
                         }
                     }
