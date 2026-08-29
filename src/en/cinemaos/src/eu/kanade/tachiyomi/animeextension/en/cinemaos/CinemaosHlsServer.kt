@@ -42,8 +42,7 @@ class CinemaosHlsServer(private val client: OkHttpClient) {
 
     private enum class Kind { PLAYLIST, SEGMENT_MP4, SEGMENT_TS, RAW }
 
-    fun proxyMasterUrl(masterUrl: String, headers: Headers?, quality: String? = null): String =
-        proxyUrl(masterUrl, headers, Kind.PLAYLIST, quality)
+    fun proxyMasterUrl(masterUrl: String, headers: Headers?, quality: String? = null): String = proxyUrl(masterUrl, headers, Kind.PLAYLIST, quality)
 
     private fun proxyUrl(targetUrl: String, headers: Headers?, kind: Kind, quality: String? = null): String {
         if (port == 0) return targetUrl

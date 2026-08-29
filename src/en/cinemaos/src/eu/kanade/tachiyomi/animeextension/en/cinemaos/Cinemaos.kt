@@ -95,15 +95,19 @@ class Cinemaos :
             for (filter in filters) {
                 when (filter) {
                     is Filters.MediaTypeFilter -> mediaType = filter.selected
+
                     is Filters.SortFilter -> sortBy = filter.selected
+
                     is Filters.YearFilter -> {
                         if (filter.state.isNotBlank()) year = filter.state.trim()
                     }
+
                     is Filters.GenreFilter -> {
                         filter.state.forEach { check ->
                             if (check.state) genreIds.add(check.value)
                         }
                     }
+
                     else -> {}
                 }
             }
@@ -114,11 +118,13 @@ class Cinemaos :
                     val yearParam = if (year.isNotBlank()) "&year=$year" else ""
                     "$baseUrl/api/tmdb?requestID=withKeywordsMovie$genreParam&language=en-US&sortBy=$sortBy$yearParam&page=$page"
                 }
+
                 "tv" -> {
                     val genreParam = if (genreIds.isNotEmpty()) "&genreKeywords=${genreIds.joinToString(",")}" else ""
                     val yearParam = if (year.isNotBlank()) "&year=$year" else ""
                     "$baseUrl/api/tmdb?requestID=withKeywordsTv$genreParam&language=en-US&sortBy=$sortBy$yearParam&page=$page"
                 }
+
                 else -> {
                     "$baseUrl/api/tmdb?requestID=trendingMovie&language=en-US&page=$page"
                 }
