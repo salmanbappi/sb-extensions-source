@@ -450,7 +450,7 @@ object CinemaosScraper {
         "M95DJjFSQN4Embb16FardqA1++2waC/oyz9XerRenb1rGurn+OabvN7iH19ZufF9Zz89fPj47AxR",
         "Z3ziF5/eybP/x07KHu/es/VowyI86tfvVu3ev+3l45cvn7+kaf7yc7t70ktRtN3klrz/L3rZHV3R",
         "eFYXHQTd5o/zXnm3mw+/+fHh9yPpLA1mpyvv7u3uff0Vyd7i7fbk66/edFV78nW9bj/SL/p/b7ZX",
-        "lyf/DdXa00TdxgAA"
+        "lyf/DdXa00TdxgAA",
     )
 
     val HTML: String by lazy {
