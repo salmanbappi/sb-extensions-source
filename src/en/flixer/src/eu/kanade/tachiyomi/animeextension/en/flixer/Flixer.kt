@@ -59,8 +59,6 @@ class Flixer :
         .add("Origin", baseUrl)
         .add("Accept", "application/json, text/plain, */*")
 
-    private val preferences: SharedPreferences by getPreferencesLazy()
-
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val vidsrcExtractor by lazy { VidsrcExtractor(client, headers) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
@@ -347,45 +345,39 @@ class Flixer :
             )
         }
 
-        return cleanedList.sortVideos()
+        return cleanedList.sort()
     }
 
     // ============================== Settings / Preferences ===============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        val serverList = arrayOf(
-            Pair("Server 1 (Ares)", "Ares"),
-            Pair("Server 2 (Balder)", "Balder"),
-            Pair("Server 3 (Circe)", "Circe"),
-            Pair("Server 4 (Dionysus)", "Dionysus"),
-            Pair("Server 5 (Eros)", "Eros"),
-            Pair("Server 6 (Freya)", "Freya"),
-            Pair("Server 7 (Gaia)", "Gaia"),
-        )
         screen.addListPreference(
             key = PREF_HOSTER_KEY,
             title = "Preferred Server",
-            defaultValue = PREF_HOSTER_DEFAULT,
-            entries = serverList.map { it.first }.toTypedArray(),
-            entryValues = serverList.map { it.second }.toTypedArray(),
+            summary = "%s",
+            entries = listOf(
+                "Server 1 (Ares)",
+                "Server 2 (Balder)",
+                "Server 3 (Circe)",
+                "Server 4 (Dionysus)",
+                "Server 5 (Eros)",
+                "Server 6 (Freya)",
+                "Server 7 (Gaia)",
+            ),
+            entryValues = listOf("Ares", "Balder", "Circe", "Dionysus", "Eros", "Freya", "Gaia"),
+            default = PREF_HOSTER_DEFAULT,
         )
 
-        val qualityList = arrayOf(
-            Pair("1080p", "1080"),
-            Pair("720p", "720"),
-            Pair("480p", "480"),
-            Pair("360p", "360"),
-            Pair("Auto", "Auto"),
-        )
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
             title = "Preferred Quality",
-            defaultValue = PREF_QUALITY_DEFAULT,
-            entries = qualityList.map { it.first }.toTypedArray(),
-            entryValues = qualityList.map { it.second }.toTypedArray(),
+            summary = "%s",
+            entries = listOf("1080p", "720p", "480p", "360p", "Auto"),
+            entryValues = listOf("1080", "720", "480", "360", "Auto"),
+            default = PREF_QUALITY_DEFAULT,
         )
     }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sort(): List<Video> {
         val qualityPref = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
 
         return sortedWith(
