@@ -1,7 +1,7 @@
 ext {
     extName = "Flixer"
     extClass = ".Flixer"
-    extVersionCode = 5
+    extVersionCode = 6
     isNsfw = false
 }
 
@@ -10,8 +10,5 @@ apply from: "$rootDir/common.gradle"
 dependencies {
     implementation(project(":lib:unpacker"))
     implementation(project(":lib:vidsrc-extractor"))
-    implementation(project(":lib:dood-extractor"))
-    implementation(project(":lib:filemoon-extractor"))
-    implementation(project(":lib:streamtape-extractor"))
     implementation(project(":lib:playlist-utils"))
 }
