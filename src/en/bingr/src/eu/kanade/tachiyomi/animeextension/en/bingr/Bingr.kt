@@ -73,7 +73,7 @@ class Bingr : Source() {
     // ============================== Latest ================================
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
         val response = client.newCall(
-            GET("$apiBaseUrl/anime/discover?page=$page&sort=START_DATE_DESC", headers)
+            GET("$apiBaseUrl/anime/discover?page=$page&sort=START_DATE_DESC", headers),
         ).execute()
         val dto = response.parseAs<AnimePageDto>(json)
         val results = dto.results ?: emptyList()
@@ -98,22 +98,27 @@ class Bingr : Source() {
                             val v = filter.toUriPart()
                             if (v.isNotBlank()) addQueryParameter("sort", v)
                         }
+
                         is Filters.FormatFilter -> {
                             val v = filter.toUriPart()
                             if (v.isNotBlank()) addQueryParameter("format", v)
                         }
+
                         is Filters.StatusFilter -> {
                             val v = filter.toUriPart()
                             if (v.isNotBlank()) addQueryParameter("status", v)
                         }
+
                         is Filters.SeasonFilter -> {
                             val v = filter.toUriPart()
                             if (v.isNotBlank()) addQueryParameter("season", v)
                         }
+
                         is Filters.GenreFilter -> {
                             val v = filter.toUriPart()
                             if (v.isNotBlank()) addQueryParameter("genre", v)
                         }
+
                         else -> {}
                     }
                 }
@@ -249,6 +254,7 @@ class Bingr : Source() {
                     videos.addAll(extractedVideos)
                 }
             }
+
             "animesalt" -> {
                 val title = if (animeTitle.isNotBlank()) animeTitle else getAnimeTitle(animeId)
                 val streamUrl = "$filmuBaseUrl/animesalt/streams".toHttpUrl().newBuilder().apply {
