@@ -677,7 +677,7 @@ class MovieBox : Source() {
                 val subtitleTracks = mutableListOf<Track>()
                 if (streamId.isNotBlank()) {
                     val subUrl = "/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=$sid&streamId=$streamId"
-                    val subRes = safeGetJsonWithHeaders(subUrl, token = token, isPlayback = true)?.first
+                    val subRes = safeGetJsonWithHeaders(subUrl, isPlayback = true)?.first
                     subRes?.obj?.get("data")?.obj?.get("extCaptions")?.arr?.forEach { cap ->
                         val capObj = cap.obj ?: return@forEach
                         val capUrl = capObj["url"]?.str ?: return@forEach
