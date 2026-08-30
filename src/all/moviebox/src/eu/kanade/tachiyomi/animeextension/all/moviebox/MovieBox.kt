@@ -60,15 +60,15 @@ class MovieBox : Source() {
     }
 
     private val apiHosts = listOf(
+        "https://apig.inmoviebox.com",
+        "https://api.inmoviebox.com",
+        "https://api-in.inmoviebox.com",
         "https://api3.aoneroom.com",
         "https://api6.aoneroom.com",
         "https://api5.aoneroom.com",
         "https://api4.aoneroom.com",
         "https://api7.aoneroom.com",
         "https://api4sg.aoneroom.com",
-        "https://apig.inmoviebox.com",
-        "https://api.inmoviebox.com",
-        "https://api-in.inmoviebox.com",
         "https://netfilm.world",
         "https://h5-api.aoneroom.com",
     )
@@ -91,24 +91,27 @@ class MovieBox : Source() {
                 return saved!!
             }
 
-            val host = getPreferredHost()
-            val url = "$host/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
-            val request = GET(url, getApiHeaders(url, forceNoToken = true))
-            try {
-                client.newCall(request).execute().use { response ->
-                    val xUser = response.header("x-user")
-                    if (!xUser.isNullOrBlank()) {
-                        val tokenRegex = """"token"\s*:\s*"([^"]+)"""".toRegex()
-                        val token = tokenRegex.find(xUser)?.groupValues?.get(1)
-                        if (!token.isNullOrBlank() && isTokenValid(token)) {
-                            bearerToken = token
-                            preferences.edit().putString("moviebox_bearer_token", token).apply()
-                            return token
+            val preferredHost = getPreferredHost()
+            val candidateHosts = listOf(preferredHost) + apiHosts.filter { it != preferredHost }
+            for (host in candidateHosts) {
+                val url = "$host/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
+                val request = GET(url, getApiHeaders(url, forceNoToken = true))
+                try {
+                    client.newCall(request).execute().use { response ->
+                        val xUser = response.header("x-user")
+                        if (!xUser.isNullOrBlank()) {
+                            val tokenRegex = """"token"\s*:\s*"([^"]+)"""".toRegex()
+                            val token = tokenRegex.find(xUser)?.groupValues?.get(1)
+                            if (!token.isNullOrBlank() && isTokenValid(token)) {
+                                bearerToken = token
+                                preferences.edit().putString("moviebox_bearer_token", token).apply()
+                                return token
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    // ignore
                 }
-            } catch (e: Exception) {
-                // ignore
             }
             return ""
         }
@@ -137,7 +140,7 @@ class MovieBox : Source() {
                 if (isDetails) add("x-play-mode", "2")
                 if (isPlayback) add("x-play-mode", "1")
                 if (!forceNoToken) {
-                    val activeToken = if (!token.isNullOrBlank()) token else getCachedToken()
+                    val activeToken = if (isTokenValid(token)) token!! else getCachedToken()
                     if (activeToken.isNotEmpty()) {
                         add("Authorization", "Bearer $activeToken")
                     }
@@ -247,7 +250,9 @@ class MovieBox : Source() {
     private fun getPreferredHost(): String = preferences.getString(PREF_HOST_KEY, PREF_HOST_DEFAULT) ?: PREF_HOST_DEFAULT
 
     private fun safeGetJsonWithHeaders(urlPath: String, isPost: Boolean = false, bodyData: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false): Pair<JsonElement, Headers>? {
-        for (host in apiHosts) {
+        val preferredHost = getPreferredHost()
+        val candidateHosts = listOf(preferredHost) + apiHosts.filter { it != preferredHost }
+        for (host in candidateHosts) {
             val adaptivePath = if (isMobileApi(host)) {
                 urlPath
                     .replace("/wefeed-h5api-bff/detail", "/wefeed-mobile-bff/subject-api/get")
@@ -278,6 +283,15 @@ class MovieBox : Source() {
                 if (body.isEmpty() || body.contains("<html", ignoreCase = true) || !body.startsWith("{")) continue
                 val jsonRes = json.parseToJsonElement(body)
                 if (jsonRes.obj?.get("code")?.jsonPrimitive?.intOrNull != 0) continue
+                if (isPlayback) {
+                    val streams = jsonRes.obj?.get("data")?.obj?.get("streams")?.arr
+                    if (streams.isNullOrEmpty()) continue
+                    val onlyBrokenCdn = streams.all {
+                        val u = it.obj?.get("url")?.str.orEmpty()
+                        u.contains("sacdn.hakunaymatata.com")
+                    }
+                    if (onlyBrokenCdn) continue
+                }
                 return Pair(jsonRes, response.headers)
             } catch (e: Exception) {
                 continue
@@ -435,7 +449,6 @@ class MovieBox : Source() {
             genre = subject["genre"]?.str
             author = subject["countryName"]?.str
             url = subject["subjectId"]?.str?.let { "/movies/$it" } ?: url
-            if (!token.isNullOrBlank()) url += "|$token"
             status = SAnime.UNKNOWN
             initialized = true
         }
@@ -511,7 +524,7 @@ class MovieBox : Source() {
                     SEpisode.create().apply {
                         name = metaEp?.name?.let { "Season $seNum - Episode $epNum - $it" } ?: "Season $seNum - Episode $epNum"
                         episode_number = epNum.toFloat()
-                        url = "$seNum|$epNum|$idsString|$detailPath" + if (!token.isNullOrBlank()) "|$token" else ""
+                        url = "$seNum|$epNum|$idsString|$detailPath"
                         val date = parseDate(metaEp?.released)
                         date_upload = if (date > 0L) date else System.currentTimeMillis()
                         if (!metaEp?.overview.isNullOrBlank()) {
@@ -532,7 +545,7 @@ class MovieBox : Source() {
                 SEpisode.create().apply {
                     name = "Play Movie"
                     episode_number = 1f
-                    url = "0|0|$idsString|$detailPath" + if (!token.isNullOrBlank()) "|$token" else ""
+                    url = "0|0|$idsString|$detailPath"
                     date_upload = System.currentTimeMillis()
                 },
             )
@@ -634,7 +647,6 @@ class MovieBox : Source() {
         val se = parts[0]
         val ep = parts[1]
         val idsString = parts[2]
-        val token = if (parts.size > 4) parts[4] else null
         val subjectIds = idsString.split("~~").mapNotNull {
             val p = it.split(":", limit = 2)
             if (p.size == 2) Pair(p[0], p[1]) else null
@@ -643,7 +655,7 @@ class MovieBox : Source() {
         val videos = mutableListOf<Video>()
         for ((sid, lang) in subjectIds) {
             val playUrl = "/wefeed-mobile-bff/subject-api/play-info?subjectId=$sid&se=$se&ep=$ep"
-            val jsonRes = safeGetJsonWithHeaders(playUrl, token = token, isPlayback = true)?.first ?: continue
+            val jsonRes = safeGetJsonWithHeaders(playUrl, isPlayback = true)?.first ?: continue
             jsonRes.obj?.get("data")?.obj?.get("streams")?.arr?.forEach { stream ->
                 val obj = stream.obj ?: return@forEach
                 val url = obj["url"]?.str ?: return@forEach
@@ -906,30 +918,30 @@ class MovieBox : Source() {
     companion object {
         private const val PREF_HOST_KEY = "api_host"
         private const val PREF_HOST_TITLE = "API Host"
-        private const val PREF_HOST_DEFAULT = "https://api3.aoneroom.com"
+        private const val PREF_HOST_DEFAULT = "https://apig.inmoviebox.com"
         private val PREF_HOST_ENTRIES = arrayOf(
+            "apig.inmoviebox.com (Recommended)",
+            "api.inmoviebox.com",
+            "api-in.inmoviebox.com",
             "api3.aoneroom.com",
             "api6.aoneroom.com",
             "api5.aoneroom.com",
             "api4.aoneroom.com",
             "api7.aoneroom.com",
             "api4sg.aoneroom.com",
-            "apig.inmoviebox.com",
-            "api.inmoviebox.com",
-            "api-in.inmoviebox.com",
             "netfilm.world",
             "h5-api.aoneroom.com",
         )
         private val PREF_HOST_VALUES = arrayOf(
+            "https://apig.inmoviebox.com",
+            "https://api.inmoviebox.com",
+            "https://api-in.inmoviebox.com",
             "https://api3.aoneroom.com",
             "https://api6.aoneroom.com",
             "https://api5.aoneroom.com",
             "https://api4.aoneroom.com",
             "https://api7.aoneroom.com",
             "https://api4sg.aoneroom.com",
-            "https://apig.inmoviebox.com",
-            "https://api.inmoviebox.com",
-            "https://api-in.inmoviebox.com",
             "https://netfilm.world",
             "https://h5-api.aoneroom.com",
         )
