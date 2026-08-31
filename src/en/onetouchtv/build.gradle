@@ -1,7 +1,7 @@
 ext {
     extName = 'OneTouch TV'
     extClass = '.OneTouchTV'
-    extVersionCode = 4
+    extVersionCode = 5
     isNsfw = false
 }
 

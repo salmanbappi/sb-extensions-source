@@ -22,6 +22,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -270,7 +271,8 @@ class OneTouchTV : Source() {
         val subtitles = (streamData.track ?: emptyList()).mapNotNull { trk ->
             val file = trk.file ?: return@mapNotNull null
             val name = trk.name ?: trk.code ?: "Subtitle"
-            Track(file, name)
+            val cleanedUrl = sanitizeSubtitle(file, name)
+            Track(cleanedUrl, name)
         }
 
         val streamHeaders = if (!source.headers.isNullOrEmpty()) {
@@ -344,6 +346,69 @@ class OneTouchTV : Source() {
             lower.contains("auto") -> 500
             else -> 0
         }
+    }
+
+    // ============================== Subtitle Sanitizer ===========================
+    private val subtitleDir by lazy {
+        File(context.cacheDir, "onetouchtv_subs").also { it.mkdirs() }
+    }
+
+    /**
+     * Some VTT files from aapanel.devcorp.me have malformed content:
+     * - BOM (\uFEFF) characters inserted before the first cue number
+     * - Duplicate cue identifier lines (e.g., "1" appears twice)
+     * - Double carriage returns (\r\r) in timestamp lines
+     * ExoPlayer's WebVTT parser fails on these, so we download, clean,
+     * and serve from a local cache file.
+     */
+    private fun sanitizeSubtitle(url: String, name: String): String {
+        return runCatching {
+            val cacheFile = File(subtitleDir, "${url.hashCode()}.vtt")
+            if (cacheFile.exists() && cacheFile.length() > 0) {
+                return@runCatching cacheFile.toURI().toString()
+            }
+
+            val response = client.newCall(GET(url, headers)).execute()
+            if (!response.isSuccessful) return@runCatching url
+
+            val raw = response.body.string()
+            if (!raw.contains("\uFEFF") && !raw.contains("\r\r")) {
+                // VTT is clean, no need to cache — use original URL
+                return@runCatching url
+            }
+
+            val cleaned = sanitizeVtt(raw)
+            cacheFile.writeText(cleaned, Charsets.UTF_8)
+            cacheFile.toURI().toString()
+        }.getOrDefault(url)
+    }
+
+    private fun sanitizeVtt(raw: String): String {
+        var text = raw
+            .replace("\uFEFF", "")
+            .replace("\r\r\n", "\n")
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+
+        // Remove duplicate cue identifiers: when two consecutive lines are
+        // both bare numbers and the second one equals the first, drop it.
+        val lines = text.lines().toMutableList()
+        val result = mutableListOf<String>()
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i]
+            if (i + 1 < lines.size &&
+                line.trim().matches(Regex("^\\d+$")) &&
+                lines[i + 1].trim() == line.trim()
+            ) {
+                result.add(line)
+                i += 2 // skip the duplicate
+            } else {
+                result.add(line)
+                i++
+            }
+        }
+        return result.joinToString("\n")
     }
 
     private fun parseDate(dateStr: String?): Long {
