@@ -278,7 +278,24 @@ class Watchroo :
                     videoNameGen = { quality -> "MoviesAPI - $quality" },
                     subtitleList = subtitleTracks,
                 )
-                videos.addAll(extracted)
+                // The CDN obfuscates multi-quality masters: variant playlists
+                // are served as /cdn/<base64>.js URLs that return a valid m3u8
+                // body but with an `application/javascript` content type, which
+                // the player can't detect as HLS ("unrecognised file format").
+                // For those, hand the player the master URL (.m3u8) and let
+                // ExoPlayer resolve the obfuscated variants itself.
+                if (extracted.any { it.videoUrl.substringBefore("?").endsWith(".js") }) {
+                    videos.add(
+                        Video(
+                            videoUrl = streamUrl,
+                            videoTitle = "MoviesAPI (HLS)",
+                            headers = moviesApiHeaders,
+                            subtitleTracks = subtitleTracks,
+                        ),
+                    )
+                } else {
+                    videos.addAll(extracted)
+                }
             } catch (_: Exception) {
                 videos.add(
                     Video(
