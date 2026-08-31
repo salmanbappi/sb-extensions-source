@@ -35,7 +35,9 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import kotlin.time.Duration.Companion.seconds
 
-class OneTouchTV : Source(), ConfigurableAnimeSource {
+class OneTouchTV :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "OneTouch TV"
 
