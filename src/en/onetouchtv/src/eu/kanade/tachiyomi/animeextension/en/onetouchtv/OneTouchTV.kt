@@ -1,12 +1,9 @@
 package eu.kanade.tachiyomi.animeextension.en.onetouchtv
 
-import android.app.Application
-import android.content.SharedPreferences
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.m3u8server.M3u8Integration
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
@@ -25,8 +22,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -35,9 +30,7 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import kotlin.time.Duration.Companion.seconds
 
-class OneTouchTV :
-    Source(),
-    ConfigurableAnimeSource {
+class OneTouchTV : Source() {
 
     override val name = "OneTouch TV"
 
@@ -53,18 +46,16 @@ class OneTouchTV :
             .build()
     }
 
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", Application.MODE_PRIVATE)
-    }
-
     private val m3u8Integration by lazy { M3u8Integration(client) }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-        coerceInputValues = true
+    override val json: Json by lazy {
+        Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            coerceInputValues = true
+        }
     }
 
     private val aesKey = "im72charPasswordofdInitVectorStm".toByteArray(Charsets.UTF_8)
@@ -307,7 +298,7 @@ class OneTouchTV :
         return processed.sortVideos()
     }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val qualityPref = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         val subPref = preferences.getString(PREF_SUB_LANG_KEY, PREF_SUB_LANG_DEFAULT) ?: PREF_SUB_LANG_DEFAULT
 
