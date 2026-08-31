@@ -11,7 +11,6 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
-import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
@@ -71,7 +70,6 @@ class Watchroo :
         .add("Accept", "application/json, text/plain, */*")
 
     private val playlistUtils by lazy { PlaylistUtils(client, moviesApiHeaders) }
-    private val universalExtractor by lazy { UniversalExtractor(client) }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -218,10 +216,6 @@ class Watchroo :
                 hosterName = "MoviesAPI",
                 hosterUrl = "moviesapi:${episodeVidoraPath(episode)}",
             ),
-            Hoster(
-                hosterName = "Watchroo Player",
-                hosterUrl = "watchroo:${watchrooPlayerUrl(episode)}",
-            ),
         )
 
         val preferred = preferences.getString(PREF_HOSTER_KEY, PREF_HOSTER_DEFAULT) ?: PREF_HOSTER_DEFAULT
@@ -232,7 +226,6 @@ class Watchroo :
         val rawUrl = hoster.hosterUrl
         val videos = when {
             rawUrl.startsWith("moviesapi:") -> extractMoviesApi(rawUrl.removePrefix("moviesapi:"))
-            rawUrl.startsWith("watchroo:") -> extractWatchrooPlayer(rawUrl.removePrefix("watchroo:"))
             else -> emptyList()
         }
         return videos.sortVideos()
@@ -310,16 +303,6 @@ class Watchroo :
         return videos
     }
 
-    /**
-     * Fallback: loads Watchroo's own player page (which iframes moviesapi.to)
-     * in a WebView and sniffs the media request. Slower than the direct API.
-     */
-    private suspend fun extractWatchrooPlayer(playerUrl: String): List<Video> = try {
-        universalExtractor.videosFromUrl(playerUrl, headers, "Watchroo")
-    } catch (_: Exception) {
-        emptyList()
-    }
-
     // ============================== URL Helpers ==============================
     // episode.url shapes (permanent anchors, never contain ephemeral tokens):
     //   movie: "/movie/550#movie"
@@ -333,19 +316,6 @@ class Watchroo :
         return "$base/$season/$ep"
     }
 
-    private fun watchrooPlayerUrl(episode: SEpisode): String {
-        val base = episode.url.substringBefore("#")
-        val anchor = episode.url.substringAfter("#", "")
-        val id = base.substringAfterLast("/")
-        return if (anchor == "movie") {
-            "$baseUrl/player?type=movie&id=$id"
-        } else {
-            val season = ANCHOR_SEASON.find(anchor)?.groupValues?.get(1).orEmpty()
-            val ep = ANCHOR_EPISODE.find(anchor)?.groupValues?.get(1).orEmpty()
-            "$baseUrl/player?type=tv&id=$id&season=$season&episode=$ep"
-        }
-    }
-
     // ============================== Preferences ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addListPreference(
@@ -355,12 +325,10 @@ class Watchroo :
             entries = listOf(
                 "All Servers",
                 "MoviesAPI",
-                "Watchroo Player",
             ),
             entryValues = listOf(
                 "All Servers",
                 "MoviesAPI",
-                "Watchroo Player",
             ),
             default = PREF_HOSTER_DEFAULT,
         )
