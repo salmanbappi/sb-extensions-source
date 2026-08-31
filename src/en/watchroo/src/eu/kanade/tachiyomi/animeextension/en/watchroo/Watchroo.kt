@@ -108,12 +108,15 @@ class Watchroo :
             for (filter in filters) {
                 when (filter) {
                     is Filters.MediaTypeFilter -> mediaType = filter.selected
+
                     is Filters.SortFilter -> sortBy = filter.selected
+
                     is Filters.GenreFilter -> {
                         filter.state.forEach { check ->
                             if (check.state) genreIds.add(check.value)
                         }
                     }
+
                     else -> {}
                 }
             }
@@ -294,12 +297,10 @@ class Watchroo :
      * Fallback: loads Watchroo's own player page (which iframes moviesapi.to)
      * in a WebView and sniffs the media request. Slower than the direct API.
      */
-    private suspend fun extractWatchrooPlayer(playerUrl: String): List<Video> {
-        return try {
-            universalExtractor.videosFromUrl(playerUrl, headers, "Watchroo")
-        } catch (_: Exception) {
-            emptyList()
-        }
+    private suspend fun extractWatchrooPlayer(playerUrl: String): List<Video> = try {
+        universalExtractor.videosFromUrl(playerUrl, headers, "Watchroo")
+    } catch (_: Exception) {
+        emptyList()
     }
 
     // ============================== URL Helpers ==============================
