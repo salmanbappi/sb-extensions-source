@@ -14,65 +14,69 @@ object Filters {
             get() = vals[state].second
     }
 
-    class TypeFilter : SelectFilter(
-        "Type",
-        arrayOf(
-            "All" to "",
-            "Drama" to "drama",
-            "Movie" to "movie",
-            "Variety" to "variety",
-            "Anime" to "anime",
-        ),
-    )
+    class TypeFilter :
+        SelectFilter(
+            "Type",
+            arrayOf(
+                "All" to "",
+                "Drama" to "drama",
+                "Movie" to "movie",
+                "Variety" to "variety",
+                "Anime" to "anime",
+            ),
+        )
 
-    class CountryFilter : SelectFilter(
-        "Country",
-        arrayOf(
-            "All" to "",
-            "Korean" to "korean",
-            "Chinese" to "chinese",
-            "Japanese" to "japanese",
-            "Thai" to "thai",
-            "Taiwanese" to "taiwanese",
-            "Hong Kong" to "hong kong",
-            "Philippines" to "philippines",
-            "Western / US" to "western",
-        ),
-    )
+    class CountryFilter :
+        SelectFilter(
+            "Country",
+            arrayOf(
+                "All" to "",
+                "Korean" to "korean",
+                "Chinese" to "chinese",
+                "Japanese" to "japanese",
+                "Thai" to "thai",
+                "Taiwanese" to "taiwanese",
+                "Hong Kong" to "hong kong",
+                "Philippines" to "philippines",
+                "Western / US" to "western",
+            ),
+        )
 
-    class StatusFilter : SelectFilter(
-        "Status",
-        arrayOf(
-            "All" to "",
-            "Ongoing" to "ongoing",
-            "Completed" to "completed",
-            "Upcoming" to "upcoming",
-        ),
-    )
+    class StatusFilter :
+        SelectFilter(
+            "Status",
+            arrayOf(
+                "All" to "",
+                "Ongoing" to "ongoing",
+                "Completed" to "completed",
+                "Upcoming" to "upcoming",
+            ),
+        )
 
-    class YearFilter : SelectFilter(
-        "Year",
-        arrayOf(
-            "All" to "",
-            "2026" to "2026",
-            "2025" to "2025",
-            "2024" to "2024",
-            "2023" to "2023",
-            "2022" to "2022",
-            "2021" to "2021",
-            "2020" to "2020",
-            "2019" to "2019",
-            "2018" to "2018",
-            "2017" to "2017",
-            "2016" to "2016",
-            "2015" to "2015",
-            "2014" to "2014",
-            "2013" to "2013",
-            "2012" to "2012",
-            "2011" to "2011",
-            "2010" to "2010",
-        ),
-    )
+    class YearFilter :
+        SelectFilter(
+            "Year",
+            arrayOf(
+                "All" to "",
+                "2026" to "2026",
+                "2025" to "2025",
+                "2024" to "2024",
+                "2023" to "2023",
+                "2022" to "2022",
+                "2021" to "2021",
+                "2020" to "2020",
+                "2019" to "2019",
+                "2018" to "2018",
+                "2017" to "2017",
+                "2016" to "2016",
+                "2015" to "2015",
+                "2014" to "2014",
+                "2013" to "2013",
+                "2012" to "2012",
+                "2011" to "2011",
+                "2010" to "2010",
+            ),
+        )
 
     class Genre(name: String, val value: String) : AnimeFilter.CheckBox(name)
 
@@ -133,9 +137,13 @@ object Filters {
         filters.forEach { filter ->
             when (filter) {
                 is TypeFilter -> type = filter.selected
+
                 is CountryFilter -> country = filter.selected
+
                 is StatusFilter -> status = filter.selected
+
                 is YearFilter -> year = filter.selected
+
                 is GenreListFilter -> {
                     filter.state.forEach { genre ->
                         if (genre.state) {
@@ -143,6 +151,7 @@ object Filters {
                         }
                     }
                 }
+
                 else -> {}
             }
         }
