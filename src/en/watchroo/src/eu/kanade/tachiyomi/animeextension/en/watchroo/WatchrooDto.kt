@@ -42,6 +42,8 @@ data class TmdbItemDto(
 ) {
     fun toSAnime(): SAnime? {
         val itemId = id ?: return null
+        // search/multi can return "person" results; only accept actual titles
+        if (media_type != "movie" && media_type != "tv") return null
         val isMovie = media_type == "movie" || (title != null && media_type != "tv")
         val displayTitle = title ?: name ?: "Unknown"
         val imagePath = poster_path ?: backdrop_path
@@ -181,7 +183,8 @@ data class VidoraResponseDto(
     val result: Boolean? = null,
     val type: String? = null,
     val title: String? = null,
-    val tmdb_id: Int? = null,
+    // vidora returns tmdb_id as a JSON string (e.g. "550"), not a number.
+    val tmdb_id: String? = null,
     val imdb_id: String? = null,
     val year: Int? = null,
     val season: Int? = null,

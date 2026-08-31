@@ -173,7 +173,7 @@ class Watchroo :
                 SEpisode.create().apply {
                     name = "Full Movie"
                     episode_number = 1f
-                    url = "$anime.url#movie"
+                    url = "${anime.url}#movie"
                     scanlator = "Movie"
                 },
             )
