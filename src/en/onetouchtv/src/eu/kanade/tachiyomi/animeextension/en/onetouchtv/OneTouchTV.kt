@@ -74,7 +74,7 @@ class OneTouchTV : Source() {
     // ============================== Decryption Helper ==============================
     private fun decrypt(encrypted: String): String {
         val clean = encrypted
-            .replace("-._", "/")
+            .replace("-_.", "/")
             .replace("-._", "/")
             .replace("@", "+")
             .replace(" ", "")
@@ -99,9 +99,11 @@ class OneTouchTV : Source() {
         val response = client.newCall(GET(url, headers)).execute()
         if (!response.isSuccessful) return null
         val encryptedText = response.body.string()
-        val jsonString = decrypt(encryptedText)
-        val apiResponse = json.decodeFromString<ApiResponseDto<T>>(jsonString)
-        return apiResponse.result
+        return runCatching {
+            val jsonString = decrypt(encryptedText)
+            val apiResponse = json.decodeFromString<ApiResponseDto<T>>(jsonString)
+            apiResponse.result
+        }.getOrNull()
     }
 
     // ============================== Popular Anime ==============================
