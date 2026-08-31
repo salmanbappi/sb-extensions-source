@@ -164,6 +164,10 @@ class OneTouchTV : Source() {
                 title = detail.title?.trim() ?: title
                 thumbnail_url = detail.image ?: detail.poster ?: thumbnail_url
 
+                val directors = detail.director.asStringList()
+                val writers = detail.screenwriter.asStringList()
+                val ratingVal = detail.rating.asStringOrNull()
+
                 val desc = buildString {
                     detail.description?.let { append(it.trim()).append("\n\n") }
                     detail.otherTitles?.takeIf { it.isNotEmpty() }?.let {
@@ -172,9 +176,12 @@ class OneTouchTV : Source() {
                     detail.country?.let { append("Country: ").append(it.replaceFirstChar { c -> c.uppercase() }).append("\n") }
                     detail.type?.let { append("Type: ").append(it.replaceFirstChar { c -> c.uppercase() }).append("\n") }
                     detail.year?.let { append("Year: ").append(it).append("\n") }
-                    detail.rating?.takeIf { it != "0.0" && it != "0" }?.let { append("Rating: ").append(it).append("/10\n") }
+                    ratingVal?.takeIf { it != "0.0" && it != "0" }?.let { append("Rating: ").append(it).append("/10\n") }
                     detail.releaseDate?.let { append("Release Date: ").append(it).append("\n") }
                     detail.aired_start?.let { append("Aired: ").append(it).append(detail.aired_end?.let { e -> " to $e" } ?: "").append("\n") }
+                    if (writers.isNotEmpty()) {
+                        append("Screenwriter: ").append(writers.joinToString(", ")).append("\n")
+                    }
                 }.trim()
 
                 description = desc.ifBlank { null }
@@ -184,7 +191,7 @@ class OneTouchTV : Source() {
                     "ongoing" -> SAnime.ONGOING
                     else -> SAnime.UNKNOWN
                 }
-                author = detail.director
+                author = directors.joinToString(", ").takeIf { it.isNotBlank() }
                 artist = detail.actors?.mapNotNull { it.name }?.joinToString(", ")?.takeIf { it.isNotBlank() }
             }
             initialized = true
@@ -195,16 +202,27 @@ class OneTouchTV : Source() {
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val contentId = anime.url.removePrefix("/vod/").substringBefore("#").substringBefore("?")
         val detail = fetchEncrypted<ContentDetailDto>("/vod/$contentId/detail") ?: return emptyList()
-        val epList = detail.episodes ?: emptyList()
+        val epList = detail.episodes
+
+        if (epList.isNullOrEmpty()) {
+            return listOf(
+                SEpisode.create().apply {
+                    url = "/vod/$contentId#playId=1&ep=1"
+                    name = if (detail.type.equals("movie", ignoreCase = true)) "Movie" else "Episode 1"
+                    episode_number = 1f
+                    date_upload = parseDate(detail.releaseDate ?: detail.aired_start)
+                },
+            )
+        }
 
         val episodes = epList.mapIndexed { index, ep ->
-            val epNumStr = ep.episode?.trim() ?: (index + 1).toString()
+            val epNumStr = ep.episode.asStringOrNull() ?: (index + 1).toString()
             val epNumber = epNumStr.toFloatOrNull() ?: (index + 1).toFloat()
-            val playId = ep.playId ?: epNumStr
+            val playId = ep.playId.asStringOrNull() ?: epNumStr
 
             SEpisode.create().apply {
                 url = "/vod/$contentId#playId=$playId&ep=$epNumStr"
-                name = if (epNumStr.isBlank() || epNumStr == "0" || detail.type == "movie") "Movie" else "Episode $epNumStr"
+                name = if (epNumStr.isBlank() || epNumStr == "0" || detail.type.equals("movie", ignoreCase = true)) "Movie" else "Episode $epNumStr"
                 episode_number = epNumber
                 scanlator = if (ep.isSub == true) "Sub" else null
                 date_upload = parseDate(ep.released_at)
@@ -255,9 +273,13 @@ class OneTouchTV : Source() {
             Track(file, name)
         }
 
-        val streamHeaders = headers.newBuilder()
-            .set("Referer", "$baseUrl/")
-            .build()
+        val streamHeaders = if (!source.headers.isNullOrEmpty()) {
+            val builder = headers.newBuilder()
+            source.headers.forEach { (k, v) -> builder.set(k, v) }
+            builder.build()
+        } else {
+            headers.newBuilder().set("Referer", "$baseUrl/").build()
+        }
 
         val serverName = source.name?.replaceFirstChar { it.uppercase() } ?: "OneTouch"
 
