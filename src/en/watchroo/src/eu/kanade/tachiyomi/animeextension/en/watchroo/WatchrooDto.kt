@@ -163,7 +163,7 @@ data class EpisodeItemDto(
             this.date_upload = parseDate(air_date)
             this.url = "/tv/$showId#season=$seasonNum&ep=$epNum"
             this.scanlator = "Season $seasonNum"
-            this.thumbnail_url = if (!thumbPath.isNullOrBlank()) "$TMDB_IMAGE_BASE$thumbPath" else ""
+            this.preview_url = if (!thumbPath.isNullOrBlank()) "$TMDB_IMAGE_BASE$thumbPath" else null
         }
     }
 }
