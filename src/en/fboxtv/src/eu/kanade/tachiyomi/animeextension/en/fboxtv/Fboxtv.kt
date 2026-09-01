@@ -255,11 +255,9 @@ class Fboxtv : Source() {
         }
     }
 
-    private fun Document.showId(): String? =
-        selectFirst("div.detail_page-watch")?.attr("data-id")?.trim()?.ifBlank { null }
+    private fun Document.showId(): String? = selectFirst("div.detail_page-watch")?.attr("data-id")?.trim()?.ifBlank { null }
 
-    private fun Document.isSeries(): Boolean =
-        selectFirst("div.detail_page-watch")?.attr("data-type")?.trim() == "2"
+    private fun Document.isSeries(): Boolean = selectFirst("div.detail_page-watch")?.attr("data-type")?.trim() == "2"
 
     // ============================== Hosters ===============================
     // Tier 1: server folders exposed by fboxtv.bz (UpCloud, VixCloud, MegaCloud, ...).
@@ -404,11 +402,13 @@ class Fboxtv : Source() {
 
         val apiUrl = when (kind) {
             "movie" -> "$SHOWS_ST_API_URL/movie?id=$id&mode=json"
+
             "tv" -> {
                 val season = segments.getOrNull(kindIdx + 2) ?: return emptyList()
                 val ep = segments.getOrNull(kindIdx + 3) ?: return emptyList()
                 "$SHOWS_ST_API_URL/tv?id=$id&season=$season&episode=$ep&mode=json"
             }
+
             else -> return emptyList()
         }
 
