@@ -20,13 +20,16 @@ import keiyoushi.utils.addListPreference
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 
@@ -58,31 +61,72 @@ class Hianimes : Source() {
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         val type = filters.filterIsInstance<Filters.TypeFilter>().firstOrNull()?.toUriPart().orEmpty()
-        if (query.isBlank() && type.isBlank()) return getPopularAnime(page)
+        val status = filters.filterIsInstance<Filters.StatusFilter>().firstOrNull()?.toUriPart().orEmpty()
+        val genres = filters.filterIsInstance<Filters.GenreFilter>().firstOrNull()?.getSelectedValues().orEmpty()
 
-        // The API ignores query parameters entirely; POST /api/search is the only working
-        // search route and it returns every match at once, so paginate client-side.
+        // A keyword only works through POST /api/search, which accepts no filters and returns
+        // every match at once; the site itself then narrows and paginates that array in the
+        // browser, so mirror that. Without a keyword, POST /api/filter does both server-side.
+        return if (query.isNotBlank()) {
+            searchByKeyword(page, query, type, status, genres)
+        } else {
+            filterAnime(page, type, status, genres)
+        }
+    }
+
+    private suspend fun searchByKeyword(
+        page: Int,
+        query: String,
+        type: String,
+        status: String,
+        genres: List<String>,
+    ): AnimesPage {
         val body = buildJsonObject { put("title", query) }
-            .toString()
-            .toRequestBody(JSON_MEDIA_TYPE)
-        val response = client.newCall(POST("$apiUrl/search", headers, body)).execute().body.string()
-        val results = runCatching { json.parseToJsonElement(response).jsonArray }.getOrNull()
-            ?: return AnimesPage(emptyList(), false)
+        val results = runCatching {
+            postJson("$apiUrl/search", body).jsonArray
+        }.getOrNull() ?: return AnimesPage(emptyList(), false)
 
-        val matches = results.map { it.jsonObject }
-            .filter { type.isBlank() || it.string("Type").equals(type, ignoreCase = true) }
-        val fromIndex = (page - 1) * SEARCH_PAGE_SIZE
+        val matches = results.map { it.jsonObject }.filter { anime ->
+            val animeGenres = anime.array("genres").map { it.jsonPrimitive.content.lowercase() }
+            (type.isBlank() || anime.string("Type").equals(type, ignoreCase = true)) &&
+                (status.isBlank() || anime.string("Status").equals(status, ignoreCase = true)) &&
+                genres.all { it.lowercase() in animeGenres }
+        }
+
+        val fromIndex = (page - 1) * PAGE_SIZE
         if (fromIndex >= matches.size) return AnimesPage(emptyList(), false)
-        val toIndex = minOf(fromIndex + SEARCH_PAGE_SIZE, matches.size)
-
+        val toIndex = minOf(fromIndex + PAGE_SIZE, matches.size)
         return AnimesPage(
             matches.subList(fromIndex, toIndex).mapNotNull(::parseAnime),
             toIndex < matches.size,
         )
     }
 
+    private suspend fun filterAnime(page: Int, type: String, status: String, genres: List<String>): AnimesPage {
+        if (type.isBlank() && status.isBlank() && genres.isEmpty()) return getPopularAnime(page)
+
+        val body = buildJsonObject {
+            if (type.isNotBlank()) put("type", type)
+            if (status.isNotBlank()) put("status", status)
+            if (genres.isNotEmpty()) {
+                putJsonArray("genre") { genres.forEach(::add) }
+            }
+            put("page", page)
+            put("limit", PAGE_SIZE)
+        }
+        val root = runCatching {
+            postJson("$apiUrl/filter", body).jsonObject
+        }.getOrNull() ?: return AnimesPage(emptyList(), false)
+
+        val animes = root.array("results").mapNotNull { parseAnime(it.jsonObject) }
+        val totalPages = root.int("totalPages") ?: page
+        return AnimesPage(animes, page < totalPages)
+    }
+
     override fun getFilterList() = AnimeFilterList(
         Filters.TypeFilter(),
+        Filters.StatusFilter(),
+        Filters.GenreFilter(),
     )
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
@@ -132,22 +176,25 @@ class Hianimes : Source() {
         }?.jsonObject ?: return emptyList()
         val links = target.objectOrNull("link") ?: return emptyList()
 
-        return listOf("sub" to "SUB", "dub" to "DUB").flatMap { (key, audio) ->
-            links.array(key).mapNotNull { source ->
-                val url = source.jsonPrimitive.contentOrNull ?: return@mapNotNull null
-                val host = url.toHttpUrl().host.removePrefix("www.")
-                Hoster(hosterName = "${serverLabel(host)} [$audio]", hosterUrl = "$audio|$url")
+        // One hoster per provider, with its SUB and DUB streams nested inside it,
+        // instead of a flat provider-times-audio list.
+        val byProvider = linkedMapOf<String, MutableList<String>>()
+        listOf("sub" to AUDIO_SUB, "dub" to AUDIO_DUB).forEach { (key, audio) ->
+            links.array(key).forEach { source ->
+                val url = source.jsonPrimitive.contentOrNull ?: return@forEach
+                val label = serverLabel(url.toHttpUrl().host.removePrefix("www."))
+                byProvider.getOrPut(label) { mutableListOf() }.add("$audio|$url")
             }
+        }
+
+        return byProvider.map { (label, entries) ->
+            Hoster(hosterName = label, hosterUrl = entries.joinToString(ENTRY_SEPARATOR))
         }.let(::sortHostersByPreference)
     }
 
     private fun sortHostersByPreference(hosters: List<Hoster>): List<Hoster> {
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
-        val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
-        return hosters.sortedWith(
-            compareByDescending<Hoster> { it.hosterName.contains(prefAudio, ignoreCase = true) }
-                .thenByDescending { it.hosterName.contains(prefServer, ignoreCase = true) },
-        )
+        return hosters.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
     }
 
     private fun serverLabel(host: String) = when {
@@ -157,27 +204,33 @@ class Hianimes : Source() {
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val (audio, embedUrl) = hoster.hosterUrl.split("|", limit = 2).let {
-            it.getOrNull(0) to it.getOrNull(1)
-        }
-        if (audio == null || embedUrl.isNullOrBlank()) return emptyList()
         val embedHeaders = headers.newBuilder().set("Referer", "$baseUrl/").build()
-        val videos = when {
-            embedUrl.contains("zokoanime.video") -> zokoVideos(embedUrl, audio)
-            embedUrl.contains("megaplay") -> megaPlayVideos(embedUrl, audio)
-            else -> universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = "${hoster.hosterName} - ")
-        }
-        return videos.map { video ->
-            Video(
-                videoUrl = video.videoUrl,
-                videoTitle = "${video.videoTitle} [$audio]",
-                headers = video.headers ?: embedHeaders,
-                resolution = video.resolution,
-                subtitleTracks = video.subtitleTracks,
-                audioTracks = video.audioTracks,
-            )
+
+        return hoster.hosterUrl.split(ENTRY_SEPARATOR).flatMap { entry ->
+            val audio = entry.substringBefore("|", "")
+            val embedUrl = entry.substringAfter("|", "")
+            if (audio.isBlank() || embedUrl.isBlank()) return@flatMap emptyList()
+
+            // The provider resolvers already tag each quality with the audio type;
+            // only the generic fallback needs it applied here.
+            when {
+                embedUrl.contains("zokoanime.video") -> zokoVideos(embedUrl, audio)
+                embedUrl.contains("megaplay") -> megaPlayVideos(embedUrl, audio)
+                else -> universalExtractor
+                    .videosFromUrl(embedUrl, embedHeaders, prefix = "${hoster.hosterName} - ")
+                    .map { video -> video.withAudioTag(audio, embedHeaders) }
+            }
         }.sortVideos()
     }
+
+    private fun Video.withAudioTag(audio: String, fallbackHeaders: Headers) = Video(
+        videoUrl = videoUrl,
+        videoTitle = "$videoTitle [$audio]",
+        headers = headers ?: fallbackHeaders,
+        resolution = resolution,
+        subtitleTracks = subtitleTracks,
+        audioTracks = audioTracks,
+    )
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
@@ -276,6 +329,10 @@ class Hianimes : Source() {
 
     private suspend fun getAnime(animeUrl: String): JsonObject = getJson("$apiUrl${animeUrl.substringBefore("#")}").jsonObject["anime"]!!.jsonObject
 
+    private suspend fun postJson(url: String, body: JsonObject) = json.parseToJsonElement(
+        client.newCall(POST(url, headers, body.toString().toRequestBody(JSON_MEDIA_TYPE))).execute().body.string(),
+    )
+
     private suspend fun getJson(url: String) = json.parseToJsonElement(client.newCall(GET(url, headers)).execute().body.string()).jsonObject
 
     private fun parseAnime(anime: JsonObject): SAnime? {
@@ -306,7 +363,10 @@ class Hianimes : Source() {
     private fun JsonObject.objectOrNull(key: String) = this[key] as? JsonObject
 
     private companion object {
-        const val SEARCH_PAGE_SIZE = 20
+        const val AUDIO_SUB = "SUB"
+        const val AUDIO_DUB = "DUB"
+        const val ENTRY_SEPARATOR = ";;"
+        const val PAGE_SIZE = 20
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         val HTML_TAGS = Regex("<[^>]*>")
         val ZOKO_PAYLOAD = Regex("""window\.__P="([^"]+)"""")
