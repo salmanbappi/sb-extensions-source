@@ -138,13 +138,13 @@ class Hianimes : Source() {
                 val host = url.toHttpUrl().host.removePrefix("www.")
                 Hoster(hosterName = "${serverLabel(host)} [$audio]", hosterUrl = "$audio|$url")
             }
-        }.sortHosters()
+        }.let(::sortHostersByPreference)
     }
 
-    private fun List<Hoster>.sortHosters(): List<Hoster> {
+    private fun sortHostersByPreference(hosters: List<Hoster>): List<Hoster> {
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
-        return sortedWith(
+        return hosters.sortedWith(
             compareByDescending<Hoster> { it.hosterName.contains(prefAudio, ignoreCase = true) }
                 .thenByDescending { it.hosterName.contains(prefServer, ignoreCase = true) },
         )
