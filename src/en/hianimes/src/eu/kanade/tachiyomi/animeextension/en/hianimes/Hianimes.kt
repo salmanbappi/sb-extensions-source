@@ -28,8 +28,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 
@@ -215,10 +215,13 @@ class Hianimes : Source() {
             // only the generic fallback needs it applied here.
             when {
                 embedUrl.contains("zokoanime.video") -> zokoVideos(embedUrl, audio)
+
                 embedUrl.contains("megaplay") -> megaPlayVideos(embedUrl, audio)
-                else -> universalExtractor
-                    .videosFromUrl(embedUrl, embedHeaders, prefix = "${hoster.hosterName} - ")
-                    .map { video -> video.withAudioTag(audio, embedHeaders) }
+
+                else ->
+                    universalExtractor
+                        .videosFromUrl(embedUrl, embedHeaders, prefix = "${hoster.hosterName} - ")
+                        .map { video -> video.withAudioTag(audio, embedHeaders) }
             }
         }.sortVideos()
     }

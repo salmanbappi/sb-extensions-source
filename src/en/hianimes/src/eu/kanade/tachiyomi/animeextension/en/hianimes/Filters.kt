@@ -17,8 +17,7 @@ object Filters {
         displayName,
         vals.map { AnimeFilter.CheckBox(it.first, false) },
     ) {
-        fun getSelectedValues(): List<String> =
-            state.mapIndexedNotNull { index, checkbox -> vals[index].second.takeIf { checkbox.state } }
+        fun getSelectedValues(): List<String> = state.mapIndexedNotNull { index, checkbox -> vals[index].second.takeIf { checkbox.state } }
     }
 
     /**
