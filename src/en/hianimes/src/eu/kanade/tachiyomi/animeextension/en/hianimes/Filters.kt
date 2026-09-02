@@ -14,16 +14,17 @@ object Filters {
      * The API exposes no server-side type filter, so these values mirror the exact
      * `Type` strings returned by `POST /api/search` and are matched client-side.
      */
-    class TypeFilter : UriPartFilter(
-        "Type",
-        arrayOf(
-            Pair("All", ""),
-            Pair("TV", "TV"),
-            Pair("Movie", "Movie"),
-            Pair("OVA", "OVA"),
-            Pair("ONA", "ONA"),
-            Pair("Special", "Special"),
-            Pair("TV Special", "TV Special"),
-        ),
-    )
+    class TypeFilter :
+        UriPartFilter(
+            "Type",
+            arrayOf(
+                Pair("All", ""),
+                Pair("TV", "TV"),
+                Pair("Movie", "Movie"),
+                Pair("OVA", "OVA"),
+                Pair("ONA", "ONA"),
+                Pair("Special", "Special"),
+                Pair("TV Special", "TV Special"),
+            ),
+        )
 }

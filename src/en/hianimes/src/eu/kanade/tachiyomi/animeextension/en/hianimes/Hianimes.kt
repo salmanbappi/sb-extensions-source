@@ -52,11 +52,9 @@ class Hianimes : Source() {
         .add("Origin", baseUrl)
         .add("Referer", "$baseUrl/")
 
-    override suspend fun getPopularAnime(page: Int): AnimesPage =
-        parseAnimePage(getJson("$apiUrl/anime/popular?page=$page&limit=20"))
+    override suspend fun getPopularAnime(page: Int): AnimesPage = parseAnimePage(getJson("$apiUrl/anime/popular?page=$page&limit=20"))
 
-    override suspend fun getLatestUpdates(page: Int): AnimesPage =
-        parseAnimePage(getJson("$apiUrl/latest/anime?page=$page&limit=20"))
+    override suspend fun getLatestUpdates(page: Int): AnimesPage = parseAnimePage(getJson("$apiUrl/latest/anime?page=$page&limit=20"))
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         val type = filters.filterIsInstance<Filters.TypeFilter>().firstOrNull()?.toUriPart().orEmpty()
@@ -276,11 +274,9 @@ class Hianimes : Source() {
         }.joinToString("")
     }
 
-    private suspend fun getAnime(animeUrl: String): JsonObject =
-        getJson("$apiUrl${animeUrl.substringBefore("#")}").jsonObject["anime"]!!.jsonObject
+    private suspend fun getAnime(animeUrl: String): JsonObject = getJson("$apiUrl${animeUrl.substringBefore("#")}").jsonObject["anime"]!!.jsonObject
 
-    private suspend fun getJson(url: String) =
-        json.parseToJsonElement(client.newCall(GET(url, headers)).execute().body.string()).jsonObject
+    private suspend fun getJson(url: String) = json.parseToJsonElement(client.newCall(GET(url, headers)).execute().body.string()).jsonObject
 
     private fun parseAnime(anime: JsonObject): SAnime? {
         val slug = anime.string("slug")
