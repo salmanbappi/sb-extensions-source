@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.en.hianimes
 
 import android.util.Base64
+import androidx.preference.PreferenceScreen
 import aniyomi.lib.m3u8server.M3u8Integration
-import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -14,15 +14,21 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
+import keiyoushi.utils.addListPreference
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class Hianimes : Source() {
 
@@ -32,7 +38,12 @@ class Hianimes : Source() {
     override val supportsLatest = true
 
     private val apiUrl = "https://animehot.cc/api"
-    private val json = Json { ignoreUnknownKeys = true }
+
+    override val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
+
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
     private val m3u8Integration by lazy { M3u8Integration(client) }
@@ -41,23 +52,39 @@ class Hianimes : Source() {
         .add("Origin", baseUrl)
         .add("Referer", "$baseUrl/")
 
-    override suspend fun getPopularAnime(page: Int): AnimesPage = parseAnimePage(getJson("$apiUrl/anime/popular?page=$page&limit=20"))
+    override suspend fun getPopularAnime(page: Int): AnimesPage =
+        parseAnimePage(getJson("$apiUrl/anime/popular?page=$page&limit=20"))
 
-    override suspend fun getLatestUpdates(page: Int): AnimesPage = parseAnimePage(getJson("$apiUrl/latest/anime?page=$page&limit=20"))
+    override suspend fun getLatestUpdates(page: Int): AnimesPage =
+        parseAnimePage(getJson("$apiUrl/latest/anime?page=$page&limit=20"))
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        val type = filters.filterIsInstance<AnimeFilter.Select<String>>().firstOrNull()?.let { TYPE_VALUES[it.state] }
-        val url = "$apiUrl/anime".toHttpUrl().newBuilder().apply {
-            addQueryParameter("page", page.toString())
-            addQueryParameter("limit", "20")
-            if (query.isNotBlank()) addQueryParameter("query", query)
-            if (!type.isNullOrBlank()) addQueryParameter("type", type)
-        }.build()
-        return parseAnimePage(getJson(url.toString()))
+        val type = filters.filterIsInstance<Filters.TypeFilter>().firstOrNull()?.toUriPart().orEmpty()
+        if (query.isBlank() && type.isBlank()) return getPopularAnime(page)
+
+        // The API ignores query parameters entirely; POST /api/search is the only working
+        // search route and it returns every match at once, so paginate client-side.
+        val body = buildJsonObject { put("title", query) }
+            .toString()
+            .toRequestBody(JSON_MEDIA_TYPE)
+        val response = client.newCall(POST("$apiUrl/search", headers, body)).execute().body.string()
+        val results = runCatching { json.parseToJsonElement(response).jsonArray }.getOrNull()
+            ?: return AnimesPage(emptyList(), false)
+
+        val matches = results.map { it.jsonObject }
+            .filter { type.isBlank() || it.string("Type").equals(type, ignoreCase = true) }
+        val fromIndex = (page - 1) * SEARCH_PAGE_SIZE
+        if (fromIndex >= matches.size) return AnimesPage(emptyList(), false)
+        val toIndex = minOf(fromIndex + SEARCH_PAGE_SIZE, matches.size)
+
+        return AnimesPage(
+            matches.subList(fromIndex, toIndex).mapNotNull(::parseAnime),
+            toIndex < matches.size,
+        )
     }
 
     override fun getFilterList() = AnimeFilterList(
-        AnimeFilter.Select("Type", TYPE_NAMES),
+        Filters.TypeFilter(),
     )
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
@@ -111,9 +138,24 @@ class Hianimes : Source() {
             links.array(key).mapNotNull { source ->
                 val url = source.jsonPrimitive.contentOrNull ?: return@mapNotNull null
                 val host = url.toHttpUrl().host.removePrefix("www.")
-                Hoster(hosterName = "$host [$audio]", hosterUrl = "$audio|$url")
+                Hoster(hosterName = "${serverLabel(host)} [$audio]", hosterUrl = "$audio|$url")
             }
-        }
+        }.sortHosters()
+    }
+
+    private fun List<Hoster>.sortHosters(): List<Hoster> {
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
+        return sortedWith(
+            compareByDescending<Hoster> { it.hosterName.contains(prefAudio, ignoreCase = true) }
+                .thenByDescending { it.hosterName.contains(prefServer, ignoreCase = true) },
+        )
+    }
+
+    private fun serverLabel(host: String) = when {
+        host.contains("megaplay") -> "MegaPlay"
+        host.contains("zokoanime") -> "ZokoAnime"
+        else -> host
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -136,7 +178,44 @@ class Hianimes : Source() {
                 subtitleTracks = video.subtitleTracks,
                 audioTracks = video.audioTracks,
             )
-        }.sortedByDescending { it.resolution ?: 0 }
+        }.sortVideos()
+    }
+
+    override fun List<Video>.sortVideos(): List<Video> {
+        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
+        return sortedWith(
+            compareByDescending<Video> { it.videoTitle.contains(prefAudio, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(prefQuality) }
+                .thenByDescending { it.resolution ?: 0 },
+        )
+    }
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        screen.addListPreference(
+            key = PREF_SERVER_KEY,
+            default = PREF_SERVER_DEFAULT,
+            title = "Preferred server",
+            summary = "%s",
+            entries = listOf("MegaPlay", "ZokoAnime"),
+            entryValues = listOf("megaplay", "zokoanime"),
+        )
+        screen.addListPreference(
+            key = PREF_AUDIO_KEY,
+            default = PREF_AUDIO_DEFAULT,
+            title = "Preferred audio",
+            summary = "%s",
+            entries = listOf("Subbed", "Dubbed"),
+            entryValues = listOf("SUB", "DUB"),
+        )
+        screen.addListPreference(
+            key = PREF_QUALITY_KEY,
+            default = PREF_QUALITY_DEFAULT,
+            title = "Preferred quality",
+            summary = "%s",
+            entries = listOf("1080p", "720p", "480p", "360p"),
+            entryValues = listOf("1080", "720", "480", "360"),
+        )
     }
 
     private suspend fun zokoVideos(embedUrl: String, audio: String): List<Video> {
@@ -197,39 +276,52 @@ class Hianimes : Source() {
         }.joinToString("")
     }
 
-    private suspend fun getAnime(animeUrl: String): JsonObject = getJson("$apiUrl${animeUrl.substringBefore("#")}").jsonObject["anime"]!!.jsonObject
+    private suspend fun getAnime(animeUrl: String): JsonObject =
+        getJson("$apiUrl${animeUrl.substringBefore("#")}").jsonObject["anime"]!!.jsonObject
 
-    private suspend fun getJson(url: String) = json.parseToJsonElement(client.newCall(GET(url, headers)).execute().body.string()).jsonObject
+    private suspend fun getJson(url: String) =
+        json.parseToJsonElement(client.newCall(GET(url, headers)).execute().body.string()).jsonObject
+
+    private fun parseAnime(anime: JsonObject): SAnime? {
+        val slug = anime.string("slug")
+            .ifBlank { anime.array("slugs").firstOrNull()?.jsonPrimitive?.contentOrNull.orEmpty() }
+        if (slug.isBlank()) return null
+        return SAnime.create().apply {
+            title = anime.string("title")
+            thumbnail_url = anime.string("image")
+            setUrlWithoutDomain("/anime/$slug")
+            fetch_type = FetchType.Episodes
+        }
+    }
 
     private fun parseAnimePage(root: JsonObject): AnimesPage {
-        val animes = root.array("animes").mapNotNull { item ->
-            val anime = item.jsonObject
-            val slug = anime.string("slug").ifBlank { anime.array("slugs").firstOrNull()?.jsonPrimitive?.contentOrNull.orEmpty() }
-            if (slug.isBlank()) return@mapNotNull null
-            SAnime.create().apply {
-                title = anime.string("title")
-                thumbnail_url = anime.string("image")
-                setUrlWithoutDomain("/anime/$slug")
-                fetch_type = FetchType.Episodes
-            }
-        }
-        val hasNext = root.objectOrNull("meta")?.get("page")?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.let { page ->
-            page < (root.objectOrNull("meta")?.get("totalPages")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: page)
-        } ?: (root["page"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1) <
-            (root["totalPages"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1)
-        return AnimesPage(animes, hasNext)
+        val animes = root.array("animes").mapNotNull { parseAnime(it.jsonObject) }
+
+        // `/anime/popular` nests pagination under `meta`; `/latest/anime` returns it at the root.
+        val meta = root.objectOrNull("meta") ?: root
+        val page = meta.int("page") ?: 1
+        val totalPages = meta.int("totalPages") ?: page
+        return AnimesPage(animes, page < totalPages)
     }
 
     private fun JsonObject.string(key: String) = this[key]?.jsonPrimitive?.contentOrNull.orEmpty()
+    private fun JsonObject.int(key: String) = this[key]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
     private fun JsonObject.array(key: String) = this[key] as? JsonArray ?: JsonArray(emptyList())
     private fun JsonObject.objectOrNull(key: String) = this[key] as? JsonObject
 
     private companion object {
-        val TYPE_NAMES = arrayOf("All", "TV", "Movie", "OVA", "ONA", "Special")
-        val TYPE_VALUES = arrayOf("", "TV", "Movie", "OVA", "ONA", "Special")
+        const val SEARCH_PAGE_SIZE = 20
+        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         val HTML_TAGS = Regex("<[^>]*>")
-        val ZOKO_PAYLOAD = Regex("window\\.__P=\\\"([^\\\"]+)\\\"")
-        val MEGAPLAY_ID = Regex("data-id=\\\"(\\d+)\\\"")
+        val ZOKO_PAYLOAD = Regex("""window\.__P="([^"]+)"""")
+        val MEGAPLAY_ID = Regex("""data-id="(\d+)"""")
         const val ZOKO_KEY = "otaku-embed-v1"
+
+        const val PREF_SERVER_KEY = "preferred_server"
+        const val PREF_SERVER_DEFAULT = "megaplay"
+        const val PREF_AUDIO_KEY = "preferred_audio"
+        const val PREF_AUDIO_DEFAULT = "SUB"
+        const val PREF_QUALITY_KEY = "preferred_quality"
+        const val PREF_QUALITY_DEFAULT = "1080"
     }
 }
