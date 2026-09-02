@@ -10,12 +10,14 @@ object Filters {
         fun toUriPart() = vals[state].second
     }
 
+    private class CheckBoxVal(name: String) : AnimeFilter.CheckBox(name, false)
+
     open class CheckBoxFilterList(
         displayName: String,
         private val vals: Array<Pair<String, String>>,
     ) : AnimeFilter.Group<AnimeFilter.CheckBox>(
         displayName,
-        vals.map { AnimeFilter.CheckBox(it.first, false) },
+        vals.map { CheckBoxVal(it.first) },
     ) {
         fun getSelectedValues(): List<String> = state.mapIndexedNotNull { index, checkbox -> vals[index].second.takeIf { checkbox.state } }
     }
