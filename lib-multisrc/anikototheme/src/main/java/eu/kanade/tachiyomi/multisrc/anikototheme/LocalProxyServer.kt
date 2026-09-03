@@ -33,6 +33,7 @@ class LocalProxyServer(
         private const val MAX_CACHE_ENTRIES = 30
         private const val MAX_CONCURRENT_PREFETCHES = 5
         private const val SOCKET_READ_TIMEOUT_MS = 120000
+
         // Hosters (VidTube/Kiwi) mint segment URLs that expire some minutes after the playlist is
         // resolved. Re-fetch the variant playlist on this cadence while playing so segments past
         // ~20 minutes keep valid URLs instead of 403ing and killing playback.
@@ -132,6 +133,7 @@ class LocalProxyServer(
      */
     private class VariantState(seed: VariantData) {
         val playlistUrl: String = seed.playlistUrl
+
         @Volatile
         var refreshedAtMs: Long = System.currentTimeMillis()
         val segments: MutableList<SegmentInfo> = CopyOnWriteArrayList(seed.segments)
@@ -415,8 +417,7 @@ class LocalProxyServer(
         }
     }
 
-    private fun variantState(stream: AudioStream, variant: VariantData): VariantState =
-        variantStates.computeIfAbsent("${stream.audioType}/${variant.quality}") { VariantState(variant) }
+    private fun variantState(stream: AudioStream, variant: VariantData): VariantState = variantStates.computeIfAbsent("${stream.audioType}/${variant.quality}") { VariantState(variant) }
 
     /**
      * Re-mints segment URLs in the background when the current snapshot is older than
