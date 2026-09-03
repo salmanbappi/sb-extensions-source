@@ -137,28 +137,6 @@ class AnikotoExtractors(
         return result
     }
 
-    private fun parseVariantSegments(text: String, variantUrl: String): List<LocalProxyServer.SegmentInfo> {
-        val result = mutableListOf<LocalProxyServer.SegmentInfo>()
-        val lines = text.lines()
-        var i = 0
-        while (i < lines.size) {
-            if (lines[i].startsWith("#EXTINF:")) {
-                val duration = lines[i].substringAfter("#EXTINF:").substringBefore(",").toDoubleOrNull() ?: 0.0
-                val next = lines.getOrNull(i + 1)?.trim() ?: ""
-                if (next.isNotEmpty() && !next.startsWith("#")) {
-                    val fullUrl = URI(variantUrl).resolve(next).toString()
-                    result.add(LocalProxyServer.SegmentInfo(fullUrl, duration))
-                    i += 2
-                } else {
-                    i++
-                }
-            } else {
-                i++
-            }
-        }
-        return result
-    }
-
     suspend fun resolveVidTube(
         iframeUrl: String,
         audioType: String,
@@ -231,10 +209,10 @@ class AnikotoExtractors(
                         variantSemaphore.withPermit {
                             try {
                                 val varText = fetchString(vi.url, seg)
-                                val segs = parseVariantSegments(varText, vi.url)
+                                val segs = HlsPlaylistParser.parseVariantSegments(varText, vi.url)
                                 logi("resolveVidTube:   variant ${vi.quality}(${vi.bandwidth}): ${segs.size} segments")
                                 if (segs.isNotEmpty()) {
-                                    LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs)
+                                    LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs, vi.url)
                                 } else {
                                     null
                                 }
@@ -313,10 +291,10 @@ class AnikotoExtractors(
                             variantSemaphore.withPermit {
                                 try {
                                     val varText = fetchString(vi.url, headers)
-                                    val segs = parseVariantSegments(varText, vi.url)
+                                    val segs = HlsPlaylistParser.parseVariantSegments(varText, vi.url)
                                     logd("resolveKiwi:   variant ${vi.quality}: ${segs.size} segments (no filter)")
                                     if (segs.isNotEmpty()) {
-                                        LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs)
+                                        LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs, vi.url)
                                     } else {
                                         null
                                     }
