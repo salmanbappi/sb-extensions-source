@@ -164,7 +164,9 @@ class Chikianimation : Source() {
                     )
                 },
             )
+
             hoster.hosterUrl.contains("dailymotion", true) -> dailymotionExtractor.videosFromUrl(hoster.hosterUrl, prefix = "Dailymotion - ")
+
             else -> listOf(Video(videoUrl = hoster.hosterUrl, videoTitle = hoster.hosterName, headers = headers))
         }
     }.getOrDefault(emptyList())
