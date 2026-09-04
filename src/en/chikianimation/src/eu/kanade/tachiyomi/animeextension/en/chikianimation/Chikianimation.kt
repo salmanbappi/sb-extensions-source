@@ -134,11 +134,10 @@ class Chikianimation : Source() {
         document.select("iframe[src], iframe[data-src], video source[src], a[href*='streamtape'], a[href*='dailymotion'], a[href*='dai.ly']").forEach { element ->
             val url = element.attr("src").ifBlank { element.attr("data-src") }.ifBlank { element.attr("href") }
             val name = when {
-                url.contains("streamtape", true) -> "StreamTape"
                 url.contains("dailymotion", true) || url.contains("dai.ly", true) -> "Dailymotion"
                 else -> "Player"
             }
-            add(name, url)
+            if (name == "Dailymotion") add(name, url)
         }
         document.select("a[href]").forEach { link ->
             val href = link.attr("href")
@@ -152,7 +151,19 @@ class Chikianimation : Source() {
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> = runCatching {
         when {
-            hoster.hosterUrl.contains("streamtape", true) -> streamTapeExtractor.videoFromUrl(hoster.hosterUrl)?.let { listOf(it) } ?: emptyList()
+            hoster.hosterUrl.contains("streamtape", true) -> listOfNotNull(
+                streamTapeExtractor.videoFromUrl(
+                    hoster.hosterUrl.replace("/v/", "/e/").substringBeforeLast(".mp4"),
+                    quality = "StreamTape",
+                )?.let { video ->
+                    Video(
+                        videoUrl = video.videoUrl,
+                        videoTitle = video.videoTitle,
+                        headers = headers,
+                        subtitleTracks = video.subtitleTracks,
+                    )
+                },
+            )
             hoster.hosterUrl.contains("dailymotion", true) -> dailymotionExtractor.videosFromUrl(hoster.hosterUrl, prefix = "Dailymotion - ")
             else -> listOf(Video(videoUrl = hoster.hosterUrl, videoTitle = hoster.hosterName, headers = headers))
         }
