@@ -131,9 +131,7 @@ class Chikianimation : Source() {
             if (name == "StreamTape") url = url.replace("streamtape.com/v/", "streamtape.com/e/")
             if (url.startsWith("http") && seen.add(url)) results += Hoster(hosterName = name, hosterUrl = url)
         }
-        val scope = document.select(".entry-content, .post-body, .player, .video-player, .servers, .embed-container")
-        val roots = if (scope.isNotEmpty()) scope else document
-        roots.select("iframe[src], iframe[data-src], video source[src], a[href]").forEach { element ->
+        document.select(".entry-content iframe[src], .entry-content iframe[data-src], .entry-content video source[src], .entry-content a[href], .player iframe[src], .player iframe[data-src], .player a[href], .video-player iframe[src], .video-player a[href], .servers a[href], .embed-container iframe[src], .embed-container a[href]").forEach { element ->
             val url = element.attr("src").ifBlank { element.attr("data-src") }.ifBlank { element.attr("href") }
             val name = when {
                 url.contains("streamtape", true) -> "StreamTape"
@@ -142,7 +140,7 @@ class Chikianimation : Source() {
             }
             add(name, url)
         }
-        roots.select("a[href]").forEach { link ->
+        document.select(".entry-content a[href], .player a[href], .video-player a[href], .servers a[href], .embed-container a[href]").forEach { link ->
             val href = link.attr("href")
             when {
                 href.contains("streamtape", true) -> add("StreamTape", href)
