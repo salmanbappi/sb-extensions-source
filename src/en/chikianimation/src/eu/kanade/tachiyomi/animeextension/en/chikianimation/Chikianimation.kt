@@ -165,11 +165,13 @@ class Chikianimation : Source() {
                 prefix = "Dailymotion - ",
                 baseUrl = baseUrl,
             )
+
             hoster.hosterUrl.contains("galaxydonghua", true) -> universalExtractor.videosFromUrl(
                 hoster.hosterUrl,
                 headers.newBuilder().set("Referer", "$baseUrl/").build(),
                 prefix = "GalaxyDonghua - ",
             )
+
             else -> listOf(Video(videoUrl = hoster.hosterUrl, videoTitle = hoster.hosterName, headers = headers))
         }
     }.getOrDefault(emptyList())
