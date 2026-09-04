@@ -8,8 +8,8 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.animeextension.en.chikianimation.extractors.StreamTapeExtractor
 import eu.kanade.tachiyomi.lib.dailymotionextractor.DailymotionExtractor
-import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.UrlUtils
@@ -159,14 +159,16 @@ class Chikianimation : Source() {
                     Video(
                         videoUrl = video.videoUrl,
                         videoTitle = video.videoTitle,
-                        headers = headers,
+                        headers = video.headers ?: headers,
                         subtitleTracks = video.subtitleTracks,
                     )
                 },
             )
-
-            hoster.hosterUrl.contains("dailymotion", true) -> dailymotionExtractor.videosFromUrl(hoster.hosterUrl, prefix = "Dailymotion - ")
-
+            hoster.hosterUrl.contains("dailymotion", true) -> dailymotionExtractor.videosFromUrl(
+                hoster.hosterUrl,
+                prefix = "Dailymotion - ",
+                baseUrl = baseUrl,
+            )
             else -> listOf(Video(videoUrl = hoster.hosterUrl, videoTitle = hoster.hosterName, headers = headers))
         }
     }.getOrDefault(emptyList())
