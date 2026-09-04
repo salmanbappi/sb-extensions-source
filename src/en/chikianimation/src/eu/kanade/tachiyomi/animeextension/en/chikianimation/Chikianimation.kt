@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.dailymotionextractor.DailymotionExtractor
+import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.UrlUtils
@@ -37,6 +38,7 @@ class Chikianimation : Source() {
 
     private val streamTapeExtractor by lazy { StreamTapeExtractor(client) }
     private val dailymotionExtractor by lazy { DailymotionExtractor(client, headers) }
+    private val universalExtractor by lazy { UniversalExtractor(client) }
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
         val url = if (page == 1) "$baseUrl/anime/" else "$baseUrl/anime/page/$page/"
@@ -131,19 +133,12 @@ class Chikianimation : Source() {
             if (name == "StreamTape") url = url.replace("streamtape.com/v/", "streamtape.com/e/")
             if (url.startsWith("http") && seen.add(url)) results += Hoster(hosterName = name, hosterUrl = url)
         }
-        document.select("iframe[src], iframe[data-src], video source[src], a[href*='streamtape'], a[href*='dailymotion'], a[href*='dai.ly']").forEach { element ->
+        document.select("iframe[src], iframe[data-src], video source[src], a[href]").forEach { element ->
             val url = element.attr("src").ifBlank { element.attr("data-src") }.ifBlank { element.attr("href") }
-            val name = when {
-                url.contains("dailymotion", true) || url.contains("dai.ly", true) -> "Dailymotion"
-                else -> "Player"
-            }
-            if (name == "Dailymotion") add(name, url)
-        }
-        document.select("a[href]").forEach { link ->
-            val href = link.attr("href")
             when {
-                href.contains("streamtape", true) -> add("StreamTape", href)
-                href.contains("dailymotion", true) -> add("Dailymotion", href)
+                url.contains("dailymotion", true) || url.contains("dai.ly", true) -> add("Dailymotion", url)
+                url.contains("galaxydonghua", true) -> add("GalaxyDonghua", url)
+                url.contains("streamtape", true) -> add("StreamTape", url)
             }
         }
         return results
@@ -170,7 +165,11 @@ class Chikianimation : Source() {
                 prefix = "Dailymotion - ",
                 baseUrl = baseUrl,
             )
-
+            hoster.hosterUrl.contains("galaxydonghua", true) -> universalExtractor.videosFromUrl(
+                hoster.hosterUrl,
+                headers.newBuilder().set("Referer", "$baseUrl/").build(),
+                prefix = "GalaxyDonghua - ",
+            )
             else -> listOf(Video(videoUrl = hoster.hosterUrl, videoTitle = hoster.hosterName, headers = headers))
         }
     }.getOrDefault(emptyList())
