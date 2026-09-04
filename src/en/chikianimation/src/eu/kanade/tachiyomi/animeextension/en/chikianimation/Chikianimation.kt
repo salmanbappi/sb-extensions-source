@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.chikianimation
 
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animeextension.en.chikianimation.extractors.StreamTapeExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -8,7 +9,6 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animeextension.en.chikianimation.extractors.StreamTapeExtractor
 import eu.kanade.tachiyomi.lib.dailymotionextractor.DailymotionExtractor
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
@@ -164,11 +164,13 @@ class Chikianimation : Source() {
                     )
                 },
             )
+
             hoster.hosterUrl.contains("dailymotion", true) -> dailymotionExtractor.videosFromUrl(
                 hoster.hosterUrl,
                 prefix = "Dailymotion - ",
                 baseUrl = baseUrl,
             )
+
             else -> listOf(Video(videoUrl = hoster.hosterUrl, videoTitle = hoster.hosterName, headers = headers))
         }
     }.getOrDefault(emptyList())
