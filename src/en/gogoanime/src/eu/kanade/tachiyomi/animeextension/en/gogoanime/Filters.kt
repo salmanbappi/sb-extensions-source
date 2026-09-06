@@ -11,57 +11,60 @@ object Filters {
         fun isDefault() = state == 0
     }
 
-    class OrderByFilter : UriPartFilter(
-        "Order by",
-        arrayOf(
-            Pair("Latest Update", "update"),
-            Pair("Latest Added", "latest"),
-            Pair("Popular", "popular"),
-            Pair("Rating", "rating"),
-            Pair("A-Z", "title"),
-            Pair("Z-A", "titlereverse"),
-        ),
-    )
+    class OrderByFilter :
+        UriPartFilter(
+            "Order by",
+            arrayOf(
+                Pair("Latest Update", "update"),
+                Pair("Latest Added", "latest"),
+                Pair("Popular", "popular"),
+                Pair("Rating", "rating"),
+                Pair("A-Z", "title"),
+                Pair("Z-A", "titlereverse"),
+            ),
+        )
 
-    class StatusFilter : UriPartFilter(
-        "Status",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Ongoing", "ongoing"),
-            Pair("Completed", "completed"),
-            Pair("Upcoming", "upcoming"),
-            Pair("Hiatus", "hiatus"),
-        ),
-    )
+    class StatusFilter :
+        UriPartFilter(
+            "Status",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Ongoing", "ongoing"),
+                Pair("Completed", "completed"),
+                Pair("Upcoming", "upcoming"),
+                Pair("Hiatus", "hiatus"),
+            ),
+        )
 
-    class TypeFilter : UriPartFilter(
-        "Type",
-        arrayOf(
-            Pair("All", ""),
-            Pair("TV Series", "tv"),
-            Pair("Movie", "movie"),
-            Pair("OVA", "ova"),
-            Pair("ONA", "ona"),
-            Pair("Special", "special"),
-            Pair("BD", "bd"),
-            Pair("Live Action", "live action"),
-            Pair("Music", "music"),
-        ),
-    )
+    class TypeFilter :
+        UriPartFilter(
+            "Type",
+            arrayOf(
+                Pair("All", ""),
+                Pair("TV Series", "tv"),
+                Pair("Movie", "movie"),
+                Pair("OVA", "ova"),
+                Pair("ONA", "ona"),
+                Pair("Special", "special"),
+                Pair("BD", "bd"),
+                Pair("Live Action", "live action"),
+                Pair("Music", "music"),
+            ),
+        )
 
-    class SubFilter : UriPartFilter(
-        "Sub/Dub",
-        arrayOf(
-            Pair("All", ""),
-            Pair("Sub", "sub"),
-            Pair("Dub", "dub"),
-            Pair("RAW", "raw"),
-        ),
-    )
+    class SubFilter :
+        UriPartFilter(
+            "Sub/Dub",
+            arrayOf(
+                Pair("All", ""),
+                Pair("Sub", "sub"),
+                Pair("Dub", "dub"),
+                Pair("RAW", "raw"),
+            ),
+        )
 
     class GenreCheckBox(name: String, val id: String) : AnimeFilter.CheckBox(name, false)
-    class GenreFilter(genres: List<Pair<String, String>>) :
-        AnimeFilter.Group<AnimeFilter.CheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) }) {
+    class GenreFilter(genres: List<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>("Genres", genres.map { GenreCheckBox(it.first, it.second) }) {
         fun getIncluded(): List<String> = state.filter { it.state }.map { (it as GenreCheckBox).id }
     }
 

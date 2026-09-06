@@ -20,15 +20,15 @@ import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.UrlUtils
 import extensions.utils.asJsoup
-import java.text.SimpleDateFormat
-import java.util.Locale
 import keiyoushi.utils.parseAs
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import org.jsoup.nodes.Document
+import java.text.SimpleDateFormat
+import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
 
 class Gogoanime : Source() {
 
@@ -204,8 +204,7 @@ class Gogoanime : Source() {
         }.sortedByDescending { it.episode_number } // Aniyomi requires descending order
     }
 
-    private fun Float.displayString(): String =
-        if (this == toInt().toFloat()) toInt().toString() else toString()
+    private fun Float.displayString(): String = if (this == toInt().toFloat()) toInt().toString() else toString()
 
     // ============================ Video Links =============================
     // 2-Tier Model:
