@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.animeextension.en.gogoanime
 
 import android.util.Base64
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
