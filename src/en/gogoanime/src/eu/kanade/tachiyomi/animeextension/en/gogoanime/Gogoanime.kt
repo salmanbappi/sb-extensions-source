@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.gogoanime
 
 import android.util.Base64
+import aniyomi.lib.m3u8server.M3u8Integration
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -56,6 +57,7 @@ class Gogoanime : Source() {
     private val vidmolyExtractor by lazy { VidMolyExtractor(client) }
     private val byseExtractor by lazy { ByseExtractor(client, playlistUtils) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -344,9 +346,11 @@ class Gogoanime : Source() {
             .set("Referer", "https://megaplay.buzz/")
             .build()
 
-        return playlistUtils.extractFromHls(
+        val videos = playlistUtils.extractFromHls(
             masterUrl,
             referer = "https://megaplay.buzz/",
+            masterHeaders = videoHeaders,
+            videoHeaders = videoHeaders,
             videoNameGen = { quality -> "$quality" },
             subtitleList = subtitleTracks,
         ).map { video ->
@@ -359,6 +363,12 @@ class Gogoanime : Source() {
                 audioTracks = video.audioTracks,
             )
         }
+
+        // Route the HLS chain through the local proxy when it can start
+        // (rewrites the playlist so every segment fetch carries the CDN
+        // headers and strips any stego prefix); otherwise fall back to the
+        // direct CDN URLs rather than dropping the HD-1 server.
+        return runCatching { m3u8Integration.processVideoList(videos) }.getOrDefault(videos)
     }
 
     @Serializable

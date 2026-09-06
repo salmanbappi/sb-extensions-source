@@ -1,7 +1,7 @@
 ext {
     extName = 'Gogoanime'
     extClass = '.Gogoanime'
-    extVersionCode = 3
+    extVersionCode = 4
     isNsfw = false
 }
 
@@ -12,4 +12,5 @@ dependencies {
     implementation(project(":lib:playlist-utils"))
     implementation(project(":lib:universal-extractor"))
     implementation(project(":lib:vidmoly-extractor"))
+    implementation(project(":lib:m3u8server"))
 }
