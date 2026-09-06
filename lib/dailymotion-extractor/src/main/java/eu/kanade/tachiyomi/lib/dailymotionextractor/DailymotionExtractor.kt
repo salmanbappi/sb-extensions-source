@@ -129,96 +129,26 @@ class DailymotionExtractor(private val client: OkHttpClient, private val headers
             Track(it.urls.first(), it.label)
         } ?: emptyList()
 
+        // The master M3U8 URL has a short-lived sec= signed token.
+        // Fetch and parse the master NOW (server-side) so we can extract the
+        // long-lived variant and audio playlist URLs from vod3.cf.dmcdn.net,
+        // which are accessible without any special headers or cookies.
+        //
+        // NOTE: do NOT expose the master URL itself as an "Auto/Adaptive"
+        // Video entry — the in-app player would run ABR and oscillate between
+        // the 1080p rendition (6+ Mbps) and lower ones on throttled mobile
+        // links, which users experience as rhythmic freezing. Fixed-quality
+        // variant entries let the player sustain a single bitrate instead.
         val masterHeaders = (fetchHeaders?.newBuilder() ?: headers.newBuilder())
             .set("Accept", "*/*")
             .set("Referer", "$DAILYMOTION_URL/")
             .set("Cookie", "ts=$ts; v1st=$v1st")
             .build()
 
-        val masterPlaylist = runCatching {
-            client.newCall(GET(masterUrl, masterHeaders)).execute().body.string()
-        }.getOrNull()
-
-        if (!masterPlaylist.isNullOrBlank() && masterPlaylist.contains("#EXT-X-STREAM-INF")) {
-            val audioTracks = mutableListOf<Track>()
-            val lines = masterPlaylist.lines()
-            for (line in lines) {
-                if (line.startsWith("#EXT-X-MEDIA:TYPE=AUDIO")) {
-                    val nameMatch = Regex("""NAME="([^"]+)"""").find(line)
-                    val uriMatch = Regex("""URI="([^"]+)"""").find(line)
-                    val groupMatch = Regex("""GROUP-ID="([^"]+)"""").find(line)
-                    val uri = uriMatch?.groupValues?.get(1)
-                    val name = nameMatch?.groupValues?.get(1) ?: "Audio"
-                    val group = groupMatch?.groupValues?.get(1) ?: ""
-                    if (!uri.isNullOrBlank()) {
-                        val trackLabel = when {
-                            group.contains("q2") -> "$name (HD)"
-                            group.contains("q1") -> "$name (SD)"
-                            else -> name
-                        }
-                        if (audioTracks.none { it.url == uri }) {
-                            audioTracks.add(Track(uri, trackLabel))
-                        }
-                    }
-                }
-            }
-
-            val videos = mutableListOf<Video>()
-            val seenQualities = mutableSetOf<String>()
-
-            // Auto (Adaptive Master Stream) - Native HLS master playlist with audio
-            videos.add(
-                Video(
-                    videoUrl = masterUrl,
-                    videoTitle = "${prefix}Auto (Adaptive)",
-                    headers = masterHeaders,
-                    subtitleTracks = subtitleList,
-                    audioTracks = audioTracks,
-                ),
-            )
-
-            // Individual quality variants with audioTracks populated
-            for (i in lines.indices) {
-                val line = lines[i].trim()
-                if (line.startsWith("#EXT-X-STREAM-INF")) {
-                    val nextUrl = lines.getOrNull(i + 1)?.trim() ?: continue
-                    if (nextUrl.startsWith("#") || nextUrl.isBlank()) continue
-
-                    val resMatch = Regex("""RESOLUTION=\d+x(\d+)""").find(line)
-                    val height = resMatch?.groupValues?.get(1)?.toIntOrNull()
-                    val nameMatch = Regex("""NAME="([^"]+)"""").find(line)
-                    val qualityName = nameMatch?.groupValues?.get(1)
-
-                    val qualityLabel = when {
-                        height != null && height >= 2160 -> "2160p (4K)"
-                        height != null -> "${height}p"
-                        !qualityName.isNullOrBlank() -> "${qualityName}p"
-                        else -> "Video"
-                    }
-
-                    if (qualityLabel in seenQualities) continue
-                    seenQualities.add(qualityLabel)
-
-                    videos.add(
-                        Video(
-                            videoUrl = nextUrl,
-                            videoTitle = "$prefix$qualityLabel",
-                            headers = headers,
-                            subtitleTracks = subtitleList,
-                            audioTracks = audioTracks,
-                        ),
-                    )
-                }
-            }
-
-            if (videos.isNotEmpty()) {
-                return videos
-            }
-        }
-
         return playlistUtils.extractFromHls(
             playlistUrl = masterUrl,
             masterHeadersGen = { _, _ -> masterHeaders },
+            // Variant/audio URLs at vod3.cf.dmcdn.net need no special auth
             videoHeadersGen = { _, _, _ -> headers },
             subtitleList = subtitleList,
             videoNameGen = { "$prefix$it" },
