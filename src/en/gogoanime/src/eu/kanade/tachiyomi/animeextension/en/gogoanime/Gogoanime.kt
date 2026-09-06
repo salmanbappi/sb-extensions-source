@@ -57,7 +57,7 @@ class Gogoanime : Source() {
     private val vidmolyExtractor by lazy { VidMolyExtractor(client) }
     private val byseExtractor by lazy { ByseExtractor(client, playlistUtils) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
-    private val m3u8Integration by lazy { M3u8Integration(client) }
+    private val megaPlayProxy by lazy { MegaPlayProxy(client) }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -364,11 +364,15 @@ class Gogoanime : Source() {
             )
         }
 
-        // Route the HLS chain through the local proxy when it can start
-        // (rewrites the playlist so every segment fetch carries the CDN
-        // headers and strips any stego prefix); otherwise fall back to the
-        // direct CDN URLs rather than dropping the HD-1 server.
-        return runCatching { m3u8Integration.processVideoList(videos) }.getOrDefault(videos)
+        // MegaPlay serves MPEG-TS segments under rotating fake image extensions
+        // (.jpg/.html/.js/...). FFmpeg-based players (mpv, Aniyomi's engine) probe
+        // the segment demuxer from the URL suffix, pick image2/mjpeg for those,
+        // and fail with "Invalid data found" in a repeating glitch loop. The
+        // local relay re-serves every segment with a .ts-terminated URL and the
+        // CDN's required Referer; processVideo() falls back to the direct CDN
+        // URL when the relay cannot start.
+        val relay = megaPlayProxy
+        return videos.map { relay.processVideo(it, "https://megaplay.buzz/") }
     }
 
     @Serializable
