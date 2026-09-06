@@ -174,18 +174,28 @@ class MegaPlayProxy(private val client: OkHttpClient) {
         val referer = Regex("""[?&]r=([^&]+)""").find(path)?.groupValues?.get(1)
             ?.let { runCatching { String(Base64.decode(it, Base64.URL_SAFE)) }.getOrNull() }
             ?: "https://megaplay.buzz/"
-        val b64 = path.substringAfter("/playlist/", "")
-            .substringAfter("/media/", "")
+
+        // NOTE: do NOT chain substringAfter() here - it returns its default
+        // (empty string) when the delimiter is absent, which silently wipes
+        // the token and made every relay request fail with 400.
+        val prefix = when {
+            path.startsWith("/playlist/") -> "/playlist/"
+            path.startsWith("/media/") -> "/media/"
+            else -> return null
+        }
+        val token = path.substringAfter(prefix)
+            .substringBefore('?')
             .substringBefore(".m3u8")
             .substringBefore(".ts")
-            .substringBefore("?")
-        if (b64.isBlank()) return null
-        val url = runCatching { String(Base64.decode(b64, Base64.URL_SAFE)) }.getOrNull() ?: return null
+            .replace("=", "")
+        if (token.isBlank()) return null
+        val url = runCatching { String(Base64.decode(token, Base64.URL_SAFE)) }.getOrNull() ?: return null
         if (!url.startsWith("http")) return null
         return url to referer
     }
 
-    private fun encode(value: String): String = Base64.encodeToString(value.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)
+    private fun encode(value: String): String =
+        Base64.encodeToString(value.toByteArray(), Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
 
     private fun resolve(baseUrl: String, relative: String): String = baseUrl.toHttpUrlOrNull()?.resolve(relative)?.toString() ?: relative
 
