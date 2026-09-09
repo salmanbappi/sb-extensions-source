@@ -259,32 +259,50 @@ class AniWaveExtractor(private val source: AniWave) {
         apiHeaders: Headers,
         streamType: String,
     ): Pair<SourceResponseDto, Boolean> {
-        val primaryResult = try {
-            val data = source.client.newCall(GET("https://$host/stream/getSources?id=$dataId&id=$dataId", apiHeaders))
-                .awaitSuccess().use { response ->
-                    if (!response.isSuccessful) throw Exception("getSources failed: HTTP ${response.code}")
-                    response.parseAs<SourceResponseDto>()
+        // The hoster now expects the id AND type parameters duplicated on both endpoints. A
+        // 200-with-empty-sources response (rate limiting / WAF) does not throw, so both endpoints
+        // must be attempted explicitly rather than only falling back on a thrown error.
+        val candidates = listOf(
+            "getSources" to "https://$host/stream/getSources?id=$dataId&id=$dataId&type=$streamType&type=$streamType",
+            "getSourcesNew" to "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId&type=$streamType&type=$streamType",
+        )
+
+        var lastBodyPreview = ""
+        for ((name, url) in candidates) {
+            Log.i("AniWaveExtractor", "fetchSourceData: GET $name: $url")
+            repeat(2) { attempt ->
+                val body = try {
+                    source.client.newCall(GET(url, apiHeaders)).awaitSuccess().use { response ->
+                        if (!response.isSuccessful) throw Exception("$name failed: HTTP ${response.code}")
+                        response.body.string()
+                    }
+                } catch (e: Exception) {
+                    Log.w("AniWaveExtractor", "fetchSourceData: $name (attempt ${attempt + 1}) failed: ${e.message}")
+                    null
+                } ?: return@repeat
+
+                val data = try {
+                    body.parseAs<SourceResponseDto>()
+                } catch (e: Exception) {
+                    lastBodyPreview = body.take(200)
+                    Log.w("AniWaveExtractor", "fetchSourceData: $name JSON decode failed: ${e.message}; body=$lastBodyPreview")
+                    return@repeat
                 }
-            data to false
-        } catch (_: Exception) {
-            null
-        }
 
-        if (primaryResult != null) return primaryResult
+                if (data.sources.startsWith("http")) {
+                    return data to (name == "getSourcesNew")
+                }
 
-        val newUrl = if (streamType.isNotEmpty()) {
-            "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId&type=$streamType&type=$streamType"
-        } else {
-            "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId"
-        }
-
-        val data = source.client.newCall(GET(newUrl, apiHeaders))
-            .awaitSuccess().use { response ->
-                if (!response.isSuccessful) throw Exception("getSourcesNew failed: HTTP ${response.code}")
-                response.parseAs<SourceResponseDto>()
+                lastBodyPreview = body.take(200)
+                Log.w("AniWaveExtractor", "fetchSourceData: $name returned no sources (sources='${data.sources}') body=$lastBodyPreview")
+                if (attempt == 0) {
+                    // Transient empty responses (rate limiting / WAF) often pass on retry.
+                    kotlinx.coroutines.delay(700L)
+                }
             }
+        }
 
-        return data to true
+        throw Exception("No valid m3u8 found (last body: $lastBodyPreview)")
     }
 
     private suspend fun fetchSourcesFromPage(
