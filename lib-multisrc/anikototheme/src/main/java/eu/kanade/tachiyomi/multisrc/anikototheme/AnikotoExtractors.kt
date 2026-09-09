@@ -105,8 +105,7 @@ class AnikotoExtractors(
         else -> "und"
     }
 
-    private fun parseMasterPlaylist(text: String, masterUrl: String): List<VariantInfo> =
-        HlsPlaylistParser.parseMasterPlaylist(text, masterUrl)
+    private fun parseMasterPlaylist(text: String, masterUrl: String): List<VariantInfo> = HlsPlaylistParser.parseMasterPlaylist(text, masterUrl)
 
     suspend fun resolveVidTube(
         iframeUrl: String,

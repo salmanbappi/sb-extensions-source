@@ -563,12 +563,10 @@ class LocalProxyServer(
         return true
     }
 
-    private fun selectMatchingVariant(variants: List<VariantInfo>, quality: String): VariantInfo? =
-        variants.firstOrNull { it.quality == quality }
-            ?: variants.minByOrNull { kotlin.math.abs(it.resolution - quality.filter(Char::isDigit).toIntOrNull().orZero()) }
+    private fun selectMatchingVariant(variants: List<VariantInfo>, quality: String): VariantInfo? = variants.firstOrNull { it.quality == quality }
+        ?: variants.minByOrNull { kotlin.math.abs(it.resolution - quality.filter(Char::isDigit).toIntOrNull().orZero()) }
 
-    private fun selectClosestVariant(variants: List<VariantData>, quality: String): VariantData? =
-        variants.minByOrNull { kotlin.math.abs(it.resolution - quality.filter(Char::isDigit).toIntOrNull().orZero()) }
+    private fun selectClosestVariant(variants: List<VariantData>, quality: String): VariantData? = variants.minByOrNull { kotlin.math.abs(it.resolution - quality.filter(Char::isDigit).toIntOrNull().orZero()) }
 
     private fun Int?.orZero(): Int = this ?: 0
 
