@@ -128,7 +128,7 @@ class MovieBox : Source() {
         val contentType = if (method == "POST") "application/json; charset=utf-8" else "application/json"
 
         return Headers.Builder()
-            .add("user-agent", "com.community.mbox.in/50020042 (Linux; U; Android 16; en_IN; sdk_gphone64_x86_64; Build/BP22.250325.006; Cronet/133.0.6876.3)")
+            .add("user-agent", "com.community.mbox.in/50020126 (Linux; U; Android 14; en_IN; SM-S918B; Build/UP1A.231005.007; Cronet/133.0.6876.3)")
             .add("accept", "application/json")
             .add("content-type", contentType)
             .add("connection", "keep-alive")
@@ -152,20 +152,20 @@ class MovieBox : Source() {
     private fun getClientInfo(): String = JsonObject(
         mapOf(
             "package_name" to kotlinx.serialization.json.JsonPrimitive("com.community.mbox.in"),
-            "version_name" to kotlinx.serialization.json.JsonPrimitive("3.0.03.0529.03"),
-            "version_code" to kotlinx.serialization.json.JsonPrimitive(50020042),
+            "version_name" to kotlinx.serialization.json.JsonPrimitive("4.0.02.0831.03"),
+            "version_code" to kotlinx.serialization.json.JsonPrimitive(50020126),
             "os" to kotlinx.serialization.json.JsonPrimitive("android"),
-            "os_version" to kotlinx.serialization.json.JsonPrimitive("16"),
+            "os_version" to kotlinx.serialization.json.JsonPrimitive("14"),
             "device_id" to kotlinx.serialization.json.JsonPrimitive(deviceId),
             "install_store" to kotlinx.serialization.json.JsonPrimitive("ps"),
             "gaid" to kotlinx.serialization.json.JsonPrimitive("d7578036d13336cc"),
-            "brand" to kotlinx.serialization.json.JsonPrimitive("google"),
-            "model" to kotlinx.serialization.json.JsonPrimitive("sdk_gphone64_x86_64"),
+            "brand" to kotlinx.serialization.json.JsonPrimitive("samsung"),
+            "model" to kotlinx.serialization.json.JsonPrimitive("SM-S918B"),
             "system_language" to kotlinx.serialization.json.JsonPrimitive("en"),
             "net" to kotlinx.serialization.json.JsonPrimitive("NETWORK_WIFI"),
             "region" to kotlinx.serialization.json.JsonPrimitive("IN"),
             "timezone" to kotlinx.serialization.json.JsonPrimitive("Asia/Calcutta"),
-            "sp_code" to kotlinx.serialization.json.JsonPrimitive(""),
+            "sp_code" to kotlinx.serialization.json.JsonPrimitive("90101"),
         ),
     ).toString()
 
@@ -249,6 +249,40 @@ class MovieBox : Source() {
 
     private fun getPreferredHost(): String = preferences.getString(PREF_HOST_KEY, PREF_HOST_DEFAULT) ?: PREF_HOST_DEFAULT
 
+    private fun extractRealStreamUrl(rawUrl: String, signCookie: String?): String {
+        if (!signCookie.isNullOrBlank()) {
+            if (signCookie.contains("urlprefix=")) {
+                try {
+                    val b64 = signCookie.substringAfter("urlprefix=").substringBefore(";").substringBefore(":sign=")
+                    val padded = b64 + "=".repeat((4 - b64.length % 4) % 4)
+                    val decoded = String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8).trim()
+                    if (decoded.startsWith("http")) {
+                        val base = if (decoded.endsWith("/")) decoded else "$decoded/"
+                        return "${base}index.mpd"
+                    }
+                } catch (_: Exception) {
+                    // ignore and fallback
+                }
+            }
+            if (signCookie.contains("CloudFront-Policy=")) {
+                try {
+                    val b64 = signCookie.substringAfter("CloudFront-Policy=").substringBefore(";")
+                    val padded = b64 + "=".repeat((4 - b64.length % 4) % 4)
+                    val jsonStr = String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8)
+                    val resource = json.parseToJsonElement(jsonStr).obj?.get("Statement")?.arr?.firstOrNull()?.obj?.get("Resource")?.str
+                    if (resource != null && resource.startsWith("http")) {
+                        val base = resource.substringBeforeLast("*")
+                        val cleanBase = if (base.endsWith("/")) base else "$base/"
+                        return "${cleanBase}index.mpd"
+                    }
+                } catch (_: Exception) {
+                    // ignore and fallback
+                }
+            }
+        }
+        return rawUrl
+    }
+
     private fun safeGetJsonWithHeaders(urlPath: String, isPost: Boolean = false, bodyData: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false): Pair<JsonElement, Headers>? {
         val preferredHost = getPreferredHost()
         val candidateHosts = listOf(preferredHost) + apiHosts.filter { it != preferredHost }
@@ -288,7 +322,11 @@ class MovieBox : Source() {
                     if (streams.isNullOrEmpty()) continue
                     val onlyBrokenCdn = streams.all {
                         val u = it.obj?.get("url")?.str.orEmpty()
-                        u.contains("sacdn.hakunaymatata.com")
+                        val cookie = it.obj?.get("signCookie")?.str.orEmpty()
+                        val resolved = extractRealStreamUrl(u, cookie)
+                        resolved.contains("sacdn.hakunaymatata.com") ||
+                            resolved.contains("b164fbfb43477929") ||
+                            resolved.contains("macdn.aoneroom.com/other/")
                     }
                     if (onlyBrokenCdn) continue
                 }
@@ -658,12 +696,17 @@ class MovieBox : Source() {
             val jsonRes = safeGetJsonWithHeaders(playUrl, isPlayback = true)?.first ?: continue
             jsonRes.obj?.get("data")?.obj?.get("streams")?.arr?.forEach { stream ->
                 val obj = stream.obj ?: return@forEach
-                val url = obj["url"]?.str ?: return@forEach
-                val res = obj["resolutions"]?.str ?: "Auto"
+                val rawUrl = obj["url"]?.str ?: return@forEach
                 val signCookie = obj["signCookie"]?.str
                 val cleanCookie = signCookie?.trim()?.trimEnd(';')
+                val resolvedUrl = extractRealStreamUrl(rawUrl, cleanCookie)
+                if (resolvedUrl.contains("b164fbfb43477929") || resolvedUrl.contains("macdn.aoneroom.com/other/")) {
+                    return@forEach
+                }
+
+                val res = obj["resolutions"]?.str ?: "Auto"
                 val streamId = obj["id"]?.str ?: ""
-                val referer = if (url.contains("hakunaymatata") || url.contains("inmoviebox")) {
+                val referer = if (resolvedUrl.contains("hakunaymatata") || resolvedUrl.contains("inmoviebox")) {
                     "https://apig.inmoviebox.com"
                 } else {
                     "https://h5.aoneroom.com/"
@@ -681,12 +724,32 @@ class MovieBox : Source() {
                     subRes?.obj?.get("data")?.obj?.get("extCaptions")?.arr?.forEach { cap ->
                         val capObj = cap.obj ?: return@forEach
                         val capUrl = capObj["url"]?.str ?: return@forEach
-                        subtitleTracks.add(Track(capUrl, capObj["lanName"]?.str ?: capObj["language"]?.str ?: "Unknown"))
+                        subtitleTracks.add(
+                            Track(
+                                url = capUrl,
+                                lang = capObj["lanName"]?.str ?: capObj["language"]?.str ?: "Unknown",
+                            ),
+                        )
                     }
                 }
 
+                val isDash = resolvedUrl.endsWith(".mpd") || resolvedUrl.contains("/dash/")
+                val formatTag = if (isDash) "DASH" else "MP4"
                 val langTag = lang.replace("dub", "").replace("dubbed", "").trim()
-                res.split(",").forEach { r -> videos.add(Video(videoUrl = url, videoTitle = "${r.trim()}P ($langTag)", headers = headers, subtitleTracks = subtitleTracks)) }
+                val langSuffix = if (langTag.isNotBlank() && !langTag.equals("original", ignoreCase = true)) " - $langTag" else ""
+                res.split(",").forEach { r ->
+                    val cleanRes = r.trim()
+                    val resInt = cleanRes.toIntOrNull()
+                    videos.add(
+                        Video(
+                            videoUrl = resolvedUrl,
+                            videoTitle = "$cleanRes ($formatTag$langSuffix)",
+                            headers = headers,
+                            resolution = resInt,
+                            subtitleTracks = subtitleTracks,
+                        ),
+                    )
+                }
             }
         }
         return videos.sortVideos()
