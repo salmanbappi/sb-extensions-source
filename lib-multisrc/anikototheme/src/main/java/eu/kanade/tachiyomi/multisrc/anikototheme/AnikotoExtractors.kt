@@ -22,7 +22,7 @@ class AnikotoExtractors(
 ) {
     companion object {
         private const val TAG = "AnikotoExtractors"
-        private val DATA_ID_REGEX = Regex("""data-id="(\d+)"""")
+        private val DATA_ID_REGEX = Regex("""data-id="([^"]+)"""")
         private const val BROWSER_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -32,6 +32,7 @@ class AnikotoExtractors(
 
     private fun logi(msg: String) = Log.i(TAG, msg)
     private fun logd(msg: String) = Log.d(TAG, msg)
+    private fun logw(msg: String) = Log.w(TAG, msg)
     private fun loge(msg: String, e: Throwable? = null) {
         if (e != null) Log.e(TAG, msg, e) else Log.e(TAG, msg)
     }
@@ -42,9 +43,10 @@ class AnikotoExtractors(
         .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .build()
 
-    private fun vidtubeApiHeaders(): Headers = Headers.Builder()
+    private fun vidtubeApiHeaders(host: String, referer: String): Headers = Headers.Builder()
         .set("User-Agent", BROWSER_UA)
-        .set("Referer", "https://vidtube.site/")
+        .set("Referer", referer)
+        .set("Origin", "https://$host")
         .set("X-Requested-With", "XMLHttpRequest")
         .set("Accept", "*/*")
         .build()
@@ -124,15 +126,28 @@ class AnikotoExtractors(
             }
             logi("resolveVidTube: data-id=$dataId")
 
-            val apiHeaders = vidtubeApiHeaders()
+            val apiHeaders = vidtubeApiHeaders(host, iframeUrl)
 
             var sourcesBody: String? = null
+            // The hoster now expects BOTH the id and the type parameters duplicated on the
+            // getSources endpoint (and an Origin header). Fall back to getSourcesNew when the
+            // primary endpoint rejects the request.
             try {
-                val sourcesUrl = "https://$host/stream/getSources?id=$dataId&type=$audioType"
+                val sourcesUrl = "https://$host/stream/getSources?id=$dataId&id=$dataId&type=$audioType&type=$audioType"
                 logi("resolveVidTube: [2/5] GET getSources: $sourcesUrl")
                 sourcesBody = fetchString(sourcesUrl, apiHeaders)
             } catch (e: Exception) {
-                // Ignore
+                logw("resolveVidTube: getSources failed (${e.message}); trying getSourcesNew")
+            }
+
+            if (sourcesBody == null) {
+                try {
+                    val newUrl = "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId&type=$audioType&type=$audioType"
+                    logi("resolveVidTube: [2b/5] GET getSourcesNew: $newUrl")
+                    sourcesBody = fetchString(newUrl, apiHeaders)
+                } catch (e: Exception) {
+                    // Ignore
+                }
             }
 
             if (sourcesBody == null) {
@@ -141,9 +156,9 @@ class AnikotoExtractors(
             }
 
             val sourcesResp = json.decodeFromString<VidTubeSourcesResponse>(sourcesBody)
-            val masterM3u8 = sourcesResp.sources?.file
+            val masterM3u8 = sourcesResp.sources
             if (masterM3u8.isNullOrEmpty() || !masterM3u8.startsWith("http")) {
-                loge("resolveVidTube: no valid m3u8 in getSources response (sources.file='$masterM3u8')")
+                loge("resolveVidTube: no valid m3u8 in getSources response (sources='$masterM3u8')")
                 return null
             }
             logi("resolveVidTube: [3/5] fetching master m3u8")

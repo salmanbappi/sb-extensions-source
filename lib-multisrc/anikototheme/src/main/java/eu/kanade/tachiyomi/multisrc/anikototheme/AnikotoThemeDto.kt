@@ -1,9 +1,16 @@
 package eu.kanade.tachiyomi.multisrc.anikototheme
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -40,13 +47,8 @@ data class SkipData(
 
 @Serializable
 data class VidTubeSourcesResponse(
-    val sources: VidTubeSources? = null,
+    @Serializable(with = SourcesSerializer::class) val sources: String = "",
     val tracks: List<VidTubeTrack> = emptyList(),
-)
-
-@Serializable
-data class VidTubeSources(
-    val file: String = "",
 )
 
 @Serializable
@@ -55,6 +57,29 @@ data class VidTubeTrack(
     val label: String = "",
     val kind: String = "",
 )
+
+/**
+ * The hoster serves `sources` either as a plain string (the master m3u8 URL), as a JSON object
+ * (`{"file": "..."}`), or as an array of such values depending on the endpoint and day. Normalize
+ * all three shapes to a String.
+ */
+object SourcesSerializer : KSerializer<String> {
+    override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
+
+    override fun deserialize(decoder: Decoder): String = when (val element = (decoder as JsonDecoder).decodeJsonElement()) {
+        is JsonObject -> element["file"]?.jsonPrimitive?.content ?: ""
+        is JsonArray -> element.firstOrNull()?.let {
+            when (it) {
+                is JsonObject -> it["file"]?.jsonPrimitive?.content ?: ""
+                is JsonPrimitive -> it.content
+                else -> ""
+            }
+        } ?: ""
+        is JsonPrimitive -> element.content
+    }
+
+    override fun serialize(encoder: Encoder, value: String): Unit = throw UnsupportedOperationException("Serialization not supported")
+}
 
 data class EpisodeMeta(
     val slug: String,
