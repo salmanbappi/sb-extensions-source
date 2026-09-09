@@ -14,7 +14,6 @@ import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.net.URI
 
 class AnikotoExtractors(
     private val client: OkHttpClient,
