@@ -24,9 +24,6 @@ class AnikotoExtractors(
     companion object {
         private const val TAG = "AnikotoExtractors"
         private val DATA_ID_REGEX = Regex("""data-id="(\d+)"""")
-        private val RESOLUTION_REGEX = Regex("""RESOLUTION=\d+x(\d+)""")
-        private val NAME_REGEX = Regex("""NAME="([^"]+)"""")
-        private val BANDWIDTH_REGEX = Regex("""BANDWIDTH=(\d+)""")
         private const val BROWSER_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -108,34 +105,8 @@ class AnikotoExtractors(
         else -> "und"
     }
 
-    private fun parseMasterPlaylist(text: String, masterUrl: String): List<VariantInfo> {
-        val result = mutableListOf<VariantInfo>()
-        val lines = text.lines()
-        var i = 0
-        while (i < lines.size) {
-            val line = lines[i]
-            if (line.startsWith("#EXT-X-STREAM-INF:")) {
-                val next = lines.getOrNull(i + 1)?.trim() ?: ""
-                if (next.isNotEmpty() && !next.startsWith("#")) {
-                    val bandwidth = BANDWIDTH_REGEX.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                    val resH = RESOLUTION_REGEX.find(line)?.groupValues?.get(1) ?: ""
-                    val resolution = resH.toIntOrNull() ?: 0
-                    var quality = NAME_REGEX.find(line)?.groupValues?.get(1) ?: ""
-                    if (quality.isBlank() || quality == "Unknown") {
-                        quality = if (resolution > 0) "${resolution}p" else "Unknown"
-                    }
-                    val fullUrl = URI(masterUrl).resolve(next).toString()
-                    result.add(VariantInfo(fullUrl, bandwidth, quality, resolution))
-                    i += 2
-                } else {
-                    i++
-                }
-            } else {
-                i++
-            }
-        }
-        return result
-    }
+    private fun parseMasterPlaylist(text: String, masterUrl: String): List<VariantInfo> =
+        HlsPlaylistParser.parseMasterPlaylist(text, masterUrl)
 
     suspend fun resolveVidTube(
         iframeUrl: String,
@@ -212,7 +183,14 @@ class AnikotoExtractors(
                                 val segs = HlsPlaylistParser.parseVariantSegments(varText, vi.url)
                                 logi("resolveVidTube:   variant ${vi.quality}(${vi.bandwidth}): ${segs.size} segments")
                                 if (segs.isNotEmpty()) {
-                                    LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs, vi.url)
+                                    LocalProxyServer.VariantData(
+                                        quality = vi.quality,
+                                        bandwidth = vi.bandwidth,
+                                        resolution = vi.resolution,
+                                        segments = segs,
+                                        playlistUrl = vi.url,
+                                        masterUrl = masterM3u8,
+                                    )
                                 } else {
                                     null
                                 }
@@ -240,7 +218,15 @@ class AnikotoExtractors(
             }
 
             logi("resolveVidTube: SUCCESS hoster=$hosterName audio=$audioLabel variants=${variantDataList.size} subs=${subtitles.size} referer=https://$host/")
-            LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, subtitles, seg)
+            LocalProxyServer.AudioStream(
+                audioType = audioType,
+                audioLabel = audioLabel,
+                hosterName = hosterName,
+                variants = variantDataList,
+                subtitles = subtitles,
+                headers = seg,
+                iframeUrl = iframeUrl,
+            )
         } catch (e: Exception) {
             loge("resolveVidTube: FAILED hoster=$hosterName audio=$audioType", e)
             null
@@ -294,7 +280,14 @@ class AnikotoExtractors(
                                     val segs = HlsPlaylistParser.parseVariantSegments(varText, vi.url)
                                     logd("resolveKiwi:   variant ${vi.quality}: ${segs.size} segments (no filter)")
                                     if (segs.isNotEmpty()) {
-                                        LocalProxyServer.VariantData(vi.quality, vi.bandwidth, vi.resolution, segs, vi.url)
+                                        LocalProxyServer.VariantData(
+                                            quality = vi.quality,
+                                            bandwidth = vi.bandwidth,
+                                            resolution = vi.resolution,
+                                            segments = segs,
+                                            playlistUrl = vi.url,
+                                            masterUrl = decoded,
+                                        )
                                     } else {
                                         null
                                     }
@@ -317,7 +310,15 @@ class AnikotoExtractors(
                 val audioLabel = if (audioType == "sub") "H-SUB" else "A-DUB"
 
                 logi("resolveKiwi: SUCCESS hoster=$hosterName audio=$audioLabel variants=${variantDataList.size} referer=https://vibeplayer.site/")
-                LocalProxyServer.AudioStream(audioType, audioLabel, hosterName, variantDataList, emptyList(), headers)
+                LocalProxyServer.AudioStream(
+                    audioType = audioType,
+                    audioLabel = audioLabel,
+                    hosterName = hosterName,
+                    variants = variantDataList,
+                    subtitles = emptyList(),
+                    headers = headers,
+                    iframeUrl = iframeUrl,
+                )
             } else {
                 loge("resolveKiwi: master is not m3u8 (starts with ${masterText.take(40)})")
                 null

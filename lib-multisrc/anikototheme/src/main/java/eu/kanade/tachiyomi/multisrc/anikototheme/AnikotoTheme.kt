@@ -544,6 +544,11 @@ abstract class AnikotoTheme : Source() {
             webViewFetcher = webViewFetcher,
         )
         server.playlist = LocalProxyServer.Playlist(resolvedStreams)
+        server.reResolveStream = { staleStream ->
+            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                reResolveStream(staleStream)
+            }
+        }
         server.prefetchCount = prefetchBuffer.toIntOrNull() ?: 10
         server.start()
         val proxyUrl = server.baseUrl
@@ -648,6 +653,26 @@ abstract class AnikotoTheme : Source() {
     override suspend fun resolveVideo(video: Video): Video {
         activeProxyServer?.onQualitySwitch()
         return video
+    }
+
+    private suspend fun reResolveStream(staleStream: LocalProxyServer.AudioStream): LocalProxyServer.AudioStream? {
+        val iframeUrl = staleStream.iframeUrl
+        if (iframeUrl.isBlank()) return null
+        val host = iframeUrl.substringAfter("://").substringBefore("/")
+        logi("Proxy full re-resolve: ${staleStream.hosterName}/${staleStream.audioType} host=$host")
+        return when {
+            host.contains("vidtube.site", ignoreCase = true) ||
+                host.contains("megaplay.buzz", ignoreCase = true) ||
+                host.contains("vidwish.live", ignoreCase = true) -> {
+                extractors.resolveVidTube(iframeUrl, staleStream.audioType, staleStream.hosterName)
+            }
+
+            host.contains("mewcdn.online", ignoreCase = true) -> {
+                extractors.resolveKiwi(iframeUrl, staleStream.audioType, staleStream.hosterName)
+            }
+
+            else -> null
+        }
     }
 
     private suspend fun resolveStreamForTask(task: HosterTask, slug: String): LocalProxyServer.AudioStream? {

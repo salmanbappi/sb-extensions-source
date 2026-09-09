@@ -36,8 +36,14 @@ class LocalProxyServer(
 
         // Hosters (VidTube/Kiwi) mint segment URLs that expire some minutes after the playlist is
         // resolved. Re-fetch the variant playlist on this cadence while playing so segments past
-        // ~20 minutes keep valid URLs instead of 403ing and killing playback.
-        private const val VARIANT_REFRESH_INTERVAL_MS = 180000L
+        // ~20 minutes keep valid URLs instead of 403ing and killing playback. When the variant
+        // playlist URL itself expires, the refresh escalates: master re-mint, then a full
+        // re-resolve of the hoster chain (see [refreshVariant]).
+        private const val VARIANT_REFRESH_INTERVAL_MS = 120000L
+
+        // How long a player-facing segment fetch waits for an in-flight background refresh to
+        // finish before trying its own re-mint (the player socket timeout is far longer).
+        private const val REFRESH_WAIT_MAX_MS = 10000L
         private const val TAG = "AnikotoProxy"
         private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -81,6 +87,14 @@ class LocalProxyServer(
 
     var playlist: Playlist? = null
 
+    /**
+     * Full re-resolve hook, wired by the theme. Re-runs the hoster resolution from the original
+     * iframe URL so the proxy can mint a brand-new URL chain (master + variant + segments) when
+     * both the captured variant and master playlist URLs have expired mid-playback.
+     */
+    @Volatile
+    var reResolveStream: ((stream: AudioStream) -> AudioStream?)? = null
+
     private val variantStates = ConcurrentHashMap<String, VariantState>()
 
     val port: Int
@@ -101,6 +115,9 @@ class LocalProxyServer(
         // Upstream variant playlist URL, kept so segment URLs can be re-minted mid-session
         // (the URLs handed out at resolve time expire after a limited window).
         val playlistUrl: String = "",
+        // Upstream master playlist URL, kept so the proxy can re-mint a brand-new variant URL
+        // when the captured variant playlist URL itself has expired.
+        val masterUrl: String = "",
     )
 
     data class SegmentInfo(
@@ -121,6 +138,9 @@ class LocalProxyServer(
         val variants: List<VariantData>,
         val subtitles: List<SubtitleData>,
         val headers: Headers,
+        // Original hoster iframe URL. Used as the entry point for a full re-resolve when both the
+        // variant and master playlist URLs have expired mid-playback.
+        val iframeUrl: String = "",
     )
 
     data class Playlist(
@@ -131,11 +151,21 @@ class LocalProxyServer(
      * Mutable per-variant state. Segment URLs are refreshed in place as the session plays, so the
      * extractors' resolve-time snapshot must not be treated as immutable.
      */
-    private class VariantState(seed: VariantData) {
-        val playlistUrl: String = seed.playlistUrl
+    private class VariantState(seed: VariantData, headers: Headers) {
+        @Volatile
+        var playlistUrl: String = seed.playlistUrl
+
+        @Volatile
+        var masterUrl: String = seed.masterUrl
+
+        @Volatile
+        var headers: Headers = headers
+
+        val quality: String = seed.quality
 
         @Volatile
         var refreshedAtMs: Long = System.currentTimeMillis()
+
         val segments: MutableList<SegmentInfo> = CopyOnWriteArrayList(seed.segments)
         val refreshInProgress = AtomicBoolean(false)
     }
@@ -175,6 +205,7 @@ class LocalProxyServer(
             runCatching { serverSocket?.close() }
             runCatching { acceptThread?.interrupt() }
             runCatching { executor.shutdownNow() }
+            reResolveStream = null
             clearCache()
             fetching.clear()
             variantStates.clear()
@@ -321,6 +352,7 @@ class LocalProxyServer(
         if (cached != null && cached.file.exists()) {
             logi("CACHE HIT: $cacheKey (${cached.size} bytes)")
             sendFile(output, "video/MP2T", cached.file)
+            maybeRefreshVariant(stream, state)
             triggerPrefetch(state, audioType, quality, index)
             return
         }
@@ -336,6 +368,7 @@ class LocalProxyServer(
             if (waitedSegment != null && waitedSegment.file.exists()) {
                 logi("FETCH WAIT SUCCEEDED: $cacheKey (${waitedSegment.size} bytes)")
                 sendFile(output, "video/MP2T", waitedSegment.file)
+                maybeRefreshVariant(stream, state)
                 triggerPrefetch(state, audioType, quality, index)
                 return
             }
@@ -345,12 +378,11 @@ class LocalProxyServer(
         logi("FETCH: $cacheKey → ${state.segments[index].url.take(80)}...")
         fetching[cacheKey] = true
         try {
-            val streamIndex = pl.streams.indexOf(stream)
-            val fetchHeaders = headersForStream(streamIndex)
             // Refresh the captured segment URLs if they are getting old (see VARIANT_REFRESH_INTERVAL_MS).
             maybeRefreshVariant(stream, state)
-            val segBytes = fetchSegmentWithRemint(state, index, fetchHeaders, stream)
+            val segBytes = fetchSegmentWithRemint(state, index, stream)
             val offset = detectSegmentOffset(segBytes)
+            requireValidSegment(segBytes, offset, cacheKey)
             val servedSize = segBytes.size - offset
             val firstByte = if (servedSize > 0) segBytes[offset] else 0.toByte()
             val isTsSync = firstByte == 0x47.toByte()
@@ -376,48 +408,41 @@ class LocalProxyServer(
     }
 
     /**
-     * Fetches a segment, and if the upstream rejects the captured URL (it expired), re-mints the
-     * variant playlist once and retries with the fresh URL.
+     * Fetches a segment and aggressively escalates through the full URL chain when it fails:
+     * retry the current segment, refresh the variant, re-mint the variant through the master, then
+     * fully re-resolve the hoster. This applies to transport failures as well as HTTP status errors.
      */
     private fun fetchSegmentWithRemint(
         state: VariantState,
         index: Int,
-        headers: Headers,
         stream: AudioStream,
     ): ByteArray {
-        val seg = state.segments.getOrNull(index)
+        val firstUrl = state.segments.getOrNull(index)?.url
             ?: throw RuntimeException("Segment $index no longer available")
         try {
-            return fetchSegment(seg.url, headers, retry = true)
-        } catch (e: UpstreamHttpException) {
-            if (e.code in 400..499 && refreshVariant(stream, state)) {
-                val reMinted = state.segments.getOrNull(index) ?: throw e
-                logi("Segment rejected with ${e.code} — re-minted URL, retrying")
-                return fetchSegment(reMinted.url, headers, retry = false)
-            }
-            throw e
+            return fetchSegment(firstUrl, state.headers, retry = true)
+        } catch (firstError: Exception) {
+            logw("Segment $index failed (${firstError.message}) — forcing URL-chain re-mint")
+            if (!refreshVariant(stream, state, waitForExisting = true)) throw firstError
         }
+
+        val variantUrl = state.segments.getOrNull(index)?.url
+            ?: throw RuntimeException("Segment $index unavailable after variant refresh")
+        try {
+            return fetchSegment(variantUrl, state.headers, retry = true)
+        } catch (variantError: Exception) {
+            logw("Segment $index still failed (${variantError.message}) — forcing master/full re-mint")
+            if (!refreshVariant(stream, state, waitForExisting = true, startAtMaster = true)) throw variantError
+        }
+
+        val reResolvedUrl = state.segments.getOrNull(index)?.url
+            ?: throw RuntimeException("Segment $index unavailable after full re-mint")
+        return fetchSegment(reResolvedUrl, state.headers, retry = true)
     }
 
     private fun isWafBlockedHost(url: String): Boolean = url.contains("mewstream.buzz") || url.contains("voltara.click") || url.contains("zaptrix.buzz")
 
-    private fun headersForStream(streamIndex: Int): Headers {
-        val pl = playlist ?: return segmentHeaders
-        if (streamIndex < 0 || streamIndex >= pl.streams.size) return segmentHeaders
-        val stream = pl.streams[streamIndex]
-        val referer = stream.headers["Referer"]
-        return if (referer.isNullOrBlank()) {
-            segmentHeaders
-        } else {
-            Headers.Builder()
-                .set("User-Agent", BROWSER_UA)
-                .set("Referer", referer)
-                .set("Accept", "*/*")
-                .build()
-        }
-    }
-
-    private fun variantState(stream: AudioStream, variant: VariantData): VariantState = variantStates.computeIfAbsent("${stream.audioType}/${variant.quality}") { VariantState(variant) }
+    private fun variantState(stream: AudioStream, variant: VariantData): VariantState = variantStates.computeIfAbsent("${stream.audioType}/${variant.quality}") { VariantState(variant, stream.headers) }
 
     /**
      * Re-mints segment URLs in the background when the current snapshot is older than
@@ -436,40 +461,116 @@ class LocalProxyServer(
     }
 
     /**
-     * Re-fetches the upstream variant playlist and swaps the captured segment URLs for fresh ones,
-     * extending the list if the upstream now advertises more segments. Old URLs are kept for any
-     * index the refreshed playlist no longer lists (a truncated response must not lose segments).
+     * Refreshes the complete expiring URL chain. It first tries the current variant URL, then asks
+     * the master playlist for a new variant URL, and finally invokes [reResolveStream] to repeat the
+     * hoster handshake. Old segments are retained if an upstream response is truncated.
      */
-    private fun refreshVariant(stream: AudioStream, state: VariantState): Boolean {
-        val url = state.playlistUrl
-        if (url.isBlank() || !state.refreshInProgress.compareAndSet(false, true)) return false
+    private fun refreshVariant(
+        stream: AudioStream,
+        state: VariantState,
+        waitForExisting: Boolean = false,
+        startAtMaster: Boolean = false,
+    ): Boolean {
+        if (!state.refreshInProgress.compareAndSet(false, true)) {
+            if (!waitForExisting) return true
+            val startedAt = System.currentTimeMillis()
+            while (state.refreshInProgress.get() && System.currentTimeMillis() - startedAt < REFRESH_WAIT_MAX_MS) {
+                Thread.sleep(50L)
+            }
+            return !state.refreshInProgress.get() &&
+                System.currentTimeMillis() - state.refreshedAtMs < VARIANT_REFRESH_INTERVAL_MS
+        }
+
         try {
-            val pl = playlist ?: return false
-            val streamIndex = pl.streams.indexOf(stream)
-            val headers = headersForStream(streamIndex)
-            val text = fetchPlaylistText(url, headers)
-            val fresh = HlsPlaylistParser.parseVariantSegments(text, url)
-            if (fresh.isNotEmpty()) {
-                val segments = state.segments
-                for (i in fresh.indices) {
-                    if (i < segments.size) {
-                        segments[i] = fresh[i]
-                    } else {
-                        segments.add(fresh[i])
-                    }
-                }
-                state.refreshedAtMs = System.currentTimeMillis()
-                logi("VARIANT REFRESHED: ${stream.audioType} → ${fresh.size} segments")
+            if (!startAtMaster && refreshFromVariantUrl(state, state.headers)) {
+                logi("VARIANT REFRESHED: ${stream.audioType}/${state.quality} → ${state.segments.size} segments")
                 return true
             }
-            logw("VARIANT REFRESH: empty playlist from $url")
+
+            logw("Variant URL refresh failed; trying master re-mint for ${stream.audioType}/${state.quality}")
+            if (refreshFromMasterUrl(state, state.headers)) {
+                logi("MASTER RE-MINTED: ${stream.audioType}/${state.quality} → ${state.segments.size} segments")
+                return true
+            }
+
+            logw("Master re-mint failed; fully re-resolving ${stream.audioType}/${state.quality}")
+            if (refreshFromResolvedStream(stream, state)) {
+                logi("FULL RE-RESOLVE SUCCEEDED: ${stream.audioType}/${state.quality} → ${state.segments.size} segments")
+                return true
+            }
         } catch (e: Exception) {
-            logw("VARIANT REFRESH FAILED: ${e.message}")
+            logw("URL-chain refresh failed: ${e.message}")
         } finally {
             state.refreshInProgress.set(false)
         }
         return false
     }
+
+    private fun refreshFromVariantUrl(state: VariantState, headers: Headers): Boolean {
+        val url = state.playlistUrl.takeIf { it.isNotBlank() } ?: return false
+        return try {
+            val fresh = HlsPlaylistParser.parseVariantSegments(fetchPlaylistText(url, headers), url)
+            updateVariantState(state, fresh)
+        } catch (e: Exception) {
+            logw("Variant playlist refresh failed (${e.message})")
+            false
+        }
+    }
+
+    private fun refreshFromMasterUrl(state: VariantState, headers: Headers): Boolean {
+        val masterUrl = state.masterUrl.takeIf { it.isNotBlank() } ?: return false
+        return try {
+            val master = HlsPlaylistParser.parseMasterPlaylist(fetchPlaylistText(masterUrl, headers), masterUrl)
+            val variant = selectMatchingVariant(master, state.quality) ?: return false
+            val fresh = HlsPlaylistParser.parseVariantSegments(fetchPlaylistText(variant.url, headers), variant.url)
+            if (fresh.isEmpty()) return false
+            state.playlistUrl = variant.url
+            updateVariantState(state, fresh)
+        } catch (e: Exception) {
+            logw("Master playlist refresh failed (${e.message})")
+            false
+        }
+    }
+
+    private fun refreshFromResolvedStream(stream: AudioStream, state: VariantState): Boolean {
+        val resolver = reResolveStream ?: return false
+        return try {
+            val resolved = resolver(stream) ?: return false
+            val variant = resolved.variants.firstOrNull { it.quality == state.quality }
+                ?: selectClosestVariant(resolved.variants, state.quality)
+                ?: return false
+            if (variant.segments.isEmpty()) return false
+            state.playlistUrl = variant.playlistUrl
+            state.masterUrl = variant.masterUrl
+            state.headers = resolved.headers
+            updateVariantState(state, variant.segments)
+        } catch (e: Exception) {
+            logw("Full stream re-resolve failed (${e.message})")
+            false
+        }
+    }
+
+    private fun updateVariantState(state: VariantState, fresh: List<SegmentInfo>): Boolean {
+        if (fresh.isEmpty()) return false
+        for (i in fresh.indices) {
+            if (i < state.segments.size) {
+                state.segments[i] = fresh[i]
+            } else {
+                state.segments.add(fresh[i])
+            }
+        }
+        state.refreshedAtMs = System.currentTimeMillis()
+        return true
+    }
+
+    private fun selectMatchingVariant(variants: List<VariantInfo>, quality: String): VariantInfo? =
+        variants.firstOrNull { it.quality == quality }
+            ?: variants.minByOrNull { kotlin.math.abs(it.resolution - quality.filter(Char::isDigit).toIntOrNull().orZero()) }
+
+    private fun selectClosestVariant(variants: List<VariantData>, quality: String): VariantData? =
+        variants.minByOrNull { kotlin.math.abs(it.resolution - quality.filter(Char::isDigit).toIntOrNull().orZero()) }
+
+    private fun Int?.orZero(): Int = this ?: 0
 
     private fun fetchPlaylistText(url: String, headers: Headers): String {
         val isWaf = isWafBlockedHost(url)
@@ -514,7 +615,7 @@ class LocalProxyServer(
         }
         val request = Request.Builder().url(url).headers(headers).build()
         var lastError: Exception? = null
-        val attempts = if (retry) 2 else 1
+        val attempts = if (retry) 3 else 1
         for (i in 0 until attempts) {
             try {
                 fetchClient.newCall(request).execute().use { response ->
@@ -589,25 +690,23 @@ class LocalProxyServer(
             if (prefetchGeneration.get() != gen) return
             val stream = playlist?.streams?.firstOrNull { it.audioType == key.substringBefore("/") }
                 ?: return
-            val pl = playlist ?: return
-            val streamIndex = pl.streams.indexOf(stream)
-            val fetchHeaders = headersForStream(streamIndex)
             // Keep prefetched URLs young so playback never catches an expired segment.
             maybeRefreshVariant(stream, state)
             val seg = state.segments.getOrNull(index) ?: return
             logi("PREFETCH: $key → ${seg.url.take(60)}...")
             val bytes = try {
-                fetchSegment(seg.url, fetchHeaders, retry = false)
-            } catch (e: UpstreamHttpException) {
-                if (e.code in 400..499 && refreshVariant(stream, state)) {
+                fetchSegment(seg.url, state.headers, retry = false)
+            } catch (e: Exception) {
+                if (refreshVariant(stream, state, waitForExisting = true)) {
                     val reMinted = state.segments.getOrNull(index) ?: throw e
-                    logi("PREFETCH RETRY after ${e.code}: $key")
-                    fetchSegment(reMinted.url, fetchHeaders, retry = false)
+                    logi("PREFETCH RETRY after ${e.message}: $key")
+                    fetchSegment(reMinted.url, state.headers, retry = true)
                 } else {
                     throw e
                 }
             }
             val offset = detectSegmentOffset(bytes)
+            requireValidSegment(bytes, offset, key)
             cacheSegment(key, bytes, offset)
             logi("PREFETCH DONE: $key (${bytes.size - offset} bytes)")
         } catch (e: Exception) {
@@ -652,6 +751,30 @@ class LocalProxyServer(
         }
         logi("getSubtitleTracks($audioType): ${tracks.size} tracks")
         return tracks
+    }
+
+    private fun requireValidSegment(data: ByteArray, offset: Int, key: String) {
+        val servedSize = data.size - offset
+        if (servedSize <= 0) throw RuntimeException("Empty segment payload: $key")
+
+        // Anikoto's known providers return MPEG-TS, sometimes hidden after a PNG wrapper. Some CDNs
+        // answer an expired/missing segment with an HTTP 200 anti-bot or error page (HTML/JSON);
+        // caching that as video makes the player fail later and blocks the retry/re-mint path.
+        // Only reject clearly textual payloads — MPEG-TS and fMP4/CMAF both start with binary bytes.
+        if (data[offset] != 0x47.toByte() && looksLikeTextPayload(data, offset)) {
+            val preview = data.copyOfRange(offset, min(offset + 64, data.size))
+                .toString(Charsets.UTF_8)
+                .replace(Regex("\\s+"), " ")
+                .take(60)
+            throw RuntimeException("Upstream returned a non-video page for $key: ${preview.take(60)}")
+        }
+    }
+
+    private fun looksLikeTextPayload(data: ByteArray, offset: Int): Boolean {
+        val sample = data.copyOfRange(offset, min(offset + 32, data.size))
+        if (sample.isEmpty()) return false
+        // Allow only ASCII printable bytes plus whitespace — binary media data fails this.
+        return sample.all { it in 0x09..0x0D.toByte() || it in 0x20..0x7E.toByte() }
     }
 
     private fun cacheSegment(key: String, data: ByteArray, offset: Int) {
