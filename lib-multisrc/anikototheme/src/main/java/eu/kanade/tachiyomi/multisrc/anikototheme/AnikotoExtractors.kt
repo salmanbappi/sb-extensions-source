@@ -108,6 +108,74 @@ class AnikotoExtractors(
 
     private fun parseMasterPlaylist(text: String, masterUrl: String): List<VariantInfo> = HlsPlaylistParser.parseMasterPlaylist(text, masterUrl)
 
+    /**
+     * Tries both the primary and the "New" getSources endpoints (each through OkHttp first, then
+     * the WebView fetcher for anti-bot hosts), retrying transient empty responses. Returns the
+     * decoded response or null after logging the last raw body so server-side rejection is visible.
+     */
+    private fun fetchSourcesResponse(
+        host: String,
+        dataId: String,
+        audioType: String,
+        apiHeaders: Headers,
+    ): VidTubeSourcesResponse? {
+        val candidates = listOf(
+            "getSources" to "https://$host/stream/getSources?id=$dataId&id=$dataId&type=$audioType&type=$audioType",
+            "getSourcesNew" to "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId&type=$audioType&type=$audioType",
+        )
+
+        var lastBodyPreview = ""
+        for ((name, url) in candidates) {
+            logi("resolveVidTube: GET $name: $url")
+            // OkHttp first, then the WebView (browser TLS + cookies) which passes anti-bot checks
+            // plain OkHttp cannot. Anti-bot hosts often answer 200 with an empty/invalid body, so
+            // both transports are tried even when the HTTP call "succeeds".
+            for (transport in listOf("okhttp", "webview")) {
+                if (transport == "webview" && webViewFetcher == null) continue
+                repeat(2) { attempt ->
+                    val body = try {
+                        if (transport == "webview") {
+                            webViewFetcher!!.fetchText(url)
+                        } else {
+                            fetchString(url, apiHeaders)
+                        }
+                    } catch (e: Exception) {
+                        logw("resolveVidTube: $name via $transport (attempt ${attempt + 1}) failed: ${e.message}")
+                        null
+                    }
+
+                    if (body == null) {
+                        return@repeat
+                    }
+
+                    val resp = try {
+                        json.decodeFromString<VidTubeSourcesResponse>(body)
+                    } catch (e: Exception) {
+                        lastBodyPreview = body.take(200)
+                        logw("resolveVidTube: $name via $transport JSON decode failed: ${e.message}; body=$lastBodyPreview")
+                        return@repeat
+                    }
+
+                    val m3u8 = resp.sources
+                    if (m3u8.isNullOrEmpty() || !m3u8.startsWith("http")) {
+                        lastBodyPreview = body.take(200)
+                        logw("resolveVidTube: $name via $transport returned no sources (sources='$m3u8') body=$lastBodyPreview")
+                        if (attempt == 0) {
+                            // Transient empty responses (rate limiting / WAF) often pass on retry.
+                            Thread.sleep(700L)
+                        }
+                        return@repeat
+                    }
+
+                    return resp
+                }
+            }
+        }
+
+        loge("resolveVidTube: no valid m3u8 from getSources/getSourcesNew (last body: $lastBodyPreview)")
+        return null
+    }
+
     suspend fun resolveVidTube(
         iframeUrl: String,
         audioType: String,
@@ -128,39 +196,8 @@ class AnikotoExtractors(
 
             val apiHeaders = vidtubeApiHeaders(host, iframeUrl)
 
-            var sourcesBody: String? = null
-            // The hoster now expects BOTH the id and the type parameters duplicated on the
-            // getSources endpoint (and an Origin header). Fall back to getSourcesNew when the
-            // primary endpoint rejects the request.
-            try {
-                val sourcesUrl = "https://$host/stream/getSources?id=$dataId&id=$dataId&type=$audioType&type=$audioType"
-                logi("resolveVidTube: [2/5] GET getSources: $sourcesUrl")
-                sourcesBody = fetchString(sourcesUrl, apiHeaders)
-            } catch (e: Exception) {
-                logw("resolveVidTube: getSources failed (${e.message}); trying getSourcesNew")
-            }
-
-            if (sourcesBody == null) {
-                try {
-                    val newUrl = "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId&type=$audioType&type=$audioType"
-                    logi("resolveVidTube: [2b/5] GET getSourcesNew: $newUrl")
-                    sourcesBody = fetchString(newUrl, apiHeaders)
-                } catch (e: Exception) {
-                    // Ignore
-                }
-            }
-
-            if (sourcesBody == null) {
-                loge("resolveVidTube: no valid m3u8 in getSources response")
-                return null
-            }
-
-            val sourcesResp = json.decodeFromString<VidTubeSourcesResponse>(sourcesBody)
+            val sourcesResp = fetchSourcesResponse(host, dataId, audioType, apiHeaders) ?: return null
             val masterM3u8 = sourcesResp.sources
-            if (masterM3u8.isNullOrEmpty() || !masterM3u8.startsWith("http")) {
-                loge("resolveVidTube: no valid m3u8 in getSources response (sources='$masterM3u8')")
-                return null
-            }
             logi("resolveVidTube: [3/5] fetching master m3u8")
 
             val subtitles = sourcesResp.tracks.filter {
