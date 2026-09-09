@@ -81,12 +81,12 @@ class MovieBox : Source() {
         }
     }
 
-    private val cinemetaCache = ConcurrentHashMap<String, Pair<String?, List<CinemetaEpisode>>>()
+    private val cinemetaCache = ConcurrentHashMap<String, CinemetaResult>()
 
     private val metaClient by lazy {
         client.newBuilder()
-            .connectTimeout(2500, TimeUnit.MILLISECONDS)
-            .readTimeout(2500, TimeUnit.MILLISECONDS)
+            .connectTimeout(5000, TimeUnit.MILLISECONDS)
+            .readTimeout(5000, TimeUnit.MILLISECONDS)
             .build()
     }
 
@@ -615,14 +615,27 @@ class MovieBox : Source() {
             }
         }
 
+        val defaultSummary = data["subject"]?.obj?.get("description")?.str
+            ?: data["description"]?.str
+            ?: data["subject"]?.obj?.get("brief")?.str
+            ?: data["brief"]?.str
+
+        val defaultThumbnail = data["subject"]?.obj?.get("cover")?.obj?.get("url")?.str
+            ?: data["cover"]?.obj?.get("url")?.str
+            ?: data["stills"]?.arr?.firstOrNull()?.obj?.get("url")?.str
+            ?: data["subject"]?.obj?.get("stills")?.arr?.firstOrNull()?.obj?.get("url")?.str
+
         val showThumbnails = preferences.getBoolean(PREF_THUMBNAILS_KEY, PREF_THUMBNAILS_DEFAULT)
         val showTitle = data["subject"]?.obj?.get("title")?.str ?: data["title"]?.str ?: ""
-        val isTv = seasonsMap.isNotEmpty() && (seasonsMap.keys.size > 1 || (seasonsMap[1]?.size ?: 0) > 1)
-        val (_, metaEps) = if (showThumbnails && showTitle.isNotBlank()) {
+        val isTv = seasonsMap.isNotEmpty()
+        val cinemetaResult = if (showTitle.isNotBlank()) {
             fetchCinemetaMeta(showTitle, isTv)
         } else {
-            Pair(null, emptyList())
+            CinemetaResult()
         }
+        val metaEps = cinemetaResult.episodes
+        val movieThumbnail = cinemetaResult.background ?: cinemetaResult.poster ?: defaultThumbnail
+        val movieSummary = cinemetaResult.description ?: defaultSummary
 
         val idsString = allIds.joinToString("~~") { "${it.first}:${it.second}" }
         seasonsMap.forEach { (seNum, epSet) ->
@@ -635,11 +648,15 @@ class MovieBox : Source() {
                         url = "$seNum|$epNum|$idsString|$detailPath"
                         val date = parseDate(metaEp?.released)
                         date_upload = if (date > 0L) date else System.currentTimeMillis()
-                        if (!metaEp?.overview.isNullOrBlank()) {
-                            summary = metaEp?.overview
+                        val epSummary = metaEp?.overview?.takeIf { it.isNotBlank() } ?: defaultSummary
+                        if (!epSummary.isNullOrBlank()) {
+                            summary = epSummary
                         }
-                        if (showThumbnails && !metaEp?.thumbnail.isNullOrBlank()) {
-                            preview_url = metaEp?.thumbnail
+                        if (showThumbnails) {
+                            val epThumb = metaEp?.thumbnail?.takeIf { it.isNotBlank() } ?: defaultThumbnail
+                            if (!epThumb.isNullOrBlank()) {
+                                preview_url = epThumb
+                            }
                         }
                     },
                 )
@@ -655,6 +672,12 @@ class MovieBox : Source() {
                     episode_number = 1f
                     url = "0|0|$idsString|$detailPath"
                     date_upload = System.currentTimeMillis()
+                    if (!movieSummary.isNullOrBlank()) {
+                        summary = movieSummary
+                    }
+                    if (showThumbnails && !movieThumbnail.isNullOrBlank()) {
+                        preview_url = movieThumbnail
+                    }
                 },
             )
         }
@@ -683,62 +706,120 @@ class MovieBox : Source() {
         }
     }
 
-    private fun fetchCinemetaMeta(title: String, isTv: Boolean): Pair<String?, List<CinemetaEpisode>> {
+    private fun fetchCinemetaMeta(title: String, isTv: Boolean): CinemetaResult {
         val cleanTitle = title.substringBefore("(").substringBefore("[").trim()
-        if (cleanTitle.isBlank()) return Pair(null, emptyList())
+        if (cleanTitle.isBlank()) return CinemetaResult()
         val cacheKey = "$cleanTitle|$isTv"
         cinemetaCache[cacheKey]?.let { return it }
 
         val metaType = if (isTv) "series" else "movie"
-        val searchUrl = "https://v3-cinemeta.strem.io/catalog/$metaType/imdb-search/search=${Uri.encode(cleanTitle)}.json"
-        val searchRequest = GET(searchUrl)
-        try {
-            metaClient.newCall(searchRequest).execute().use { response ->
-                val body = response.body.string()
-                val jsonRes = json.parseToJsonElement(body).obj ?: return Pair(null, emptyList())
-                val metas = jsonRes["metas"]?.arr ?: return Pair(null, emptyList())
-                var bestImdbId: String? = null
-                for (metaEl in metas) {
-                    val m = metaEl.obj ?: continue
-                    val name = m["name"]?.str ?: continue
-                    if (name.equals(cleanTitle, ignoreCase = true) || name.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(name, ignoreCase = true)) {
-                        bestImdbId = m["imdb_id"]?.str
-                        if (bestImdbId != null) break
+        val endpoints = listOf("imdb-search", "top")
+        var metas: List<JsonElement>? = null
+        for (ep in endpoints) {
+            val searchUrl = "https://v3-cinemeta.strem.io/catalog/$metaType/$ep/search=${Uri.encode(cleanTitle)}.json"
+            try {
+                metaClient.newCall(GET(searchUrl)).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body.string()
+                        val jsonRes = json.parseToJsonElement(body).obj
+                        val list = jsonRes?.get("metas")?.arr
+                        if (!list.isNullOrEmpty()) {
+                            metas = list
+                        }
                     }
                 }
+            } catch (_: Exception) {
+                // ignore and try next endpoint
+            }
+            if (!metas.isNullOrEmpty()) break
+        }
 
-                if (bestImdbId != null) {
-                    val detailsUrl = "https://v3-cinemeta.strem.io/meta/$metaType/$bestImdbId.json"
-                    val detailsRequest = GET(detailsUrl)
-                    metaClient.newCall(detailsRequest).execute().use { detailsResponse ->
-                        val detailsBody = detailsResponse.body.string()
-                        val detailsJson = json.parseToJsonElement(detailsBody).obj ?: return Pair(null, emptyList())
-                        val metaObj = detailsJson["meta"]?.obj ?: return Pair(null, emptyList())
-                        val description = metaObj["description"]?.str
-
-                        val episodesList = mutableListOf<CinemetaEpisode>()
-                        val videos = metaObj["videos"]?.arr
-                        videos?.forEach { videoEl ->
-                            val v = videoEl.obj ?: return@forEach
-                            val name = v["name"]?.str
-                            val season = v["season"]?.jsonPrimitive?.intOrNull ?: 1
-                            val episode = v["number"]?.jsonPrimitive?.intOrNull ?: v["episode"]?.jsonPrimitive?.intOrNull ?: 1
-                            val overview = v["overview"]?.str ?: v["description"]?.str
-                            val thumbnail = v["thumbnail"]?.str
-                            val released = v["released"]?.str ?: v["firstAired"]?.str
-                            episodesList.add(CinemetaEpisode(season, episode, name, overview, thumbnail, released))
+        if (metas.isNullOrEmpty() && (cleanTitle.contains(":") || cleanTitle.contains("-"))) {
+            val baseTitle = cleanTitle.substringBefore(":").substringBefore("-").trim()
+            if (baseTitle.isNotBlank() && !baseTitle.equals(cleanTitle, ignoreCase = true)) {
+                for (ep in endpoints) {
+                    val searchUrl = "https://v3-cinemeta.strem.io/catalog/$metaType/$ep/search=${Uri.encode(baseTitle)}.json"
+                    try {
+                        metaClient.newCall(GET(searchUrl)).execute().use { response ->
+                            if (response.isSuccessful) {
+                                val body = response.body.string()
+                                val jsonRes = json.parseToJsonElement(body).obj
+                                val list = jsonRes?.get("metas")?.arr
+                                if (!list.isNullOrEmpty()) {
+                                    metas = list
+                                }
+                            }
                         }
-                        val result = Pair(description, episodesList)
-                        cinemetaCache[cacheKey] = result
-                        return result
+                    } catch (_: Exception) {
+                        // ignore
                     }
+                    if (!metas.isNullOrEmpty()) break
                 }
             }
-        } catch (_: Exception) {
-            // ignore
         }
-        return Pair(null, emptyList())
+
+        if (!metas.isNullOrEmpty()) {
+            var bestImdbId: String? = null
+            for (metaEl in metas!!) {
+                val m = metaEl.obj ?: continue
+                val name = m["name"]?.str ?: continue
+                if (name.equals(cleanTitle, ignoreCase = true) || name.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(name, ignoreCase = true)) {
+                    bestImdbId = m["imdb_id"]?.str ?: m["id"]?.str
+                    if (bestImdbId != null) break
+                }
+            }
+            if (bestImdbId == null) {
+                bestImdbId = metas!!.firstOrNull()?.obj?.let { it["imdb_id"]?.str ?: it["id"]?.str }
+            }
+
+            if (bestImdbId != null) {
+                val detailsUrl = "https://v3-cinemeta.strem.io/meta/$metaType/$bestImdbId.json"
+                try {
+                    metaClient.newCall(GET(detailsUrl)).execute().use { detailsResponse ->
+                        if (detailsResponse.isSuccessful) {
+                            val detailsBody = detailsResponse.body.string()
+                            val detailsJson = json.parseToJsonElement(detailsBody).obj
+                            val metaObj = detailsJson?.get("meta")?.obj
+                            if (metaObj != null) {
+                                val description = metaObj["description"]?.str ?: metaObj["overview"]?.str
+                                val poster = metaObj["poster"]?.str
+                                val background = metaObj["background"]?.str
+
+                                val episodesList = mutableListOf<CinemetaEpisode>()
+                                val videos = metaObj["videos"]?.arr
+                                videos?.forEach { videoEl ->
+                                    val v = videoEl.obj ?: return@forEach
+                                    val name = v["name"]?.str
+                                    val season = v["season"]?.jsonPrimitive?.intOrNull ?: 1
+                                    val episode = v["number"]?.jsonPrimitive?.intOrNull ?: v["episode"]?.jsonPrimitive?.intOrNull ?: 1
+                                    val overview = v["overview"]?.str ?: v["description"]?.str
+                                    val thumbnail = v["thumbnail"]?.str
+                                    val released = v["released"]?.str ?: v["firstAired"]?.str
+                                    episodesList.add(CinemetaEpisode(season, episode, name, overview, thumbnail, released))
+                                }
+                                val result = CinemetaResult(description, poster, background, episodesList)
+                                cinemetaCache[cacheKey] = result
+                                return result
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    // ignore
+                }
+            }
+        }
+
+        val emptyResult = CinemetaResult()
+        cinemetaCache[cacheKey] = emptyResult
+        return emptyResult
     }
+
+    private data class CinemetaResult(
+        val description: String? = null,
+        val poster: String? = null,
+        val background: String? = null,
+        val episodes: List<CinemetaEpisode> = emptyList(),
+    )
 
     private data class CinemetaEpisode(
         val season: Int,
