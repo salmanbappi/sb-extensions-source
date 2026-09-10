@@ -10,7 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
-import eu.kanade.tachiyomi.util.parseAs
+import keiyoushi.utils.parseAs
 import extensions.utils.Source
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
