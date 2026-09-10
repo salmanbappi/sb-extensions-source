@@ -158,9 +158,9 @@ class MoviesMod : Source() {
             throw Exception("No episode links found. Site may have changed or is behind Cloudflare.")
         }
 
-        val qualityRegex = "\d{3,4}p(?:\s+\w+)?".toRegex(RegexOption.IGNORE_CASE)
-        val seasonRegex = "[ .]?S(?:eason)?[ .]?(\d{1,2})[ .]?".toRegex(RegexOption.IGNORE_CASE)
-        val movieTitleRegex = "^[^(]+\n?".toRegex(RegexOption.IGNORE_CASE)
+        val qualityRegex = """\d{3,4}p(?:\s+\w+)?""".toRegex(RegexOption.IGNORE_CASE)
+        val seasonRegex = """[ .]?S(?:eason)?[ .]?(\d{1,2})[ .]?""".toRegex(RegexOption.IGNORE_CASE)
+        val movieTitleRegex = """^[^(]+\n?""".toRegex(RegexOption.IGNORE_CASE)
 
         // Safe check for series vs movie; avoid NPE on empty or missing text
         val isSerie = episodeElements.firstOrNull()?.selectFirst("a")?.text()?.equals("Episode Links", ignoreCase = true) == true
@@ -342,7 +342,7 @@ class MoviesMod : Source() {
             return null
         }
 
-        val path = mediaResponse.body.string().substringAfter("replace("").substringBefore(""")
+        val path = mediaResponse.body.string().substringAfter("replace(\"").substringBefore("\"")
 
         if (path == "/404") return null
 
@@ -445,7 +445,7 @@ class MoviesMod : Source() {
     }
 
     companion object {
-        private val SIZE_REGEX = "\[((?:.(?!\[))+)]*\$".toRegex(RegexOption.IGNORE_CASE)
+        private val SIZE_REGEX = """\[((?:.(?!\[))+)]*$""".toRegex(RegexOption.IGNORE_CASE)
 
         private const val PREF_DOMAIN_KEY = "pref_domain_new"
         private const val PREF_DOMAIN_TITLE = "Currently used domain"
