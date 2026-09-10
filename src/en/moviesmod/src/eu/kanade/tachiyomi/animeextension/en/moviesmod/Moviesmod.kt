@@ -17,7 +17,6 @@ import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
-import extensions.utils.Filters
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.parallelMapNotNull
