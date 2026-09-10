@@ -17,7 +17,6 @@ import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -91,6 +90,7 @@ class Moviesmod : Source() {
                         categoryUrl = filter.toUriPart()
                     }
                 }
+
                 else -> {}
             }
         }
@@ -548,8 +548,11 @@ class Moviesmod : Source() {
                         val directUrl = when {
                             loc != null && loc.contains("url=") ->
                                 URLDecoder.decode(loc.substringAfter("url=").substringBefore("&"), "UTF-8")
+
                             loc != null -> loc
+
                             headResp.isSuccessful -> href
+
                             else -> null
                         }
                         if (!directUrl.isNullOrBlank() && videoList.none { it.videoUrl == directUrl }) {
