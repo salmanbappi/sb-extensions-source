@@ -17,7 +17,6 @@ import extensions.utils.asJsoup
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.parallelCatchingFlatMap
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
@@ -26,6 +25,7 @@ import okhttp3.Response
 import org.jsoup.parser.Parser
 import java.net.URLDecoder
 import java.net.URLEncoder
+import kotlin.time.Duration.Companion.seconds
 
 class Moviesmod : Source() {
 
@@ -83,6 +83,7 @@ class Moviesmod : Source() {
                         categoryUrl = filter.toUriPart()
                     }
                 }
+
                 else -> {}
             }
         }
@@ -503,8 +504,11 @@ class Moviesmod : Source() {
                         val directUrl = when {
                             loc != null && loc.contains("url=") ->
                                 URLDecoder.decode(loc.substringAfter("url=").substringBefore("&"), "UTF-8")
+
                             loc != null -> loc
+
                             headResp.isSuccessful -> href
+
                             else -> null
                         }
                         if (!directUrl.isNullOrBlank() && videoList.none { it.videoUrl == directUrl }) {
