@@ -2,7 +2,7 @@ apply plugin: 'com.android.application'
 apply plugin: 'kotlinx-serialization'
 
 assert !ext.has("pkgNameSuffix")
-assert !ext.has("libVersion")
+// assert !ext.has("libVersion")
 
 assert extName.chars().max().asInt < 0x180 : "Extension name should be romanized"
 
@@ -32,11 +32,12 @@ android {
     }
 
     defaultConfig {
-        minSdk 21
+        minSdk 24
         targetSdk 34
         applicationId pkgName
         versionCode theme == null ? extVersionCode : theme.baseVersionCode + overrideVersionCode
-        versionName "16.$versionCode"
+        def libVersion = project.ext.find("libVersion") ?: "16"
+        versionName "$libVersion.$versionCode"
         base {
             archivesName = "aniyomi-${project.parent.name}.${project.name}-v$versionName"
         }
