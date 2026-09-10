@@ -36,7 +36,9 @@ import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
 
-class Moviesmod : Source(), ConfigurableAnimeSource {
+class Moviesmod :
+    Source(),
+    ConfigurableAnimeSource {
 
     override val name = "MoviesMod"
 
@@ -58,7 +60,11 @@ class Moviesmod : Source(), ConfigurableAnimeSource {
     private val redirectorBypasser by lazy { RedirectorBypasser(client, headers) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val archiveCache = ConcurrentHashMap<String, Document>()
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        encodeDefaults = true
+    }
     private val preferences by getPreferencesLazy()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -512,8 +518,11 @@ class Moviesmod : Source(), ConfigurableAnimeSource {
                     val directUrl = when {
                         loc != null && loc.contains("url=") ->
                             URLDecoder.decode(loc.substringAfter("url=").substringBefore("&"), "UTF-8")
+
                         loc != null -> loc
+
                         headResp?.isSuccessful == true -> href
+
                         else -> href
                     }
 
@@ -614,17 +623,17 @@ class Moviesmod : Source(), ConfigurableAnimeSource {
 
     @Serializable
     data class EpisodeData(
-    val season: Int? = null,
-    val episode: Int? = null,
-    val postUrl: String? = null,
-    val archives: List<ArchiveLink>? = null
-)
+        val season: Int? = null,
+        val episode: Int? = null,
+        val postUrl: String? = null,
+        val archives: List<ArchiveLink>? = null,
+    )
 
     @Serializable
     data class ArchiveLink(
-    val quality: String? = null,
-    val url: String? = null
-)
+        val quality: String? = null,
+        val url: String? = null,
+    )
 
     companion object {
         private const val PREF_BASE_URL_KEY = "pref_base_url"
