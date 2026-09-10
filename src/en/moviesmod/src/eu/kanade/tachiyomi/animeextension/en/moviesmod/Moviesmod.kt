@@ -4,7 +4,6 @@ import android.util.Base64
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -15,11 +14,11 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
-import keiyoushi.utils.getPreferencesLazy
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -60,12 +59,6 @@ class Moviesmod :
     private val redirectorBypasser by lazy { RedirectorBypasser(client, headers) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val archiveCache = ConcurrentHashMap<String, Document>()
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-        encodeDefaults = true
-    }
-    private val preferences by getPreferencesLazy()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -311,7 +304,8 @@ class Moviesmod :
 
                 val epNums = linkedSetOf<Int>()
                 for (arch in archList) {
-                    val archDoc = getCachedOrFetchArchive(arch.url, postUrl) ?: continue
+                    val archUrl = arch.url ?: continue
+                    val archDoc = getCachedOrFetchArchive(archUrl, postUrl) ?: continue
                     val links = archDoc.select("div.timed-content-client_show_0_5_0 a")
                         .ifEmpty {
                             archDoc.select("""a[href*="cloud.unblockedgames.world"], a[href*="?sid="], a[href*="r?key="]""")
