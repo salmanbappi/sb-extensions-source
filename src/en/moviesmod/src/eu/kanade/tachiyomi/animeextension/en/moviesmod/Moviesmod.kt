@@ -368,11 +368,9 @@ class Moviesmod :
         return extractVideos(sidUrl, quality)
     }
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        return getHosterList(episode).parallelMapNotNull { hoster ->
-            runCatching { getVideoList(hoster) }.getOrNull()
-        }.flatten().sortVideos()
-    }
+    override suspend fun getVideoList(episode: SEpisode): List<Video> = getHosterList(episode).parallelMapNotNull { hoster ->
+        runCatching { getVideoList(hoster) }.getOrNull()
+    }.flatten().sortVideos()
 
     private fun extractVideos(fileOrSidUrl: String, quality: String): List<Video> {
         val mediaUrl = getMediaUrl(fileOrSidUrl) ?: return emptyList()
@@ -524,14 +522,14 @@ class Moviesmod :
 
     @Serializable
     data class EpLinks(
-    val urls: List<EpUrl>? = null
-)
+        val urls: List<EpUrl>? = null,
+    )
 
     @Serializable
     data class EpUrl(
-    val quality: String? = null,
-    val url: String? = null
-)
+        val quality: String? = null,
+        val url: String? = null,
+    )
 
     private fun EpLinks.toJson(): String = json.encodeToString(this)
 
