@@ -62,7 +62,9 @@ class MoviesMod : Source() {
                                         }
                                         origin ?: baseUrl
                                     }
+
                                     in 200..299 -> baseUrl
+
                                     else -> null
                                 }
                             }
@@ -254,9 +256,7 @@ class MoviesMod : Source() {
     }
 
     // ============================ Video Links =============================
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        return listOf(Hoster(hosterName = "Default", hosterUrl = episode.url))
-    }
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(Hoster(hosterName = "Default", hosterUrl = episode.url))
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val episode = SEpisode.create().apply {
@@ -309,6 +309,7 @@ class MoviesMod : Source() {
                         listOf(Video(videoUrl = finalUrl, videoTitle = "$quality - Instant$size"))
                     }
                 }
+
                 href.contains(".m3u8") -> {
                     runCatching {
                         playlistUtils.extractFromHls(
@@ -317,7 +318,9 @@ class MoviesMod : Source() {
                         )
                     }.getOrDefault(emptyList())
                 }
+
                 href.contains("/login") -> emptyList()
+
                 else -> {
                     // Fallback for r2.dev, seedtg.xyz, tgcdn_bot and future hosts - expose as direct
                     listOf(Video(videoUrl = href, videoTitle = "$quality - Direct$size"))
