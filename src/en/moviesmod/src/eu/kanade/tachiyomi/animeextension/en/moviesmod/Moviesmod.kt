@@ -16,8 +16,6 @@ import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -27,6 +25,8 @@ import org.jsoup.parser.Parser
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 class Moviesmod : Source() {
 
@@ -374,7 +374,9 @@ class Moviesmod : Source() {
                         hosterName = label,
                         hosterUrl = "$sidUrl|$label",
                     )
-                } else null
+                } else {
+                    null
+                }
             }
 
             if (hosters.isNotEmpty()) {
