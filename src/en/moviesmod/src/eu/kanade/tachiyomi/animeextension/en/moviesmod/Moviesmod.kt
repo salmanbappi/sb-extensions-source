@@ -17,22 +17,19 @@ import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
+import extensions.utils.Filters
 import extensions.utils.Source
 import extensions.utils.asJsoup
+import keiyoushi.utils.parallelMapNotNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
-import java.net.URLDecoder
 import java.net.URLEncoder
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
 
 class Moviesmod :
@@ -58,7 +55,6 @@ class Moviesmod :
 
     private val redirectorBypasser by lazy { RedirectorBypasser(client, headers) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-    private val archiveCache = ConcurrentHashMap<String, Document>()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -221,8 +217,27 @@ class Moviesmod :
         val response = client.newCall(GET(postUrl, headers)).execute()
         val doc = response.asJsoup()
         val content = doc.selectFirst("div.entry-content") ?: return emptyList()
-        val pageText = content.text()
 
+        val episodeElements = content.select("p:has(a.maxbutton-episode-links, a.maxbutton-download-links)")
+            .ifEmpty { content.select("p:has(a[class*=maxbutton])") }
+            .ifEmpty { content.select("p:has(a[href*='/archives/'])") }
+            .filter { row ->
+                val aEl = row.selectFirst("a[href]") ?: return@filter false
+                val href = aEl.attr("abs:href").ifBlank { aEl.attr("href") }
+                val text = aEl.text().trim()
+                href.isNotBlank() && !href.startsWith("javascript:") &&
+                    !text.contains("batch", ignoreCase = true) &&
+                    !text.contains("zip", ignoreCase = true) &&
+                    !text.contains("telegram", ignoreCase = true) &&
+                    !text.contains("imdb", ignoreCase = true) &&
+                    (href.contains("/archives/") || href.contains("?sid=") || href.contains("?url="))
+            }
+
+        if (episodeElements.isEmpty()) {
+            return emptyList()
+        }
+
+        val pageText = content.text()
         val audioTag = when {
             pageText.contains("Dual Audio", ignoreCase = true) -> "Dual Audio"
             pageText.contains("Multi Audio", ignoreCase = true) -> "Multi Audio"
@@ -231,167 +246,89 @@ class Moviesmod :
             else -> "Original"
         }
 
-        val buttonRows = content.select("p:has(a.maxbutton-episode-links, a.maxbutton-download-links)")
-            .ifEmpty { content.select("p:has(a[class*=maxbutton])") }
-            .ifEmpty { content.select("p:has(a[href*='/archives/'])") }
+        val qualityRegex = Regex("""\d{3,4}p(?:\s+\w+)?""", RegexOption.IGNORE_CASE)
+        val seasonRegex = Regex("""[ .]?S(?:eason)?[ .]?(\d{1,2})[ .]?""", RegexOption.IGNORE_CASE)
+        val movieTitleRegex = Regex("""^[^(]+\n?""", RegexOption.IGNORE_CASE)
 
-        if (buttonRows.isEmpty()) {
-            return emptyList()
-        }
-
-        val isSerie = buttonRows.any { row ->
+        val isSerie = episodeElements.any { row ->
             row.select("a").any {
                 it.hasClass("maxbutton-episode-links") || it.text().contains("Episode", ignoreCase = true)
             }
         }
 
-        val seasonRegex = Regex("""(?:Season\s*(\d+)|\bS(\d{1,2})\b)""", RegexOption.IGNORE_CASE)
-        val qualityRegex = Regex("""\d{3,4}p(?:\s+\w+)?""", RegexOption.IGNORE_CASE)
+        val triples = episodeElements.parallelMapNotNull { row ->
+            runCatching {
+                // Find the nearest heading immediately preceding this button row
+                val prevP = row.previousElementSiblings()
+                    .lastOrNull { sibling ->
+                        val text = sibling.text().trim()
+                        text.isNotBlank() && !sibling.hasClass("maxbutton") && sibling.select("a[class*=maxbutton]").isEmpty()
+                    }?.text().orEmpty()
 
-        if (isSerie) {
-            val seasonArchives = mutableMapOf<Int, MutableList<ArchiveLink>>()
-
-            for (row in buttonRows) {
-                val aEl = row.selectFirst("a[href]") ?: continue
-                val btnText = aEl.text().trim()
-                if (btnText.contains("batch", ignoreCase = true) || btnText.contains("zip", ignoreCase = true)) {
-                    continue
+                val quality = qualityRegex.find(prevP)?.value ?: "HD"
+                val defaultName = if (isSerie) {
+                    seasonRegex.find(prevP)?.value?.trim() ?: "Season 1"
+                } else {
+                    movieTitleRegex.find(prevP.replace("Download", "").trim())?.value?.trim() ?: "Movie"
                 }
 
+                val aEl = row.selectFirst("a[href]") ?: return@parallelMapNotNull null
                 val rawHref = aEl.attr("abs:href").ifBlank { aEl.attr("href") }
-                if (rawHref.isBlank()) continue
-                val archUrl = extractChildUrl(rawHref)
+                val childUrl = extractChildUrl(rawHref)
 
-                val prevSiblings = row.previousElementSiblings()
-                var seasonNum = 1
-                var qualityLabel = "HD"
+                val episodePageDocument = runCatching {
+                    val req = GET(childUrl, headersBuilder().set("Referer", postUrl).build())
+                    client.newCall(req).execute().asJsoup()
+                }.getOrNull() ?: return@parallelMapNotNull null
 
-                // Search backwards for the nearest season title
-                for (sibling in prevSiblings.asReversed()) {
-                    val sText = sibling.text().trim()
-                    if (sText.isNotBlank()) {
-                        val sMatch = seasonRegex.find(sText)
-                        if (sMatch != null) {
-                            val numStr = sMatch.groupValues[1].ifEmpty { sMatch.groupValues.getOrNull(2) }
-                            numStr?.toIntOrNull()?.let { seasonNum = it }
-                            break
-                        }
+                val links = episodePageDocument.select("div.timed-content-client_show_0_5_0 a")
+                    .ifEmpty {
+                        episodePageDocument.select("""a[href*="cloud.unblockedgames.world"], a[href*="?sid="], a[href*="r?key="]""")
                     }
-                }
 
-                // Search backwards for the nearest quality label
-                for (sibling in prevSiblings.asReversed()) {
-                    val qText = sibling.text().trim()
-                    if (qText.isNotBlank()) {
-                        val qMatch = qualityRegex.find(qText)
-                        if (qMatch != null) {
-                            val is10Bit = qText.contains("10bit", ignoreCase = true) || qText.contains("hevc", ignoreCase = true)
-                            qualityLabel = if (is10Bit) "${qMatch.value} 10Bit" else qMatch.value
-                            break
-                        }
+                links.mapIndexedNotNull { index, linkElement ->
+                    val lText = linkElement.text().trim()
+                    if (lText.contains("batch", ignoreCase = true) || lText.contains("zip", ignoreCase = true) || lText.contains("comment", ignoreCase = true)) {
+                        return@mapIndexedNotNull null
                     }
-                }
-
-                seasonArchives.getOrPut(seasonNum) { mutableListOf() }.add(ArchiveLink(qualityLabel, archUrl))
-            }
-
-            val allEpisodes = mutableListOf<SEpisode>()
-            var sequentialNumber = 1
-
-            for (seasonNum in seasonArchives.keys.sorted()) {
-                val archList = seasonArchives[seasonNum] ?: continue
-                if (archList.isEmpty()) continue
-
-                val epNums = linkedSetOf<Int>()
-                for (arch in archList) {
-                    val archUrl = arch.url ?: continue
-                    val archDoc = getCachedOrFetchArchive(archUrl, postUrl) ?: continue
-                    val links = archDoc.select("div.timed-content-client_show_0_5_0 a")
-                        .ifEmpty {
-                            archDoc.select("""a[href*="cloud.unblockedgames.world"], a[href*="?sid="], a[href*="r?key="]""")
-                        }
-
-                    for ((index, linkEl) in links.withIndex()) {
-                        val lText = linkEl.text().trim()
-                        if (lText.contains("batch", ignoreCase = true) || lText.contains("zip", ignoreCase = true) || lText.contains("comment", ignoreCase = true)) {
-                            continue
-                        }
-                        val epMatch = Regex("""(?:Episode|Ep|E)\s*[-:]?\s*(\d+)""", RegexOption.IGNORE_CASE).find(lText)
-                        val ep = epMatch?.groupValues?.get(1)?.toIntOrNull()
+                    val episode = if (isSerie) {
+                        Regex("""(?:Episode|Ep|E)\s*[-:]?\s*(\d+)""", RegexOption.IGNORE_CASE).find(lText)?.groupValues?.get(1)?.toIntOrNull()
                             ?: lText.replace("Episode", "", true).trim().toIntOrNull()
                             ?: (index + 1)
-                        epNums.add(ep)
+                    } else {
+                        0
                     }
 
-                    if (epNums.isNotEmpty()) {
-                        break
-                    }
-                }
+                    val url = linkElement.attr("abs:href").takeUnless(String::isBlank)
+                        ?: return@mapIndexedNotNull null
 
-                val sortedEpNums = epNums.sorted()
-                for (epNum in sortedEpNums) {
-                    val epData = EpisodeData(
-                        season = seasonNum,
-                        episode = epNum,
-                        postUrl = postUrl,
-                        archives = archList,
+                    Triple(
+                        Pair(defaultName, episode),
+                        url,
+                        if (isSerie) quality else "$quality $lText".trim(),
                     )
-
-                    allEpisodes.add(
-                        SEpisode.create().apply {
-                            name = "Season $seasonNum Ep $epNum"
-                            url = json.encodeToString(epData)
-                            episode_number = sequentialNumber.toFloat()
-                            scanlator = audioTag
-                        },
-                    )
-                    sequentialNumber++
                 }
-            }
+            }.getOrNull()
+        }.flatten()
 
-            if (allEpisodes.isNotEmpty()) {
-                return allEpisodes.reversed()
-            }
-        }
+        val grouped = triples.groupBy { it.first }.values.mapIndexed { index, items ->
+            val (itemName, episodeNum) = items.first().first
 
-        // Single Movie fallback
-        val movieArchives = mutableListOf<ArchiveLink>()
-        for (row in buttonRows) {
-            val aEl = row.selectFirst("a[href]") ?: continue
-            val rawHref = aEl.attr("abs:href").ifBlank { aEl.attr("href") }
-            if (rawHref.isBlank()) continue
-            val archUrl = extractChildUrl(rawHref)
-
-            val prevSiblings = row.previousElementSiblings()
-            var qualityLabel = "HD"
-            for (sibling in prevSiblings.asReversed()) {
-                val qText = sibling.text().trim()
-                val qMatch = qualityRegex.find(qText)
-                if (qMatch != null) {
-                    val is10Bit = qText.contains("10bit", ignoreCase = true) || qText.contains("hevc", ignoreCase = true)
-                    qualityLabel = if (is10Bit) "${qMatch.value} 10Bit" else qMatch.value
-                    break
-                }
-            }
-
-            movieArchives.add(ArchiveLink(qualityLabel, archUrl))
-        }
-
-        val movieData = EpisodeData(
-            season = 0,
-            episode = 0,
-            postUrl = postUrl,
-            archives = movieArchives,
-        )
-
-        return listOf(
             SEpisode.create().apply {
-                name = "Full Movie"
-                url = json.encodeToString(movieData)
-                episode_number = 1.0f
+                url = EpLinks(
+                    urls = items.map { triple ->
+                        EpUrl(url = triple.second, quality = triple.third)
+                    },
+                ).toJson()
+
+                name = if (isSerie) "$itemName Ep $episodeNum" else itemName
+
+                episode_number = (index + 1).toFloat()
                 scanlator = audioTag
-            },
-        )
+            }
+        }
+
+        return grouped.reversed()
     }
 
     private fun extractChildUrl(mainUrl: String): String {
@@ -402,68 +339,21 @@ class Moviesmod :
         }.getOrDefault(mainUrl)
     }
 
-    private fun getCachedOrFetchArchive(archUrl: String, referer: String): Document? {
-        archiveCache[archUrl]?.let { return it }
-        return runCatching {
-            val req = GET(archUrl, headersBuilder().set("Referer", referer).build())
-            val doc = client.newCall(req).execute().asJsoup()
-            archiveCache[archUrl] = doc
-            doc
-        }.getOrNull()
-    }
-
     // ============================ Video Links =============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val data = runCatching { json.decodeFromString<EpisodeData>(episode.url) }.getOrNull()
+        val epLinks = runCatching { json.decodeFromString<EpLinks>(episode.url) }.getOrNull()
             ?: return emptyList()
 
-        val hosters = mutableListOf<Hoster>()
-        val archives = data.archives ?: emptyList()
-        val season = data.season ?: 1
-        val targetEpisode = data.episode ?: 1
-        val postUrl = data.postUrl ?: baseUrl
-
-        for (archive in archives) {
-            val archUrl = archive.url ?: continue
-            val quality = archive.quality ?: "HD"
-            val archDoc = getCachedOrFetchArchive(archUrl, postUrl) ?: continue
-            val links = archDoc.select("div.timed-content-client_show_0_5_0 a")
-                .ifEmpty {
-                    archDoc.select("""a[href*="cloud.unblockedgames.world"], a[href*="?sid="], a[href*="r?key="]""")
-                }
-
-            for ((index, linkElement) in links.withIndex()) {
-                val lText = linkElement.text().trim()
-                if (lText.contains("batch", ignoreCase = true) || lText.contains("zip", ignoreCase = true) || lText.contains("comment", ignoreCase = true)) {
-                    continue
-                }
-
-                val epNum = if (season > 0) {
-                    Regex("""(?:Episode|Ep|E)\s*[-:]?\s*(\d+)""", RegexOption.IGNORE_CASE).find(lText)?.groupValues?.get(1)?.toIntOrNull()
-                        ?: lText.replace("Episode", "", true).trim().toIntOrNull()
-                        ?: (index + 1)
-                } else {
-                    0
-                }
-
-                if (epNum == targetEpisode) {
-                    val sidUrl = linkElement.attr("abs:href").ifBlank { linkElement.attr("href") }
-                    if (sidUrl.isNotBlank()) {
-                        val cleanText = lText.replace(Regex("""[^\w\s()-]"""), "").trim()
-                        val serverLabel = if (season == 0 && cleanText.isNotBlank()) cleanText else "DriveSeed"
-                        hosters.add(
-                            Hoster(
-                                hosterName = "$quality - $serverLabel",
-                                hosterUrl = "$sidUrl|$quality",
-                            ),
-                        )
-                    }
-                }
-            }
-        }
-
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-        return hosters.distinctBy { it.hosterUrl }.sortedWith(
+
+        return epLinks.urls?.mapNotNull { epUrl ->
+            val u = epUrl.url ?: return@mapNotNull null
+            val q = epUrl.quality ?: "HD"
+            Hoster(
+                hosterName = "$q - DriveSeed",
+                hosterUrl = "$u|$q",
+            )
+        }.orEmpty().distinctBy { it.hosterUrl }.sortedWith(
             compareByDescending<Hoster> { it.hosterName.contains(prefQuality, ignoreCase = true) }
                 .thenByDescending { it.hosterName.contains("1080p", ignoreCase = true) }
                 .thenByDescending { it.hosterName.contains("720p", ignoreCase = true) },
@@ -473,99 +363,116 @@ class Moviesmod :
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val parts = hoster.hosterUrl.split("|", limit = 2)
         val sidUrl = parts[0]
-        val qualityLabel = if (parts.size > 1) parts[1].substringBefore(" - ").trim() else "HD"
+        val quality = if (parts.size > 1) parts[1] else "HD"
 
-        return resolveSidToVideos(sidUrl, qualityLabel)
+        return extractVideos(sidUrl, quality)
     }
 
-    private fun resolveSidToVideos(sidUrl: String, qualityLabel: String): List<Video> {
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        return getHosterList(episode).parallelMapNotNull { hoster ->
+            runCatching { getVideoList(hoster) }.getOrNull()
+        }.flatten().sortVideos()
+    }
+
+    private fun extractVideos(fileOrSidUrl: String, quality: String): List<Video> {
+        val mediaUrl = getMediaUrl(fileOrSidUrl) ?: return emptyList()
+        val doc = runCatching {
+            client.newCall(GET(mediaUrl, headers)).execute().asJsoup()
+        }.getOrNull() ?: return emptyList()
+
+        val btns = doc.select("div.card-body a.btn")
+        if (btns.isEmpty()) return emptyList()
+
         val videoList = mutableListOf<Video>()
-        val streamHeaders = headersBuilder().set("Referer", "https://driveseed.org/").build()
 
-        runCatching {
-            val redirectUrl = if (sidUrl.contains("?sid=")) {
-                redirectorBypasser.bypass(sidUrl) ?: return emptyList()
-            } else if (sidUrl.contains("r?key=")) {
-                sidUrl
-            } else {
-                return emptyList()
-            }
+        btns.forEach { btn ->
+            val href = btn.attr("abs:href").takeUnless { it.isBlank() } ?: return@forEach
+            val size = SIZE_REGEX.find(btn.text())?.groupValues?.get(1)?.let { " - $it" } ?: ""
 
-            val mediaResp = client.newCall(GET(redirectUrl, headersBuilder().set("Referer", "https://cloud.unblockedgames.world/").build())).execute()
-            val mediaHtml = mediaResp.body.string()
-
-            val filePath = Regex("""replace\(["']([^"']+)["']\)""").find(mediaHtml)?.groupValues?.get(1) ?: return emptyList()
-            if (filePath == "/404") return emptyList()
-            val fileUrl = if (filePath.startsWith("http")) filePath else "https://" + mediaResp.request.url.host + (if (filePath.startsWith("/")) filePath else "/$filePath")
-
-            val fileResp = client.newCall(GET(fileUrl, streamHeaders)).execute()
-            val docFile = fileResp.asJsoup()
-
-            // 1. Instant Download / Direct Stream links
-            docFile.select("a.btn, a[href*='cdn.video-gen'], a[href*='video-seed'], a[href*='r2.dev'], a[href*='instant.video-gen']").forEach { a ->
-                val href = a.attr("abs:href").ifBlank { a.attr("href") }
-                val label = a.text().trim()
-                if (href.isNotBlank() && !label.contains("login", ignoreCase = true)) {
-                    val headRequest = GET(href, streamHeaders).newBuilder().head().build()
-                    val headResp = runCatching { client.newCall(headRequest).execute() }.getOrNull()
-                    val loc = headResp?.header("location")
-                    val directUrl = when {
-                        loc != null && loc.contains("url=") ->
-                            URLDecoder.decode(loc.substringAfter("url=").substringBefore("&"), "UTF-8")
-
-                        loc != null -> loc
-
-                        headResp?.isSuccessful == true -> href
-
-                        else -> href
-                    }
-
-                    if (!directUrl.isNullOrBlank() && videoList.none { it.videoUrl == directUrl }) {
-                        if (directUrl.contains(".m3u8")) {
-                            runCatching {
-                                playlistUtils.extractFromHls(
-                                    directUrl,
-                                    videoNameGen = { q -> "$qualityLabel - $q" },
-                                )
-                            }.getOrNull()?.let { videoList.addAll(it) }
-                        } else {
-                            videoList.add(
-                                Video(
-                                    videoUrl = directUrl,
-                                    videoTitle = "$qualityLabel - $label",
-                                    headers = streamHeaders,
-                                ),
-                            )
+            when {
+                href.contains("cdn.video-gen.xyz") || href.contains("video-seed.dev") ||
+                    href.contains("r2.dev") || href.contains("instant.video-gen") -> {
+                    val finalUrl = runCatching {
+                        val headRequest = GET(href, headers).newBuilder().head().build()
+                        client.newCall(headRequest).execute().use { resp ->
+                            if (!resp.isSuccessful) return@use null
+                            resp.request.url.queryParameter("url") ?: resp.request.url.toString()
                         }
+                    }.getOrNull() ?: href
+
+                    if (finalUrl.contains(".m3u8")) {
+                        runCatching {
+                            playlistUtils.extractFromHls(
+                                playlistUrl = finalUrl,
+                                videoNameGen = { q -> "$quality - $q$size" },
+                            )
+                        }.getOrNull()?.let { videoList.addAll(it) } ?: videoList.add(
+                            Video(videoUrl = finalUrl, videoTitle = "$quality - HLS$size"),
+                        )
+                    } else {
+                        videoList.add(
+                            Video(videoUrl = finalUrl, videoTitle = "$quality - Instant$size"),
+                        )
                     }
                 }
-            }
 
-            // 2. Cloudflare Worker mirrors (/wfile/)
-            val wfileId = fileUrl.substringAfterLast("/")
-            var workerIdx = 1
-            for (type in listOf(1, 2)) {
-                val wfileUrl = "https://driveseed.org/wfile/$wfileId?type=$type"
-                runCatching {
-                    val wResp = client.newCall(GET(wfileUrl, streamHeaders)).execute()
-                    val wDoc = wResp.asJsoup()
-                    wDoc.select("a[href*='workers.dev']").forEach { wLink ->
-                        val wHref = wLink.attr("abs:href")
-                        if (wHref.isNotBlank() && videoList.none { it.videoUrl == wHref }) {
-                            videoList.add(
-                                Video(
-                                    videoUrl = wHref,
-                                    videoTitle = "$qualityLabel - Worker Mirror ${workerIdx++}",
-                                    headers = streamHeaders,
-                                ),
-                            )
-                        }
+                href.contains(".m3u8") -> {
+                    runCatching {
+                        playlistUtils.extractFromHls(
+                            playlistUrl = href,
+                            videoNameGen = { q -> "$quality - $q$size" },
+                        )
+                    }.getOrNull()?.let { videoList.addAll(it) }
+                }
+
+                href.contains("/login") -> {}
+
+                else -> {
+                    videoList.add(
+                        Video(videoUrl = href, videoTitle = "$quality - Direct$size"),
+                    )
+                }
+            }
+        }
+
+        if (mediaUrl.contains("/file/")) {
+            val wfileUrl = mediaUrl.replace("/file/", "/wfile/")
+            runCatching {
+                val wDoc = client.newCall(GET(wfileUrl, headers)).execute().asJsoup()
+                var wIdx = 1
+                wDoc.select("a[href*='workers.dev']").forEach { wLink ->
+                    val wHref = wLink.attr("abs:href").ifBlank { wLink.attr("href") }
+                    if (wHref.isNotBlank() && videoList.none { it.videoUrl == wHref }) {
+                        videoList.add(
+                            Video(
+                                videoUrl = wHref,
+                                videoTitle = "$quality - CF Worker $wIdx",
+                                headers = headers,
+                            ),
+                        )
+                        wIdx++
                     }
                 }
             }
         }
 
-        return videoList.sortVideos()
+        return videoList
+    }
+
+    private fun getMediaUrl(url: String): String? {
+        val mediaResponse = if (url.contains("?sid=")) {
+            val finalUrl = redirectorBypasser.bypass(url) ?: return null
+            client.newCall(GET(finalUrl)).execute()
+        } else if (url.contains("r?key=") || url.contains("/file/")) {
+            client.newCall(GET(url)).execute()
+        } else {
+            return null
+        }
+
+        val path = mediaResponse.body.string().substringAfter("replace(\"").substringBefore("\"")
+        if (path == "/404") return null
+
+        return "https://" + mediaResponse.request.url.host + path
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
@@ -616,20 +523,21 @@ class Moviesmod :
     }
 
     @Serializable
-    data class EpisodeData(
-        val season: Int? = null,
-        val episode: Int? = null,
-        val postUrl: String? = null,
-        val archives: List<ArchiveLink>? = null,
-    )
+    data class EpLinks(
+    val urls: List<EpUrl>? = null
+)
 
     @Serializable
-    data class ArchiveLink(
-        val quality: String? = null,
-        val url: String? = null,
-    )
+    data class EpUrl(
+    val quality: String? = null,
+    val url: String? = null
+)
+
+    private fun EpLinks.toJson(): String = json.encodeToString(this)
 
     companion object {
+        private val SIZE_REGEX = Regex("""\[((?:.(?!\[))+)]*$""", RegexOption.IGNORE_CASE)
+
         private const val PREF_BASE_URL_KEY = "pref_base_url"
         private const val PREF_BASE_URL_DEFAULT = "https://moviesmod.zone"
         private const val PREF_QUALITY_KEY = "pref_quality"
