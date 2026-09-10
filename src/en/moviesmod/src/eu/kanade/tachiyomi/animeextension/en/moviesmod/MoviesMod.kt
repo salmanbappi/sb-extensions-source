@@ -151,9 +151,9 @@ class MoviesMod : Source() {
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = response.asJsoup()
-        // Original selector + fallback for site redesign / domain change
-        val episodeElements = doc.select("p:has(a.maxbutton-episode-links,a.maxbutton-download-links)")
-            .ifEmpty { doc.select("p:has(a[class*=maxbutton])") }
+        val episodeElements = doc.select("p:has(a[class*=maxbutton]), div:has(a[class*=maxbutton])")
+            .ifEmpty { doc.select("p:has(a.maxbutton-episode-links,a.maxbutton-download-links)") }
+            .ifEmpty { doc.select("p:has(a[href*='/archives/']), p:has(a[href*='?sid=']), p:has(a[href*='r?key='])") }
             .asSequence()
 
         if (!episodeElements.iterator().hasNext()) {
@@ -163,9 +163,17 @@ class MoviesMod : Source() {
         val qualityRegex = """\d{3,4}p(?:\s+\w+)?""".toRegex(RegexOption.IGNORE_CASE)
         val seasonRegex = """[ .]?S(?:eason)?[ .]?(\d{1,2})[ .]?""".toRegex(RegexOption.IGNORE_CASE)
         val movieTitleRegex = """^[^(]+\n?""".toRegex(RegexOption.IGNORE_CASE)
+        val epNumRegex = """(?:Episode|Ep|E)\s*[-:.]?\s*(\d+)""".toRegex(RegexOption.IGNORE_CASE)
 
-        // Safe check for series vs movie; avoid NPE on empty or missing text
-        val isSerie = episodeElements.firstOrNull()?.selectFirst("a")?.text()?.equals("Episode Links", ignoreCase = true) == true
+        val isSerie = episodeElements.any { row ->
+            val text = row.text()
+            text.contains("Episode", ignoreCase = true) ||
+                text.contains("Zip", ignoreCase = true) ||
+                text.contains("Pack", ignoreCase = true) ||
+                text.contains("Season", ignoreCase = true)
+        } || doc.selectFirst("h1.entry-title, .entry-title")?.text()?.run {
+            contains("Season", true) || contains("Series", true) || contains("S0", true) || contains("Complete", true)
+        } == true
 
         // Parallelize child-page fetches to avoid performance regression vs sequential Jsoup.connect
         val childPageLoaded = AtomicBoolean(false)
@@ -174,41 +182,95 @@ class MoviesMod : Source() {
                 val prevP = row.previousElementSiblings()
                     .firstOrNull { it.text().isNotBlank() }?.text().orEmpty()
 
-                val quality = qualityRegex.find(prevP)?.value ?: "HD"
                 val defaultName = if (isSerie) {
                     val sNum = seasonRegex.find(prevP)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: seasonRegex.find(row.text())?.groupValues?.get(1)?.toIntOrNull()
+                        ?: seasonRegex.find(doc.selectFirst("h1.entry-title, .entry-title")?.text().orEmpty())?.groupValues?.get(1)?.toIntOrNull()
                     if (sNum != null) "Season $sNum" else (seasonRegex.find(prevP)?.value?.trim() ?: "Season 1")
                 } else {
                     movieTitleRegex.find(prevP.replace("Download", "").trim())?.value?.trim() ?: "Movie"
                 }
 
-                val episodePageUrl = row.selectFirst("a[href]")?.attr("abs:href")?.takeUnless { it.isBlank() }
-                    ?: return@parallelMapNotNullBlocking null
+                // Check for direct episode links right on the main page row (e.g. Episode 1, Episode 2)
+                val directLinks = row.select("a[href]").filter { a ->
+                    val text = a.text().trim()
+                    val href = a.attr("abs:href").ifBlank { a.attr("href") }
+                    (text.contains("Episode", true) || text.contains("Ep", true)) &&
+                        (href.contains("?sid=") || href.contains("r?key=") || href.contains("cloud.") || href.contains("/archives/"))
+                }
 
-                val childUrl = extractChildUrl(episodePageUrl)
+                // Prioritize Episode Links button over Zip / Batch / Pack buttons
+                val targetButton = row.select("a[href]").firstOrNull { a ->
+                    val text = a.text().trim()
+                    val cls = a.className()
+                    (text.contains("Episode", true) || cls.contains("episode", true)) &&
+                        !text.contains("zip", true) && !text.contains("batch", true) && !text.contains("pack", true)
+                } ?: row.select("a[href]").firstOrNull { a ->
+                    val text = a.text().trim()
+                    !text.contains("zip", true) && !text.contains("batch", true) && !text.contains("pack", true)
+                } ?: row.selectFirst("a[href]")
 
-                val episodePageDocument = runCatching {
-                    client.newCall(GET(childUrl, headers)).execute().asJsoup()
-                }.getOrNull() ?: return@parallelMapNotNullBlocking null
-                childPageLoaded.set(true)
+                val quality = qualityRegex.find(prevP)?.value
+                    ?: qualityRegex.find(row.text())?.value
+                    ?: targetButton?.text()?.let { qualityRegex.find(it)?.value }
+                    ?: "HD"
 
-                val links = episodePageDocument.select("div.timed-content-client_show_0_5_0 a")
-                    .ifEmpty {
-                        episodePageDocument.select("""a[href*="?sid="], a[href*="r?key="]""")
-                    }
+                val links = if (directLinks.isNotEmpty()) {
+                    directLinks
+                } else {
+                    val episodePageUrl = targetButton?.attr("abs:href")?.takeUnless { it.isBlank() }
+                        ?: return@parallelMapNotNullBlocking null
+
+                    val childUrl = extractChildUrl(episodePageUrl)
+
+                    val episodePageDocument = runCatching {
+                        client.newCall(GET(childUrl, headers)).execute().asJsoup()
+                    }.getOrNull() ?: return@parallelMapNotNullBlocking null
+                    childPageLoaded.set(true)
+
+                    episodePageDocument.select("div[class*=\"timed-content\"] a")
+                        .ifEmpty {
+                            episodePageDocument.select("""a[href*="?sid="], a[href*="r?key="], a[href*="cloud"], a[href*="/archives/"], a[href*="/download/"], a[href*="drive"], a[href*="fastdl"], a[href*="hubcloud"]""")
+                        }
+                        .ifEmpty {
+                            episodePageDocument.select("p:has(a[class*=maxbutton]) a, div.entry-content a[href], div.thecontent a[href], a.btn, a[class*=button]")
+                        }
+                        .filter { linkElement ->
+                            val lText = linkElement.text().trim()
+                            val lHref = linkElement.attr("abs:href").ifBlank { linkElement.attr("href") }.trim()
+                            lHref.isNotBlank() &&
+                                !lHref.startsWith("javascript:") &&
+                                !lHref.startsWith("#") &&
+                                !lHref.contains("telegram", true) &&
+                                !lHref.contains("t.me", true) &&
+                                !lHref.endsWith(".zip", true) &&
+                                !lHref.endsWith(".rar", true) &&
+                                !lHref.contains(".zip?", true) &&
+                                !lText.contains("batch", true) &&
+                                !lText.contains("zip", true) &&
+                                !lText.contains("telegram", true) &&
+                                !lText.contains("comment", true) &&
+                                !lText.contains("join", true) &&
+                                !lText.contains("how to download", true) &&
+                                !lText.equals("home", true)
+                        }
+                }
 
                 links.mapIndexedNotNull { index, linkElement ->
                     val episode = if (isSerie) {
-                        linkElement.text()
-                            .replace("Episode", "", true)
-                            .trim()
-                            .toIntOrNull() ?: (index + 1)
+                        epNumRegex.find(linkElement.text())?.groupValues?.get(1)?.toIntOrNull()
+                            ?: linkElement.text().replace("Episode", "", true).trim().toIntOrNull()
+                            ?: (index + 1)
                     } else {
                         0
                     }
 
-                    val url = linkElement.attr("abs:href").takeUnless(String::isBlank)
-                        ?: return@mapIndexedNotNull null
+                    val rawUrl = linkElement.attr("abs:href").ifBlank { linkElement.attr("href") }.trim()
+                    val url = if (rawUrl.startsWith("http")) {
+                        rawUrl
+                    } else {
+                        currentBaseUrl.trimEnd('/') + "/" + rawUrl.trimStart('/')
+                    }.takeUnless(String::isBlank) ?: return@mapIndexedNotNull null
 
                     Triple(
                         Pair(defaultName, episode),
@@ -226,7 +288,7 @@ class MoviesMod : Source() {
                 url = EpLinks(
                     urls = items.map { triple ->
                         EpUrl(url = triple.second, quality = triple.third)
-                    },
+                    }.distinctBy { it.url },
                 ).toJson()
 
                 name = if (isSerie) "$itemName Ep $episodeNum" else itemName
@@ -249,9 +311,11 @@ class MoviesMod : Source() {
 
     private fun extractChildUrl(mainUrl: String): String {
         return runCatching {
-            val urlParam = mainUrl.toHttpUrl().queryParameter("url") ?: return@runCatching mainUrl
-            val flags = if (urlParam.contains("-") || urlParam.contains("_")) Base64.URL_SAFE else Base64.DEFAULT
-            String(Base64.decode(urlParam, flags))
+            val rawParam = mainUrl.toHttpUrl().queryParameter("url") ?: return@runCatching mainUrl
+            val cleanParam = rawParam.trim()
+            val padded = cleanParam + "=".repeat((4 - cleanParam.length % 4) % 4)
+            val flags = if (padded.contains("-") || padded.contains("_")) Base64.URL_SAFE else Base64.DEFAULT
+            String(Base64.decode(padded, flags)).trim()
         }.getOrDefault(mainUrl)
     }
 
