@@ -295,12 +295,12 @@ class AnimeHeaven : Source() {
     }
 
     // ============================ Recommendations ========================
-    fun relatedAnimeListRequest(anime: SAnime): Request {
+    override fun relatedAnimeListRequest(anime: SAnime): Request {
         val path = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
         return GET("$baseUrl$path", headers)
     }
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> {
+    override fun relatedAnimeListParse(response: Response): List<SAnime> {
         val doc = response.asJsoup()
         return doc.select("div.info3 div.similarimg").mapNotNull { element ->
             parseSimilarElement(element)

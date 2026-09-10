@@ -438,9 +438,9 @@ class Zanora : Source() {
 
     // ============================ Recommendations =============================
 
-    fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
+    override fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> {
+    override fun relatedAnimeListParse(response: Response): List<SAnime> {
         val doc = response.asJsoup()
         val relatedElements = doc.select("div.film-related div.flw-item, div.related-anime a, div.flw-item")
         return relatedElements.mapNotNull { el ->

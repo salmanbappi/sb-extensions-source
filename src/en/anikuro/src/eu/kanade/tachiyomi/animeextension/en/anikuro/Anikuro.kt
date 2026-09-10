@@ -321,12 +321,12 @@ class Anikuro : Source() {
     }
 
     // ============================ Recommendations ========================
-    fun relatedAnimeListRequest(anime: SAnime): Request {
+    override fun relatedAnimeListRequest(anime: SAnime): Request {
         val id = anime.url.substringAfterLast("/").substringBefore("?")
         return GET("$baseUrl/api/v1/anime/$id/full", headers)
     }
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> {
+    override fun relatedAnimeListParse(response: Response): List<SAnime> {
         val dto = jsonSerializer.decodeFromString<AnimeDetailResponseDto>(response.body.string())
         val data = dto.data ?: return emptyList()
         val items = (data.recommendations ?: emptyList()) + (data.relations ?: emptyList())

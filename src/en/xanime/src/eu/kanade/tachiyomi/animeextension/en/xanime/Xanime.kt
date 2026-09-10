@@ -425,9 +425,9 @@ class Xanime : Source() {
     }
 
     // ============================ Recommendations ========================
-    fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
+    override fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> {
+    override fun relatedAnimeListParse(response: Response): List<SAnime> {
         val html = response.body.string()
         val doc = Jsoup.parse(html, response.request.url.toString())
         val currentPath = response.request.url.encodedPath

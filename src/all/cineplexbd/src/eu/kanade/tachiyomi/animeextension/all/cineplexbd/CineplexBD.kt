@@ -618,9 +618,9 @@ class CineplexBD : Source() {
     }
 
     // ================= Relation/Suggestions =================
-    fun relatedAnimeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
+    override fun relatedAnimeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> {
+    override fun relatedAnimeListParse(response: Response): List<SAnime> {
         val doc = response.asJsoup()
         val elements = doc.select(".slider-track a[href*='view.php'], .slider-track a[href*='watch.php'], .slider-track a[href*='tview.php']")
             .takeIf { it.isNotEmpty() }

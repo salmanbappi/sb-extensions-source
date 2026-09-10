@@ -456,9 +456,9 @@ class ZoroTv : Source() {
 
     // ============================ Relation / Recommendations =============================
 
-    fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
+    override fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> {
+    override fun relatedAnimeListParse(response: Response): List<SAnime> {
         val document = response.asJsoup()
         return document.select("div.bixbox:contains(Recommended) article.bs, div.bixbox:contains(recommend) article.bs").map { element ->
             SAnime.create().apply {

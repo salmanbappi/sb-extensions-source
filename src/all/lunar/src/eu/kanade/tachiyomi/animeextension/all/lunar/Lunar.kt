@@ -310,7 +310,7 @@ class Lunar : Source() {
 
     // ============================ RECOMMENDATIONS ============================
 
-    fun relatedAnimeListRequest(anime: SAnime): Request {
+    override fun relatedAnimeListRequest(anime: SAnime): Request {
         val query = """
             query (${'$'}search: String) {
                 Media(search: ${'$'}search, type: ANIME) {
@@ -339,7 +339,7 @@ class Lunar : Source() {
         return POST("https://graphql.anilist.co", headers, body)
     }
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> {
+    override fun relatedAnimeListParse(response: Response): List<SAnime> {
         val body = response.body.string()
         val jsonObj = runCatching { JSONObject(body) }.getOrNull() ?: return emptyList()
         val edges = jsonObj.optJSONObject("data")

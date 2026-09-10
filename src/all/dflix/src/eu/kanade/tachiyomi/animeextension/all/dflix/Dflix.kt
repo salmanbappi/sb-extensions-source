@@ -224,7 +224,7 @@ class Dflix : Source() {
 
     override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {}
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> {
+    override fun relatedAnimeListParse(response: Response): List<SAnime> {
         val document = response.asJsoup()
         val currentUrl = response.request.url.encodedPath
 

@@ -58,6 +58,8 @@ abstract class Source :
 
     override fun seasonListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
+    override fun relatedAnimeListRequest(anime: SAnime): Request = throw UnsupportedOperationException()
+    override fun relatedAnimeListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
 
     open fun videoListRequest(episode: SEpisode): Request = throw UnsupportedOperationException()
     open fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()

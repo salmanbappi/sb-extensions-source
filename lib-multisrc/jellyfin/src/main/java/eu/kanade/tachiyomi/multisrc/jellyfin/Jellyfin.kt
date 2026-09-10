@@ -521,13 +521,13 @@ abstract class Jellyfin(
         return items.map { it.toSEpisode(baseUrl, userId, showThumbnails, showSummary, episodeTemplate) }.reversed()
     }
 
-    open fun relatedAnimeListRequest(anime: SAnime): okhttp3.Request {
+    override fun relatedAnimeListRequest(anime: SAnime): okhttp3.Request {
         val url = anime.url.toHttpUrl()
         val itemId = url.pathSegments.last()
         return GET("$baseUrl/Items/$itemId/Similar?UserId=$userId&Limit=12", headers)
     }
 
-    open fun relatedAnimeListParse(response: Response): List<SAnime> {
+    override fun relatedAnimeListParse(response: Response): List<SAnime> {
         val dto = response.parseAs<ItemListDto>(json)
         return dto.items.map { it.toSAnime(baseUrl, userId) }
     }

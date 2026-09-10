@@ -535,7 +535,7 @@ class ShuttleTV : Source() {
     }
 
     // ============================ Recommendations =============================
-    fun relatedAnimeListRequest(anime: SAnime): Request {
+    override fun relatedAnimeListRequest(anime: SAnime): Request {
         val id = anime.url.substringAfter("/watch/").substringBefore("?")
         val mediaType = if (anime.url.contains("type=tv")) "tv" else "movie"
 
@@ -546,7 +546,7 @@ class ShuttleTV : Source() {
         return GET(url, headers)
     }
 
-    fun relatedAnimeListParse(response: Response): List<SAnime> = parseTmdbMediaList(response).animes
+    override fun relatedAnimeListParse(response: Response): List<SAnime> = parseTmdbMediaList(response).animes
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
