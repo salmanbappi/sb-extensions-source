@@ -4,8 +4,8 @@ import android.util.Log
 import eu.kanade.tachiyomi.lib.megamaxmultiserver.dto.IframeResponse
 import eu.kanade.tachiyomi.lib.megamaxmultiserver.dto.LeechResponse
 import eu.kanade.tachiyomi.network.GET
-import keiyoushi.utils.parseAs
 import keiyoushi.utils.UrlUtils
+import keiyoushi.utils.parseAs
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import kotlin.math.abs

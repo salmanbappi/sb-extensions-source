@@ -10,10 +10,10 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
-import keiyoushi.utils.parseAs
 import extensions.utils.Source
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.parseAs
 import okhttp3.OkHttpClient
 import kotlin.time.Duration.Companion.seconds
 
