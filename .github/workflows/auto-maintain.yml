@@ -28,7 +28,7 @@ jobs:
           python3 scripts/cli.py auto-maintain
 
       - name: Create Pull Request if Changes Found
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           commit-message: "chore(auto-maintain): sync extractors and auto-fix dependencies"
           title: "🤖 Automated Repository Maintenance & Extractor Sync"
