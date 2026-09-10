@@ -1,0 +1,13 @@
+ext {
+    extName = 'MoviesMod'
+    extClass = '.Moviesmod'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:cloudflare-interceptor"))
+    implementation(project(":lib:playlist-utils"))
+}
