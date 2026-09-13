@@ -9,7 +9,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parseAs
-import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
@@ -362,7 +362,7 @@ class AniWaveExtractor(private val source: AniWave) {
                 IvParameterSpec(ivBytes),
             )
             val plain = cipher.doFinal(raw).toString(Charsets.UTF_8)
-            decodeFromString<EncPayload>(plain).file
+            Json.decodeFromString<EncPayload>(plain).file
         } catch (e: Exception) {
             Log.w("AniWaveExtractor", "decryptEncPayload: failed (${e.message})")
             ""
