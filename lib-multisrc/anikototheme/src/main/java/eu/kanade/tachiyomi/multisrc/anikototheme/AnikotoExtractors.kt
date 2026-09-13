@@ -23,6 +23,12 @@ class AnikotoExtractors(
     companion object {
         private const val TAG = "AnikotoExtractors"
         private val DATA_ID_REGEX = Regex("""data-id="([^"]+)"""")
+
+        // CDN (`s=`) discovery, mirroring the player's own handling: the inline script compares the
+        // CDNs it ships with (`"tcdn"!==s`), and the markup may link sources with an explicit `s=`.
+        private val SC_IN_PAGE_JS = Regex(""""([a-z0-9_]{2,12})"!==s""")
+        private val SC_IN_PAGE_URL = Regex("""[?&]s=([a-z0-9_]{2,12})""")
+        private val SOURCES_ENDPOINTS = listOf("getSourcesNew", "getSources")
         private const val BROWSER_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -141,71 +147,122 @@ class AnikotoExtractors(
     }
 
     /**
-     * Tries both the primary and the "New" getSources endpoints (each through OkHttp first, then
-     * the WebView fetcher for anti-bot hosts), retrying transient empty responses. Returns the
-     * decoded response or null after logging the last raw body so server-side rejection is visible.
+     * Decoded `getSources*` payload: the master playlist plus the tracks that came with it, and
+     * the already-fetched [masterText] once the master has been verified to serve real HLS.
      */
-    private fun fetchSourcesResponse(
+    private data class SourcesData(
+        val masterM3u8: String,
+        val tracks: List<VidTubeTrack>,
+        val masterText: String,
+    )
+
+    /**
+     * The player appends an `s` (CDN selector) parameter to its `getSources*` calls and each value
+     * maps to a different CDN host, so a source is only usable when the right `s` is used. Collect
+     * every candidate we can see, most specific first: the embed URL's own `s=`, the CDNs named by
+     * the inline player script (`"tcdn"!==s&&"bcdn"!==s`), any `?s=` links in the markup, and the
+     * two known CDNs with a bare request as the last resort.
+     */
+    private fun buildSCandidates(iframeUrl: String, pageHtml: String): List<String> {
+        val fromUrl = iframeUrl.substringAfter('?', "")
+            .substringBefore('#')
+            .split('&')
+            .firstOrNull { it.startsWith("s=") }
+            ?.substringAfter('=', "")
+            ?.takeIf { it.isNotEmpty() }
+
+        return buildList {
+            fromUrl?.let { add(it) }
+            SC_IN_PAGE_JS.findAll(pageHtml).forEach { add(it.groupValues[1]) }
+            SC_IN_PAGE_URL.findAll(pageHtml).forEach { add(it.groupValues[1]) }
+            add("bcdn")
+            add("tcdn")
+            add("")
+        }.distinct().take(6)
+    }
+
+    /** Decodes a `getSources*` body into its master playlist + tracks, or null when unusable. */
+    private fun parseSourcesBody(body: String): Pair<String, List<VidTubeTrack>>? {
+        val resp = try {
+            json.decodeFromString<VidTubeSourcesResponse>(body)
+        } catch (e: Exception) {
+            logw("resolveVidTube: JSON decode failed: ${e.message}; body=${body.take(200)}")
+            return null
+        }
+
+        val master = resp.sources?.file?.takeIf { it.isNotEmpty() }
+            ?: decryptEncPayload(resp.enc).takeIf { it.isNotEmpty() }
+        if (master.isNullOrEmpty() || !master.startsWith("http")) {
+            logw("resolveVidTube: no sources in payload (sources='${resp.sources?.file}' enc='${resp.enc.take(30)}…')")
+            return null
+        }
+
+        val tracks = resp.tracks.filter { it.file.startsWith("http") && it.label.isNotEmpty() }
+        return master to tracks
+    }
+
+    /**
+     * Walks every `s` candidate and both `getSources*` endpoints, and only accepts a response once
+     * its master playlist has been fetched and confirmed to be real HLS. Earlier CDN hosts for the
+     * same episode go stale and answer with a WAF/challenge page, so verification is what keeps the
+     * hoster list populated instead of failing every server.
+     */
+    private fun fetchSourcesData(
         host: String,
         dataId: String,
         audioType: String,
+        sCandidates: List<String>,
         apiHeaders: Headers,
-    ): VidTubeSourcesResponse? {
-        val candidates = listOf(
-            "getSources" to "https://$host/stream/getSources?id=$dataId&id=$dataId&type=$audioType&type=$audioType",
-            "getSourcesNew" to "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId&type=$audioType&type=$audioType",
-        )
+    ): SourcesData? {
+        var usedWebView = false
+        var lastError = "no candidates"
 
-        var lastBodyPreview = ""
-        for ((name, url) in candidates) {
-            logi("resolveVidTube: GET $name: $url")
-            // OkHttp first, then the WebView (browser TLS + cookies) which passes anti-bot checks
-            // plain OkHttp cannot. Anti-bot hosts often answer 200 with an empty/invalid body, so
-            // both transports are tried even when the HTTP call "succeeds".
-            for (transport in listOf("okhttp", "webview")) {
-                if (transport == "webview" && webViewFetcher == null) continue
-                repeat(2) { attempt ->
-                    val body = try {
-                        if (transport == "webview") {
+        for (s in sCandidates) {
+            val suffix = if (s.isEmpty()) "" else "&s=$s"
+            for (endpoint in SOURCES_ENDPOINTS) {
+                val url = "https://$host/stream/$endpoint?id=$dataId&type=$audioType$suffix"
+                logi("resolveVidTube: GET $endpoint (s=${s.ifEmpty { "-" }})")
+
+                val body = try {
+                    fetchString(url, apiHeaders)
+                } catch (e: Exception) {
+                    lastError = "$endpoint s=${s.ifEmpty { "-" }}: ${e.message}"
+                    // Anti-bot hosts reject plain OkHttp outright; retry through the WebView once.
+                    if (!usedWebView && webViewFetcher != null) {
+                        usedWebView = true
+                        try {
                             webViewFetcher!!.fetchText(url)
-                        } else {
-                            fetchString(url, apiHeaders)
+                        } catch (e2: Exception) {
+                            logw("resolveVidTube: $endpoint via webview failed: ${e2.message}")
+                            null
                         }
-                    } catch (e: Exception) {
-                        logw("resolveVidTube: $name via $transport (attempt ${attempt + 1}) failed: ${e.message}")
+                    } else {
                         null
                     }
+                } ?: continue
 
-                    if (body == null) {
-                        return@repeat
-                    }
+                val parsed = parseSourcesBody(body) ?: continue
+                val (masterM3u8, tracks) = parsed
 
-                    val resp = try {
-                        json.decodeFromString<VidTubeSourcesResponse>(body)
-                    } catch (e: Exception) {
-                        lastBodyPreview = body.take(200)
-                        logw("resolveVidTube: $name via $transport JSON decode failed: ${e.message}; body=$lastBodyPreview")
-                        return@repeat
-                    }
-
-                    val m3u8 = resp.sources?.file?.takeIf { it.isNotEmpty() }
-                        ?: decryptEncPayload(resp.enc).takeIf { it.isNotEmpty() }
-                    if (m3u8.isNullOrEmpty() || !m3u8.startsWith("http")) {
-                        lastBodyPreview = body.take(200)
-                        logw("resolveVidTube: $name via $transport returned no sources (sources='${resp.sources?.file}' enc='${resp.enc.take(30)}...') body=$lastBodyPreview")
-                        if (attempt == 0) {
-                            // Transient empty responses (rate limiting / WAF) often pass on retry.
-                            Thread.sleep(700L)
-                        }
-                        return@repeat
-                    }
-
-                    return resp
+                val masterText = try {
+                    fetchString(masterM3u8, segHeaders(extractHost(masterM3u8) ?: host))
+                } catch (e: Exception) {
+                    lastError = "$endpoint s=${s.ifEmpty { "-" }} master: ${e.message}"
+                    logw("resolveVidTube: master did not verify ($lastError)")
+                    continue
                 }
+                if (!masterText.startsWith("#EXTM3U")) {
+                    lastError = "$endpoint s=${s.ifEmpty { "-" }} master is not m3u8"
+                    logw("resolveVidTube: master is not m3u8 (starts with ${masterText.take(40)})")
+                    continue
+                }
+
+                logi("resolveVidTube: master verified via $endpoint (s=${s.ifEmpty { "-" }})")
+                return SourcesData(masterM3u8, tracks, masterText)
             }
         }
 
-        loge("resolveVidTube: no valid m3u8 from getSources/getSourcesNew (last body: $lastBodyPreview)")
+        loge("resolveVidTube: no valid m3u8 from ${SOURCES_ENDPOINTS.joinToString("/")} (host=$host, sCandidates=$sCandidates, last: $lastError)")
         return null
     }
 
@@ -229,29 +286,20 @@ class AnikotoExtractors(
 
             val apiHeaders = vidtubeApiHeaders(host, iframeUrl)
 
-            val sourcesResp = fetchSourcesResponse(host, dataId, audioType, apiHeaders) ?: return null
-            val masterM3u8 = sourcesResp.sources?.file?.takeIf { it.isNotEmpty() }
-                ?: decryptEncPayload(sourcesResp.enc).takeIf { it.isNotEmpty() }
-            if (masterM3u8.isNullOrEmpty()) {
-                loge("resolveVidTube: no usable master m3u8 (sources='${sourcesResp.sources?.file}')")
-                return null
-            }
-            logi("resolveVidTube: [3/5] fetching master m3u8")
+            // The embed URL carries the CDN selector (`?s=tcdn`); the page JS names the others.
+            val sCandidates = buildSCandidates(iframeUrl, pageHtml)
+            logi("resolveVidTube: s candidates = $sCandidates")
 
-            val subtitles = sourcesResp.tracks.filter {
-                it.file.startsWith("http") && it.label.isNotEmpty()
-            }.map { track ->
+            val sources = fetchSourcesData(host, dataId, audioType, sCandidates, apiHeaders) ?: return null
+            val masterM3u8 = sources.masterM3u8
+            val masterText = sources.masterText
+            logi("resolveVidTube: [3/5] master already verified")
+
+            val subtitles = sources.tracks.map { track ->
                 LocalProxyServer.SubtitleData(track.file, track.label, inferLang(track.label))
             }
             if (subtitles.isNotEmpty()) {
                 logi("resolveVidTube: subs=${subtitles.size} track(s)")
-            }
-
-            val seg = segHeaders(host)
-            val masterText = fetchString(masterM3u8, seg)
-            if (!masterText.startsWith("#EXTM3U")) {
-                loge("resolveVidTube: master is not m3u8 (starts with ${masterText.take(40)})")
-                return null
             }
 
             val variants = parseMasterPlaylist(masterText, masterM3u8)
@@ -261,6 +309,8 @@ class AnikotoExtractors(
             }
             logi("resolveVidTube: ${variants.size} variants: ${variants.joinToString { it.quality }}")
             logi("resolveVidTube: [4/5] fetching ${variants.size} variant playlists")
+
+            val seg = segHeaders(host)
 
             val variantDataList = coroutineScope {
                 variants.map { vi ->
