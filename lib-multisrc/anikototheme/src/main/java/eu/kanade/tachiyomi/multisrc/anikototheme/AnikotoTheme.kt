@@ -59,6 +59,7 @@ abstract class AnikotoTheme : Source() {
     protected open val synopsisSelector = "div.synopsis div.content"
     protected open val detailPosterSelector = "div.poster img"
     protected open val popularAnimeSelector = "div.ani.items > div.item"
+
     // Server entries differ per site skin: anikoto uses li[data-link-id], sogo uses
     // a.server[data-link-id], suge uses div.server[data-link-id]. Cover all three so the
     // shared getHosterList works on every theme without per-site overrides.
