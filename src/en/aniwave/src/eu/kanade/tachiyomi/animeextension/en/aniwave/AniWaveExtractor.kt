@@ -362,7 +362,7 @@ class AniWaveExtractor(private val source: AniWave) {
                 IvParameterSpec(ivBytes),
             )
             val plain = cipher.doFinal(raw).toString(Charsets.UTF_8)
-            json.decodeFromString<EncPayload>(plain).file
+            decodeFromString<EncPayload>(plain).file
         } catch (e: Exception) {
             Log.w("AniWaveExtractor", "decryptEncPayload: failed (${e.message})")
             ""
@@ -542,5 +542,9 @@ class AniWaveExtractor(private val source: AniWave) {
         )
         private val HOST_MAP_REGEX = Regex("""var HOST_MAP\s*=\s*\{([^}]+)\}""")
         private val HOST_ENTRY_REGEX = Regex("""'([^']+)'\s*:\s*'([^']+)'""")
+
+        // MegaPlay AES-256-CBC key/IV for decrypting the `enc` payload in getSources* responses.
+        private const val MEGAPLAY_AES_KEY = "i?LMTAx0Q6,:}50U"
+        private const val MEGAPLAY_AES_IV = "W0;27ToaUpl_P%'c"
     }
 }
