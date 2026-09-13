@@ -269,7 +269,9 @@ class AnimeSuge : AnikotoTheme() {
 
             val meta = EpisodeMeta(slug, num.toString(), malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
-                url = "/watch/${getCleanSlug(slug)}/ep-$num"
+                // Encode the full EpisodeMeta in the URL fragment so getHosterList can
+                // discover servers without a refetch (same contract as the theme).
+                url = meta.encode()
                 name = title
                 episode_number = num.toFloat()
                 date_upload = (timestamp.toLongOrNull() ?: 0L) * 1000L
@@ -333,10 +335,21 @@ class AnimeSuge : AnikotoTheme() {
 
     override suspend fun fetchFreshEpisodeMeta(slug: String, epNum: String): EpisodeMeta? {
         try {
+            // Suge stores plain slugs in EpisodeMeta (getCleanSlug strips /watch/ + /anime/),
+            // so probe the canonical detail paths in order.
             val cleanSlug = getCleanSlug(slug)
-            val detailResponse = client.newCall(GET("$baseUrl/anime/$cleanSlug")).execute()
-            val detailDoc = detailResponse.asJsoup()
-
+            val detailDoc = listOf(
+                "$baseUrl/anime/$cleanSlug",
+                "$baseUrl/anime/$cleanSlug/ep-1",
+                "$baseUrl/watch/$cleanSlug/ep-$epNum",
+            ).firstNotNullOfOrNull { url ->
+                runCatching {
+                    val doc = client.newCall(GET(url)).execute().asJsoup()
+                    val hasId = doc.selectFirst(".favourite[data-id], [data-id]") != null ||
+                        mangaIdRegex.containsMatchIn(doc.html())
+                    if (hasId) doc else null
+                }.getOrNull()
+            } ?: return null
             val animeId = detailDoc.selectFirst(".favourite[data-id], [data-id]")?.attr("data-id")
                 ?: mangaIdRegex.find(detailDoc.html())?.groupValues?.get(1)
                 ?: return null

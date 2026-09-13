@@ -26,6 +26,12 @@ class AnikotoExtractors(
         private const val BROWSER_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+        // MegaPlay-style `enc` payload cipher (from lib/newclient.min.js):
+        // AES-256-CBC, key "i?LMTAx0Q6,:}50U" zero-padded to 32 bytes,
+        // IV "W0;27ToaUpl_P%'c", base64url body decrypting to {"file": "<master m3u8>"}.
+        private const val MEGAPLAY_AES_KEY = "i?LMTAx0Q6,:}50U"
+        private const val MEGAPLAY_AES_IV = "W0;27ToaUpl_P%'c"
+
         // Limit concurrent variant playlist fetches to avoid rate limits (matches v4 APK)
         private val variantSemaphore = Semaphore(2)
     }
@@ -109,6 +115,32 @@ class AnikotoExtractors(
     private fun parseMasterPlaylist(text: String, masterUrl: String): List<VariantInfo> = HlsPlaylistParser.parseMasterPlaylist(text, masterUrl)
 
     /**
+     * Decrypts a MegaPlay-style `enc` payload to its `{"file": "<master m3u8>"}` JSON.
+     * Returns the master URL, or an empty string when the payload cannot be decoded.
+     */
+    private fun decryptEncPayload(enc: String): String {
+        if (enc.isBlank()) return ""
+        return try {
+            val raw = Base64.decode(enc, Base64.URL_SAFE or Base64.NO_WRAP)
+            val keyBytes = ByteArray(32)
+            val keySrc = MEGAPLAY_AES_KEY.toByteArray(Charsets.UTF_8)
+            System.arraycopy(keySrc, 0, keyBytes, 0, minOf(keySrc.size, 32))
+            val ivBytes = MEGAPLAY_AES_IV.toByteArray(Charsets.UTF_8).copyOf(16)
+            val cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(
+                javax.crypto.Cipher.DECRYPT_MODE,
+                javax.crypto.spec.SecretKeySpec(keyBytes, "AES"),
+                javax.crypto.spec.IvParameterSpec(ivBytes),
+            )
+            val plain = cipher.doFinal(raw).toString(Charsets.UTF_8)
+            json.decodeFromString<VidTubeSources>(plain).file
+        } catch (e: Exception) {
+            logw("decryptEncPayload: failed (${e.message})")
+            ""
+        }
+    }
+
+    /**
      * Tries both the primary and the "New" getSources endpoints (each through OkHttp first, then
      * the WebView fetcher for anti-bot hosts), retrying transient empty responses. Returns the
      * decoded response or null after logging the last raw body so server-side rejection is visible.
@@ -156,10 +188,11 @@ class AnikotoExtractors(
                         return@repeat
                     }
 
-                    val m3u8 = resp.sources
+                    val m3u8 = resp.sources?.file?.takeIf { it.isNotEmpty() }
+                        ?: decryptEncPayload(resp.enc).takeIf { it.isNotEmpty() }
                     if (m3u8.isNullOrEmpty() || !m3u8.startsWith("http")) {
                         lastBodyPreview = body.take(200)
-                        logw("resolveVidTube: $name via $transport returned no sources (sources='$m3u8') body=$lastBodyPreview")
+                        logw("resolveVidTube: $name via $transport returned no sources (sources='${resp.sources?.file}' enc='${resp.enc.take(30)}...') body=$lastBodyPreview")
                         if (attempt == 0) {
                             // Transient empty responses (rate limiting / WAF) often pass on retry.
                             Thread.sleep(700L)
@@ -197,7 +230,12 @@ class AnikotoExtractors(
             val apiHeaders = vidtubeApiHeaders(host, iframeUrl)
 
             val sourcesResp = fetchSourcesResponse(host, dataId, audioType, apiHeaders) ?: return null
-            val masterM3u8 = sourcesResp.sources
+            val masterM3u8 = sourcesResp.sources?.file?.takeIf { it.isNotEmpty() }
+                ?: decryptEncPayload(sourcesResp.enc).takeIf { it.isNotEmpty() }
+            if (masterM3u8.isNullOrEmpty()) {
+                loge("resolveVidTube: no usable master m3u8 (sources='${sourcesResp.sources?.file}')")
+                return null
+            }
             logi("resolveVidTube: [3/5] fetching master m3u8")
 
             val subtitles = sourcesResp.tracks.filter {
