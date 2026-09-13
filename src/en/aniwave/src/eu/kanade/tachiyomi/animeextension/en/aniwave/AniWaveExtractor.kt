@@ -9,9 +9,13 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parseAs
+import kotlinx.serialization.decodeFromString
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 private data class ExtractionResult(
     val videos: List<Video>,
@@ -216,9 +220,12 @@ class AniWaveExtractor(private val source: AniWave) {
             add("Origin", "https://$host")
         }.build()
 
-        val (data, usedGetSourcesNew) = fetchSourceData(dataId, host, apiHeaders, streamType)
+        val sCandidates = buildSCandidates(embedUrl)
+
+        val (data, usedGetSourcesNew) = fetchSourceData(dataId, host, apiHeaders, streamType, sCandidates)
 
         val m3u8 = data.sources.takeIf { it.startsWith("http") }
+            ?: decryptEncPayload(data.enc).takeIf { it.startsWith("http") }
             ?: throw Exception("No valid m3u8 found")
 
         val subtitles = data.tracks
@@ -258,51 +265,108 @@ class AniWaveExtractor(private val source: AniWave) {
         host: String,
         apiHeaders: Headers,
         streamType: String,
+        sCandidates: List<String>,
     ): Pair<SourceResponseDto, Boolean> {
-        // The hoster now expects the id AND type parameters duplicated on both endpoints. A
-        // 200-with-empty-sources response (rate limiting / WAF) does not throw, so both endpoints
-        // must be attempted explicitly rather than only falling back on a thrown error.
-        val candidates = listOf(
-            "getSources" to "https://$host/stream/getSources?id=$dataId&id=$dataId&type=$streamType&type=$streamType",
-            "getSourcesNew" to "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId&type=$streamType&type=$streamType",
-        )
-
+        // The hoster now expects the id AND type parameters duplicated on both endpoints, and it
+        // picks the CDN by the same `s` selector the web player appends. A 200-with-empty-sources
+        // response (rate limiting / WAF / wrong CDN) does not throw, so every candidate must be
+        // attempted explicitly rather than only falling back on a thrown error.
         var lastBodyPreview = ""
-        for ((name, url) in candidates) {
-            Log.i("AniWaveExtractor", "fetchSourceData: GET $name: $url")
-            repeat(2) { attempt ->
-                val body = try {
-                    source.client.newCall(GET(url, apiHeaders)).awaitSuccess().use { response ->
-                        if (!response.isSuccessful) throw Exception("$name failed: HTTP ${response.code}")
-                        response.body.string()
+        for (s in sCandidates) {
+            val suffix = if (s.isEmpty()) "" else "&s=$s"
+            val candidates = listOf(
+                "getSources" to "https://$host/stream/getSources?id=$dataId&id=$dataId&type=$streamType&type=$streamType$suffix",
+                "getSourcesNew" to "https://$host/stream/getSourcesNew?id=$dataId&id=$dataId&type=$streamType&type=$streamType$suffix",
+            )
+
+            for ((name, url) in candidates) {
+                Log.i("AniWaveExtractor", "fetchSourceData: GET $name (s=${s.ifEmpty { "-" }}): $url")
+                repeat(2) { attempt ->
+                    val body = try {
+                        source.client.newCall(GET(url, apiHeaders)).awaitSuccess().use { response ->
+                            if (!response.isSuccessful) throw Exception("$name failed: HTTP ${response.code}")
+                            response.body.string()
+                        }
+                    } catch (e: Exception) {
+                        Log.w("AniWaveExtractor", "fetchSourceData: $name s=${s.ifEmpty { "-" }} (attempt ${attempt + 1}) failed: ${e.message}")
+                        null
+                    } ?: return@repeat
+
+                    val data = try {
+                        body.parseAs<SourceResponseDto>()
+                    } catch (e: Exception) {
+                        lastBodyPreview = body.take(200)
+                        Log.w("AniWaveExtractor", "fetchSourceData: $name JSON decode failed: ${e.message}; body=$lastBodyPreview")
+                        return@repeat
                     }
-                } catch (e: Exception) {
-                    Log.w("AniWaveExtractor", "fetchSourceData: $name (attempt ${attempt + 1}) failed: ${e.message}")
-                    null
-                } ?: return@repeat
 
-                val data = try {
-                    body.parseAs<SourceResponseDto>()
-                } catch (e: Exception) {
+                    // Accept either a plain `sources` URL or an encrypted `enc` payload — newer
+                    // responses carry only the latter.
+                    if (data.sources.startsWith("http") || data.enc.isNotEmpty()) {
+                        return data to (name == "getSourcesNew")
+                    }
+
                     lastBodyPreview = body.take(200)
-                    Log.w("AniWaveExtractor", "fetchSourceData: $name JSON decode failed: ${e.message}; body=$lastBodyPreview")
-                    return@repeat
-                }
-
-                if (data.sources.startsWith("http")) {
-                    return data to (name == "getSourcesNew")
-                }
-
-                lastBodyPreview = body.take(200)
-                Log.w("AniWaveExtractor", "fetchSourceData: $name returned no sources (sources='${data.sources}') body=$lastBodyPreview")
-                if (attempt == 0) {
-                    // Transient empty responses (rate limiting / WAF) often pass on retry.
-                    kotlinx.coroutines.delay(700L)
+                    Log.w("AniWaveExtractor", "fetchSourceData: $name s=${s.ifEmpty { "-" }} returned no sources (sources='${data.sources}') body=$lastBodyPreview")
+                    if (attempt == 0) {
+                        // Transient empty responses (rate limiting / WAF) often pass on retry.
+                        kotlinx.coroutines.delay(700L)
+                    }
                 }
             }
         }
 
         throw Exception("No valid m3u8 found (last body: $lastBodyPreview)")
+    }
+
+    /**
+     * The player appends an `s` (CDN selector) parameter to its `getSources*` calls and each value
+     * maps to a different CDN host, so a source is only usable when the right `s` is used. Collect
+     * every candidate we can see, most specific first: the embed URL's own `s=`, the CDNs named by
+     * the inline player script (`"tcdn"!==s&&"bcdn"!==s`), any `?s=` links in the markup, and the
+     * two known CDNs with a bare request as the last resort.
+     */
+    private fun buildSCandidates(iframeUrl: String): List<String> {
+        val fromUrl = iframeUrl.substringAfter('?', "")
+            .substringBefore('#')
+            .split('&')
+            .firstOrNull { it.startsWith("s=") }
+            ?.substringAfter('=', "")
+            ?.takeIf { it.isNotEmpty() }
+
+        return buildList {
+            fromUrl?.let { add(it) }
+            add("tcdn")
+            add("bcdn")
+            add("")
+        }.distinct().take(4)
+    }
+
+    /**
+     * Decrypts a MegaPlay-style `enc` payload to its `{"file": "<master m3u8>"}` JSON.
+     * AES-256-CBC, key `i?LMTAx0Q6,:}50U` zero-padded to 32 bytes, IV `W0;27ToaUpl_P%'c`,
+     * base64url body. Returns the master URL, or an empty string when it cannot be decoded.
+     */
+    private fun decryptEncPayload(enc: String): String {
+        if (enc.isBlank()) return ""
+        return try {
+            val raw = Base64.decode(enc, Base64.URL_SAFE or Base64.NO_WRAP)
+            val keyBytes = ByteArray(32)
+            val keySrc = MEGAPLAY_AES_KEY.toByteArray(Charsets.UTF_8)
+            System.arraycopy(keySrc, 0, keyBytes, 0, minOf(keySrc.size, 32))
+            val ivBytes = MEGAPLAY_AES_IV.toByteArray(Charsets.UTF_8).copyOf(16)
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(keyBytes, "AES"),
+                IvParameterSpec(ivBytes),
+            )
+            val plain = cipher.doFinal(raw).toString(Charsets.UTF_8)
+            json.decodeFromString<EncPayload>(plain).file
+        } catch (e: Exception) {
+            Log.w("AniWaveExtractor", "decryptEncPayload: failed (${e.message})")
+            ""
+        }
     }
 
     private suspend fun fetchSourcesFromPage(
