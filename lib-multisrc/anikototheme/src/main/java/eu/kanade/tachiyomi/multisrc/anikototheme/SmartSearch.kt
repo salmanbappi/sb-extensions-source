@@ -105,7 +105,9 @@ class SmartSearch(
 
         return when (engine) {
             Engine.GEMINI -> resolveWithGemini(query, geminiApiKey, geminiModel)
+
             Engine.GOOGLE -> resolveWithGoogle(query)
+
             else -> {
                 if (geminiApiKey.isBlank()) {
                     resolveWithGoogle(query)
@@ -549,7 +551,10 @@ class SmartSearch(
 
         /** Pulls `error.message` out of a Gemini error body, if present. */
         fun geminiApiErrorMessage(body: String): String? = try {
-            val message = Json { ignoreUnknownKeys = true; isLenient = true }
+            val message = Json {
+                ignoreUnknownKeys = true
+                isLenient = true
+            }
                 .parseToJsonElement(body)
                 .jsonObject["error"]
                 ?.jsonObject
@@ -562,16 +567,15 @@ class SmartSearch(
         }
 
         /** POSTs a generateContent request; returns (statusCode, body). */
-        fun postGemini(client: OkHttpClient, url: String, apiKey: String, body: String): Pair<Int, String> =
-            client.newCall(
-                Request.Builder()
-                    .url(url)
-                    .header("x-goog-api-key", apiKey.trim())
-                    .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                    .build(),
-            ).execute().use { response ->
-                response.code to (response.body?.string() ?: "")
-            }
+        fun postGemini(client: OkHttpClient, url: String, apiKey: String, body: String): Pair<Int, String> = client.newCall(
+            Request.Builder()
+                .url(url)
+                .header("x-goog-api-key", apiKey.trim())
+                .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build(),
+        ).execute().use { response ->
+            response.code to (response.body?.string() ?: "")
+        }
 
         /** Test request used by Settings → Smart Search → Test connection. Null means success. */
         fun testGemini(apiKey: String, model: String): String? {

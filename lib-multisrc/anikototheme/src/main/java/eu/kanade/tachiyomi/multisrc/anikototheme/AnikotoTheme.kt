@@ -1296,9 +1296,11 @@ abstract class AnikotoTheme : Source() {
     }
 
     private fun updateDetailsSummary(pref: Preference, overridePhrase: String?) {
-        val phrase = (overridePhrase
-            ?: preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT)
-            ?: PREF_SMART_SEARCH_PHRASE_DEFAULT).trim()
+        val phrase = (
+            overridePhrase
+                ?: preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT)
+                ?: PREF_SMART_SEARCH_PHRASE_DEFAULT
+            ).trim()
         val display = phrase.ifEmpty { "(empty)" }
         val prefix = if (phrase.isEmpty()) "" else "$phrase "
 
