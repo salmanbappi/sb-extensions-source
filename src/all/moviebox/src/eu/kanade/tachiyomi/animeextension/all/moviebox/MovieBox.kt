@@ -371,7 +371,7 @@ class MovieBox : Source() {
                 if (body.isEmpty() || body.contains("<html", ignoreCase = true) || !body.startsWith("{")) continue
                 val jsonRes = json.parseToJsonElement(body)
                 if (jsonRes.obj?.get("code")?.jsonPrimitive?.intOrNull != 0) continue
-                if (isPlayback) {
+                if (isPlayback && urlPath.contains("play-info")) {
                     val streams = jsonRes.obj?.get("data")?.obj?.get("streams")?.arr
                     if (streams.isNullOrEmpty()) continue
                     val onlyBrokenCdn = streams.all {
@@ -854,7 +854,10 @@ class MovieBox : Source() {
         val playUrl = "/wefeed-mobile-bff/subject-api/play-info?subjectId=$sid&se=$se&ep=$ep"
         val jsonRes = safeGetJsonWithHeaders(playUrl, isPlayback = true)?.first ?: return emptyList()
         val videos = mutableListOf<Video>()
-        jsonRes.obj?.get("data")?.obj?.get("streams")?.arr?.forEach { stream ->
+        val dataObj = jsonRes.obj?.get("data")?.obj
+        // Internal subtitles bundled with play-info (per docs: subTitleList).
+        val internalSubs = parseCaptionTracks(dataObj)
+        dataObj?.get("streams")?.arr?.forEach { stream ->
             val obj = stream.obj ?: return@forEach
             val rawUrl = obj["url"]?.str ?: return@forEach
             val signCookie = obj["signCookie"]?.str
@@ -878,20 +881,13 @@ class MovieBox : Source() {
                 .build()
 
             val subtitleTracks = mutableListOf<Track>()
+            subtitleTracks.addAll(internalSubs)
+            subtitleTracks.addAll(parseCaptionTracks(obj))
             if (streamId.isNotBlank()) {
-                val subUrl = "/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=$sid&streamId=$streamId"
-                val subRes = safeGetJsonWithHeaders(subUrl, isPlayback = true)?.first
-                subRes?.obj?.get("data")?.obj?.get("extCaptions")?.arr?.forEach { cap ->
-                    val capObj = cap.obj ?: return@forEach
-                    val capUrl = capObj["url"]?.str ?: return@forEach
-                    subtitleTracks.add(
-                        Track(
-                            url = capUrl,
-                            lang = capObj["lanName"]?.str ?: capObj["language"]?.str ?: "Unknown",
-                        ),
-                    )
-                }
+                val dataResourceId = dataObj?.get("resourceId")?.str
+                subtitleTracks.addAll(fetchExternalCaptions(sid, streamId, se, ep, obj["resourceId"]?.str ?: dataResourceId))
             }
+            val distinctSubs = subtitleTracks.distinctBy { it.url }
 
             val isDash = resolvedUrl.endsWith(".mpd") || resolvedUrl.contains("/dash/")
             val formatTag = if (isDash) "DASH" else "MP4"
@@ -906,12 +902,58 @@ class MovieBox : Source() {
                         videoTitle = "$cleanRes ($formatTag$langSuffix)",
                         headers = headers,
                         resolution = resInt,
-                        subtitleTracks = subtitleTracks,
+                        subtitleTracks = distinctSubs,
                     ),
                 )
             }
         }
         return videos
+    }
+
+    private fun parseCaptionTracks(dataObj: JsonObject?): List<Track> {
+        if (dataObj == null) return emptyList()
+        val keys = listOf("subTitleList", "subtitleList", "subtitles", "captions", "extCaptions", "extcaptions", "captionList")
+        for (key in keys) {
+            val arr = dataObj[key]?.arr ?: continue
+            if (arr.isEmpty()) continue
+            val tracks = arr.mapNotNull { cap ->
+                val capObj = cap.obj ?: return@mapNotNull null
+                val capUrl = capObj["url"]?.str?.ifBlank { capObj["file"]?.str }
+                    ?: capObj["src"]?.str ?: return@mapNotNull null
+                if (capUrl.isBlank()) return@mapNotNull null
+                val label = capObj["lanName"]?.str
+                    ?: capObj["language"]?.str
+                    ?: capObj["lang"]?.str
+                    ?: capObj["name"]?.str
+                    ?: capObj["label"]?.str
+                    ?: capObj["title"]?.str
+                    ?: "Unknown"
+                Track(url = capUrl, lang = label)
+            }
+            if (tracks.isNotEmpty()) return tracks
+        }
+        return emptyList()
+    }
+
+    private fun fetchExternalCaptions(sid: String, streamId: String, se: String, ep: String, resourceId: String?): List<Track> {
+        val paths = mutableListOf(
+            "/wefeed-mobile-bff/subject-api/get-stream-captions?subjectId=$sid&streamId=$streamId",
+        )
+        if (!resourceId.isNullOrBlank()) {
+            paths.add("/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId=$sid&resourceId=$resourceId&episode=$ep")
+            paths.add("/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId=$sid&resourceId=$resourceId&se=$se&ep=$ep")
+        }
+        paths.add("/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId=$sid&streamId=$streamId&episode=$ep")
+        val out = mutableListOf<Track>()
+        for (path in paths) {
+            val dataObj = runCatching { safeGetJsonWithHeaders(path, isPlayback = true)?.first?.obj?.get("data")?.obj }.getOrNull()
+            val tracks = parseCaptionTracks(dataObj)
+            if (tracks.isNotEmpty()) {
+                out.addAll(tracks)
+                break
+            }
+        }
+        return out
     }
 
     private val blockedKeywords = listOf(
