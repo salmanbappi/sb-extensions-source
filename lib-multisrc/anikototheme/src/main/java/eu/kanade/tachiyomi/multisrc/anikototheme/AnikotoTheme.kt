@@ -1,8 +1,13 @@
 package eu.kanade.tachiyomi.multisrc.anikototheme
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
 import android.text.SpannableString
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
@@ -11,9 +16,12 @@ import android.util.Log
 import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
+import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
+import androidx.preference.newPlainPreference
+import androidx.preference.unselectable
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
@@ -24,10 +32,12 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimitHost
 import extensions.utils.Source
 import extensions.utils.asJsoup
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -47,9 +57,24 @@ import java.util.concurrent.TimeUnit
 abstract class AnikotoTheme : Source() {
 
     abstract override val name: String
-    abstract override val baseUrl: String
+
+    /** Default site, used until the user picks a mirror in settings. */
+    abstract val defaultBaseUrl: String
+
     abstract override val lang: String
     override val supportsLatest = true
+
+    /**
+     * Mirrors offered in Settings → Playback → Preferred domain as `label to url`. Empty (or a
+     * single entry) hides the picker, which is the case for the single-domain skins.
+     */
+    protected open val domainMirrors: List<Pair<String, String>> = emptyList()
+
+    private val preferredDomain: String
+        get() = preferences.getString(PREF_DOMAIN, defaultBaseUrl)?.takeIf { it.isNotBlank() } ?: defaultBaseUrl
+
+    final override val baseUrl: String
+        get() = if (domainMirrors.size > 1) preferredDomain else defaultBaseUrl
 
     protected open val bmetaSelector = "div.bmeta"
     protected open val scoreLabel = "MAL"
@@ -134,6 +159,9 @@ abstract class AnikotoTheme : Source() {
     }
     private val smartSearch by lazy { SmartSearch(webViewFetcher) }
 
+    /** The read-only "Details" row, kept so the phrase examples stay in sync while editing. */
+    private var smartDetailsPref: Preference? = null
+
     // ---- Preferences ----
 
     private val preferredQuality: String
@@ -163,6 +191,30 @@ abstract class AnikotoTheme : Source() {
     private val smartSearchPhrase: String
         get() = preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT)
             ?: PREF_SMART_SEARCH_PHRASE_DEFAULT
+
+    /** Selected engine; "auto" resolves to Gemini when a key is configured, else Google. */
+    private val smartSearchEngine: String
+        get() = when (val engine = preferences.getString(PREF_SMART_ENGINE, PREF_SMART_ENGINE_DEFAULT)) {
+            SmartSearch.Engine.AUTO -> if (geminiApiKey.isNotBlank()) SmartSearch.Engine.GEMINI else SmartSearch.Engine.GOOGLE
+            null -> PREF_SMART_ENGINE_DEFAULT
+            else -> engine
+        }
+
+    private val geminiApiKey: String
+        get() = preferences.getString(PREF_GEMINI_KEY, PREF_GEMINI_KEY_DEFAULT) ?: PREF_GEMINI_KEY_DEFAULT
+
+    private val geminiModel: String
+        get() {
+            val selected = preferences.getString(PREF_GEMINI_MODEL, PREF_GEMINI_MODEL_DEFAULT) ?: PREF_GEMINI_MODEL_DEFAULT
+            if (selected != PREF_GEMINI_MODEL_CUSTOM) {
+                return selected.ifBlank { PREF_GEMINI_MODEL_DEFAULT }
+            }
+            val custom = preferences.getString(PREF_GEMINI_CUSTOM_MODEL, "")?.trim().orEmpty()
+            return custom.ifBlank { PREF_GEMINI_MODEL_DEFAULT }
+        }
+
+    private val copySmartSearchResponse: Boolean
+        get() = preferences.getBoolean(PREF_SMART_COPY_RESPONSE, false)
 
     // ---- Headers ----
 
@@ -221,15 +273,28 @@ abstract class AnikotoTheme : Source() {
         return GET(urlBuilder.build())
     }
 
-    protected suspend fun showToast(message: String) {
+    protected suspend fun showToast(message: String, duration: Int = Toast.LENGTH_LONG) {
         try {
             val app = Injekt.get<Application>()
             withContext(Dispatchers.Main) {
-                Toast.makeText(app, message, Toast.LENGTH_LONG).show()
+                Toast.makeText(app, message, duration).show()
             }
         } catch (e: Exception) {
             loge("SmartSearch: failed to show toast", e)
         }
+    }
+
+    /** Copies the smart-search query/answer to the clipboard; false when the copy failed. */
+    protected suspend fun copyToClipboard(text: String): Boolean = try {
+        val app = Injekt.get<Application>()
+        withContext(Dispatchers.Main) {
+            val clipboard = app.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("AniKoto smart search response", text))
+        }
+        true
+    } catch (e: Exception) {
+        loge("SmartSearch: clipboard copy failed", e)
+        false
     }
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
@@ -251,16 +316,38 @@ abstract class AnikotoTheme : Source() {
         val title = if (cachedTitle != null) {
             cachedTitle
         } else {
-            val resolved = smartSearch.resolve(strippedQuery)
-            if (resolved == null) {
-                logw("SmartSearch: AI resolution failed, falling back to normal search")
-                smartSearch.cacheTitle(strippedQuery, strippedQuery)
-                showToast("AI search was unable to initiate and fell back to normal search")
-                val response = client.newCall(getSearchAnimeRequest(page, query, filters)).execute()
-                return parseAnimeList(response.asJsoup())
+            when (val resolved = smartSearch.resolve(strippedQuery, smartSearchEngine, geminiApiKey, geminiModel)) {
+                is SmartSearch.ResolveResult.Success -> {
+                    smartSearch.cacheTitle(strippedQuery, resolved.title)
+                    if (copySmartSearchResponse &&
+                        copyToClipboard("Query: $strippedQuery\nTitle: ${resolved.title}")
+                    ) {
+                        showToast("Smart search: query and result copied to clipboard", Toast.LENGTH_SHORT)
+                    }
+                    resolved.title
+                }
+
+                is SmartSearch.ResolveResult.Failure -> {
+                    logw("SmartSearch: resolution FAILED — ${resolved.userMessage}")
+                    var message = "Smart search failed: ${resolved.userMessage}"
+                    if (copySmartSearchResponse) {
+                        val payload = buildString {
+                            append("Query: ").append(strippedQuery)
+                            append("\nError: ").append(resolved.userMessage).append("\n")
+                            val detail = resolved.detail
+                            if (!detail.isNullOrBlank()) {
+                                append("\n--- raw engine response ---\n").append(detail.take(20000))
+                            }
+                        }
+                        if (copyToClipboard(payload)) {
+                            message += " (response copied to clipboard)"
+                        }
+                    }
+                    showToast(message)
+                    val response = client.newCall(getSearchAnimeRequest(page, query, filters)).execute()
+                    return parseAnimeList(response.asJsoup())
+                }
             }
-            smartSearch.cacheTitle(strippedQuery, resolved)
-            resolved
         }
 
         logi("SmartSearch: searching AniKoto for \"$title\" (page $page)")
@@ -913,10 +1000,22 @@ abstract class AnikotoTheme : Source() {
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         try {
-            // ── Category 1: Playback ────────────────────────────────────
+            // ── Playback ────────────────────────────────────────────────
             PreferenceCategory(screen.context).apply {
                 title = "Playback"
                 screen.addPreference(this)
+
+                // Mirror picker — only meaningful for skins that publish several domains.
+                if (domainMirrors.size > 1) {
+                    ListPreference(screen.context).apply {
+                        key = PREF_DOMAIN
+                        title = "Preferred domain"
+                        entries = domainMirrors.map { it.first }.toTypedArray()
+                        entryValues = domainMirrors.map { it.second }.toTypedArray()
+                        setDefaultValue(defaultBaseUrl)
+                        summary = "Currently: %s"
+                    }.also { addPreference(it) }
+                }
 
                 ListPreference(screen.context).apply {
                     key = PREF_QUALITY
@@ -955,7 +1054,7 @@ abstract class AnikotoTheme : Source() {
                 }.also { addPreference(it) }
             }
 
-            // ── Category 2: Servers ─────────────────────────────────────
+            // ── Servers ─────────────────────────────────────────────────
             if (useMapper) {
                 PreferenceCategory(screen.context).apply {
                     title = "Servers"
@@ -971,7 +1070,7 @@ abstract class AnikotoTheme : Source() {
                 }
             }
 
-            // ── Category 3: Episode metadata ────────────────────────────
+            // ── Episode metadata ────────────────────────────────────────
             PreferenceCategory(screen.context).apply {
                 title = "Episode metadata"
                 screen.addPreference(this)
@@ -1001,20 +1100,85 @@ abstract class AnikotoTheme : Source() {
                 }.also { addPreference(it) }
             }
 
-            // ── Category 4: Smart Search ────────────────────────────────
+            // ── Smart Search ────────────────────────────────────────────
             PreferenceCategory(screen.context).apply {
                 title = "Smart Search"
                 screen.addPreference(this)
 
+                migrateLegacySmartSearchValues()
+
                 SwitchPreferenceCompat(screen.context).apply {
                     key = PREF_SMART_SEARCH
-                    title = "Enable smart search"
-                    summaryOn = "AI resolves descriptive queries and corrects spelling"
-                    summaryOff = "Smart search disabled (normal keyword search only)"
+                    title = "Smart Search"
+                    summary = "Search spelling correction and smarter description searching"
                     setDefaultValue(PREF_SMART_SEARCH_DEFAULT)
                 }.also { addPreference(it) }
 
-                EditTextPreference(screen.context).apply {
+                val enginePref = ListPreference(screen.context).apply {
+                    key = PREF_SMART_ENGINE
+                    title = "AI engine"
+                    entries = arrayOf("Google Gemini API", "Google AI Search")
+                    entryValues = arrayOf(SmartSearch.Engine.GEMINI, SmartSearch.Engine.GOOGLE)
+                    setDefaultValue(PREF_SMART_ENGINE_DEFAULT)
+                    summary = "Currently: %s"
+                }.also { addPreference(it) }
+
+                val keyPref = EditTextPreference(screen.context).apply {
+                    key = PREF_GEMINI_KEY
+                    title = "Gemini API key"
+                    dialogTitle = "Gemini API key"
+                    setDefaultValue(PREF_GEMINI_KEY_DEFAULT)
+                    updateGeminiKeySummary(this, null)
+                    setOnPreferenceChangeListener { _, newValue ->
+                        updateGeminiKeySummary(this, newValue as? String)
+                        true
+                    }
+                }.also { addPreference(it) }
+
+                val modelPref = ListPreference(screen.context).apply {
+                    key = PREF_GEMINI_MODEL
+                    title = "Gemini model"
+                    entries = arrayOf("Gemini 3.1 Flash Lite", "Gemini 3.5 Flash Lite", "Gemini 3.8 Flash", "Custom model ID")
+                    entryValues = (GEMINI_MODELS + PREF_GEMINI_MODEL_CUSTOM).toTypedArray()
+                    setDefaultValue(PREF_GEMINI_MODEL_DEFAULT)
+                    summary = "Currently: %s"
+                }.also { addPreference(it) }
+
+                val customPref = EditTextPreference(screen.context).apply {
+                    key = PREF_GEMINI_CUSTOM_MODEL
+                    title = "Custom model ID"
+                    dialogTitle = "Custom model ID"
+                    setDefaultValue(PREF_GEMINI_CUSTOM_MODEL_DEFAULT)
+                    updateCustomModelSummary(this, null)
+                    setOnPreferenceChangeListener { _, newValue ->
+                        updateCustomModelSummary(this, newValue as? String)
+                        true
+                    }
+                }.also { addPreference(it) }
+
+                val testPref = newPlainPreference(screen.context)?.apply {
+                    key = PREF_GEMINI_TEST
+                    title = "Test connection"
+                    summary = "Sends a tiny test request with the key and model above."
+                    setOnPreferenceClickListener {
+                        val apiKey = geminiApiKey
+                        val model = geminiModel
+                        CoroutineScope(Dispatchers.IO).launch {
+                            showToast("Testing Gemini $model …")
+                            val error = SmartSearch.testGemini(apiKey, model)
+                            showToast(error ?: "Gemini works! ($model)")
+                        }
+                        true
+                    }
+                }?.also { addPreference(it) }
+
+                SwitchPreferenceCompat(screen.context).apply {
+                    key = PREF_SMART_COPY_RESPONSE
+                    title = "Copy response"
+                    setDefaultValue(false)
+                }.also { addPreference(it) }
+
+                val phrasePref = EditTextPreference(screen.context).apply {
                     key = PREF_SMART_SEARCH_PHRASE
                     title = "Activation phrase"
                     dialogTitle = "Activation phrase"
@@ -1027,16 +1191,127 @@ abstract class AnikotoTheme : Source() {
                         "• <phrase> anime about a spy\n\n" +
                         "Note: ~5-8s latency per AI search."
                     setDefaultValue(PREF_SMART_SEARCH_PHRASE_DEFAULT)
-                    updatePhraseSummary(this, preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT) ?: PREF_SMART_SEARCH_PHRASE_DEFAULT)
+                    updatePhraseSummary(
+                        this,
+                        preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT)
+                            ?: PREF_SMART_SEARCH_PHRASE_DEFAULT,
+                    )
                     setOnPreferenceChangeListener { _, newValue ->
-                        updatePhraseSummary(this, newValue as? String ?: "")
+                        updatePhraseSummary(this, newValue as? String)
+                        smartDetailsPref?.let { updateDetailsSummary(it, newValue as? String) }
                         true
                     }
                 }.also { addPreference(it) }
+
+                applyEngineVisibility(enginePref, keyPref, modelPref, customPref, testPref)
+
+                // Visibility follows the stored value, so re-apply it after the write lands.
+                enginePref.setOnPreferenceChangeListener { _, _ ->
+                    Handler(Looper.getMainLooper()).post {
+                        applyEngineVisibility(enginePref, keyPref, modelPref, customPref, testPref)
+                    }
+                    true
+                }
+                modelPref.setOnPreferenceChangeListener { _, _ ->
+                    Handler(Looper.getMainLooper()).post {
+                        applyEngineVisibility(enginePref, keyPref, modelPref, customPref, testPref)
+                    }
+                    true
+                }
+            }
+
+            // ── Details ─────────────────────────────────────────────────
+            PreferenceCategory(screen.context).apply {
+                title = "Details"
+                screen.addPreference(this)
+
+                newPlainPreference(screen.context)?.apply {
+                    key = PREF_SMART_DETAILS
+                    unselectable()
+                    updateDetailsSummary(this, null)
+                    smartDetailsPref = this
+                }?.also { addPreference(it) }
             }
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
         }
+    }
+
+    /** Moves pre-v16.12 values ("auto" engine, off-list model ids) into the new layout. */
+    private fun migrateLegacySmartSearchValues() {
+        try {
+            val engine = preferences.getString(PREF_SMART_ENGINE, PREF_SMART_ENGINE_DEFAULT)
+            if (engine == "auto") {
+                val migrated = if (geminiApiKey.isNotBlank()) SmartSearch.Engine.GEMINI else SmartSearch.Engine.GOOGLE
+                preferences.edit().putString(PREF_SMART_ENGINE, migrated).apply()
+            }
+
+            val model = preferences.getString(PREF_GEMINI_MODEL, PREF_GEMINI_MODEL_DEFAULT) ?: PREF_GEMINI_MODEL_DEFAULT
+            if (model != PREF_GEMINI_MODEL_CUSTOM && model !in GEMINI_MODELS) {
+                preferences.edit()
+                    .putString(PREF_GEMINI_MODEL, PREF_GEMINI_MODEL_CUSTOM)
+                    .putString(PREF_GEMINI_CUSTOM_MODEL, model)
+                    .apply()
+            }
+        } catch (e: Exception) {
+            logw("SmartSearch: legacy preference migration failed: ${e.message}")
+        }
+    }
+
+    /** Gemini-only rows are hidden while the Google engine is selected. */
+    private fun applyEngineVisibility(
+        enginePref: ListPreference,
+        keyPref: EditTextPreference,
+        modelPref: ListPreference,
+        customPref: EditTextPreference,
+        testPref: Preference?,
+    ) {
+        try {
+            val engine = preferences.getString(PREF_SMART_ENGINE, PREF_SMART_ENGINE_DEFAULT)
+                ?: PREF_SMART_ENGINE_DEFAULT
+            val gemini = engine != SmartSearch.Engine.GOOGLE
+            val customModel = preferences.getString(PREF_GEMINI_MODEL, PREF_GEMINI_MODEL_DEFAULT) == PREF_GEMINI_MODEL_CUSTOM
+
+            keyPref.setVisible(gemini)
+            modelPref.setVisible(gemini)
+            testPref?.setVisible(gemini)
+            customPref.setVisible(gemini && customModel)
+        } catch (e: Exception) {
+            logw("SmartSearch: engine visibility update failed: ${e.message}")
+        }
+    }
+
+    private fun updateGeminiKeySummary(pref: EditTextPreference, overrideValue: String?) {
+        val value = (overrideValue ?: preferences.getString(PREF_GEMINI_KEY, PREF_GEMINI_KEY_DEFAULT) ?: "").trim()
+        pref.summary = when {
+            value.isEmpty() -> "Not set"
+            value.length <= 8 -> "••••"
+            else -> "••••${value.takeLast(4)}"
+        }
+    }
+
+    private fun updateCustomModelSummary(pref: EditTextPreference, overrideValue: String?) {
+        val value = (overrideValue ?: preferences.getString(PREF_GEMINI_CUSTOM_MODEL, PREF_GEMINI_CUSTOM_MODEL_DEFAULT) ?: "").trim()
+        pref.summary = value.ifEmpty { "Not set" }
+    }
+
+    private fun updateDetailsSummary(pref: Preference, overridePhrase: String?) {
+        val phrase = (overridePhrase
+            ?: preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT)
+            ?: PREF_SMART_SEARCH_PHRASE_DEFAULT).trim()
+        val display = phrase.ifEmpty { "(empty)" }
+        val prefix = if (phrase.isEmpty()) "" else "$phrase "
+
+        pref.title = "Details"
+        pref.summary = "Type your activation phrase at the start of your search to trigger AI.\n" +
+            "Leave empty to use AI for all searches.\n" +
+            "Case-insensitive. Must be followed by a space.\n\n" +
+            "Your phrase: \"$display\"\n\n" +
+            "Examples:\n" +
+            "${prefix}the anime with a russian girl\n" +
+            "${prefix}narutp\n" +
+            "${prefix}anime about a spy\n\n" +
+            "Note: ~5-8s latency per AI search."
     }
 
     private fun updatePhraseSummary(pref: EditTextPreference, phrase: String?) {
@@ -1083,6 +1358,8 @@ abstract class AnikotoTheme : Source() {
     }
 
     companion object {
+        private const val PREF_DOMAIN = "pref_domain"
+
         private const val PREF_QUALITY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "720"
         private const val PREF_AUDIO = "pref_audio"
@@ -1096,9 +1373,28 @@ abstract class AnikotoTheme : Source() {
         private const val PREF_LOAD_DESCRIPTIONS = "pref_load_descriptions"
 
         private const val PREF_SMART_SEARCH = "pref_smart_search"
-        private const val PREF_SMART_SEARCH_DEFAULT = false
+        private const val PREF_SMART_SEARCH_DEFAULT = true
         private const val PREF_SMART_SEARCH_PHRASE = "pref_smart_search_phrase"
         private const val PREF_SMART_SEARCH_PHRASE_DEFAULT = "?"
+        private const val PREF_SMART_ENGINE = "pref_smart_engine"
+        private const val PREF_SMART_ENGINE_DEFAULT = SmartSearch.Engine.GOOGLE
+        private const val PREF_SMART_COPY_RESPONSE = "pref_smart_copy_response"
+        private const val PREF_SMART_DETAILS = "pref_smart_details"
+
+        private const val PREF_GEMINI_KEY = "pref_gemini_key"
+        private const val PREF_GEMINI_KEY_DEFAULT = ""
+        private const val PREF_GEMINI_MODEL = "pref_gemini_model"
+        private const val PREF_GEMINI_MODEL_DEFAULT = "gemini-3.1-flash-lite"
+        private const val PREF_GEMINI_MODEL_CUSTOM = "custom"
+        private const val PREF_GEMINI_CUSTOM_MODEL = "pref_gemini_custom_model"
+        private const val PREF_GEMINI_CUSTOM_MODEL_DEFAULT = ""
+        private const val PREF_GEMINI_TEST = "pref_gemini_test"
+
+        private val GEMINI_MODELS = listOf(
+            PREF_GEMINI_MODEL_DEFAULT,
+            "gemini-3.5-flash-lite",
+            "gemini-3.8-flash",
+        )
 
         private const val TAG = "Anikoto"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"

@@ -32,7 +32,7 @@ import java.net.URLEncoder
 class AnimeSuge : AnikotoTheme() {
 
     override val name = "AnimeSuge"
-    override val baseUrl = "https://animesuge.cz"
+    override val defaultBaseUrl = "https://animesuge.cz"
     override val lang = "en"
 
     override val popularAnimeSelector = "div.main-card > div.item, div.items > div.item, div.item"

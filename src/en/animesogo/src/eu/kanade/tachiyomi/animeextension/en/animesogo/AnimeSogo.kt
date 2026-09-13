@@ -6,7 +6,7 @@ import eu.kanade.tachiyomi.multisrc.anikototheme.AnikotoTheme
 class AnimeSogo : AnikotoTheme() {
 
     override val name = "AnimeSogo"
-    override val baseUrl = "https://animesogo.to"
+    override val defaultBaseUrl = "https://animesogo.to"
     override val lang = "en"
 
     override val bmetaSelector = "div.bl-meta"
