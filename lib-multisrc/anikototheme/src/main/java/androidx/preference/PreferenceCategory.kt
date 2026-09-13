@@ -17,6 +17,5 @@ import android.content.Context
 @Suppress("UNUSED_PARAMETER")
 class PreferenceCategory(context: Context) : Preference() {
 
-    fun addPreference(preference: Preference): Boolean =
-        throw UnsupportedOperationException("Stub! Provided by the Aniyomi app at runtime.")
+    fun addPreference(preference: Preference): Boolean = throw UnsupportedOperationException("Stub! Provided by the Aniyomi app at runtime.")
 }
