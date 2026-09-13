@@ -29,6 +29,9 @@ class AnikotoExtractors(
         private val SC_IN_PAGE_JS = Regex(""""([a-z0-9_]{2,12})"!==s""")
         private val SC_IN_PAGE_URL = Regex("""[?&]s=([a-z0-9_]{2,12})""")
         private val SOURCES_ENDPOINTS = listOf("getSourcesNew", "getSources")
+
+        /** Statuses that mean "the CDN wants a real browser" rather than a bad URL. */
+        private val BROWSER_FALLBACK_CODES = setOf(403, 429, 503)
         private const val BROWSER_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -85,18 +88,32 @@ class AnikotoExtractors(
         url.contains("voltara.click", ignoreCase = true) ||
         url.contains("zaptrix.buzz", ignoreCase = true)
 
+    /**
+     * Fetches a URL through OkHttp, falling back to the app's WebView whenever OkHttp cannot get
+     * through. The MegaPlay CDN hosts rotate and sit behind Cloudflare: a plain request is answered
+     * with a challenge the headless interceptor cannot solve ("Failed to bypass Cloudflare"), while
+     * the WebView runs the challenge, keeps the clearance cookie and returns the body. The
+     * reference extension relies on the same fallback for its master playlist.
+     */
     private fun fetchString(url: String, headers: Headers): String {
         if (isWafBlockedHost(url) && webViewFetcher != null) {
             return webViewFetcher.fetchText(url)
         }
-        val response = client.newCall(Request.Builder().url(url).headers(headers).build()).execute()
-        if (!response.isSuccessful) {
-            if (isWafBlockedHost(url) && webViewFetcher != null) {
+        val response = try {
+            client.newCall(Request.Builder().url(url).headers(headers).build()).execute()
+        } catch (e: Exception) {
+            val fallback = webViewFetcher ?: throw e
+            logw("fetchString: ${e.message?.take(60)} — retrying via WebView (${url.take(60)})")
+            return fallback.fetchText(url)
+        }
+        response.use {
+            if (it.isSuccessful) return it.body.string()
+            if (webViewFetcher != null && it.code in BROWSER_FALLBACK_CODES) {
+                logw("fetchString: HTTP ${it.code} — retrying via WebView (${url.take(60)})")
                 return webViewFetcher.fetchText(url)
             }
-            throw RuntimeException("HTTP ${response.code}")
+            throw RuntimeException("HTTP ${it.code}")
         }
-        return response.body.string()
     }
 
     private fun testSegment(url: String, headers: Headers): Boolean = try {
