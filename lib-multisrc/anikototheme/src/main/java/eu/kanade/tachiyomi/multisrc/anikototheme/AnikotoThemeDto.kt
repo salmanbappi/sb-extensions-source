@@ -58,11 +58,6 @@ data class VidTubeSourcesResponse(
 )
 
 @Serializable
-data class VidTubeSources(
-    val file: String = "",
-)
-
-@Serializable
 data class VidTubeSkipPoint(
     val start: Double = 0.0,
     val end: Double = 0.0,

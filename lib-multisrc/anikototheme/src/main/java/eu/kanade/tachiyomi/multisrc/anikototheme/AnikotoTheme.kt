@@ -11,7 +11,6 @@ import android.util.Log
 import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
-import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
@@ -919,41 +918,41 @@ abstract class AnikotoTheme : Source() {
                 title = "Playback"
                 screen.addPreference(this)
 
-                ListPreference(context).apply {
+                ListPreference(screen.context).apply {
                     key = PREF_QUALITY
                     title = "Preferred quality"
                     entries = arrayOf("1080p", "720p", "480p", "360p")
                     entryValues = arrayOf("1080", PREF_QUALITY_DEFAULT, "480", "360")
                     setDefaultValue(PREF_QUALITY_DEFAULT)
                     summary = "Currently: %s"
-                }.also(::addPreference)
+                }.also { addPreference(it) }
 
-                ListPreference(context).apply {
+                ListPreference(screen.context).apply {
                     key = PREF_AUDIO
                     title = "Preferred audio"
                     entries = arrayOf("Sub", "Dub", "Hardsub")
                     entryValues = arrayOf(PREF_AUDIO_DEFAULT, "A-DUB", "H-SUB")
                     setDefaultValue(PREF_AUDIO_DEFAULT)
                     summary = "Currently: %s"
-                }.also(::addPreference)
+                }.also { addPreference(it) }
 
-                ListPreference(context).apply {
+                ListPreference(screen.context).apply {
                     key = PREF_BUFFER
                     title = "Pre-fetch buffer"
                     entries = arrayOf("10%", "20%", "30%", "50%", "100%")
                     entryValues = arrayOf("10", "20", "30", "50", "100")
                     setDefaultValue(PREF_BUFFER_DEFAULT)
                     summary = "Currently: %s"
-                }.also(::addPreference)
+                }.also { addPreference(it) }
 
-                ListPreference(context).apply {
+                ListPreference(screen.context).apply {
                     key = PREF_SERVER
                     title = "Preferred server"
                     entries = arrayOf("Auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
                     entryValues = arrayOf("auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
                     setDefaultValue(PREF_SERVER_DEFAULT)
                     summary = "Currently: %s"
-                }.also(::addPreference)
+                }.also { addPreference(it) }
             }
 
             // ── Category 2: Servers ─────────────────────────────────────
@@ -962,13 +961,13 @@ abstract class AnikotoTheme : Source() {
                     title = "Servers"
                     screen.addPreference(this)
 
-                    SwitchPreferenceCompat(context).apply {
+                    SwitchPreferenceCompat(screen.context).apply {
                         key = PREF_ENABLE_KIWI_KEY
                         title = "Enable Kiwi-Stream"
                         summaryOn = "Fetching Kiwi-Stream from external sources"
                         summaryOff = "Kiwi-Stream disabled"
                         setDefaultValue(PREF_ENABLE_KIWI_DEFAULT)
-                    }.also(::addPreference)
+                    }.also { addPreference(it) }
                 }
             }
 
@@ -977,29 +976,29 @@ abstract class AnikotoTheme : Source() {
                 title = "Episode metadata"
                 screen.addPreference(this)
 
-                SwitchPreferenceCompat(context).apply {
+                SwitchPreferenceCompat(screen.context).apply {
                     key = PREF_LOAD_THUMBNAILS
                     title = "Load episode thumbnails"
                     summaryOn = "Fetching preview images from external sources"
                     summaryOff = "Episode thumbnails disabled (faster episode list loading)"
                     setDefaultValue(true)
-                }.also(::addPreference)
+                }.also { addPreference(it) }
 
-                SwitchPreferenceCompat(context).apply {
+                SwitchPreferenceCompat(screen.context).apply {
                     key = PREF_LOAD_TITLES
                     title = "Load episode titles"
                     summaryOn = "Fetching episode titles from external sources"
                     summaryOff = "Using default episode numbers only"
                     setDefaultValue(true)
-                }.also(::addPreference)
+                }.also { addPreference(it) }
 
-                SwitchPreferenceCompat(context).apply {
+                SwitchPreferenceCompat(screen.context).apply {
                     key = PREF_LOAD_DESCRIPTIONS
                     title = "Load episode descriptions"
                     summaryOn = "Fetching episode descriptions from external sources"
                     summaryOff = "Episode descriptions disabled"
                     setDefaultValue(true)
-                }.also(::addPreference)
+                }.also { addPreference(it) }
             }
 
             // ── Category 4: Smart Search ────────────────────────────────
@@ -1007,44 +1006,33 @@ abstract class AnikotoTheme : Source() {
                 title = "Smart Search"
                 screen.addPreference(this)
 
-                SwitchPreferenceCompat(context).apply {
+                SwitchPreferenceCompat(screen.context).apply {
                     key = PREF_SMART_SEARCH
                     title = "Enable smart search"
                     summaryOn = "AI resolves descriptive queries and corrects spelling"
                     summaryOff = "Smart search disabled (normal keyword search only)"
                     setDefaultValue(PREF_SMART_SEARCH_DEFAULT)
-                }.also(::addPreference)
+                }.also { addPreference(it) }
 
-                EditTextPreference(context).apply {
+                EditTextPreference(screen.context).apply {
                     key = PREF_SMART_SEARCH_PHRASE
                     title = "Activation phrase"
                     dialogTitle = "Activation phrase"
                     dialogMessage = "Type this at the start of your search to trigger AI.\n" +
                         "Case-insensitive. Must be followed by a space.\n" +
-                        "Leave empty to use AI for all searches."
+                        "Leave empty to use AI for all searches.\n\n" +
+                        "Examples:\n" +
+                        "• <phrase> the anime with a russian girl\n" +
+                        "• <phrase> narutp\n" +
+                        "• <phrase> anime about a spy\n\n" +
+                        "Note: ~5-8s latency per AI search."
                     setDefaultValue(PREF_SMART_SEARCH_PHRASE_DEFAULT)
                     updatePhraseSummary(this, preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT) ?: PREF_SMART_SEARCH_PHRASE_DEFAULT)
-                    onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, newValue ->
+                    setOnPreferenceChangeListener { _, newValue ->
                         updatePhraseSummary(this, newValue as? String ?: "")
                         true
                     }
-                }.also(::addPreference)
-
-                Preference(context).apply {
-                    title = "Details"
-                    val currentPhrase = (preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT) ?: PREF_SMART_SEARCH_PHRASE_DEFAULT).ifBlank { "(empty)" }
-                    val phraseDisplay = if (currentPhrase == "(empty)") "(empty — AI used for all)" else "\"$currentPhrase\""
-                    summary = "Type your activation phrase at the start of your search to trigger AI.\n" +
-                        "Leave empty to use AI for all searches.\n\n" +
-                        "Case-insensitive. Must be followed by a space.\n\n" +
-                        "Your phrase: $phraseDisplay\n\n" +
-                        "Examples:\n" +
-                        "• ${currentPhrase.takeIf { it != "(empty)" } ?: "?"} the anime with a russian girl\n" +
-                        "• ${currentPhrase.takeIf { it != "(empty)" } ?: "?"} narutp\n" +
-                        "• ${currentPhrase.takeIf { it != "(empty)" } ?: "?"} anime about a spy\n\n" +
-                        "Note: ~5-8s latency per AI search."
-                    isSelectable = false
-                }.also(::addPreference)
+                }.also { addPreference(it) }
             }
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
