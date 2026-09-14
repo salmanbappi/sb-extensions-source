@@ -80,7 +80,7 @@ class Animex : Source() {
         }
         val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val encodedHeaders = encodeHeaders(headers)
-        val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
+        val path = if (url.contains(".m3u8") || url.contains(".txt")) "playlist.m3u8" else "segment.ts"
         val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
         return "http://127.0.0.1:${proxy!!.port}/$path?$query"
     }
@@ -884,14 +884,21 @@ class Animex : Source() {
         )
 
         return videos.map { video ->
-            val isTargetServer = video.videoTitle.contains("mimi", ignoreCase = true) ||
-                video.videoTitle.contains("vee", ignoreCase = true) ||
-                video.videoTitle.contains("yuki", ignoreCase = true) ||
-                video.videoUrl.contains("mimi", ignoreCase = true) ||
-                video.videoUrl.contains("vee", ignoreCase = true) ||
-                video.videoUrl.contains("yuki", ignoreCase = true)
+            // Route every non-direct-media stream through the local proxy: providers like
+            // Loli/Sora serve playlists as .txt/JPEG-disguised files with protocol-relative
+            // .jpg segments and picky CDNs, which mpv cannot handle natively.
+            val isDirectMedia = video.videoUrl.contains(".mp4", ignoreCase = true) ||
+                video.videoUrl.contains(".mkv", ignoreCase = true) ||
+                video.videoUrl.contains(".mpd", ignoreCase = true)
+            val needsProxy = !isDirectMedia && (
+                video.videoUrl.contains(".m3u8", ignoreCase = true) ||
+                    video.videoUrl.contains(".txt", ignoreCase = true) ||
+                    video.videoUrl.contains(".jpg", ignoreCase = true) ||
+                    video.videoUrl.contains(".jpeg", ignoreCase = true) ||
+                    video.videoUrl.contains(".png", ignoreCase = true)
+                )
 
-            if (isTargetServer && video.videoUrl.contains(".m3u8")) {
+            if (needsProxy) {
                 Video(
                     videoUrl = getProxyUrl(video.videoUrl, video.headers),
                     videoTitle = video.videoTitle,
@@ -1360,7 +1367,7 @@ private class LocalProxyServer(
             when {
                 path.contains("playlist.m3u8") -> servePlaylist(targetUrl, headers, encodedHeaders, output)
                 path.contains("key.bin") -> serveKey(targetUrl, headers, output)
-                else -> serveSegment(targetUrl, headers, output)
+                else -> serveSegment(targetUrl, headers, encodedHeaders, output)
             }
         } catch (_: Exception) {
             try {
@@ -1396,7 +1403,7 @@ private class LocalProxyServer(
         val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val path = when {
             isKey || url.contains(".key") || url.contains("key.bin") -> "key.bin"
-            url.contains(".m3u8") -> "playlist.m3u8"
+            url.contains(".m3u8") || url.contains(".txt") -> "playlist.m3u8"
             else -> "segment.ts"
         }
         val query = "url=$encoded" + if (!headersStr.isNullOrEmpty()) "&headers=$headersStr" else ""
@@ -1493,7 +1500,7 @@ private class LocalProxyServer(
         output.flush()
     }
 
-    private fun serveSegment(targetUrl: String, headers: Headers, output: OutputStream) {
+    private fun serveSegment(targetUrl: String, headers: Headers, encodedHeaders: String?, output: OutputStream) {
         val response = fetchWithRetry(targetUrl, headers)
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
@@ -1510,6 +1517,14 @@ private class LocalProxyServer(
             val read = inputStream.read(headerBuffer, totalRead, headerBuffer.size - totalRead)
             if (read == -1) break
             totalRead += read
+        }
+
+        // Some providers (e.g. Loli/Sora) serve HLS playlists disguised as .jpg/.png
+        // files. If the payload contains playlist text, treat it as a playlist
+        // instead of a media segment.
+        if (looksLikePlaylist(headerBuffer)) {
+            response.close()
+            return servePlaylist(targetUrl, headers, encodedHeaders, output)
         }
 
         val sample = if (totalRead == headerBuffer.size) headerBuffer else headerBuffer.copyOf(totalRead)
@@ -1536,6 +1551,12 @@ private class LocalProxyServer(
         }
         output.flush()
         response.close()
+    }
+
+    private fun looksLikePlaylist(data: ByteArray): Boolean {
+        if (data.isEmpty()) return false
+        val text = String(data, 0, minOf(data.size, 512), Charsets.US_ASCII)
+        return text.contains("#EXTM3U") || text.contains("#EXT-X")
     }
 
     private fun detectSkipBytes(data: ByteArray): Int {
