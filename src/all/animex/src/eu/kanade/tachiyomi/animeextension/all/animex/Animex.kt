@@ -769,12 +769,13 @@ class Animex : Source() {
                                                 if (get("Origin") == null) set("Origin", "https://animex.one")
                                                 if (get("Referer") == null) set("Referer", "https://animex.one/")
                                             }
-                                            if (providerId.equals("sora", ignoreCase = true)) {
-                                                if (get("Referer") == null) set("Referer", "https://animex.one/")
-                                            }
                                         }.build()
 
-                                        if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+                                        // NEKO serves HLS with .txt extensions (master.txt, index-v1-a1.txt),
+                                        // so also trust the API-provided MIME type (video/mpegurl).
+                                        val isHls = streamUrl.contains(".m3u8", ignoreCase = true) ||
+                                            source.type?.contains("mpegurl", ignoreCase = true) == true
+                                        if (isHls) {
                                             try {
                                                 val playlistUtils = PlaylistUtils(client, headers)
                                                 val playlistVideos = playlistUtils.extractFromHls(
@@ -1032,8 +1033,8 @@ class Animex : Source() {
         ListPreference(screen.context).apply {
             key = "pref_preferred_server"
             title = "Preferred Server"
-            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
-            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
+            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu", "Zuna", "Loli", "Sora")
+            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu", "zuna", "loli", "sora")
             setDefaultValue("beep")
             summary = "%s"
         }.also { screen.addPreference(it) }
@@ -1041,8 +1042,8 @@ class Animex : Source() {
         MultiSelectListPreference(screen.context).apply {
             key = "pref_disabled_servers"
             title = "Disable Servers"
-            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
-            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
+            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu", "Zuna", "Loli", "Sora")
+            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu", "zuna", "loli", "sora")
             setDefaultValue(emptySet<String>())
         }.also { screen.addPreference(it) }
     }
