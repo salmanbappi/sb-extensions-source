@@ -231,6 +231,9 @@ class Animex : Source() {
         return if (server == "auto") "beep" else server
     }
 
+    private fun getPreferredQuality(): String =
+        preferences.getString("pref_preferred_quality", "1080") ?: "1080"
+
     // ============================== POPULAR / LATEST ==============================
 
     override fun popularAnimeRequest(page: Int): Request {
@@ -855,6 +858,7 @@ class Animex : Source() {
         }
 
         val preferredServer = getPreferredServer()
+        val preferredQuality = getPreferredQuality()
         videos.sortWith(
             compareBy<Video> { video ->
                 val matchesPreferred = when (preferredType) {
@@ -871,6 +875,8 @@ class Animex : Source() {
                     else -> false
                 }
                 if (matchesCategory) 0 else 1
+            }.thenBy { video ->
+                if (video.videoTitle.contains(preferredQuality, ignoreCase = true)) 0 else 1
             }.thenBy { video ->
                 val isPreferredServer = video.videoTitle.contains(preferredServer, ignoreCase = true)
                 if (isPreferredServer) 0 else 1
@@ -1012,6 +1018,15 @@ class Animex : Source() {
             entries = arrayOf("Soft Sub", "Hard Sub", "Dub")
             entryValues = arrayOf("soft", "hard", "dub")
             setDefaultValue("soft")
+            summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        ListPreference(screen.context).apply {
+            key = "pref_preferred_quality"
+            title = "Preferred Quality"
+            entries = arrayOf("1080p", "720p", "480p", "360p")
+            entryValues = arrayOf("1080", "720", "480", "360")
+            setDefaultValue("1080")
             summary = "%s"
         }.also { screen.addPreference(it) }
 
