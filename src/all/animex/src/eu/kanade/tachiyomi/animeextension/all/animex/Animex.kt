@@ -894,38 +894,34 @@ class Animex : Source() {
         )
 
         return videos.map { video ->
-            // Route every non-direct-media stream through the local proxy: providers like
-            // Loli/Sora serve playlists as .txt/JPEG-disguised files with protocol-relative
-            // .jpg segments and picky CDNs, which mpv cannot handle natively.
+            // Subtitle hosts (e.g. lostproject.club) fail TLS handshake on some device
+            // networks, so always fetch subtitle tracks through the local proxy.
+            val proxiedSubtitles = video.subtitleTracks.map { track ->
+                if (track.url.startsWith("http://127.0.0.1")) {
+                    track
+                } else {
+                    Track(getSubtitleProxyUrl(track.url, video.headers), track.lang)
+                }
+            }
+
+            // Route every non-direct-media stream through the local proxy: providers
+            // like Loli/Sora serve extension-less or .txt/JPEG-disguised HLS playlists
+            // with picky CDNs, which mpv cannot handle natively.
             val isDirectMedia = video.videoUrl.contains(".mp4", ignoreCase = true) ||
                 video.videoUrl.contains(".mkv", ignoreCase = true) ||
+                video.videoUrl.contains(".webm", ignoreCase = true) ||
                 video.videoUrl.contains(".mpd", ignoreCase = true)
-            val needsProxy = !isDirectMedia && (
-                video.videoUrl.contains(".m3u8", ignoreCase = true) ||
-                    video.videoUrl.contains(".txt", ignoreCase = true) ||
-                    video.videoUrl.contains(".jpg", ignoreCase = true) ||
-                    video.videoUrl.contains(".jpeg", ignoreCase = true) ||
-                    video.videoUrl.contains(".png", ignoreCase = true)
-                )
 
-            if (needsProxy) {
+            if (isDirectMedia) {
+                video.copy(subtitleTracks = proxiedSubtitles)
+            } else {
                 Video(
                     videoUrl = getProxyUrl(video.videoUrl, video.headers),
                     videoTitle = video.videoTitle,
-                    // Subtitle hosts (e.g. lostproject.club) fail TLS handshake on some
-                    // devices, so fetch them through the local proxy's retry ladder too.
-                    subtitleTracks = video.subtitleTracks.map { track ->
-                        if (track.url.startsWith("http://127.0.0.1")) {
-                            track
-                        } else {
-                            Track(getSubtitleProxyUrl(track.url, video.headers), track.lang)
-                        }
-                    },
+                    subtitleTracks = proxiedSubtitles,
                     audioTracks = video.audioTracks,
                     headers = video.headers,
                 )
-            } else {
-                video
             }
         }
     }
