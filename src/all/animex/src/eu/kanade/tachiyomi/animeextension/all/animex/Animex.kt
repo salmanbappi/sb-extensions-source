@@ -231,8 +231,7 @@ class Animex : Source() {
         return if (server == "auto") "beep" else server
     }
 
-    private fun getPreferredQuality(): String =
-        preferences.getString("pref_preferred_quality", "1080") ?: "1080"
+    private fun getPreferredQuality(): String = preferences.getString("pref_preferred_quality", "1080") ?: "1080"
 
     // ============================== POPULAR / LATEST ==============================
 
