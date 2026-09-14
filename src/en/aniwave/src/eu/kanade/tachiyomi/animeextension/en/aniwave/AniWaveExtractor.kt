@@ -549,9 +549,8 @@ class AniWaveExtractor(private val source: AniWave) {
         private const val MEGAPLAY_AES_IV = "W0;27ToaUpl_P%'c"
 
         /** Returns true when the embed CDN host serves PNG-obfuscated .ts segments. */
-        fun isMegaPlayHost(host: String): Boolean =
-            host.contains("megaplay.buzz", ignoreCase = true) ||
-                host.contains("mikora.top", ignoreCase = true) ||
-                host.contains("megap.", ignoreCase = true)
+        fun isMegaPlayHost(host: String): Boolean = host.contains("megaplay.buzz", ignoreCase = true) ||
+            host.contains("mikora.top", ignoreCase = true) ||
+            host.contains("megap.", ignoreCase = true)
     }
 }
