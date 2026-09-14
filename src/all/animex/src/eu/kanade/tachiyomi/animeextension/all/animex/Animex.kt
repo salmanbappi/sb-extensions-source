@@ -85,6 +85,16 @@ class Animex : Source() {
         return "http://127.0.0.1:${proxy!!.port}/$path?$query"
     }
 
+    private fun getSubtitleProxyUrl(url: String, headers: Headers?): String {
+        if (proxy == null) {
+            proxy = LocalProxyServer(client, json).apply { start() }
+        }
+        val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val encodedHeaders = encodeHeaders(headers)
+        val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
+        return "http://127.0.0.1:${proxy!!.port}/subtitle.vtt?$query"
+    }
+
     private fun encodeHeaders(headers: Headers?): String? {
         if (headers == null || headers.size == 0) return null
         val map = mutableMapOf<String, String>()
@@ -902,7 +912,15 @@ class Animex : Source() {
                 Video(
                     videoUrl = getProxyUrl(video.videoUrl, video.headers),
                     videoTitle = video.videoTitle,
-                    subtitleTracks = video.subtitleTracks,
+                    // Subtitle hosts (e.g. lostproject.club) fail TLS handshake on some
+                    // devices, so fetch them through the local proxy's retry ladder too.
+                    subtitleTracks = video.subtitleTracks.map { track ->
+                        if (track.url.startsWith("http://127.0.0.1")) {
+                            track
+                        } else {
+                            Track(getSubtitleProxyUrl(track.url, video.headers), track.lang)
+                        }
+                    },
                     audioTracks = video.audioTracks,
                     headers = video.headers,
                 )
@@ -1367,6 +1385,7 @@ private class LocalProxyServer(
             when {
                 path.contains("playlist.m3u8") -> servePlaylist(targetUrl, headers, encodedHeaders, output)
                 path.contains("key.bin") -> serveKey(targetUrl, headers, output)
+                path.contains("subtitle.vtt") -> serveText(targetUrl, headers, output, "text/vtt")
                 else -> serveSegment(targetUrl, headers, encodedHeaders, output)
             }
         } catch (_: Exception) {
@@ -1410,21 +1429,81 @@ private class LocalProxyServer(
         return "http://127.0.0.1:$port/$path?$query"
     }
 
+    // HTTP/1.1-preferring client: some provider CDNs reset HTTP/2 connections from
+    // mobile networks, which surfaces as TLS/connection exceptions in OkHttp.
+    private val httpClient: OkHttpClient by lazy {
+        client.newBuilder().protocols(listOf(okhttp3.Protocol.HTTP_1_1)).build()
+    }
+
+    private fun Response.silentClose() {
+        try {
+            close()
+        } catch (_: Exception) {}
+    }
+
     private fun fetchWithRetry(targetUrl: String, headers: Headers): Response {
-        var response = client.newCall(GET(targetUrl, headers)).execute()
-        if (response.code == 403) {
-            response.close()
-            val fallbackHeaders = headers.newBuilder()
-                .set("Referer", "https://animex.one/")
-                .build()
-            response = client.newCall(GET(targetUrl, fallbackHeaders)).execute()
-            if (response.code == 403) {
-                response.close()
-                val noRefererHeaders = headers.newBuilder().removeAll("Referer").build()
-                response = client.newCall(GET(targetUrl, noRefererHeaders)).execute()
+        val fallbackHeaders = headers.newBuilder()
+            .set("Referer", "https://animex.one/")
+            .build()
+        val noRefererHeaders = headers.newBuilder().removeAll("Referer").build()
+        val httpUrl = targetUrl.replaceFirst("https://", "http://")
+
+        // Transport/header ladder: TLS/HTTP2 resets on some CDNs need HTTP/1.1,
+        // and a few hosts only respond over plain HTTP on flaky mobile networks.
+        // Attempt = (url, headers, force HTTP/1.1)
+        val attempts = mutableListOf(
+            Triple(targetUrl, headers, false),
+            Triple(targetUrl, fallbackHeaders, false),
+            Triple(targetUrl, noRefererHeaders, false),
+            Triple(targetUrl, headers, true),
+            Triple(targetUrl, fallbackHeaders, true),
+            Triple(httpUrl, noRefererHeaders, true),
+        )
+
+        // NEKO CDN hosts rotate; their Referer/Origin allowlist does too.
+        val isNekoCdn = targetUrl.contains("premilkyway", ignoreCase = true) ||
+            targetUrl.contains("otakuhg", ignoreCase = true) ||
+            targetUrl.contains("brandidentity", ignoreCase = true) ||
+            targetUrl.contains("vibevibe", ignoreCase = true)
+        if (isNekoCdn) {
+            attempts.add(
+                1,
+                Triple(
+                    targetUrl,
+                    headers.newBuilder().set("Referer", "https://premilkyway.com/").build(),
+                    false,
+                ),
+            )
+            attempts.add(
+                2,
+                Triple(
+                    targetUrl,
+                    headers.newBuilder()
+                        .set("Referer", "https://otakuhg.site/")
+                        .set("Origin", "https://otakuhg.site")
+                        .build(),
+                    false,
+                ),
+            )
+        }
+
+        var lastResponse: Response? = null
+        var lastError: Exception? = null
+        for ((url, requestHeaders, useHttp1) in attempts) {
+            try {
+                val callClient = if (useHttp1) httpClient else client
+                val response = callClient.newCall(GET(url, requestHeaders)).execute()
+                if (response.isSuccessful) {
+                    lastResponse?.silentClose()
+                    return response
+                }
+                lastResponse?.silentClose()
+                lastResponse = response
+            } catch (e: Exception) {
+                lastError = e
             }
         }
-        return response
+        return lastResponse ?: throw lastError ?: java.io.IOException("All proxy fetch attempts failed for $targetUrl")
     }
 
     private fun servePlaylist(targetUrl: String, headers: Headers, encodedHeaders: String?, output: OutputStream) {
@@ -1435,8 +1514,18 @@ private class LocalProxyServer(
             return
         }
 
-        val content = response.body.string()
-        response.close()
+        val rawBytes = response.body.bytes()
+        response.silentClose()
+
+        // Some providers wrap playlists in image (JPEG/PNG) data. Strip everything
+        // before the #EXTM3U marker so mpv/ffmpeg sees clean playlist text.
+        val marker = "#EXTM3U".toByteArray(Charsets.US_ASCII)
+        val markerIndex = findAsciiMarker(rawBytes, marker, rawBytes.size)
+        val content = if (markerIndex > 0) {
+            String(rawBytes, markerIndex, rawBytes.size - markerIndex, Charsets.UTF_8)
+        } else {
+            String(rawBytes, Charsets.UTF_8)
+        }
         val lines = content.split(Regex("""\r?\n"""))
         val builder = StringBuilder(content.length * 2)
 
@@ -1478,6 +1567,25 @@ private class LocalProxyServer(
         output.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
         output.write("Connection: close\r\n\r\n".toByteArray())
         output.write(bodyBytes)
+        output.flush()
+    }
+
+    private fun serveText(targetUrl: String, headers: Headers, output: OutputStream, contentType: String) {
+        val response = fetchWithRetry(targetUrl, headers)
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.silentClose()
+            return
+        }
+
+        val bytes = response.body.bytes()
+        response.silentClose()
+
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: ${bytes.size}\r\n".toByteArray())
+        output.write("Content-Type: $contentType\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        output.write(bytes)
         output.flush()
     }
 
@@ -1555,8 +1663,25 @@ private class LocalProxyServer(
 
     private fun looksLikePlaylist(data: ByteArray): Boolean {
         if (data.isEmpty()) return false
-        val text = String(data, 0, minOf(data.size, 512), Charsets.US_ASCII)
-        return text.contains("#EXTM3U") || text.contains("#EXT-X")
+        val marker = "#EXTM3U".toByteArray(Charsets.US_ASCII)
+        val extX = "#EXT-X".toByteArray(Charsets.US_ASCII)
+        return findAsciiMarker(data, marker, minOf(data.size, 65536)) >= 0 ||
+            findAsciiMarker(data, extX, minOf(data.size, 65536)) >= 0
+    }
+
+    private fun findAsciiMarker(data: ByteArray, marker: ByteArray, limit: Int): Int {
+        val maxStart = minOf(data.size, limit) - marker.size
+        if (maxStart < 0) return -1
+        var i = 0
+        while (i <= maxStart) {
+            if (data[i] == marker[0]) {
+                var j = 1
+                while (j < marker.size && data[i + j] == marker[j]) j++
+                if (j == marker.size) return i
+            }
+            i++
+        }
+        return -1
     }
 
     private fun detectSkipBytes(data: ByteArray): Int {
