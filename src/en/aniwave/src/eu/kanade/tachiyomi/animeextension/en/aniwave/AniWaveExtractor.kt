@@ -257,7 +257,8 @@ class AniWaveExtractor(private val source: AniWave) {
             videoHeaders = vidHeaders,
         )
 
-        return ExtractionResult(videos, usedGetSourcesNew)
+        val requiresProxy = usedGetSourcesNew || isMegaPlayHost(host)
+        return ExtractionResult(videos, requiresProxy)
     }
 
     private suspend fun fetchSourceData(
@@ -546,5 +547,11 @@ class AniWaveExtractor(private val source: AniWave) {
         // MegaPlay AES-256-CBC key/IV for decrypting the `enc` payload in getSources* responses.
         private const val MEGAPLAY_AES_KEY = "i?LMTAx0Q6,:}50U"
         private const val MEGAPLAY_AES_IV = "W0;27ToaUpl_P%'c"
+
+        /** Returns true when the embed CDN host serves PNG-obfuscated .ts segments. */
+        fun isMegaPlayHost(host: String): Boolean =
+            host.contains("megaplay.buzz", ignoreCase = true) ||
+                host.contains("mikora.top", ignoreCase = true) ||
+                host.contains("megap.", ignoreCase = true)
     }
 }
