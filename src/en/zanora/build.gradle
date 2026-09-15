@@ -1,7 +1,7 @@
 ext {
     extName = 'Zanora'
     extClass = '.Zanora'
-    extVersionCode = 22
+    extVersionCode = 23
     isNsfw = false
 }
 

@@ -1,7 +1,7 @@
 ext {
     extName = 'SubDubAnime'
     extClass = '.Subdubanime'
-    extVersionCode = 3
+    extVersionCode = 4
     isNsfw = false
 }
 

@@ -444,7 +444,7 @@ class ReAnime : Source() {
 
     // ============================== Related Anime ==============================
 
-    override fun relatedAnimeListParse(response: Response): List<SAnime> {
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
         val dto = response.parseAs<AnimeDetailDto>()
         val currentId = dto.animeId
 

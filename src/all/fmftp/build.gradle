@@ -1,7 +1,7 @@
 ext {
     extName = 'FM FTP'
     extClass = '.FmFtp'
-    extVersionCode = 1010
+    extVersionCode = 1011
     isNsfw = false
 }
 

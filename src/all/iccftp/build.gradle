@@ -1,7 +1,7 @@
 ext {
     extName = 'ICC FTP'
     extClass = '.IccFtp'
-    extVersionCode = 1015
+    extVersionCode = 1016
     isNsfw = false
 }
 

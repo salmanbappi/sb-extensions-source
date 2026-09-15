@@ -442,7 +442,7 @@ class AniWave : Source() {
 
     // ============================== Related ===============================
 
-    override fun relatedAnimeListRequest(anime: SAnime): Request {
+    fun relatedAnimeListRequest(anime: SAnime): Request {
         val animeUrl = anime.url.substringBefore("#")
         val animeId = anime.url.substringAfter("#", "")
         return if (animeId.isNotEmpty()) {
@@ -453,7 +453,7 @@ class AniWave : Source() {
         }
     }
 
-    override fun relatedAnimeListParse(response: Response): List<SAnime> {
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
         return try {
             val document = response.asJsoup()
             val currentAnimePath = response.request.url.encodedPath

@@ -668,9 +668,9 @@ class Vegamovies : Source() {
     }
 
     // ============================ Recommendations ========================
-    override fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
+    fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
 
-    override fun relatedAnimeListParse(response: Response): List<SAnime> {
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
         val doc = response.asJsoup()
         return doc.select("article.post-item, div.recent-posts li").mapNotNull { element ->
             val linkEl = element.selectFirst("a") ?: return@mapNotNull null

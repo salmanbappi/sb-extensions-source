@@ -1,7 +1,7 @@
 ext {
     extName = 'FtpBd'
     extClass = '.FtpBdFactory'
-    extVersionCode = 1351
+    extVersionCode = 1352
     isNsfw = false
 }
 
