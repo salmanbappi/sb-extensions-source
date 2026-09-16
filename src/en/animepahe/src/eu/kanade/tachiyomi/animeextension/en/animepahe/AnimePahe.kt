@@ -360,7 +360,7 @@ class AnimePahe :
     override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
 
     // ======================== Relation/Suggestions ========================
-    override val disableRelatedAnimesBySearch = true
+    val disableRelatedAnimesBySearch = true
 
     fun relatedAnimeListRequest(anime: SAnime) = animeDetailsRequest(anime)
 
