@@ -476,6 +476,8 @@ class AnimePahe : Source() {
         }
     }
 
+    override suspend fun resolveVideo(video: Video): Video = video
+
     override fun List<Video>.sortVideos(): List<Video> {
         val subPreference = preferences.getString(PREF_SUB_KEY, PREF_SUB_DEFAULT) ?: PREF_SUB_DEFAULT
         val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT

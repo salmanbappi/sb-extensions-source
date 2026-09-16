@@ -79,5 +79,7 @@ abstract class Source :
         return videoListParse(response)
     }
 
+    override suspend fun resolveVideo(video: Video): Video = video
+
     private suspend fun okhttp3.Call.await(): Response = withContext(Dispatchers.IO) { execute() }
 }

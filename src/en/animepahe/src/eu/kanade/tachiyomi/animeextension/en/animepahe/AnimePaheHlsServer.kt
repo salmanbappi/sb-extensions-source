@@ -150,24 +150,26 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
 
     private fun createLocalM3u8Url(m3u8Url: String): String {
         val encodedUrl = URLEncoder.encode(m3u8Url, Charsets.UTF_8.name())
-        return "http://localhost:$port/m3u8?url=$encodedUrl"
+        return "http://127.0.0.1:$port/m3u8?url=$encodedUrl"
     }
 
     private fun createLocalMp4Url(mp4Url: String): String {
         val encodedUrl = URLEncoder.encode(mp4Url, Charsets.UTF_8.name())
-        return "http://localhost:$port/mp4?url=$encodedUrl"
+        return "http://127.0.0.1:$port/mp4?url=$encodedUrl"
     }
 
     private fun Video.copyWithLocalUrl(localUrl: String): Video = Video(
         videoUrl = localUrl,
         videoTitle = videoTitle,
         headers = headers,
+        initialized = true,
     )
 
     private fun Video.copyWithLocalMp4Url(localUrl: String): Video = Video(
         videoUrl = localUrl,
         videoTitle = videoTitle,
         headers = headers,
+        initialized = true,
     )
 
     private fun extractHeadersFromSession(session: IHTTPSession): Headers = Headers.Builder().apply {
