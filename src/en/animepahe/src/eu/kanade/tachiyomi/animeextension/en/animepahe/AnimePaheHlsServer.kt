@@ -1,27 +1,33 @@
 package eu.kanade.tachiyomi.animeextension.en.animepahe
 
 import eu.kanade.tachiyomi.animesource.model.Video
-import fi.iki.elonen.NanoHTTPD
-import fi.iki.elonen.NanoHTTPD.Response.Status
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.ByteArrayInputStream
-import java.io.FilterInputStream
 import java.io.IOException
+import java.io.OutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.URLDecoder
 import java.net.URLEncoder
 import java.security.GeneralSecurityException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-object AnimePaheHlsServer : NanoHTTPD(0) {
+object AnimePaheHlsServer {
 
-    val port: Int
-        get() = super.getListeningPort()
+    private var serverSocket: ServerSocket? = null
+    private val executor = Executors.newCachedThreadPool()
+
+    @Volatile
+    var port: Int = 0
+        private set
 
     @Volatile
     private var isRunning = false
@@ -38,14 +44,31 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
 
     private data class HlsKey(val url: String, val iv: String?)
 
-    override fun start() {
-        super.start()
-        isRunning = true
+    fun start() {
+        if (isRunning && serverSocket?.isClosed == false) return
+        synchronized(this) {
+            if (isRunning && serverSocket?.isClosed == false) return
+            try {
+                serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+                port = serverSocket!!.localPort
+                isRunning = true
+                executor.execute {
+                    while (isRunning && serverSocket?.isClosed == false) {
+                        try {
+                            val socket = serverSocket!!.accept()
+                            executor.execute { handleSocket(socket) }
+                        } catch (_: Exception) {}
+                    }
+                }
+            } catch (_: Exception) {}
+        }
     }
 
-    override fun stop() {
-        super.stop()
+    fun stop() {
         isRunning = false
+        try {
+            serverSocket?.close()
+        } catch (_: Exception) {}
     }
 
     fun processVideoList(client: OkHttpClient, videos: List<Video>): List<Video> {
@@ -70,83 +93,202 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
         }
     }
 
-    override fun serve(session: IHTTPSession): Response = when {
-        session.uri.startsWith("/m3u8") -> handleM3u8Request(session)
-        session.uri.startsWith("/segment") -> handleSegmentRequest(session)
-        session.uri.startsWith("/mp4") -> handleMp4Request(session)
-        else -> newFixedLengthResponse(Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
-    }
-
-    private fun handleM3u8Request(session: IHTTPSession): Response {
-        val url = session.parameters["url"]?.first()
-            ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url parameter")
-
-        return try {
-            val headers = extractHeadersFromSession(session)
-            val playlist = fetchString(url, headers)
-            val content = rewritePlaylist(playlist, url)
-            newFixedLengthResponse(Status.OK, "application/vnd.apple.mpegurl", content)
-        } catch (e: Exception) {
-            newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
+    @Synchronized
+    private fun ensureStarted() {
+        if (!isRunning || serverSocket == null || serverSocket?.isClosed == true) {
+            start()
         }
     }
 
-    private fun handleSegmentRequest(session: IHTTPSession): Response {
-        val url = session.parameters["url"]?.first()
-            ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url parameter")
+    private fun handleSocket(socket: Socket) {
+        try {
+            socket.tcpNoDelay = true
+            socket.setSoLinger(true, 5)
 
-        return try {
-            val headers = extractHeadersFromSession(session)
-            val keyUrl = session.parameters["key"]?.first()
-            val iv = session.parameters["iv"]?.first()
-            val data = fetchSegment(url, headers, keyUrl, iv)
-            newChunkedResponse(Status.OK, "video/mp2t", ByteArrayInputStream(data))
-        } catch (e: Exception) {
-            newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
-        }
-    }
+            val input = socket.getInputStream()
+            val reader = input.bufferedReader(Charsets.UTF_8)
+            val requestLine = reader.readLine() ?: return
+            val requestParts = requestLine.split(" ")
+            if (requestParts.size < 2) return
 
-    private fun handleMp4Request(session: IHTTPSession): Response {
-        val url = session.parameters["url"]?.first()
-            ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url parameter")
+            val pathWithQuery = requestParts[1]
 
-        return try {
-            val upstream = fetchMp4(url, session)
-            val body = upstream.body
-            val contentLength = upstream.header("Content-Length")?.toLongOrNull() ?: -1L
-            val contentType = upstream.header("Content-Type") ?: "video/mp4"
-            val status = Status.lookup(upstream.code) ?: Status.OK
-            val stream = object : FilterInputStream(body.byteStream()) {
-                override fun close() {
-                    try {
-                        super.close()
-                    } finally {
-                        upstream.close()
-                    }
+            val requestHeaders = mutableMapOf<String, String>()
+            while (true) {
+                val line = reader.readLine() ?: break
+                if (line.isEmpty()) break
+                val colon = line.indexOf(':')
+                if (colon > 0) {
+                    val k = line.substring(0, colon).trim().lowercase()
+                    val v = line.substring(colon + 1).trim()
+                    requestHeaders[k] = v
                 }
             }
 
-            val localResponse = if (contentLength >= 0) {
-                newFixedLengthResponse(status, contentType, stream, contentLength)
-            } else {
-                newChunkedResponse(status, contentType, stream)
+            val path = pathWithQuery.substringBefore("?")
+            val queryString = pathWithQuery.substringAfter("?", "")
+            val queryParams = parseQueryParams(queryString)
+
+            val output = socket.getOutputStream()
+
+            when {
+                path.startsWith("/m3u8") -> handleM3u8(queryParams, requestHeaders, output)
+                path.startsWith("/segment") -> handleSegment(queryParams, requestHeaders, output)
+                path.startsWith("/mp4") -> handleMp4(queryParams, requestHeaders, output)
+                else -> sendResponse(output, 404, "Not Found", "text/plain", "Not Found".toByteArray())
             }
-            localResponse.apply {
-                upstream.header("Accept-Ranges")?.let { addHeader("Accept-Ranges", it) }
-                upstream.header("Content-Range")?.let { addHeader("Content-Range", it) }
-            }
-        } catch (e: Exception) {
-            newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
+            output.flush()
+        } catch (_: Exception) {
+        } finally {
+            try {
+                socket.close()
+            } catch (_: Exception) {}
         }
     }
 
-    @Synchronized
-    private fun ensureStarted() {
-        if (!isRunning) {
-            start()
-            isRunning = true
+    private fun parseQueryParams(query: String): Map<String, String> {
+        if (query.isEmpty()) return emptyMap()
+        val result = mutableMapOf<String, String>()
+        for (param in query.split("&")) {
+            val idx = param.indexOf('=')
+            if (idx > 0) {
+                val key = URLDecoder.decode(param.substring(0, idx), "UTF-8")
+                val value = URLDecoder.decode(param.substring(idx + 1), "UTF-8")
+                result[key] = value
+            }
+        }
+        return result
+    }
+
+    private fun handleM3u8(params: Map<String, String>, headers: Map<String, String>, out: OutputStream) {
+        val url = params["url"] ?: run {
+            sendResponse(out, 400, "Bad Request", "text/plain", "Missing url".toByteArray())
+            return
+        }
+
+        try {
+            val forwardHeaders = buildForwardHeaders(headers)
+            val playlist = fetchString(url, forwardHeaders)
+            val rewritten = rewritePlaylist(playlist, url)
+            sendResponse(out, 200, "OK", "application/vnd.apple.mpegurl", rewritten.toByteArray(Charsets.UTF_8))
+        } catch (e: Exception) {
+            sendResponse(out, 500, "Internal Server Error", "text/plain", "Error: ${e.message}".toByteArray())
         }
     }
+
+    private fun handleSegment(params: Map<String, String>, headers: Map<String, String>, out: OutputStream) {
+        val url = params["url"] ?: run {
+            sendResponse(out, 400, "Bad Request", "text/plain", "Missing url".toByteArray())
+            return
+        }
+
+        try {
+            val forwardHeaders = buildForwardHeaders(headers)
+            val keyUrl = params["key"]
+            val iv = params["iv"]
+            val data = fetchSegment(url, forwardHeaders, keyUrl, iv)
+            sendResponse(out, 200, "OK", "video/mp2t", data)
+        } catch (e: Exception) {
+            sendResponse(out, 500, "Internal Server Error", "text/plain", "Error: ${e.message}".toByteArray())
+        }
+    }
+
+    private fun handleMp4(params: Map<String, String>, headers: Map<String, String>, out: OutputStream) {
+        val url = params["url"] ?: run {
+            sendResponse(out, 400, "Bad Request", "text/plain", "Missing url".toByteArray())
+            return
+        }
+
+        try {
+            val reqHeadersBuilder = Headers.Builder().apply {
+                mp4Headers[url]?.let { sourceHeaders ->
+                    for (i in 0 until sourceHeaders.size) {
+                        add(sourceHeaders.name(i), sourceHeaders.value(i))
+                    }
+                }
+                headers["range"]?.let { set("Range", it) }
+            }
+
+            val response = requireMp4Client().newCall(
+                Request.Builder().url(url).headers(reqHeadersBuilder.build()).build(),
+            ).execute()
+
+            response.use { resp ->
+                val code = resp.code
+                val statusText = if (code == 206) "Partial Content" else if (code == 200) "OK" else resp.message
+                val contentType = resp.header("Content-Type") ?: "video/mp4"
+                val contentLength = resp.header("Content-Length")
+                val acceptRanges = resp.header("Accept-Ranges")
+                val contentRange = resp.header("Content-Range")
+
+                val headerText = buildString {
+                    append("HTTP/1.1 $code $statusText\r\n")
+                    append("Content-Type: $contentType\r\n")
+                    if (contentLength != null) append("Content-Length: $contentLength\r\n")
+                    if (acceptRanges != null) append("Accept-Ranges: $acceptRanges\r\n")
+                    if (contentRange != null) append("Content-Range: $contentRange\r\n")
+                    append("Connection: close\r\n\r\n")
+                }
+                out.write(headerText.toByteArray(Charsets.UTF_8))
+
+                resp.body?.byteStream()?.use { stream ->
+                    stream.copyTo(out)
+                }
+            }
+        } catch (e: Exception) {
+            sendResponse(out, 500, "Internal Server Error", "text/plain", "Error: ${e.message}".toByteArray())
+        }
+    }
+
+    private fun sendResponse(out: OutputStream, code: Int, status: String, contentType: String, body: ByteArray) {
+        val header = "HTTP/1.1 $code $status\r\n" +
+            "Content-Type: $contentType\r\n" +
+            "Content-Length: ${body.size}\r\n" +
+            "Connection: close\r\n\r\n"
+        out.write(header.toByteArray(Charsets.UTF_8))
+        out.write(body)
+    }
+
+    private fun buildForwardHeaders(headers: Map<String, String>): Headers = Headers.Builder().apply {
+        headers.forEach { (key, value) ->
+            when (key) {
+                "user-agent", "referer", "origin", "accept", "accept-language",
+                "accept-encoding", "cache-control", "pragma",
+                -> add(key, value)
+            }
+        }
+    }.build()
+
+    private fun fetchString(url: String, headers: Headers): String = requireClient().newCall(
+        Request.Builder().url(url).headers(headers).build(),
+    ).execute().use { response ->
+        if (!response.isSuccessful) {
+            throw IOException("Failed to fetch playlist: ${response.code}")
+        }
+        response.body?.string() ?: ""
+    }
+
+    private fun fetchSegment(url: String, headers: Headers, keyUrl: String?, iv: String?): ByteArray {
+        val rawData = fetchBytes(url, headers)
+        return if (keyUrl.isNullOrBlank()) {
+            rawData
+        } else {
+            val ivHex = iv ?: throw IOException("Missing AES-128 IV for encrypted segment")
+            decryptAes128Cbc(rawData, fetchBytes(keyUrl, headers), ivHex)
+        }
+    }
+
+    private fun fetchBytes(url: String, headers: Headers): ByteArray = requireClient().newCall(
+        Request.Builder().url(url).headers(headers).build(),
+    ).execute().use { response ->
+        if (!response.isSuccessful) {
+            throw IOException("Failed to fetch resource: ${response.code}")
+        }
+        response.body?.bytes() ?: ByteArray(0)
+    }
+
+    private fun requireClient(): OkHttpClient = client ?: throw IOException("AnimePahe HLS server is not initialized")
+    private fun requireMp4Client(): OkHttpClient = mp4Client ?: throw IOException("AnimePahe MP4 server is not initialized")
 
     private fun createLocalM3u8Url(m3u8Url: String): String {
         val encodedUrl = URLEncoder.encode(m3u8Url, Charsets.UTF_8.name())
@@ -162,6 +304,14 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
         videoUrl = localUrl,
         videoTitle = videoTitle,
         headers = headers,
+        preferred = preferred,
+        subtitleTracks = subtitleTracks,
+        audioTracks = audioTracks,
+        timestamps = timestamps,
+        mpvArgs = mpvArgs,
+        ffmpegStreamArgs = ffmpegStreamArgs,
+        ffmpegVideoArgs = ffmpegVideoArgs,
+        internalData = internalData,
         initialized = true,
     )
 
@@ -169,76 +319,22 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
         videoUrl = localUrl,
         videoTitle = videoTitle,
         headers = headers,
+        preferred = preferred,
+        subtitleTracks = subtitleTracks,
+        audioTracks = audioTracks,
+        timestamps = timestamps,
+        mpvArgs = mpvArgs,
+        ffmpegStreamArgs = ffmpegStreamArgs,
+        ffmpegVideoArgs = ffmpegVideoArgs,
+        internalData = internalData,
         initialized = true,
     )
-
-    private fun extractHeadersFromSession(session: IHTTPSession): Headers = Headers.Builder().apply {
-        session.headers.forEach { (key, value) ->
-            when (key.lowercase()) {
-                "user-agent", "referer", "origin", "accept", "accept-language",
-                "accept-encoding", "cache-control", "pragma",
-                -> add(key, value)
-            }
-        }
-    }.build()
-
-    private fun fetchMp4(url: String, session: IHTTPSession): okhttp3.Response {
-        val headers = Headers.Builder().apply {
-            mp4Headers[url]?.let { sourceHeaders ->
-                for (index in 0 until sourceHeaders.size) {
-                    add(sourceHeaders.name(index), sourceHeaders.value(index))
-                }
-            }
-            session.headers["range"]?.let { set("Range", it) }
-        }.build()
-
-        val response = requireMp4Client().newCall(Request.Builder().url(url).headers(headers).build()).execute()
-        if (!response.isSuccessful) {
-            val code = response.code
-            response.close()
-            throw IOException("Failed to fetch MP4: $code")
-        }
-        return response
-    }
-
-    private fun fetchString(url: String, headers: Headers): String = requireClient().newCall(Request.Builder().url(url).headers(headers).build()).execute().use { response ->
-        if (!response.isSuccessful) {
-            throw IOException("Failed to fetch playlist: ${response.code}")
-        }
-        response.body.string()
-    }
-
-    private fun fetchSegment(
-        url: String,
-        headers: Headers,
-        keyUrl: String?,
-        iv: String?,
-    ): ByteArray {
-        val rawData = fetchBytes(url, headers)
-        return if (keyUrl.isNullOrBlank()) {
-            rawData
-        } else {
-            val ivHex = iv ?: throw IOException("Missing AES-128 IV for encrypted segment")
-            decryptAes128Cbc(rawData, fetchBytes(keyUrl, headers), ivHex)
-        }
-    }
-
-    private fun fetchBytes(url: String, headers: Headers): ByteArray = requireClient().newCall(Request.Builder().url(url).headers(headers).build()).execute().use { response ->
-        if (!response.isSuccessful) {
-            throw IOException("Failed to fetch resource: ${response.code}")
-        }
-        response.body.bytes()
-    }
-
-    private fun requireClient(): OkHttpClient = client ?: throw IOException("AnimePahe HLS server is not initialized")
-
-    private fun requireMp4Client(): OkHttpClient = mp4Client ?: throw IOException("AnimePahe MP4 server is not initialized")
 
     private fun rewritePlaylist(content: String, originalUrl: String): String {
         val baseHttpUrl = originalUrl.toHttpUrlOrNull()
         val modifiedLines = mutableListOf<String>()
         var mediaSequence = 0L
-        var segmentSequence = mediaSequence
+        var segmentSequence = 0L
         var currentKey: HlsKey? = null
 
         content.lines().forEach { line ->
@@ -248,7 +344,6 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
                     segmentSequence = mediaSequence
                     modifiedLines.add(line)
                 }
-
                 line.startsWith("#EXT-X-KEY:") -> {
                     val attributes = parseHlsAttributes(line)
                     when (attributes["METHOD"]?.uppercase()) {
@@ -264,21 +359,13 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
                                 )
                             }
                         }
-
-                        "NONE" -> {
-                            currentKey = null
-                            modifiedLines.add(line)
-                        }
-
                         else -> {
                             currentKey = null
                             modifiedLines.add(line)
                         }
                     }
                 }
-
                 line.startsWith("#") || line.isBlank() -> modifiedLines.add(line)
-
                 else -> {
                     val resolvedUrl = resolveHlsUrl(baseHttpUrl, line)
                     if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
@@ -303,7 +390,7 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
     private fun createLocalSegmentUrl(segmentUrl: String, key: HlsKey?, sequence: Long): String {
         val encodedUrl = URLEncoder.encode(segmentUrl, Charsets.UTF_8.name())
         return buildString {
-            append("http://localhost:$port/segment?url=$encodedUrl")
+            append("http://127.0.0.1:$port/segment?url=$encodedUrl")
             if (key != null) {
                 append("&key=")
                 append(URLEncoder.encode(key.url, Charsets.UTF_8.name()))
@@ -324,7 +411,7 @@ object AnimePaheHlsServer : NanoHTTPD(0) {
         }
 
         return try {
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            val cipher = Cipher.getInstance("AES/CBC/NoPadding")
             cipher.init(
                 Cipher.DECRYPT_MODE,
                 SecretKeySpec(key, "AES"),
