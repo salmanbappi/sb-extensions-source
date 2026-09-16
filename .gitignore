@@ -15,4 +15,4 @@ generated-src/
 __pycache__/
 *.pyc
 scratch/
-scripts/
+/scripts/
