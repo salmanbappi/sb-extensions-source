@@ -215,7 +215,13 @@ object AnimePaheHlsServer {
 
             response.use { resp ->
                 val code = resp.code
-                val statusText = if (code == 206) "Partial Content" else if (code == 200) "OK" else resp.message
+                val statusText = if (code == 206) {
+                    "Partial Content"
+                } else if (code == 200) {
+                    "OK"
+                } else {
+                    resp.message
+                }
                 val contentType = resp.header("Content-Type") ?: "video/mp4"
                 val contentLength = resp.header("Content-Length")
                 val acceptRanges = resp.header("Accept-Ranges")
@@ -344,6 +350,7 @@ object AnimePaheHlsServer {
                     segmentSequence = mediaSequence
                     modifiedLines.add(line)
                 }
+
                 line.startsWith("#EXT-X-KEY:") -> {
                     val attributes = parseHlsAttributes(line)
                     when (attributes["METHOD"]?.uppercase()) {
@@ -359,13 +366,16 @@ object AnimePaheHlsServer {
                                 )
                             }
                         }
+
                         else -> {
                             currentKey = null
                             modifiedLines.add(line)
                         }
                     }
                 }
+
                 line.startsWith("#") || line.isBlank() -> modifiedLines.add(line)
+
                 else -> {
                     val resolvedUrl = resolveHlsUrl(baseHttpUrl, line)
                     if (resolvedUrl.contains(".m3u8", ignoreCase = true)) {
