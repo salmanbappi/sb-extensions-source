@@ -434,15 +434,13 @@ class CNCVerseSource(
 
     override fun videoListRequest(episode: SEpisode): Request = GET(videoListUrl(episode), videoListHeaders())
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        return try {
-            val request = videoListRequest(episode)
-            val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
-            videoListParse(response)
-        } catch (e: Throwable) {
-            Log.e(TAG, "getVideoList error for episode ${episode.url}", e)
-            emptyList()
-        }
+    override suspend fun getVideoList(episode: SEpisode): List<Video> = try {
+        val request = videoListRequest(episode)
+        val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
+        videoListParse(response)
+    } catch (e: Throwable) {
+        Log.e(TAG, "getVideoList error for episode ${episode.url}", e)
+        emptyList()
     }
 
     override fun videoListParse(response: Response): List<Video> {
