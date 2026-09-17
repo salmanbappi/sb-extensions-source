@@ -2,6 +2,8 @@ package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.os.SystemClock
+import android.util.Log
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -13,10 +15,14 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.NetworkHelper
 import extensions.utils.Source
 import extensions.utils.UrlUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -24,8 +30,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.util.UUID
 import java.util.concurrent.TimeUnit
+
+private const val TAG = "NetMirror"
+private const val DEFAULT_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 12; RMX2117 Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/147.0.7727.55 Mobile Safari/537.36 /OS.Gatu v3.0"
+private const val APP_REQUESTED_WITH = "app.netmirror.netmirrornew"
 
 class NetMirror : AnimeSourceFactory {
     override fun createSources(): List<AnimeSource> = listOf(
@@ -66,67 +76,103 @@ class CNCVerseSource(
         else -> "https://imgcdn.kim/hs/v/$id.jpg"
     }
 
+    /**
+     * Cookie header for site requests: this source's own bypass cookie **plus** whatever the
+     * app's cookie jar holds for the host — notably the `cf_clearance` that
+     * [CloudflareInterceptor] solved. Replacing the header outright would throw the clearance
+     * away and force a fresh WebView challenge on literally every request.
+     */
+    private fun siteCookieHeader(url: HttpUrl, cookieVal: String): String {
+        val parts = mutableListOf<String>()
+        if (cookieVal.isNotEmpty()) parts.add("t_hash_t=$cookieVal")
+        parts.add("ott=$ott")
+        parts.add("hd=on")
+        if (studio.isNotEmpty()) parts.add("studio=$studio")
+        network.client.cookieJar.loadForRequest(url)
+            .filter { cookie -> parts.none { it.startsWith("${cookie.name}=") } }
+            .forEach { cookie -> parts.add("${cookie.name}=${cookie.value}") }
+        return parts.joinToString("; ")
+    }
+
+    private fun mediaCookieHeader(url: HttpUrl): String {
+        val parts = mutableListOf("hd=on")
+        network.client.cookieJar.loadForRequest(url)
+            .filter { cookie -> cookie.name != "hd" }
+            .forEach { cookie -> parts.add("${cookie.name}=${cookie.value}") }
+        return parts.joinToString("; ")
+    }
+
+    /** True when a response is an HTML page (verification/ad wall) instead of expected JSON. */
+    private fun isHtmlResponse(response: Response): Boolean {
+        if (response.header("Content-Type").orEmpty().contains("html", ignoreCase = true)) return true
+        return try {
+            response.peekBody(256).string().trimStart().startsWith("<")
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     override val client: OkHttpClient = network.client.newBuilder()
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(120, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains("net52.cc") || url.contains("net11.cc")) {
-                var cookieVal = getBypassCookie()
-                if (cookieVal.isNotEmpty()) {
-                    var cookieHeader = buildString {
-                        append("t_hash_t=$cookieVal")
-                        append("; ott=$ott")
-                        append("; hd=on")
-                        if (studio.isNotEmpty()) {
-                            append("; studio=$studio")
-                        }
-                    }
-                    val refererUrl = if (url.contains("/mobile/")) "$baseUrl/mobile/home?app=1" else "$baseUrl/home"
-                    var newRequest = request.newBuilder()
-                        .header("Cookie", cookieHeader)
-                        .header("Referer", refererUrl)
-                        .build()
-                    var response = chain.proceed(newRequest)
+            if (!url.contains("net52.cc") && !url.contains("net11.cc")) {
+                return@addInterceptor chain.proceed(request)
+            }
 
-                    if (response.code == 302 || response.request.url.toString().contains("verify")) {
-                        response.close()
-                        clearBypassCookie()
-                        cookieVal = getBypassCookie(force = true)
-                        if (cookieVal.isNotEmpty()) {
-                            cookieHeader = buildString {
-                                append("t_hash_t=$cookieVal")
-                                append("; ott=$ott")
-                                append("; hd=on")
-                                if (studio.isNotEmpty()) {
-                                    append("; studio=$studio")
-                                }
-                            }
-                            newRequest = request.newBuilder()
-                                .header("Cookie", cookieHeader)
-                                .header("Referer", refererUrl)
-                                .build()
-                            response = chain.proceed(newRequest)
-                        }
-                    }
-                    return@addInterceptor response
+            val refererUrl = if (url.contains("/mobile/")) mobileHomeUrl else "$baseUrl/home"
+            var cookieVal = getBypassCookie()
+            var response = chain.proceed(
+                request.newBuilder()
+                    .header("Cookie", siteCookieHeader(request.url, cookieVal))
+                    .header("Referer", refererUrl)
+                    .build(),
+            )
+
+            // A redirect to the verification page, or an HTML body where a `/mobile/` API
+            // endpoint was expected, means the bypass cookie was rejected. Mint a new one and
+            // retry once.
+            val rejected = response.code == 302 ||
+                response.request.url.toString().contains("verify") ||
+                (url.contains("/mobile/") && isHtmlResponse(response))
+            if (rejected) {
+                Log.w(TAG, "bypass cookie rejected or missing for $url (HTTP ${response.code}) — refreshing")
+                response.close()
+                clearBypassCookie()
+                cookieVal = getBypassCookie(force = true)
+                if (cookieVal.isNotEmpty()) {
+                    response = chain.proceed(
+                        request.newBuilder()
+                            .header("Cookie", siteCookieHeader(request.url, cookieVal))
+                            .header("Referer", refererUrl)
+                            .build(),
+                    )
                 }
             }
-            chain.proceed(request)
+            response
         }
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
             if (url.contains(".m3u8") || url.contains(".vtt")) {
-                val newRequest = request.newBuilder()
-                    .header("Cookie", "hd=on")
-                    .build()
-                return@addInterceptor chain.proceed(newRequest)
+                val existingCookie = request.header("Cookie")
+                val cookie = if (!existingCookie.isNullOrEmpty()) {
+                    existingCookie
+                } else {
+                    mediaCookieHeader(request.url)
+                }
+                return@addInterceptor chain.proceed(
+                    request.newBuilder()
+                        .header("Cookie", cookie)
+                        .build(),
+                )
             }
             chain.proceed(request)
         }
-        // Added last so that it sees the final request (with this source's own cookies) and can
-        // solve a Cloudflare challenge in a WebView on the fly, then retry with `cf_clearance`.
-        .addInterceptor(CloudflareInterceptor(network.client))
+        .addInterceptor(CloudflareInterceptor(network.client, DEFAULT_USER_AGENT))
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
@@ -142,7 +188,7 @@ class CNCVerseSource(
         .set("Sec-Fetch-Site", "same-origin")
         .set("Sec-Fetch-User", "?1")
         .set("Upgrade-Insecure-Requests", "1")
-        .set("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0")
+        .set("User-Agent", DEFAULT_USER_AGENT)
         .set("X-Requested-With", "XMLHttpRequest")
 
     // ============================== Popular ===============================
@@ -359,26 +405,19 @@ class CNCVerseSource(
      * (`/mobile/playlist.php`, `/mobile/pv/playlist.php`, `/mobile/hs/playlist.php`) — the same
      * endpoint the reference "CNC Verse Mobile" plugin uses.
      *
-     * The NewTV app API (`checknewtv.php` -> `/newtv/player.php`) is deliberately *not* used: it
-     * only returns a usable manifest together with a `Usertoken`, which the reference can only
-     * obtain by scraping `const otp` from netmirror.gg/tv inside a WebView. Without that token the
-     * API answers with a placeholder manifest (`/files/220884/...&in=unknown::db`) that is
-     * byte-identical for every episode of a series, so playback silently shows the wrong content.
+     * NetMirror requires a valid `t_hash_t` session cookie to generate genuine playback tokens.
+     * Without it, `playlist.php` generates `/mobile/hls/<id>.m3u8?in=unknown::db`, which returns
+     * HTTP 404 Apache Not Found on NetMirror's CDN.
      *
-     * A rejected bypass cookie or a Cloudflare interstitial makes the endpoint answer with HTML
-     * instead of JSON, which used to surface as a bare "No available video"; that case is retried
-     * with a fresh cookie, and `CloudflareInterceptor` solves challenges in a WebView on the fly.
+     * The bypass flow scrapes `data-addhash` from `mobile/home?app=1`, pings `userver.net52.cc`,
+     * and polls `mobile/verify2.php` until the server-side ad verification timer settles with
+     * `{"statusup":"All Done"}` and issues the 12-hour `t_hash_t` cookie.
      */
 
-    /**
-     * Headers for the playlist XHR. The inherited `Sec-Fetch-Dest: document` /
-     * `Sec-Fetch-Mode: navigate` hints describe a top-level navigation, which is a
-     * mismatch for an AJAX call and a (minor) bot signal; the reference sends the
-     * `empty`/`cors` pair instead.
-     */
     private fun videoListHeaders(): Headers = headers.newBuilder()
         .set("Accept", "*/*")
         .set("Referer", mobileHomeUrl)
+        .set("User-Agent", DEFAULT_USER_AGENT)
         .set("X-Requested-With", APP_REQUESTED_WITH)
         .set("Sec-Fetch-Dest", "empty")
         .set("Sec-Fetch-Mode", "cors")
@@ -389,30 +428,38 @@ class CNCVerseSource(
 
     private fun videoListUrl(episode: SEpisode): String {
         val path = if (ottPath.isEmpty()) "playlist.php" else "$ottPath/playlist.php"
-        // The response is keyed on `id` only (`t`/`tm` are ignored by the server), and the
-        // 2-tier hoster flow in `extensions.utils.Source` rebuilds SEpisode from its url alone,
-        // so `name` may be absent here.
         val title = java.net.URLEncoder.encode(episode.name.orEmpty(), "UTF-8")
         return "$baseUrl/mobile/$path?id=${episode.url}&t=$title&tm=${System.currentTimeMillis() / 1000}"
     }
 
     override fun videoListRequest(episode: SEpisode): Request = GET(videoListUrl(episode), videoListHeaders())
 
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        return try {
+            val request = videoListRequest(episode)
+            val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
+            videoListParse(response)
+        } catch (e: Throwable) {
+            Log.e(TAG, "getVideoList error for episode ${episode.url}", e)
+            emptyList()
+        }
+    }
+
     override fun videoListParse(response: Response): List<Video> {
         val requestUrl = response.request.url.toString()
-        var playlist = parsePlaylist(response.body.string())
+        val rawBody = response.body.string()
+        var playlist = parsePlaylist(rawBody)
 
         if (playlist == null) {
-            // Not a playlist. The server answers the ad/verify wall or a Cloudflare
-            // interstitial instead of JSON when the bypass cookie is missing or stale,
-            // which surfaces to the user as "No available video". Mint a fresh cookie
-            // and retry once before giving up.
+            Log.w(TAG, "Invalid playlist or bypass cookie expired, forcing refresh...")
+            clearBypassCookie()
             getBypassCookie(force = true)
             playlist = try {
                 client.newCall(GET(requestUrl, videoListHeaders())).execute().use {
                     parsePlaylist(it.body.string())
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "Retry playlist.php request failed", e)
                 null
             }
         }
@@ -426,7 +473,11 @@ class CNCVerseSource(
     }
 
     private fun parsePlaylist(body: String): JSONArray? = try {
-        JSONArray(body).takeIf { it.length() > 0 }
+        if (body.contains("in=unknown::db")) {
+            null
+        } else {
+            JSONArray(body).takeIf { it.length() > 0 }
+        }
     } catch (e: Exception) {
         null
     }
@@ -443,7 +494,6 @@ class CNCVerseSource(
             }
         }
 
-        // `sources` are the qualities of the episode, `tracks` (kind == "captions") the subtitles.
         val sources = mutableListOf<Pair<String, String>>()
         val subtitleTracks = mutableListOf<Track>()
 
@@ -484,15 +534,20 @@ class CNCVerseSource(
         val masterHeadersGen: (Headers, String) -> Headers = { baseHeaders, ref ->
             playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
                 .set("Cookie", cookieHeader)
+                .set("User-Agent", DEFAULT_USER_AGENT)
                 .set("X-Requested-With", APP_REQUESTED_WITH)
+                .set("Referer", mobileHomeUrl)
+                .set("Accept", "*/*")
                 .build()
         }
 
-        val videoHeadersGen: (Headers, String, String) -> Headers = { _, _, _ ->
-            Headers.Builder()
-                .set("Referer", mobileHomeUrl)
-                .set("X-Requested-With", APP_REQUESTED_WITH)
+        val videoHeadersGen: (Headers, String, String) -> Headers = { baseHeaders, ref, _ ->
+            playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
                 .set("Cookie", cookieHeader)
+                .set("User-Agent", DEFAULT_USER_AGENT)
+                .set("X-Requested-With", APP_REQUESTED_WITH)
+                .set("Referer", mobileHomeUrl)
+                .set("Accept", "*/*")
                 .build()
         }
 
@@ -500,8 +555,6 @@ class CNCVerseSource(
         val seen = mutableSetOf<String>()
 
         for ((label, sourceUrl) in sources) {
-            // Every source (Auto / Full HD / Mid HD) can expose the same variant with a freshly
-            // minted `in=` token, so dedupe on the URL without that volatile token.
             val qualityParam = QUALITY_PARAM_REGEX.find(sourceUrl)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }
             val fallbackName = qualityParam ?: label.ifEmpty { "Video" }
 
@@ -515,11 +568,10 @@ class CNCVerseSource(
                     subtitleList = subtitleTracks,
                 )
             } catch (e: Exception) {
+                Log.w(TAG, "Failed to extract from HLS $sourceUrl", e)
                 emptyList()
             }
 
-            // If the master playlist could not be expanded, still surface the source itself:
-            // the player understands a master playlist, so one entry beats an empty list.
             val expanded = extracted.ifEmpty {
                 listOf(
                     Video(
@@ -582,8 +634,7 @@ class CNCVerseSource(
     override fun getFilterList(): AnimeFilterList = AnimeFilterList()
 
     companion object {
-        private const val APP_REQUESTED_WITH = "app.netmirror.netmirrornew"
-
+        private val ADDHASH_REGEX = Regex("""data-addhash="([^"]+)"""")
         private val QUALITY_PARAM_REGEX = Regex("""[?&]q=([^&]+)""")
         private val RESOLUTION_REGEX = Regex("""(\d{3,4})p""")
         private val IN_PARAM_REGEX = Regex("""[?&]in=[^&]*""")
@@ -601,66 +652,107 @@ class CNCVerseSource(
             val savedCookie = if (force) null else sharedPreferences.getString("nf_cookie", null)
             val savedTimestamp = if (force) 0L else sharedPreferences.getLong("nf_cookie_timestamp", 0L)
 
-            if (!savedCookie.isNullOrEmpty() && now - savedTimestamp < 54_000_000) {
+            if (!savedCookie.isNullOrEmpty() && (savedCookie.contains("::") || savedCookie.contains("%3A%3A")) && now - savedTimestamp < 43_200_000L) {
                 cookieValue = savedCookie
                 cookieTimestamp = savedTimestamp
                 return savedCookie
             }
 
             try {
-                val formBody = FormBody.Builder()
-                    .add("g-recaptcha-response", UUID.randomUUID().toString())
+                Log.d(TAG, "Starting NetMirror bypass flow...")
+
+                val network = Injekt.get<NetworkHelper>()
+                val bypassClient = network.client.newBuilder()
+                    .addInterceptor(CloudflareInterceptor(network.client, DEFAULT_USER_AGENT))
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .followRedirects(true)
+                    .followSslRedirects(true)
                     .build()
 
-                val directClient = OkHttpClient.Builder()
-                    .followRedirects(false)
-                    .followSslRedirects(false)
+                // Step 1: Scrape data-addhash from mobile home
+                val homeRequest = Request.Builder()
+                    .url("https://net52.cc/mobile/home?app=1")
+                    .header("User-Agent", DEFAULT_USER_AGENT)
+                    .header("X-Requested-With", APP_REQUESTED_WITH)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .build()
+
+                val homeHtml = bypassClient.newCall(homeRequest).execute().use { it.body.string() }
+                val addhash = ADDHASH_REGEX.find(homeHtml)?.groupValues?.get(1).orEmpty()
+                if (addhash.isEmpty()) {
+                    Log.w(TAG, "Failed to scrape data-addhash from mobile/home")
+                    return cookieValue
+                }
+                Log.d(TAG, "Scraped addhash: $addhash")
+
+                // Step 2: Handshake ping to userver (fire and ignore)
+                try {
+                    val pingRequest = Request.Builder()
+                        .url("https://userver.net52.cc/?hee5=$addhash&a=y&t=${System.currentTimeMillis()}")
+                        .header("User-Agent", DEFAULT_USER_AGENT)
+                        .header("X-Requested-With", APP_REQUESTED_WITH)
+                        .build()
+                    bypassClient.newCall(pingRequest).execute().close()
+                } catch (e: Exception) {
+                    Log.d(TAG, "userver ping note: ${e.message}")
+                }
+
+                // Step 3: Poll verify2.php until "All Done"
+                val formBody = FormBody.Builder()
+                    .add("verify", addhash)
+                    .build()
+
+                val pollClient = OkHttpClient.Builder()
                     .connectTimeout(15, TimeUnit.SECONDS)
                     .readTimeout(15, TimeUnit.SECONDS)
                     .build()
 
-                val request = Request.Builder()
-                    .url("https://net52.cc/verify.php")
-                    .post(formBody)
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-                    .header("Accept-Encoding", "gzip, deflate, br, zstd")
-                    .header("Accept-Language", "en-US,en;q=0.9")
-                    .header("Cache-Control", "max-age=0")
-                    .header("Connection", "keep-alive")
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Origin", "https://net22.cc")
-                    .header("Referer", "https://net22.cc/verify2")
-                    .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
-                    .header("sec-ch-ua-mobile", "?0")
-                    .header("sec-ch-ua-platform", "\"Windows\"")
-                    .header("Sec-Fetch-Dest", "document")
-                    .header("Sec-Fetch-Mode", "navigate")
-                    .header("Sec-Fetch-Site", "same-origin")
-                    .header("Sec-Fetch-User", "?1")
-                    .header("Upgrade-Insecure-Requests", "1")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-                    .build()
+                for (attempt in 1..10) {
+                    SystemClock.sleep(if (attempt == 1) 4000L else 5000L)
 
-                directClient.newCall(request).execute().use { response ->
-                    val setCookieHeaders = response.headers.values("Set-Cookie")
-                    for (header in setCookieHeaders) {
-                        if (header.startsWith("t_hash_t=")) {
-                            val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
-                            if (cookie.isNotEmpty()) {
-                                cookieValue = cookie
-                                cookieTimestamp = now
-                                sharedPreferences.edit()
-                                    .putString("nf_cookie", cookie)
-                                    .putLong("nf_cookie_timestamp", now)
-                                    .apply()
-                                return cookie
+                    val verifyRequest = Request.Builder()
+                        .url("https://net52.cc/mobile/verify2.php")
+                        .post(formBody)
+                        .header("User-Agent", DEFAULT_USER_AGENT)
+                        .header("X-Requested-With", "XMLHttpRequest")
+                        .header("Referer", "https://net52.cc/mobile/home?app=1")
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .build()
+
+                    val (bodyStr, setCookieHeaders) = try {
+                        pollClient.newCall(verifyRequest).execute().use { resp ->
+                            resp.body.string() to resp.headers.values("Set-Cookie")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "verify2 poll error (attempt $attempt): ${e.message}")
+                        "" to emptyList<String>()
+                    }
+
+                    Log.d(TAG, "verify2 attempt $attempt: $bodyStr")
+
+                    if (bodyStr.contains("\"statusup\":\"All Done\"") || bodyStr.contains("All Done")) {
+                        for (header in setCookieHeaders) {
+                            if (header.contains("t_hash_t=")) {
+                                val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
+                                if (cookie.isNotEmpty()) {
+                                    cookieValue = cookie
+                                    cookieTimestamp = System.currentTimeMillis()
+                                    sharedPreferences.edit()
+                                        .putString("nf_cookie", cookie)
+                                        .putLong("nf_cookie_timestamp", cookieTimestamp)
+                                        .apply()
+                                    Log.i(TAG, "Successfully acquired bypass cookie t_hash_t on attempt $attempt")
+                                    return cookie
+                                }
                             }
                         }
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Error acquiring bypass cookie", e)
             }
+
             return cookieValue
         }
 
