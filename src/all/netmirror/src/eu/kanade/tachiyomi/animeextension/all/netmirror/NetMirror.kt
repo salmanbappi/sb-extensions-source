@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
@@ -123,6 +124,9 @@ class CNCVerseSource(
             }
             chain.proceed(request)
         }
+        // Added last so that it sees the final request (with this source's own cookies) and can
+        // solve a Cloudflare challenge in a WebView on the fly, then retry with `cf_clearance`.
+        .addInterceptor(CloudflareInterceptor(network.client))
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
@@ -350,38 +354,84 @@ class CNCVerseSource(
 
     // ============================ Video Links =============================
 
-    /**
-     * NetMirror publishes the per-episode streams through the mobile playlist endpoint
-     * (`/mobile/playlist.php`, `/mobile/pv/playlist.php`, `/mobile/hs/playlist.php`), which is what
-     * the reference "CNC Verse Mobile" plugin uses.
+    /*
+     * NetMirror publishes per-episode streams through the mobile playlist endpoint
+     * (`/mobile/playlist.php`, `/mobile/pv/playlist.php`, `/mobile/hs/playlist.php`) — the same
+     * endpoint the reference "CNC Verse Mobile" plugin uses.
      *
      * The NewTV app API (`checknewtv.php` -> `/newtv/player.php`) is deliberately *not* used: it
-     * only returns a usable manifest together with a `Usertoken`, which the reference implementation
-     * can only obtain by solving a Cloudflare challenge inside a WebView. Without that token the API
-     * answers with a placeholder manifest (`/files/220884/...&in=unknown::db`) that is byte-identical
-     * for every episode of a series, so playback silently shows the wrong content.
+     * only returns a usable manifest together with a `Usertoken`, which the reference can only
+     * obtain by scraping `const otp` from netmirror.gg/tv inside a WebView. Without that token the
+     * API answers with a placeholder manifest (`/files/220884/...&in=unknown::db`) that is
+     * byte-identical for every episode of a series, so playback silently shows the wrong content.
+     *
+     * A rejected bypass cookie or a Cloudflare interstitial makes the endpoint answer with HTML
+     * instead of JSON, which used to surface as a bare "No available video"; that case is retried
+     * with a fresh cookie, and `CloudflareInterceptor` solves challenges in a WebView on the fly.
      */
-    override fun videoListRequest(episode: SEpisode): Request {
+
+    /**
+     * Headers for the playlist XHR. The inherited `Sec-Fetch-Dest: document` /
+     * `Sec-Fetch-Mode: navigate` hints describe a top-level navigation, which is a
+     * mismatch for an AJAX call and a (minor) bot signal; the reference sends the
+     * `empty`/`cors` pair instead.
+     */
+    private fun videoListHeaders(): Headers = headers.newBuilder()
+        .set("Accept", "*/*")
+        .set("Referer", mobileHomeUrl)
+        .set("X-Requested-With", APP_REQUESTED_WITH)
+        .set("Sec-Fetch-Dest", "empty")
+        .set("Sec-Fetch-Mode", "cors")
+        .set("Sec-Fetch-Site", "same-origin")
+        .removeAll("Sec-Fetch-User")
+        .removeAll("Upgrade-Insecure-Requests")
+        .build()
+
+    private fun videoListUrl(episode: SEpisode): String {
         val path = if (ottPath.isEmpty()) "playlist.php" else "$ottPath/playlist.php"
-        val title = java.net.URLEncoder.encode(episode.name, "UTF-8")
-        val url = "$baseUrl/mobile/$path?id=${episode.url}&t=$title&tm=${System.currentTimeMillis() / 1000}"
-
-        val requestHeaders = headers.newBuilder()
-            .set("Accept", "*/*")
-            .set("Referer", mobileHomeUrl)
-            .set("X-Requested-With", APP_REQUESTED_WITH)
-            .build()
-
-        return GET(url, requestHeaders)
+        // The response is keyed on `id` only (`t`/`tm` are ignored by the server), and the
+        // 2-tier hoster flow in `extensions.utils.Source` rebuilds SEpisode from its url alone,
+        // so `name` may be absent here.
+        val title = java.net.URLEncoder.encode(episode.name.orEmpty(), "UTF-8")
+        return "$baseUrl/mobile/$path?id=${episode.url}&t=$title&tm=${System.currentTimeMillis() / 1000}"
     }
 
+    override fun videoListRequest(episode: SEpisode): Request = GET(videoListUrl(episode), videoListHeaders())
+
     override fun videoListParse(response: Response): List<Video> {
-        val playlist = try {
-            JSONArray(response.body.string())
-        } catch (e: Exception) {
+        val requestUrl = response.request.url.toString()
+        var playlist = parsePlaylist(response.body.string())
+
+        if (playlist == null) {
+            // Not a playlist. The server answers the ad/verify wall or a Cloudflare
+            // interstitial instead of JSON when the bypass cookie is missing or stale,
+            // which surfaces to the user as "No available video". Mint a fresh cookie
+            // and retry once before giving up.
+            getBypassCookie(force = true)
+            playlist = try {
+                client.newCall(GET(requestUrl, videoListHeaders())).execute().use {
+                    parsePlaylist(it.body.string())
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        if (playlist == null) {
+            displayToast("NetMirror: server returned no playlist (HTTP ${response.code})")
             return emptyList()
         }
 
+        return buildVideos(playlist)
+    }
+
+    private fun parsePlaylist(body: String): JSONArray? = try {
+        JSONArray(body).takeIf { it.length() > 0 }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun buildVideos(playlist: JSONArray): List<Video> {
         val cookieHeader = buildString {
             val cookieVal = getBypassCookie()
             if (cookieVal.isNotEmpty()) {
@@ -424,7 +474,10 @@ class CNCVerseSource(
             }
         }
 
-        if (sources.isEmpty()) return emptyList()
+        if (sources.isEmpty()) {
+            displayToast("NetMirror: playlist contained no sources")
+            return emptyList()
+        }
 
         val playlistUtils = PlaylistUtils(client, headers)
 
@@ -465,7 +518,21 @@ class CNCVerseSource(
                 emptyList()
             }
 
-            for (video in extracted) {
+            // If the master playlist could not be expanded, still surface the source itself:
+            // the player understands a master playlist, so one entry beats an empty list.
+            val expanded = extracted.ifEmpty {
+                listOf(
+                    Video(
+                        videoUrl = sourceUrl,
+                        videoTitle = fallbackName,
+                        headers = videoHeadersGen(headers, mobileHomeUrl, sourceUrl),
+                        resolution = qualityParam?.let { RESOLUTION_REGEX.find(it)?.groupValues?.get(1)?.toIntOrNull() },
+                        subtitleTracks = subtitleTracks,
+                    ),
+                )
+            }
+
+            for (video in expanded) {
                 if (!seen.add(IN_PARAM_REGEX.replace(video.videoUrl, ""))) continue
                 videos.add(
                     Video(
