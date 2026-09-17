@@ -125,13 +125,17 @@ class CNCVerseSource(
         }
         if (url.contains("/mobile/home")) {
             val peek = try {
-                response.peekBody(4096).string()
+                response.peekBody(32768).string()
             } catch (e: Exception) {
                 ""
             }
-            return peek.contains("We Need Support", ignoreCase = true) ||
-                peek.contains("open-support", ignoreCase = true) ||
-                (!peek.contains("tray-container") && !peek.contains("<article") && !peek.contains("top10"))
+            if (peek.contains("<title>Home - Android Mobile</title>", ignoreCase = true) ||
+                peek.contains("tray-container") ||
+                peek.contains("<article")
+            ) {
+                return false
+            }
+            return true
         }
         if (url.contains(".php")) {
             return isHtmlResponse(response)
