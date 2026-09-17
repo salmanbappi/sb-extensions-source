@@ -464,8 +464,12 @@ class CNCVerseSource(
 
     private fun videoListUrl(episode: SEpisode): String {
         val path = if (ottPath.isEmpty()) "playlist.php" else "$ottPath/playlist.php"
-        val title = java.net.URLEncoder.encode(episode.name.orEmpty(), "UTF-8")
-        return "$baseUrl/mobile/$path?id=${episode.url}&t=$title&tm=${System.currentTimeMillis() / 1000}"
+        // IMPORTANT: never read episode.name here. The hoster flow (Source.getVideoList(hoster))
+        // constructs SEpisode with only `url` set, and `name` is lateinit — reading it throws
+        // UninitializedPropertyAccessException before any request is made ("No available videos").
+        // playlist.php only needs the id; verified live: id, id+tm, and id+t+tm all return
+        // identical valid playlists.
+        return "$baseUrl/mobile/$path?id=${episode.url}&tm=${System.currentTimeMillis() / 1000}"
     }
 
     override fun videoListRequest(episode: SEpisode): Request = GET(videoListUrl(episode), videoListHeaders())
