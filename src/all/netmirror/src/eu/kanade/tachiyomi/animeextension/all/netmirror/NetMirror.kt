@@ -482,6 +482,11 @@ class CNCVerseSource(
     override fun videoListParse(response: Response): List<Video> {
         val requestUrl = response.request.url.toString()
         val rawBody = response.body.string()
+        Log.i(
+            TAG,
+            "videoListParse: HTTP ${response.code} ct=${response.header("Content-Type").orEmpty()} " +
+                "len=${rawBody.length} hasCookie=${getBypassCookie().isNotEmpty()}",
+        )
         var playlist = parsePlaylist(rawBody)
 
         if (playlist == null) {
@@ -489,8 +494,10 @@ class CNCVerseSource(
             clearBypassCookie()
             getBypassCookie(force = true)
             playlist = try {
-                client.newCall(GET(requestUrl, videoListHeaders())).execute().use {
-                    parsePlaylist(it.body.string())
+                client.newCall(GET(requestUrl, videoListHeaders())).execute().use { retry ->
+                    val retryBody = retry.body.string()
+                    Log.i(TAG, "playlist retry: HTTP ${retry.code} len=${retryBody.length}")
+                    parsePlaylist(retryBody)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Retry playlist.php request failed", e)
@@ -499,20 +506,24 @@ class CNCVerseSource(
         }
 
         if (playlist == null) {
-            displayToast("NetMirror: server returned no playlist (HTTP ${response.code})")
+            val reason = if (rawBody.contains("in=unknown::db")) "invalid session token" else "non-JSON body"
+            displayToast("NetMirror: no playlist (HTTP ${response.code}, len=${rawBody.length}, $reason)")
             return emptyList()
         }
 
+        Log.i(TAG, "playlist parsed: ${playlist.length()} items")
         return buildVideos(playlist)
     }
 
     private fun parsePlaylist(body: String): JSONArray? = try {
         if (body.contains("in=unknown::db")) {
+            Log.w(TAG, "parsePlaylist: body contains in=unknown::db (session token rejected)")
             null
         } else {
             JSONArray(body).takeIf { it.length() > 0 }
         }
     } catch (e: Exception) {
+        Log.w(TAG, "parsePlaylist: not JSON (${e.javaClass.simpleName}: ${e.message}) len=${body.length}")
         null
     }
 
@@ -559,8 +570,15 @@ class CNCVerseSource(
         }
 
         if (sources.isEmpty()) {
-            displayToast("NetMirror: playlist contained no sources")
+            Log.w(TAG, "buildVideos: playlist contained no sources")
+            displayToast("NetMirror: playlist contained no sources (${playlist.length()} items)")
             return emptyList()
+        }
+
+        Log.i(TAG, "buildVideos: ${sources.size} sources, ${subtitleTracks.size} subtitle tracks")
+        for ((label, sourceUrl) in sources) {
+            val host = runCatching { java.net.URI(sourceUrl).host }.getOrNull() ?: "?"
+            Log.d(TAG, "source: label='$label' host=$host")
         }
 
         val playlistUtils = PlaylistUtils(client, headers)
@@ -633,7 +651,9 @@ class CNCVerseSource(
             }
         }
 
-        return videos.sortVideos()
+        val result = videos.sortVideos()
+        Log.i(TAG, "buildVideos: returning ${result.size} videos")
+        return result
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
