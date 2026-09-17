@@ -4,20 +4,18 @@ import android.app.Application
 import android.content.SharedPreferences
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
+import extensions.utils.UrlUtils
 import okhttp3.FormBody
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -51,6 +49,9 @@ class CNCVerseSource(
     override val lang = "all"
     override val supportsLatest = false
 
+    private val mobileHomeUrl: String
+        get() = "$baseUrl/mobile/home?app=1"
+
     private val ottPath: String
         get() = when (ott) {
             "nf" -> ""
@@ -79,7 +80,7 @@ class CNCVerseSource(
                             append("; studio=$studio")
                         }
                     }
-                    val refererUrl = if (url.contains("/home")) "$baseUrl/mobile/home?app=1" else "$baseUrl/home"
+                    val refererUrl = if (url.contains("/mobile/")) "$baseUrl/mobile/home?app=1" else "$baseUrl/home"
                     var newRequest = request.newBuilder()
                         .header("Cookie", cookieHeader)
                         .header("Referer", refererUrl)
@@ -349,107 +350,137 @@ class CNCVerseSource(
 
     // ============================ Video Links =============================
 
+    /**
+     * NetMirror publishes the per-episode streams through the mobile playlist endpoint
+     * (`/mobile/playlist.php`, `/mobile/pv/playlist.php`, `/mobile/hs/playlist.php`), which is what
+     * the reference "CNC Verse Mobile" plugin uses.
+     *
+     * The NewTV app API (`checknewtv.php` -> `/newtv/player.php`) is deliberately *not* used: it
+     * only returns a usable manifest together with a `Usertoken`, which the reference implementation
+     * can only obtain by solving a Cloudflare challenge inside a WebView. Without that token the API
+     * answers with a placeholder manifest (`/files/220884/...&in=unknown::db`) that is byte-identical
+     * for every episode of a series, so playback silently shows the wrong content.
+     */
     override fun videoListRequest(episode: SEpisode): Request {
-        val apiBase = getApiUrl()
-        val url = "$apiBase/newtv/player.php?id=${episode.url}"
+        val path = if (ottPath.isEmpty()) "playlist.php" else "$ottPath/playlist.php"
+        val title = java.net.URLEncoder.encode(episode.name, "UTF-8")
+        val url = "$baseUrl/mobile/$path?id=${episode.url}&t=$title&tm=${System.currentTimeMillis() / 1000}"
 
-        val ottValue = if (ott == "dp") "hs" else ott
-        val headers = Headers.Builder()
-            .add("Ott", ottValue)
-            .add("Usertoken", "")
-            .add("Cache-Control", "no-cache, no-store, must-revalidate")
-            .add("Pragma", "no-cache")
-            .add("Expires", "0")
-            .add("X-Requested-With", "NetmirrorNewTV v1.0")
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
-            .add("Accept", "application/json, text/plain, */*")
+        val requestHeaders = headers.newBuilder()
+            .set("Accept", "*/*")
+            .set("Referer", mobileHomeUrl)
+            .set("X-Requested-With", APP_REQUESTED_WITH)
             .build()
 
-        return GET(url, headers)
+        return GET(url, requestHeaders)
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val json = response.body.string()
-        val jsonObj = JSONObject(json)
-        val status = jsonObj.optString("status")
-        val videoLink = jsonObj.optString("video_link")
-        val referer = jsonObj.optString("referer")
-
-        if ((status != "ok" && status != "otp") || videoLink.isEmpty()) {
+        val playlist = try {
+            JSONArray(response.body.string())
+        } catch (e: Exception) {
             return emptyList()
         }
 
-        val cookieVal = getBypassCookie()
         val cookieHeader = buildString {
+            val cookieVal = getBypassCookie()
             if (cookieVal.isNotEmpty()) {
                 append("t_hash_t=$cookieVal; ")
             }
-            append("ott=$ott; ")
-            append("hd=on")
+            append("ott=$ott; hd=on")
             if (studio.isNotEmpty()) {
                 append("; studio=$studio")
             }
         }
 
-        val videoHeaders = Headers.Builder()
-            .set("Referer", referer.ifEmpty { getApiUrl() })
-            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
-            .set("Cookie", cookieHeader)
-            .build()
+        // `sources` are the qualities of the episode, `tracks` (kind == "captions") the subtitles.
+        val sources = mutableListOf<Pair<String, String>>()
+        val subtitleTracks = mutableListOf<Track>()
+
+        for (i in 0 until playlist.length()) {
+            val item = playlist.optJSONObject(i) ?: continue
+
+            item.optJSONArray("sources")?.let { array ->
+                for (j in 0 until array.length()) {
+                    val source = array.optJSONObject(j) ?: continue
+                    val file = source.optString("file").replace("\\", "")
+                    if (file.isEmpty()) continue
+                    val sourceUrl = UrlUtils.fixUrl(file, baseUrl)
+                    if (sources.none { it.second == sourceUrl }) {
+                        sources.add(source.optString("label") to sourceUrl)
+                    }
+                }
+            }
+
+            item.optJSONArray("tracks")?.let { array ->
+                for (j in 0 until array.length()) {
+                    val track = array.optJSONObject(j) ?: continue
+                    if (!track.optString("kind").equals("captions", true)) continue
+                    val file = track.optString("file").replace("\\", "")
+                    val trackUrl = UrlUtils.fixUrl(file, baseUrl)
+                    if (trackUrl.isEmpty() || subtitleTracks.any { it.url == trackUrl }) continue
+                    subtitleTracks.add(Track(trackUrl, track.optString("label").ifEmpty { "Subtitle" }))
+                }
+            }
+        }
+
+        if (sources.isEmpty()) return emptyList()
 
         val playlistUtils = PlaylistUtils(client, headers)
 
-        val masterHeadersGen = { baseHeaders: Headers, ref: String ->
-            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
-            headers.newBuilder().apply {
-                if (cookieVal.isNotEmpty()) {
-                    set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
-                }
-            }.build()
+        val masterHeadersGen: (Headers, String) -> Headers = { baseHeaders, ref ->
+            playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
+                .set("Cookie", cookieHeader)
+                .set("X-Requested-With", APP_REQUESTED_WITH)
+                .build()
         }
 
-        val videoHeadersGen = { baseHeaders: Headers, ref: String, videoUrl: String ->
-            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
-            headers.newBuilder().apply {
-                if (cookieVal.isNotEmpty()) {
-                    set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
-                }
-            }.build()
+        val videoHeadersGen: (Headers, String, String) -> Headers = { _, _, _ ->
+            Headers.Builder()
+                .set("Referer", mobileHomeUrl)
+                .set("X-Requested-With", APP_REQUESTED_WITH)
+                .set("Cookie", cookieHeader)
+                .build()
         }
 
-        val videos = try {
-            playlistUtils.extractFromHls(
-                playlistUrl = videoLink,
-                referer = referer.ifEmpty { getApiUrl() },
-                masterHeadersGen = masterHeadersGen,
-                videoHeadersGen = videoHeadersGen,
-                videoNameGen = { "$name - $it" },
-            )
-        } catch (e: Exception) {
-            emptyList()
-        }
+        val videos = mutableListOf<Video>()
+        val seen = mutableSetOf<String>()
 
-        val mappedVideos = videos.map { video ->
-            if (video.subtitleTracks.isEmpty()) {
-                video
-            } else {
-                Video(
-                    videoUrl = video.videoUrl,
-                    videoTitle = video.videoTitle,
-                    headers = video.headers,
-                    subtitleTracks = video.subtitleTracks.map { track ->
-                        if (track.url.endsWith(".m3u8")) {
-                            Track(track.url.substringBeforeLast(".m3u8") + ".vtt", track.lang)
-                        } else {
-                            track
-                        }
-                    },
-                    audioTracks = video.audioTracks,
+        for ((label, sourceUrl) in sources) {
+            // Every source (Auto / Full HD / Mid HD) can expose the same variant with a freshly
+            // minted `in=` token, so dedupe on the URL without that volatile token.
+            val qualityParam = QUALITY_PARAM_REGEX.find(sourceUrl)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }
+            val fallbackName = qualityParam ?: label.ifEmpty { "Video" }
+
+            val extracted = try {
+                playlistUtils.extractFromHls(
+                    playlistUrl = sourceUrl,
+                    referer = mobileHomeUrl,
+                    masterHeadersGen = masterHeadersGen,
+                    videoHeadersGen = videoHeadersGen,
+                    videoNameGen = { quality -> if (quality == "Video") fallbackName else quality },
+                    subtitleList = subtitleTracks,
+                )
+            } catch (e: Exception) {
+                emptyList()
+            }
+
+            for (video in extracted) {
+                if (!seen.add(IN_PARAM_REGEX.replace(video.videoUrl, ""))) continue
+                videos.add(
+                    Video(
+                        videoUrl = video.videoUrl,
+                        videoTitle = video.videoTitle,
+                        headers = video.headers,
+                        resolution = RESOLUTION_REGEX.find(video.videoTitle)?.groupValues?.get(1)?.toIntOrNull(),
+                        subtitleTracks = video.subtitleTracks,
+                        audioTracks = video.audioTracks,
+                    ),
                 )
             }
         }
 
-        return mappedVideos.sortVideos()
+        return videos.sortVideos()
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
@@ -484,82 +515,14 @@ class CNCVerseSource(
     override fun getFilterList(): AnimeFilterList = AnimeFilterList()
 
     companion object {
+        private const val APP_REQUESTED_WITH = "app.netmirror.netmirrornew"
+
+        private val QUALITY_PARAM_REGEX = Regex("""[?&]q=([^&]+)""")
+        private val RESOLUTION_REGEX = Regex("""(\d{3,4})p""")
+        private val IN_PARAM_REGEX = Regex("""[?&]in=[^&]*""")
+
         private val sharedPreferences: SharedPreferences by lazy {
             Injekt.get<Application>().getSharedPreferences("cncverse_shared_prefs", 0)
-        }
-
-        private var resolvedApiUrl = ""
-
-        @Synchronized
-        private fun getApiUrl(): String {
-            if (resolvedApiUrl.isNotEmpty()) return resolvedApiUrl
-
-            val newTvBaseHeaders = mapOf(
-                "Cache-Control" to "no-cache, no-store, must-revalidate",
-                "Pragma" to "no-cache",
-                "Expires" to "0",
-                "X-Requested-With" to "NetmirrorNewTV v1.0",
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0",
-                "Accept" to "application/json, text/plain, */*",
-            )
-
-            val newTvDomains = listOf(
-                "aHR0cHM6Ly9tb2JpbGVkZXRlY3RzLmNvbQ==",
-                "aHR0cHM6Ly9tb2JpbGVkZXRlY3QuYXBw",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmFydA==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmNj",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmNsaWNr",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lmluaw==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmxpdmU=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnBybw==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNob3A=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNpdGU=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNwYWNl",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnN0b3Jl",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnZpcA==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lndpa2k=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lnh5eg==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5hcnQ=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5jYw==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5pbmZv",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5pbms=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5saXZl",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5wcm8=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5zdG9yZQ==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy50b3A=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy54eXo=",
-            )
-
-            val directClient = OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .build()
-
-            for (encoded in newTvDomains) {
-                val base = decodeBase64(encoded).trimEnd('/')
-                try {
-                    val request = Request.Builder()
-                        .url("$base/checknewtv.php")
-                        .apply {
-                            newTvBaseHeaders.forEach { (k, v) -> addHeader(k, v) }
-                        }
-                        .build()
-
-                    directClient.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val json = response.body?.string() ?: ""
-                            val tokenHash = JSONObject(json).optString("token_hash")
-                            if (tokenHash.isNotEmpty()) {
-                                resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
-                                return resolvedApiUrl
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Try next domain
-                }
-            }
-            throw Exception("Failed to resolve NewTV API base URL")
         }
 
         private var cookieValue = ""
@@ -643,7 +606,5 @@ class CNCVerseSource(
                 .remove("nf_cookie_timestamp")
                 .apply()
         }
-
-        private fun decodeBase64(value: String): String = String(android.util.Base64.decode(value, android.util.Base64.DEFAULT))
     }
 }
