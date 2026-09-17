@@ -112,6 +112,33 @@ class CNCVerseSource(
         }
     }
 
+    /**
+     * Determines whether the server returned the verification / ad wall instead of real content.
+     * For HTML pages like /mobile/home, HTML is expected and only rejected if it lacks content trays
+     * or contains the ad wall prompt ("We Need Support").
+     * For .php API endpoints (search.php, post.php, playlist.php, episodes.php), HTML means
+     * the session was rejected since JSON was expected.
+     */
+    private fun isVerificationWall(url: String, response: Response): Boolean {
+        if (response.code == 302 || response.request.url.toString().contains("verify")) {
+            return true
+        }
+        if (url.contains("/mobile/home")) {
+            val peek = try {
+                response.peekBody(4096).string()
+            } catch (e: Exception) {
+                ""
+            }
+            return peek.contains("We Need Support", ignoreCase = true) ||
+                peek.contains("open-support", ignoreCase = true) ||
+                (!peek.contains("tray-container") && !peek.contains("<article") && !peek.contains("top10"))
+        }
+        if (url.contains(".php")) {
+            return isHtmlResponse(response)
+        }
+        return false
+    }
+
     override val client: OkHttpClient = network.client.newBuilder()
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -132,12 +159,8 @@ class CNCVerseSource(
                     .build(),
             )
 
-            // A redirect to the verification page, or an HTML body where a `/mobile/` API
-            // endpoint was expected, means the bypass cookie was rejected. Mint a new one and
-            // retry once.
-            val rejected = response.code == 302 ||
-                response.request.url.toString().contains("verify") ||
-                (url.contains("/mobile/") && isHtmlResponse(response))
+            // Retry once if the response hit the verification / ad wall
+            val rejected = isVerificationWall(url, response)
             if (rejected) {
                 Log.w(TAG, "bypass cookie rejected or missing for $url (HTTP ${response.code}) — refreshing")
                 response.close()
@@ -200,20 +223,29 @@ class CNCVerseSource(
         val animeList = mutableListOf<SAnime>()
         val articles = document.select(".tray-container article, #top10 .top10-post")
         for (element in articles) {
-            val id = element.selectFirst("a")?.attr("data-post") ?: element.attr("data-post") ?: continue
-            val title = element.selectFirst("img")?.attr("alt")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("img")?.attr("title")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("a")?.attr("title")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst(".card-title")?.text()?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("h3")?.text()?.takeIf { it.isNotEmpty() }
+            val id = element.selectFirst("a")?.attr("data-post")
+                ?: element.attr("data-post")
+                ?: continue
+            if (id.isEmpty()) continue
+
+            val title = element.selectFirst("img")?.attr("alt")?.takeIf { it.isNotBlank() }
+                ?: element.selectFirst("img")?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: element.selectFirst("a")?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: element.selectFirst(".card-title")?.text()?.takeIf { it.isNotBlank() }
+                ?: element.selectFirst("h3")?.text()?.takeIf { it.isNotBlank() }
                 ?: ""
-            if (id.isNotEmpty()) {
-                val anime = SAnime.create()
-                anime.title = title
-                anime.url = id
-                anime.thumbnail_url = getPosterUrl(id)
-                animeList.add(anime)
+
+            val img = element.selectFirst("img")
+            val thumbnail = img?.attr("data-src")?.takeIf { it.isNotBlank() }
+                ?: img?.attr("src")?.takeIf { it.isNotBlank() }
+                ?: getPosterUrl(id)
+
+            val anime = SAnime.create().apply {
+                this.title = title
+                this.url = id
+                this.thumbnail_url = thumbnail
             }
+            animeList.add(anime)
         }
         return AnimesPage(animeList.distinctBy { it.url }, false)
     }
@@ -684,14 +716,18 @@ class CNCVerseSource(
                 }
                 Log.d(TAG, "Scraped addhash: $addhash")
 
-                // Step 2: Handshake ping to userver (fire and ignore)
+                // Step 2: Handshake ping to userver (fire and ignore, quick timeout)
                 try {
+                    val pingClient = OkHttpClient.Builder()
+                        .connectTimeout(3, TimeUnit.SECONDS)
+                        .readTimeout(3, TimeUnit.SECONDS)
+                        .build()
                     val pingRequest = Request.Builder()
                         .url("https://userver.net52.cc/?hee5=$addhash&a=y&t=${System.currentTimeMillis()}")
                         .header("User-Agent", DEFAULT_USER_AGENT)
                         .header("X-Requested-With", APP_REQUESTED_WITH)
                         .build()
-                    bypassClient.newCall(pingRequest).execute().close()
+                    pingClient.newCall(pingRequest).execute().close()
                 } catch (e: Exception) {
                     Log.d(TAG, "userver ping note: ${e.message}")
                 }
