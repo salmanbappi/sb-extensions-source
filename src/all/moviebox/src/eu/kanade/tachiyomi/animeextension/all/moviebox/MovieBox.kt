@@ -129,6 +129,19 @@ class MovieBox : Source() {
 
     private val secretKeyDefault = "NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw=="
 
+    // Alternate request-signing key (observed in the official app and used as a
+    // retry leg by CNC's CloudStream MovieBoxProvider): when the primary key
+    // stops producing accepted signatures (server-side rotation), the same
+    // canonical string is re-signed with this key and the request retried once.
+    private val secretKeyAlt = "WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ=="
+
+    // The stream/resource CDNs (sacdn/macdn/bcdn.hakunaymatata.com, *.aoneroom.com)
+    // reject desktop browser UAs with HTTP 428 Forbidden; only the Android app's
+    // Cronet UA is served. Video and API requests must both carry this UA
+    // (verified live 2026-09).
+    private val MOVIEBOX_APP_UA =
+        "com.community.mbox.in/50020126 (Linux; U; Android 14; en_IN; SM-S918B; Build/UP1A.231005.007; Cronet/133.0.6876.3)"
+
     private fun saveToken(token: String?) {
         if (!token.isNullOrBlank() && isTokenValid(token)) {
             bearerToken = token
@@ -177,17 +190,17 @@ class MovieBox : Source() {
         .add("Origin", "https://moviebox.ph")
         .add("Accept", "application/json")
 
-    private fun getApiHeaders(url: String, method: String = "GET", body: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false, forceNoToken: Boolean = false): Headers {
+    private fun getApiHeaders(url: String, method: String = "GET", body: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false, forceNoToken: Boolean = false, useAltKey: Boolean = false): Headers {
         val timestamp = System.currentTimeMillis()
         val contentType = if (method == "POST") "application/json; charset=utf-8" else "application/json"
 
         return Headers.Builder()
-            .add("user-agent", "com.community.mbox.in/50020126 (Linux; U; Android 14; en_IN; SM-S918B; Build/UP1A.231005.007; Cronet/133.0.6876.3)")
+            .add("user-agent", MOVIEBOX_APP_UA)
             .add("accept", "application/json")
             .add("content-type", contentType)
             .add("connection", "keep-alive")
             .add("x-client-token", generateXClientToken(timestamp))
-            .add("x-tr-signature", generateXTrSignature(method, "application/json", contentType, url, body, timestamp = timestamp))
+            .add("x-tr-signature", generateXTrSignature(method, "application/json", contentType, url, body, timestamp = timestamp, useAltKey = useAltKey))
             .add("x-client-info", getClientInfo())
             .add("x-client-status", "0")
             .apply {
@@ -285,10 +298,11 @@ class MovieBox : Source() {
         url: String,
         body: String? = null,
         timestamp: Long,
+        useAltKey: Boolean = false,
     ): String {
         val canonical = buildCanonicalString(method, accept, contentType, url, body, timestamp)
 
-        val secretStr = String(Base64.decode(secretKeyDefault, Base64.DEFAULT))
+        val secretStr = String(Base64.decode(if (useAltKey) secretKeyAlt else secretKeyDefault, Base64.DEFAULT))
         val secretBytes = Base64.decode(secretStr, Base64.DEFAULT)
 
         val mac = Mac.getInstance("HmacMD5")
@@ -308,6 +322,7 @@ class MovieBox : Source() {
             if (signCookie.contains("urlprefix=")) {
                 try {
                     val b64 = signCookie.substringAfter("urlprefix=").substringBefore(";").substringBefore(":sign=")
+                        .replace('-', '+').replace('_', '/')
                     val padded = b64 + "=".repeat((4 - b64.length % 4) % 4)
                     val decoded = String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8).trim()
                     if (decoded.startsWith("http")) {
@@ -321,6 +336,7 @@ class MovieBox : Source() {
             if (signCookie.contains("CloudFront-Policy=")) {
                 try {
                     val b64 = signCookie.substringAfter("CloudFront-Policy=").substringBefore(";")
+                        .replace('-', '+').replace('_', '/')
                     val padded = b64 + "=".repeat((4 - b64.length % 4) % 4)
                     val jsonStr = String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8)
                     val resource = json.parseToJsonElement(jsonStr).obj?.get("Statement")?.arr?.firstOrNull()?.obj?.get("Resource")?.str
@@ -359,34 +375,43 @@ class MovieBox : Source() {
             }
 
             val url = host + adaptivePath
-            val request = if (isPost) {
-                val body = bodyData.orEmpty().toRequestBody("application/json; charset=utf-8".toMediaType())
-                POST(url, getApiHeaders(url, "POST", bodyData, token = token, isDetails = isDetails, isPlayback = isPlayback), body)
-            } else {
-                GET(url, getApiHeaders(url, token = token, isDetails = isDetails, isPlayback = isPlayback))
-            }
-            try {
-                val response = client.newCall(request).execute()
-                val body = response.body.string().trim()
-                if (body.isEmpty() || body.contains("<html", ignoreCase = true) || !body.startsWith("{")) continue
-                val jsonRes = json.parseToJsonElement(body)
-                if (jsonRes.obj?.get("code")?.jsonPrimitive?.intOrNull != 0) continue
-                if (isPlayback && urlPath.contains("play-info")) {
-                    val streams = jsonRes.obj?.get("data")?.obj?.get("streams")?.arr
-                    if (streams.isNullOrEmpty()) continue
-                    val onlyBrokenCdn = streams.all {
-                        val u = it.obj?.get("url")?.str.orEmpty()
-                        val cookie = it.obj?.get("signCookie")?.str.orEmpty()
-                        val resolved = extractRealStreamUrl(u, cookie)
-                        resolved.contains("sacdn.hakunaymatata.com") ||
-                            resolved.contains("b164fbfb43477929") ||
-                            resolved.contains("macdn.aoneroom.com/other/")
-                    }
-                    if (onlyBrokenCdn) continue
+
+            // Signature rejection / key rotation: retry the same host once with
+            // the alternate signing key before moving to the next host.
+            for (useAltKey in listOf(false, true)) {
+                val request = if (isPost) {
+                    val body = bodyData.orEmpty().toRequestBody("application/json; charset=utf-8".toMediaType())
+                    POST(url, getApiHeaders(url, "POST", bodyData, token = token, isDetails = isDetails, isPlayback = isPlayback, useAltKey = useAltKey), body)
+                } else {
+                    GET(url, getApiHeaders(url, token = token, isDetails = isDetails, isPlayback = isPlayback, useAltKey = useAltKey))
                 }
-                return Pair(jsonRes, response.headers)
-            } catch (e: Exception) {
-                continue
+                try {
+                    val response = client.newCall(request).execute()
+                    val body = response.body.string().trim()
+                    if (body.isEmpty() || body.contains("<html", ignoreCase = true) || !body.startsWith("{")) continue
+                    val jsonRes = json.parseToJsonElement(body)
+                    if (jsonRes.obj?.get("code")?.jsonPrimitive?.intOrNull != 0) continue
+                    if (isPlayback && urlPath.contains("play-info")) {
+                        val streams = jsonRes.obj?.get("data")?.obj?.get("streams")?.arr
+                        if (streams.isNullOrEmpty()) continue
+                        // sacdn.hakunaymatata.com is a WORKING CDN: its URL is
+                        // derived from the stream's signCookie (CloudFront-Policy
+                        // resource) and plays fine with the full cookie + app UA
+                        // (verified live 2026-09). Only genuinely dead hosts
+                        // disqualify a response.
+                        val onlyBrokenCdn = streams.all {
+                            val u = it.obj?.get("url")?.str.orEmpty()
+                            val cookie = it.obj?.get("signCookie")?.str.orEmpty()
+                            val resolved = extractRealStreamUrl(u, cookie)
+                            resolved.contains("b164fbfb43477929") ||
+                                resolved.contains("macdn.aoneroom.com/other/")
+                        }
+                        if (onlyBrokenCdn) continue
+                    }
+                    return Pair(jsonRes, response.headers)
+                } catch (e: Exception) {
+                    continue
+                }
             }
         }
         return null
@@ -863,20 +888,20 @@ class MovieBox : Source() {
             val signCookie = obj["signCookie"]?.str
             val cleanCookie = signCookie?.trim()?.trimEnd(';')
             val resolvedUrl = extractRealStreamUrl(rawUrl, cleanCookie)
-            if (resolvedUrl.contains("b164fbfb43477929") || resolvedUrl.contains("macdn.aoneroom.com/other/")) {
+            if (resolvedUrl.startsWith("magnet:") ||
+                resolvedUrl.contains("b164fbfb43477929") ||
+                resolvedUrl.contains("macdn.aoneroom.com/other/")
+            ) {
                 return@forEach
             }
 
             val res = obj["resolutions"]?.str ?: "Auto"
             val streamId = obj["id"]?.str ?: ""
-            val referer = if (resolvedUrl.contains("hakunaymatata") || resolvedUrl.contains("inmoviebox")) {
-                "https://apig.inmoviebox.com"
-            } else {
-                "https://h5.aoneroom.com/"
-            }
+            // Stream CDNs reject desktop UAs with HTTP 428 — video requests must
+            // carry the app's Cronet UA plus the full signed CloudFront cookie.
             val headers = Headers.Builder()
-                .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .add("Referer", referer)
+                .add("User-Agent", MOVIEBOX_APP_UA)
+                .add("Referer", "https://moviebox.ph/")
                 .apply { if (!cleanCookie.isNullOrBlank()) add("Cookie", cleanCookie) }
                 .build()
 
@@ -903,6 +928,55 @@ class MovieBox : Source() {
                         headers = headers,
                         resolution = resInt,
                         subtitleTracks = distinctSubs,
+                    ),
+                )
+            }
+        }
+        // play-info gave nothing usable (e.g. every stream sits on a dead
+        // CDN host): fall back to the details endpoint's resourceDetectors,
+        // which carries direct signed progressive MP4s per resolution
+        // (mostly movies; mirrors CNC's CloudStream MovieBoxProvider).
+        if (videos.isEmpty()) {
+            videos.addAll(fetchDetectorFallbackVideos(sid, lang))
+        }
+        return videos
+    }
+
+    private fun fetchDetectorFallbackVideos(sid: String, lang: String): List<Video> {
+        val jsonRes = safeGetJsonWithHeaders("/wefeed-mobile-bff/subject-api/get?subjectId=$sid", isDetails = true)
+            ?: return emptyList()
+        val dataObj = jsonRes.first.obj?.get("data")?.obj
+        val detectors = dataObj?.get("resourceDetectors")?.arr ?: return emptyList()
+
+        val videos = mutableListOf<Video>()
+        val langTag = lang.replace("dub", "").replace("dubbed", "").trim()
+        val langSuffix = if (langTag.isNotBlank() && !langTag.equals("original", ignoreCase = true)) " - $langTag" else ""
+
+        val fallbackHeaders = Headers.Builder()
+            .add("User-Agent", MOVIEBOX_APP_UA)
+            .add("Referer", "https://moviebox.ph/")
+            .build()
+
+        detectors.forEach { detectorEl ->
+            val detector = detectorEl.obj ?: return@forEach
+            val detectorSubs = parseCaptionTracks(detector)
+            detector["resolutionList"]?.arr?.forEach { videoEl ->
+                val obj = videoEl.obj ?: return@forEach
+                val link = obj["resourceLink"]?.str ?: return@forEach
+                if (link.startsWith("magnet:")) return@forEach
+                if (link.contains("b164fbfb43477929") || link.contains("/other/2026/09/04/")) return@forEach
+
+                val resLabel = obj["resolution"]?.str ?: "Auto"
+                val resInt = resLabel.filter { it.isDigit() }.toIntOrNull()
+                val formatTag = if (link.contains("/dash/") || link.endsWith(".mpd")) "DASH" else "MP4"
+                val subtitleTracks = (detectorSubs + parseCaptionTracks(obj)).distinctBy { it.url }
+                videos.add(
+                    Video(
+                        videoUrl = link,
+                        videoTitle = "$resLabel ($formatTag$langSuffix)",
+                        headers = fallbackHeaders,
+                        resolution = resInt,
+                        subtitleTracks = subtitleTracks,
                     ),
                 )
             }
