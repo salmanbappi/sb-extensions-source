@@ -471,8 +471,7 @@ class Anilight : Source() {
     private fun apiProxy(path: String, target: String): String = "$API_BASE/$path?url=${enc(target)}"
 
     /** Subtitles that 403 on direct fetches are served through the API. */
-    private fun proxyCaption(subUrl: String): String =
-        if (CAPTION_PROXY_HOSTS.any { subUrl.contains(it) }) apiProxy("proxy/captions", subUrl) else subUrl
+    private fun proxyCaption(subUrl: String): String = if (CAPTION_PROXY_HOSTS.any { subUrl.contains(it) }) apiProxy("proxy/captions", subUrl) else subUrl
 
     private suspend fun videosFromCandidate(
         candidateUrl: String,
