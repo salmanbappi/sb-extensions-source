@@ -308,14 +308,10 @@ class Anilight : Source() {
             val subtitleTracks = (sourcesDto.tracks ?: emptyList()).mapNotNull { track ->
                 val subUrl = track.url ?: return@mapNotNull null
                 val resolvedSubUrl = when {
-                    subUrl.contains("1oe.lostproject.club") -> {
-                        "$API_BASE/proxy/captions?url=${URLEncoder.encode(subUrl, "UTF-8")}"
-                    }
-
-                    // Provider "l" gatekeeper 403s direct subtitle fetches; its
-                    // lb relay serves them fine (verified live 2026-09).
+                    // Provider l's subtitle CDN 403s direct fetches; its
+                    // dedicated Worker serves the VTTs (verified 2026-09-18).
                     subUrl.contains("krussdomi.com") -> {
-                        "$API_BASE/lb/l/proxy?url=${URLEncoder.encode(subUrl, "UTF-8")}"
+                        "$L_WORKER/proxy?url=${URLEncoder.encode(subUrl, "UTF-8")}"
                     }
 
                     else -> subUrl
@@ -389,10 +385,9 @@ class Anilight : Source() {
             typeVideos
         }
 
-        // Final gate: the lb/proxy worker pools rotate between dead and live
-        // backends per request, so a playlist that classified clean can still
-        // yield junk when the extractor re-fetches it (the site answered one
-        // request and an error page the next). Re-peek every video and drop
+        // Final gate: playlists that classified clean can still yield junk
+        // when the extractor re-fetches them (proxy backends flap per request).
+        // Re-peek every video and drop
         // anything that is neither a playlist nor binary media, so no text
         // junk ever reaches the player as a "video".
         val sorted = videos.sortVideos().validateAndMarkHls()
@@ -400,10 +395,11 @@ class Anilight : Source() {
     }
 
     private fun resolveStreamUrl(rawUrl: String): String {
-        // NOTE: the old 03nc1.livedns.my remaps are gone — that host is now a
-        // parked domain whose "for sale" page was being relayed as stream
-        // content. cdn.mewstream.buzz (in workerDomains below) still routes
-        // through its lb relay, which works whenever a live worker answers.
+        // 2026-09-18: the site removed its entire proxy layer — /proxy,
+        // /api/proxy, /lb/*/proxy and /proxy/captions all return 404 JSON
+        // ("Route not found"), and the old 03nc1.livedns.my remap target is a
+        // parked domain. Routing is now direct fetches for the mello-family
+        // CDNs and provider l's dedicated Cloudflare Worker for krussdomi.
         val url = rawUrl
             .replace("vibeplayer.site", "vivibebe.site")
             .replace("bd.24stream.xyz", "bd.aniwatchtv.site")
@@ -416,43 +412,19 @@ class Anilight : Source() {
             .replace("hls.kotocdn.site", "megap.kotocdn.site")
             .replace("hls.streamzone1.site", "j5b9s.streamzone1.site")
 
-        val workerDomains = listOf(
-            "cdn.mewstream.buzz",
-            "j5b9s.streamzone1.site",
-            "9hjkrt.nekostream.site",
-            "e7nv.sparqle.click",
-            "j3nd.voltara.click",
-            "p4m9q.cinewave2.site",
-            "megap.kotocdn.site",
-            "03nc1.livedns.my",
-        )
-        val apiProxyDomains = listOf(
-            "vivibebe.site",
-            "vibeplayer.site",
-            "bd.24stream.xyz",
-            "bd.aniwatchtv.site",
-        )
-
         return when {
-            // Provider "l"'s CDN (krussdomi) 403s direct fetches, but its own
-            // lb relay works (verified live 2026-09) and rewrites child/audio
-            // URIs to the same worker — routing keeps provider l playable.
+            // Provider l's CDN (krussdomi) sits behind Cloudflare and 403s all
+            // direct fetches, but its dedicated Worker proxies the master,
+            // variants, audio renditions and subtitles (verified live
+            // 2026-09-18). The Worker rewrites child URIs onto itself, so
+            // segment fetches flow through it automatically.
             url.contains("krussdomi.com") -> {
-                "$API_BASE/lb/l/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
+                "$L_WORKER/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
             }
 
-            workerDomains.any { url.contains(it) } -> {
-                "$API_BASE/lb/misa/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
-            }
-
-            url.contains("hls.anidb.app") -> {
-                "$API_BASE/lb/near/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
-            }
-
-            apiProxyDomains.any { url.contains(it) } -> {
-                "$API_BASE/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
-            }
-
+            // mello-family CDNs serve everything directly — playlists with a
+            // fake image/jpeg content-type, relative child paths and raw TS
+            // segments all answer 200 to plain requests with a site Referer.
             else -> url
         }
     }
@@ -511,31 +483,44 @@ class Anilight : Source() {
 
     /**
      * Re-validates each candidate video right before it is handed to the
-     * player: the lb/proxy worker pools answer different backends per request,
-     * so an entry produced from a clean playlist can still point at an error
-     * page. Playlists are re-marked with the `#.m3u8` fragment here (so the
+     * player: upstream proxies and Workers occasionally answer with an error
+     * page instead of media, so an entry produced from a clean playlist can
+     * still point at junk. Playlists are re-marked with the `#.m3u8` fragment here (so the
      * local m3u8 server always picks them up); text/JSON junk is dropped.
      */
     private suspend fun List<Video>.validateAndMarkHls(): List<Video> = mapNotNull { video ->
+        validateAndMarkHlsEntry(video, retried = false)
+    }
+
+    private suspend fun validateAndMarkHlsEntry(video: Video, retried: Boolean): Video? {
         val url = video.videoUrl
-        if (url.startsWith("data:")) return@mapNotNull video
+        if (url.startsWith("data:")) return video
 
         val body = try {
             client.newCall(GET(url, video.headers ?: headers)).execute().use { response ->
-                if (!response.isSuccessful) return@mapNotNull null
+                if (!response.isSuccessful) return null
                 response.peekBody(2048L).string()
             }
         } catch (_: Exception) {
-            return@mapNotNull video // transient network error — keep, let the player retry
+            return video // transient network error — keep, let the player retry
         }
 
         val trimmed = body.trimStart().removePrefix("\uFEFF")
-        when {
+        return when {
             trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXT-X-") ->
                 video.withUrl(url.withM3u8FragmentIfNeeded())
 
             trimmed.startsWith("<") || trimmed.startsWith("{") ||
-                trimmed.startsWith("http://") || trimmed.startsWith("https://") -> null
+                trimmed.startsWith("http://") || trimmed.startsWith("https:") -> {
+                // The l Worker occasionally cold-starts with a 404 HTML page
+                // (Cloudflare workers.dev error); one immediate retry has
+                // cleared it every time (verified live 2026-09-18).
+                if (url.startsWith(L_WORKER) && !retried) {
+                    validateAndMarkHlsEntry(video, retried = true)
+                } else {
+                    null
+                }
+            }
 
             else -> video
         }
@@ -546,10 +531,10 @@ class Anilight : Source() {
             .set("Referer", "https://www.animegg.org/")
             .build()
 
-        // Site-hosted proxy endpoints (API_BASE/proxy, /lb/<server>/proxy) are
-        // gated on the site's own origin — anonymous fetches get HTML error
-        // pages that used to surface to the player as "video".
-        streamUrl.contains("anilight.") || streamUrl.contains("/proxy") -> headers.newBuilder()
+        // Site-hosted proxy endpoints and the mello-family CDNs are gated on
+        // the site's origin — anonymous fetches get HTML error pages or 403s.
+        streamUrl.contains("anilight.") || streamUrl.contains("/proxy") ||
+            streamUrl.contains("dpopdrop") -> headers.newBuilder()
             .set("Referer", "$baseUrl/")
             .set("Origin", baseUrl)
             .build()
@@ -600,8 +585,10 @@ class Anilight : Source() {
         ListPreference(screen.context).apply {
             key = PREF_SERVER_KEY
             title = "Preferred Server"
-            entries = arrayOf("Misa", "Near", "Rem", "Misora", "Light", "Raye", "Ryu")
-            entryValues = arrayOf("misa", "near", "rem", "misora", "light", "raye", "ryu")
+            // l and mello are the currently-playable servers (verified live
+            // 2026-09-18); misa/near/misora workers are dead upstream.
+            entries = arrayOf("L", "Mello", "Misa", "Near", "Rem", "Misora", "Light", "Raye", "Ryu")
+            entryValues = arrayOf("l", "mello", "misa", "near", "rem", "misora", "light", "raye", "ryu")
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
@@ -625,6 +612,10 @@ class Anilight : Source() {
     companion object {
         private const val API_BASE = "https://api.anilight.live/api"
 
+        // Provider "l"'s dedicated Cloudflare Worker. The site's own /lb/l/proxy
+        // shim (which redirected here) was removed on ~2026-09-17.
+        private const val L_WORKER = "https://pro-lrvp-1.l-anilight.workers.dev"
+
         private const val PREF_TITLE_LANG_KEY = "pref_title_lang"
         private const val PREF_TITLE_LANG_DEFAULT = "english"
 
@@ -632,7 +623,7 @@ class Anilight : Source() {
         private const val PREF_AUDIO_DEFAULT = "Soft Sub"
 
         private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "misa"
+        private const val PREF_SERVER_DEFAULT = "l"
 
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
