@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
@@ -20,6 +21,7 @@ import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import java.net.URLEncoder
 import kotlin.time.Duration.Companion.seconds
@@ -38,8 +40,13 @@ class Anilight : Source() {
 
     private val m3u8Integration by lazy { M3u8Integration(client) }
 
+    private val doodExtractor by lazy { DoodExtractor(client) }
+
+    private val megaPlayExtractor by lazy { MegaPlayExtractor(client, playlistUtils) }
+
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
+            // The upstream API allows 100 req/min and answers 429 beyond that.
             .rateLimit(permits = 6, period = 1.seconds)
             .build()
     }
@@ -214,7 +221,10 @@ class Anilight : Source() {
                     else -> "Episode $epNumInt: $epTitle"
                 }
                 episode_number = epNum
-                url = "$slug#id=$animeId&ep=$epNum"
+                // Keep the anchor free of float noise ("1", not "1.0"): it is
+                // matched verbatim against the episode numbers the watch API
+                // returns, and used as the `epNum` query parameter.
+                url = "$slug#id=$animeId&ep=$epNumInt"
                 scanlator = when {
                     ep.embed_url?.sub != null && ep.embed_url.dub != null -> "Sub & Dub"
                     ep.embed_url?.dub != null -> "Dub"
@@ -224,7 +234,7 @@ class Anilight : Source() {
         }.reversed()
     }
 
-    // ============================ Video Links =============================
+    // ============================ Hoster List =============================
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val slug = episode.url.substringBefore("#")
@@ -246,37 +256,79 @@ class Anilight : Source() {
         val dto = response.parseAs<WatchResponseDto>(json)
         val servers = dto.servers
 
-        val providerMap = mutableMapOf<String, MutableList<String>>()
+        val providerMap = linkedMapOf<String, MutableList<String>>()
+        val tipMap = mutableMapOf<String, String>()
 
         servers?.subProviders?.forEach { p ->
             p.id?.let { pid ->
                 val typeLabel = if (p.tip?.contains("Soft Sub", ignoreCase = true) == true) "soft-sub" else "sub"
                 providerMap.getOrPut(pid) { mutableListOf() }.add(typeLabel)
+                p.tip?.let { tip -> if (pid !in tipMap) tipMap[pid] = tip }
             }
         }
 
         servers?.dubProviders?.forEach { p ->
             p.id?.let { pid ->
                 providerMap.getOrPut(pid) { mutableListOf() }.add("dub")
+                p.tip?.let { tip -> if (pid !in tipMap) tipMap[pid] = tip }
             }
         }
 
-        if (providerMap.isEmpty()) {
-            listOf("misa", "near", "rem", "misora", "light", "raye", "ryu").forEach { pid ->
-                providerMap[pid] = mutableListOf("sub", "dub")
+        // The API roster carries internal/experimental entries the website
+        // hides from its own server picker.
+        providerMap.keys
+            .filter { id -> HIDDEN_PROVIDER_IDS.any { id.contains(it, ignoreCase = true) } }
+            .forEach { hidden ->
+                providerMap.remove(hidden)
+                tipMap.remove(hidden)
             }
+
+        // The site's own default player: a MegaPlay embed that exists per
+        // episode (not per provider), so it is bolted onto the roster here
+        // exactly like the web player does.
+        val episodeDto = (dto.episodes ?: emptyList()).firstOrNull { it.episodeKey() == epNum }
+        val embedSub = episodeDto?.embed_url?.sub.orEmpty()
+        val embedDub = episodeDto?.embed_url?.dub.orEmpty()
+        val embedTypes = buildList {
+            if (embedSub.isNotBlank()) add("sub")
+            if (embedDub.isNotBlank()) add("dub")
+        }
+
+        // The API occasionally ships an empty `servers` object; fall back to
+        // the full provider roster the site itself offers.
+        if (providerMap.isEmpty()) {
+            FALLBACK_PROVIDERS.forEach { (pid, tip) ->
+                providerMap[pid] = mutableListOf("sub", "dub")
+                tipMap[pid] = tip
+            }
+        }
+
+        if (embedTypes.isNotEmpty()) {
+            providerMap[MEG_PROVIDER] = embedTypes.toMutableList()
+            tipMap[MEG_PROVIDER] = "Embed"
         }
 
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
 
         return providerMap.map { (providerId, types) ->
             val displayName = providerId.replaceFirstChar { it.uppercase() }
+            val tip = tipMap[providerId]
             Hoster(
-                hosterName = displayName,
-                hosterUrl = "$animeId|$epNum|$providerId|${types.distinct().joinToString(",")}",
+                hosterName = if (tip.isNullOrBlank()) displayName else "$displayName · $tip",
+                // megaplay embeds are per-episode rather than per-provider, so
+                // they ride along in two extra fields.
+                hosterUrl = "$animeId|$epNum|$providerId|${types.distinct().joinToString(",")}|$embedSub|$embedDub",
             )
-        }.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
+        }.sortedByDescending { it.providerId() == prefServer }
     }
+
+    private fun Hoster.providerId(): String = hosterUrl.split("|").getOrNull(2).orEmpty()
+
+    private fun EpisodeDto.episodeKey(): String = (number ?: 1f).let {
+        if (it % 1f == 0f) it.toInt().toString() else it.toString()
+    }
+
+    // ============================ Video Links =============================
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val parts = hoster.hosterUrl.split("|")
@@ -286,41 +338,36 @@ class Anilight : Source() {
         val epNum = parts[1]
         val providerId = parts[2]
         val types = parts[3].split(",").filter { it.isNotBlank() }
+        val embedSub = parts.getOrNull(4).orEmpty()
+        val embedDub = parts.getOrNull(5).orEmpty()
+
+        // MegaPlay is a per-episode embed, not an API provider: it never sees
+        // `/sources`, and it brings its own subtitle tracks.
+        if (providerId == MEG_PROVIDER) {
+            val megaVideos = types.parallelCatchingFlatMap { rawType ->
+                val isDub = rawType.equals("dub", ignoreCase = true)
+                val embedUrl = if (isDub) embedDub else embedSub
+                if (embedUrl.isBlank()) return@parallelCatchingFlatMap emptyList<Video>()
+                megaPlayExtractor.videosFromEmbed(embedUrl, isDub)
+            }
+            return m3u8Integration.processVideoList(megaVideos.sortVideos())
+        }
 
         val videos = types.parallelCatchingFlatMap { rawType ->
             val apiType = if (rawType.equals("dub", ignoreCase = true)) "dub" else "sub"
-            val url = "$API_BASE/sources?id=${URLEncoder.encode(animeId, "UTF-8")}&epNum=${URLEncoder.encode(epNum, "UTF-8")}&type=${URLEncoder.encode(apiType, "UTF-8")}&providerId=${URLEncoder.encode(providerId, "UTF-8")}"
 
-            val response = try {
-                client.newCall(GET(url, headers)).execute()
-            } catch (_: Exception) {
-                return@parallelCatchingFlatMap emptyList<Video>()
-            }
+            val sourcesDto = fetchSources(animeId, epNum, apiType, providerId)
+                ?: return@parallelCatchingFlatMap emptyList<Video>()
 
-            if (!response.isSuccessful) return@parallelCatchingFlatMap emptyList<Video>()
-
-            val sourcesDto = try {
-                response.parseAs<SourcesResponseDto>(json)
-            } catch (_: Exception) {
-                return@parallelCatchingFlatMap emptyList<Video>()
-            }
-
-            val subtitleTracks = (sourcesDto.tracks ?: emptyList()).mapNotNull { track ->
-                val subUrl = track.url ?: return@mapNotNull null
-                val resolvedSubUrl = when {
-                    // Provider l's subtitle CDN 403s direct fetches; its
-                    // dedicated Worker serves the VTTs (verified 2026-09-18).
-                    subUrl.contains("krussdomi.com") -> {
-                        "$L_WORKER/proxy?url=${URLEncoder.encode(subUrl, "UTF-8")}"
-                    }
-
-                    else -> subUrl
+            val subtitleTracks = (sourcesDto.tracks ?: emptyList())
+                .filterNot { it.kind.equals("thumbnails", ignoreCase = true) }
+                .mapNotNull { track ->
+                    val subUrl = track.url ?: return@mapNotNull null
+                    Track(
+                        url = proxyCaption(subUrl),
+                        lang = track.label ?: track.lang ?: "English",
+                    )
                 }
-                Track(
-                    url = resolvedSubUrl,
-                    lang = track.label ?: track.lang ?: "English",
-                )
-            }
 
             val audioBadge = when {
                 apiType == "dub" -> "[Dub]"
@@ -328,137 +375,166 @@ class Anilight : Source() {
                 else -> "[Sub]"
             }
 
-            val typeVideos = mutableListOf<Video>()
+            // Provider "vid" is an iframe-only DoodStream player that the site
+            // never proxies; it has to be unwrapped with the dood extractor.
+            if (providerId == VID_PROVIDER) {
+                return@parallelCatchingFlatMap (sourcesDto.sources ?: emptyList()).mapNotNull { src ->
+                    val embedUrl = src.url ?: return@mapNotNull null
+                    doodExtractor.videoFromUrl(
+                        url = embedUrl,
+                        prefix = audioBadge,
+                        externalSubs = subtitleTracks,
+                    )
+                }
+            }
 
-            for (src in sourcesDto.sources ?: emptyList()) {
-                val rawUrl = src.url ?: continue
-                val streamUrl = resolveStreamUrl(rawUrl)
-                val streamHeaders = resolveStreamHeaders(streamUrl)
+            (sourcesDto.sources ?: emptyList()).flatMap { src ->
+                val rawUrl = src.url ?: return@flatMap emptyList()
+                // Providers round-robin their CDN hosts, and the one baked
+                // into the API response is not always the live one — walk the
+                // candidate list the website itself builds and keep the first
+                // that actually answers with media. A candidate blowing up
+                // must not take its siblings down with it.
+                try {
+                    proxyCandidates(rawUrl, providerId).firstNotNullOfOrNull { candidate ->
+                        videosFromCandidate(candidate, audioBadge, subtitleTracks, src.quality).ifEmpty { null }
+                    } ?: emptyList()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }
+        }
 
-                val check = classifyStream(streamUrl, streamHeaders)
-                when (check.kind) {
-                    StreamKind.MASTER_PLAYLIST, StreamKind.MEDIA_PLAYLIST -> {
-                        if (check.kind == StreamKind.MASTER_PLAYLIST && "#EXT-X-MEDIA:TYPE=AUDIO" in check.body) {
-                            // Master carries independent audio renditions (provider
-                            // "l"): splitting it into per-quality Videos kills audio
-                            // because ExoPlayer cannot sync separate HLS audio
-                            // playlists via MergingMediaSource. Keep the master whole
-                            // — the local m3u8 server rewrites variant lines while
-                            // leaving #EXT-X-MEDIA URIs intact for ExoPlayer's
-                            // native HLS audio handling.
-                            typeVideos.add(
-                                Video(
-                                    videoUrl = streamUrl,
-                                    videoTitle = "Auto $audioBadge",
-                                    headers = streamHeaders,
-                                    subtitleTracks = subtitleTracks,
-                                ),
-                            )
-                        } else {
-                            val hlsVideos = playlistUtils.extractFromHls(
-                                playlistUrl = streamUrl,
-                                masterHeaders = streamHeaders,
-                                videoHeaders = streamHeaders,
-                                videoNameGen = { quality -> "$quality $audioBadge" },
-                                subtitleList = subtitleTracks,
-                            )
-                            typeVideos.addAll(hlsVideos)
-                        }
-                    }
+        return m3u8Integration.processVideoList(videos.sortVideos())
+    }
 
-                    StreamKind.PROGRESSIVE -> typeVideos.add(
+    private suspend fun fetchSources(animeId: String, epNum: String, apiType: String, providerId: String): SourcesResponseDto? {
+        val url = "$API_BASE/sources?id=${enc(animeId)}&epNum=${enc(epNum)}&type=${enc(apiType)}&providerId=${enc(providerId)}"
+        return try {
+            val response = client.newCall(GET(url, headers)).execute()
+            if (!response.isSuccessful) return null
+            response.parseAs<SourcesResponseDto>(json)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Turns a raw stream URL into the list of proxy URLs the AniLight web
+     * player itself would try, in order.
+     *
+     * The site removed its public `/proxy` + `/lb/<server>/proxy` shims from
+     * the page markup and now resolves them server-side through a rotating
+     * pool of Cloudflare Workers (`pro-lrvp-*`, `pro-mvp-*`, `pro-mevp-*`, …).
+     * Those worker hostnames change per request, so the only stable entry
+     * point is the API proxy — hardcoding a worker is guaranteed to rot.
+     */
+    private fun proxyCandidates(rawUrl: String, providerId: String): List<String> = when {
+        // krussdomi-hosted CDNs, including the per-provider krussdomi
+        // sub-account that serves soft subs.
+        providerId == "l" || providerId == "raye" -> listOf(apiProxy("lb/$providerId/proxy", rawUrl))
+
+        // animegg progressive MP4s; the worker rewrites them onto vidcache.
+        providerId == "ryu" -> listOf(apiProxy("proxy/ryu", rawUrl))
+
+        // otakuhg embed pages; the endpoint resolves the embed into a stream.
+        providerId == "light" || providerId == "rem" ->
+            listOf("$API_BASE/proxy/light-rem?url=${enc(rawUrl)}&serverId=${enc(providerId)}")
+
+        // The misa CDN rotates between a primary and five mirrors, and the
+        // primary 404s more often than not, so every origin gets a turn.
+        providerId == "misa" -> misaCandidates(rawUrl).map { apiProxy("lb/misa/proxy", it) }
+
+        rawUrl.contains("hls.anidb.app") -> listOf(apiProxy("lb/near/proxy", rawUrl))
+
+        rawUrl.contains("?t.m3u8") -> listOf(apiProxy("lb/mello/proxy", rawUrl))
+
+        rawUrl.contains("bd.24stream.xyz") || rawUrl.contains("bd.aniwatchtv.site") ->
+            listOf(apiProxy("proxy", rawUrl.replace("bd.24stream.xyz", "bd.aniwatchtv.site")))
+
+        else -> listOf(rawUrl)
+    }
+
+    private fun misaCandidates(rawUrl: String): List<String> {
+        val origin = MISA_MIRRORS.firstOrNull { rawUrl.startsWith(it, ignoreCase = true) }
+        if (origin != null) return listOf(rawUrl)
+
+        val base = rawUrl.toHttpUrlOrNull() ?: return listOf(rawUrl)
+        return buildList {
+            add(rawUrl)
+            MISA_MIRRORS.forEach { mirror ->
+                add(base.newBuilder().scheme("https").host(mirror.substringAfter("//")).port(443).build().toString())
+            }
+        }
+    }
+
+    private fun apiProxy(path: String, target: String): String = "$API_BASE/$path?url=${enc(target)}"
+
+    /** Subtitles that 403 on direct fetches are served through the API. */
+    private fun proxyCaption(subUrl: String): String =
+        if (CAPTION_PROXY_HOSTS.any { subUrl.contains(it) }) apiProxy("proxy/captions", subUrl) else subUrl
+
+    private suspend fun videosFromCandidate(
+        candidateUrl: String,
+        audioBadge: String,
+        subtitleTracks: List<Track>,
+        quality: String?,
+    ): List<Video> {
+        val streamHeaders = streamHeaders()
+
+        val body = try {
+            client.newCall(GET(candidateUrl, streamHeaders)).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                response.peekBody(PEEK_BYTES).string()
+            }
+        } catch (_: Exception) {
+            return emptyList()
+        }
+
+        val trimmed = body.trimStart().removePrefix("\uFEFF")
+        return when {
+            trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXT-X-") -> when {
+                // A master carrying independent audio renditions (provider
+                // "l"/"raye") must stay whole: splitting it into per-quality
+                // Videos kills audio because ExoPlayer cannot sync separate
+                // HLS audio playlists through MergingMediaSource. The local
+                // m3u8 server rewrites the variant lines while leaving
+                // #EXT-X-MEDIA URIs intact for ExoPlayer's native handling.
+                body.contains("#EXT-X-MEDIA:TYPE=AUDIO") || !body.contains("#EXT-X-STREAM-INF") ->
+                    listOf(
                         Video(
-                            videoUrl = streamUrl,
-                            videoTitle = "${src.quality ?: "HD"} $audioBadge",
+                            videoUrl = candidateUrl.withM3u8FragmentIfNeeded(),
+                            videoTitle = "Auto $audioBadge",
                             headers = streamHeaders,
                             subtitleTracks = subtitleTracks,
                         ),
                     )
 
-                    // Dead proxy / HTML error page / rotated-domain junk: handing
-                    // this to the player is what produced "unrecognised file
-                    // format" — skip it and let a healthy hoster answer instead.
-                    StreamKind.GARBAGE -> continue
+                else -> try {
+                    playlistUtils.extractFromHls(
+                        playlistUrl = candidateUrl,
+                        masterHeaders = streamHeaders,
+                        videoHeaders = streamHeaders,
+                        videoNameGen = { quality2 -> "$quality2 $audioBadge" },
+                        subtitleList = subtitleTracks,
+                    )
+                } catch (_: Exception) {
+                    emptyList()
                 }
             }
 
-            typeVideos
+            // Dead proxy / HTML error page / rotated-domain junk.
+            trimmed.startsWith("<") || trimmed.startsWith("{") || trimmed.startsWith("http") -> emptyList()
+
+            else -> listOf(
+                Video(
+                    videoUrl = candidateUrl,
+                    videoTitle = "${quality ?: "Video"} $audioBadge",
+                    headers = streamHeaders,
+                    subtitleTracks = subtitleTracks,
+                ),
+            )
         }
-
-        // Final gate: playlists that classified clean can still yield junk
-        // when the extractor re-fetches them (proxy backends flap per request).
-        // Re-peek every video and drop
-        // anything that is neither a playlist nor binary media, so no text
-        // junk ever reaches the player as a "video".
-        val sorted = videos.sortVideos().validateAndMarkHls()
-        return m3u8Integration.processVideoList(sorted)
-    }
-
-    private fun resolveStreamUrl(rawUrl: String): String {
-        // 2026-09-18: the site removed its entire proxy layer — /proxy,
-        // /api/proxy, /lb/*/proxy and /proxy/captions all return 404 JSON
-        // ("Route not found"), and the old 03nc1.livedns.my remap target is a
-        // parked domain. Routing is now direct fetches for the mello-family
-        // CDNs and provider l's dedicated Cloudflare Worker for krussdomi.
-        val url = rawUrl
-            .replace("vibeplayer.site", "vivibebe.site")
-            .replace("bd.24stream.xyz", "bd.aniwatchtv.site")
-            // Server IDs seen in the wild; keeps the hardcoded-server fallback
-            // playable when the API stops listing a given provider.
-            .replace("hls.sparqle.click", "e7nv.sparqle.click")
-            .replace("hls.voltara.click", "j3nd.voltara.click")
-            .replace("hls.cinewave2.site", "p4m9q.cinewave2.site")
-            .replace("hls.nekostream.site", "9hjkrt.nekostream.site")
-            .replace("hls.kotocdn.site", "megap.kotocdn.site")
-            .replace("hls.streamzone1.site", "j5b9s.streamzone1.site")
-
-        return when {
-            // Provider l's CDN (krussdomi) sits behind Cloudflare and 403s all
-            // direct fetches, but its dedicated Worker proxies the master,
-            // variants, audio renditions and subtitles (verified live
-            // 2026-09-18). The Worker rewrites child URIs onto itself, so
-            // segment fetches flow through it automatically.
-            url.contains("krussdomi.com") -> {
-                "$L_WORKER/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
-            }
-
-            // mello-family CDNs serve everything directly — playlists with a
-            // fake image/jpeg content-type, relative child paths and raw TS
-            // segments all answer 200 to plain requests with a site Referer.
-            else -> url
-        }
-    }
-
-    // ====================== Stream classification =========================
-
-    /**
-     * Proxies hosted behind [API_BASE] serve playlists without an .m3u8
-     * suffix, so URL-shape checks misroute them. Classify by content instead:
-     * peek the first bytes and look for real HLS tags.
-     */
-    private enum class StreamKind { MASTER_PLAYLIST, MEDIA_PLAYLIST, PROGRESSIVE, GARBAGE }
-
-    private data class StreamCheck(val kind: StreamKind, val body: String)
-
-    private fun classifyStream(url: String, requestHeaders: Headers): StreamCheck {
-        val body = try {
-            client.newCall(GET(url, requestHeaders)).execute().use { response ->
-                if (!response.isSuccessful) return StreamCheck(StreamKind.GARBAGE, "")
-                // Media playlists start with tags; 4KB is plenty and keeps memory flat.
-                response.peekBody(4096L).string()
-            }
-        } catch (_: Exception) {
-            return StreamCheck(StreamKind.GARBAGE, "")
-        }
-
-        val trimmed = body.trimStart().removePrefix("\uFEFF")
-        val kind = when {
-            trimmed.startsWith("#EXTM3U") && "#EXT-X-STREAM-INF" in body -> StreamKind.MASTER_PLAYLIST
-            trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXT-X-") -> StreamKind.MEDIA_PLAYLIST
-            trimmed.startsWith("<") || trimmed.startsWith("{") -> StreamKind.GARBAGE
-            else -> StreamKind.PROGRESSIVE
-        }
-        return StreamCheck(kind, body)
     }
 
     /**
@@ -473,74 +549,15 @@ class Anilight : Source() {
         return "$this#.m3u8"
     }
 
-    private fun Video.withUrl(newUrl: String): Video = Video(
-        videoUrl = newUrl,
-        videoTitle = videoTitle,
-        headers = headers,
-        subtitleTracks = subtitleTracks,
-        audioTracks = audioTracks,
-    )
-
-    /**
-     * Re-validates each candidate video right before it is handed to the
-     * player: upstream proxies and Workers occasionally answer with an error
-     * page instead of media, so an entry produced from a clean playlist can
-     * still point at junk. Playlists are re-marked with the `#.m3u8` fragment here (so the
-     * local m3u8 server always picks them up); text/JSON junk is dropped.
-     */
-    private suspend fun List<Video>.validateAndMarkHls(): List<Video> = mapNotNull { video ->
-        validateAndMarkHlsEntry(video, retried = false)
-    }
-
-    private suspend fun validateAndMarkHlsEntry(video: Video, retried: Boolean): Video? {
-        val url = video.videoUrl
-        if (url.startsWith("data:")) return video
-
-        val body = try {
-            client.newCall(GET(url, video.headers ?: headers)).execute().use { response ->
-                if (!response.isSuccessful) return null
-                response.peekBody(2048L).string()
-            }
-        } catch (_: Exception) {
-            return video // transient network error — keep, let the player retry
-        }
-
-        val trimmed = body.trimStart().removePrefix("\uFEFF")
-        return when {
-            trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXT-X-") ->
-                video.withUrl(url.withM3u8FragmentIfNeeded())
-
-            trimmed.startsWith("<") || trimmed.startsWith("{") ||
-                trimmed.startsWith("http://") || trimmed.startsWith("https:") -> {
-                // The l Worker occasionally cold-starts with a 404 HTML page
-                // (Cloudflare workers.dev error); one immediate retry has
-                // cleared it every time (verified live 2026-09-18).
-                if (url.startsWith(L_WORKER) && !retried) {
-                    validateAndMarkHlsEntry(video, retried = true)
-                } else {
-                    null
-                }
-            }
-
-            else -> video
-        }
-    }
-
-    private fun resolveStreamHeaders(streamUrl: String): Headers = when {
-        streamUrl.contains("animegg.org") -> headers.newBuilder()
-            .set("Referer", "https://www.animegg.org/")
-            .build()
-
-        // Site-hosted proxy endpoints and the mello-family CDNs are gated on
-        // the site's origin — anonymous fetches get HTML error pages or 403s.
-        streamUrl.contains("anilight.") || streamUrl.contains("/proxy") ||
-            streamUrl.contains("dpopdrop") -> headers.newBuilder()
-            .set("Referer", "$baseUrl/")
-            .set("Origin", baseUrl)
-            .build()
-
-        else -> headers
-    }
+    private fun streamHeaders(): Headers = headers.newBuilder()
+        // Every candidate is either an API proxy URL or a worker URL the proxy
+        // redirected to, and the workers/CDNs behind them are gated on the
+        // site origin — anonymous fetches get HTML error pages or 403s.
+        // Sending it for the unmatched raw-CDN fallback too is harmless and
+        // mirrors what the web player's own requests look like.
+        .set("Referer", "$baseUrl/")
+        .set("Origin", baseUrl)
+        .build()
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
@@ -554,6 +571,8 @@ class Anilight : Source() {
     }
 
     private fun getTitleLangPref(): String = preferences.getString(PREF_TITLE_LANG_KEY, PREF_TITLE_LANG_DEFAULT) ?: PREF_TITLE_LANG_DEFAULT
+
+    private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
     // ============================== Settings ==============================
 
@@ -585,10 +604,13 @@ class Anilight : Source() {
         ListPreference(screen.context).apply {
             key = PREF_SERVER_KEY
             title = "Preferred Server"
-            // l and mello are the currently-playable servers (verified live
-            // 2026-09-18); misa/near/misora workers are dead upstream.
-            entries = arrayOf("L", "Mello", "Misa", "Near", "Rem", "Misora", "Light", "Raye", "Ryu")
-            entryValues = arrayOf("l", "mello", "misa", "near", "rem", "misora", "light", "raye", "ryu")
+            // Meg is the site's own default embed and exists for nearly every
+            // episode; l, misa, mello, rem and vid are the other consistently
+            // playable providers (verified live 2026-09-19). near is currently
+            // rate-limited at its origin and light/rem/raye drop episodes per
+            // show.
+            entries = arrayOf("Meg", "L", "Mello", "Misa", "Misora", "Near", "Raye", "Rem", "Ryu", "Vid", "Light")
+            entryValues = arrayOf("meg", "l", "mello", "misa", "misora", "near", "raye", "rem", "ryu", "vid", "light")
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
@@ -612,9 +634,39 @@ class Anilight : Source() {
     companion object {
         private const val API_BASE = "https://api.anilight.live/api"
 
-        // Provider "l"'s dedicated Cloudflare Worker. The site's own /lb/l/proxy
-        // shim (which redirected here) was removed on ~2026-09-17.
-        private const val L_WORKER = "https://pro-lrvp-1.l-anilight.workers.dev"
+        private const val VID_PROVIDER = "vid"
+
+        private const val MEG_PROVIDER = "meg"
+
+        /** Entries the website hides from its own server picker. */
+        private val HIDDEN_PROVIDER_IDS = listOf("yuki", "vee")
+
+        private const val PEEK_BYTES = 64L * 1024L
+
+        /** Providers the site ships in `servers` as of 2026-09-19. */
+        private val FALLBACK_PROVIDERS = listOf(
+            "l" to "Soft Sub, Fast",
+            "light" to "Hard Sub, Fast",
+            "mello" to "Hard Sub, Fast",
+            "misa" to "Soft Sub, Fast",
+            "misora" to "Hard Sub, Fast",
+            "near" to "Hard Sub, Fast",
+            "raye" to "Soft Sub, Fast",
+            "rem" to "Soft Sub, Fast",
+            "ryu" to "Hard Sub, Fast",
+            "vid" to "Hard Sub, Embed",
+        )
+
+        /** Alternate origins the misa CDN rotates through. */
+        private val MISA_MIRRORS = listOf(
+            "https://ncdn.imgnex.top",
+            "https://f0ja7.zhaevor.top",
+            "https://bb.akirax.buzz",
+            "https://xdw5v.qeltrix.top",
+            "https://fetch.nexabloom.top",
+        )
+
+        private val CAPTION_PROXY_HOSTS = listOf("1oe.lostproject.club", "subbl.krussdomi.com")
 
         private const val PREF_TITLE_LANG_KEY = "pref_title_lang"
         private const val PREF_TITLE_LANG_DEFAULT = "english"
@@ -623,7 +675,10 @@ class Anilight : Source() {
         private const val PREF_AUDIO_DEFAULT = "Soft Sub"
 
         private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "l"
+
+        // MegaPlay is what the website itself selects by default, and it is
+        // the only source that exists for essentially every episode.
+        private const val PREF_SERVER_DEFAULT = "meg"
 
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
