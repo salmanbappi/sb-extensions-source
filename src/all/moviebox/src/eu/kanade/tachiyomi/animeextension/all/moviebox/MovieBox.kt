@@ -356,6 +356,9 @@ class MovieBox : Source() {
     private fun safeGetJsonWithHeaders(urlPath: String, isPost: Boolean = false, bodyData: String? = null, token: String? = null, isDetails: Boolean = false, isPlayback: Boolean = false): Pair<JsonElement, Headers>? {
         val preferredHost = getPreferredHost()
         val candidateHosts = listOf(preferredHost) + apiHosts.filter { it != preferredHost }
+        // Throttled-but-valid response kept as a last resort: if every host
+        // reports cdnThrottleLevel=1 we still hand back something playable.
+        var throttledFallback: Pair<JsonElement, Headers>? = null
         for (host in candidateHosts) {
             val adaptivePath = if (isMobileApi(host)) {
                 urlPath
@@ -392,8 +395,18 @@ class MovieBox : Source() {
                     val jsonRes = json.parseToJsonElement(body)
                     if (jsonRes.obj?.get("code")?.jsonPrimitive?.intOrNull != 0) continue
                     if (isPlayback && urlPath.contains("play-info")) {
-                        val streams = jsonRes.obj?.get("data")?.obj?.get("streams")?.arr
+                        val dataObj = jsonRes.obj?.get("data")?.obj
+                        val streams = dataObj?.get("streams")?.arr
                         if (streams.isNullOrEmpty()) continue
+                        // Hosts report cdnThrottleLevel=1 when they front the
+                        // throttled sbcdn Edge-Cache CDN (~0.6 MB/s aggregate —
+                        // constant buffering) and 0 for the unthrottled
+                        // sacdn/CloudFront CDN (~6.7 MB/s). Prefer the fast
+                        // CDN; a throttled response is only a last resort.
+                        if (dataObj?.get("cdnThrottleLevel")?.jsonPrimitive?.intOrNull == 1) {
+                            if (throttledFallback == null) throttledFallback = Pair(jsonRes, response.headers)
+                            continue
+                        }
                         // sacdn.hakunaymatata.com is a WORKING CDN: its URL is
                         // derived from the stream's signCookie (CloudFront-Policy
                         // resource) and plays fine with the full cookie + app UA
@@ -414,7 +427,7 @@ class MovieBox : Source() {
                 }
             }
         }
-        return null
+        return throttledFallback
     }
 
     // Popular
@@ -1018,16 +1031,19 @@ class MovieBox : Source() {
             paths.add("/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId=$sid&resourceId=$resourceId&se=$se&ep=$ep")
         }
         paths.add("/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId=$sid&streamId=$streamId&episode=$ep")
-        val out = mutableListOf<Track>()
-        for (path in paths) {
-            val dataObj = runCatching { safeGetJsonWithHeaders(path, isPlayback = true)?.first?.obj?.get("data")?.obj }.getOrNull()
-            val tracks = parseCaptionTracks(dataObj)
-            if (tracks.isNotEmpty()) {
-                out.addAll(tracks)
-                break
-            }
+        // Fire every caption path concurrently instead of serially — each API
+        // round-trip costs ~100-900ms and up to 4 of them were blocking the
+        // video list before playback could start.
+        val results = runBlocking {
+            paths.map { path ->
+                async(Dispatchers.IO) {
+                    runCatching {
+                        safeGetJsonWithHeaders(path, isPlayback = true)?.first?.obj?.get("data")?.obj
+                    }.getOrNull()?.let { parseCaptionTracks(it) } ?: emptyList()
+                }
+            }.awaitAll()
         }
-        return out
+        return results.firstOrNull { it.isNotEmpty() } ?: emptyList()
     }
 
     private val blockedKeywords = listOf(
@@ -1256,30 +1272,36 @@ class MovieBox : Source() {
     companion object {
         private const val PREF_HOST_KEY = "api_host"
         private const val PREF_HOST_TITLE = "API Host"
-        private const val PREF_HOST_DEFAULT = "https://apig.inmoviebox.com"
+
+        // aoneroom hosts report cdnThrottleLevel=0 and serve streams from the
+        // unthrottled sacdn (CloudFront) CDN (~6.7 MB/s aggregate); inmoviebox
+        // hosts report cdnThrottleLevel=1 and route to the throttled sbcdn3
+        // Edge-Cache CDN (~0.6 MB/s aggregate — constant buffering). Default
+        // and ordering follow the working reference providers (api3 first).
+        private const val PREF_HOST_DEFAULT = "https://api3.aoneroom.com"
         private val PREF_HOST_ENTRIES = arrayOf(
-            "apig.inmoviebox.com (Recommended)",
-            "api.inmoviebox.com",
-            "api-in.inmoviebox.com",
-            "api3.aoneroom.com",
+            "api3.aoneroom.com (Recommended)",
             "api6.aoneroom.com",
             "api5.aoneroom.com",
             "api4.aoneroom.com",
             "api7.aoneroom.com",
             "api4sg.aoneroom.com",
+            "apig.inmoviebox.com (slow CDN)",
+            "api.inmoviebox.com (slow CDN)",
+            "api-in.inmoviebox.com (slow CDN)",
             "netfilm.world",
             "h5-api.aoneroom.com",
         )
         private val PREF_HOST_VALUES = arrayOf(
-            "https://apig.inmoviebox.com",
-            "https://api.inmoviebox.com",
-            "https://api-in.inmoviebox.com",
             "https://api3.aoneroom.com",
             "https://api6.aoneroom.com",
             "https://api5.aoneroom.com",
             "https://api4.aoneroom.com",
             "https://api7.aoneroom.com",
             "https://api4sg.aoneroom.com",
+            "https://apig.inmoviebox.com",
+            "https://api.inmoviebox.com",
+            "https://api-in.inmoviebox.com",
             "https://netfilm.world",
             "https://h5-api.aoneroom.com",
         )
