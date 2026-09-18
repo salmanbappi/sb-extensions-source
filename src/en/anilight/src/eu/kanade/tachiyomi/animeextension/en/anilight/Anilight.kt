@@ -331,8 +331,8 @@ class Anilight : Source() {
                 val streamUrl = resolveStreamUrl(rawUrl)
                 val streamHeaders = resolveStreamHeaders(streamUrl)
 
-                try {
-                    if (streamUrl.contains(".m3u8", ignoreCase = true) || streamUrl.contains("/proxy", ignoreCase = true)) {
+                when (classifyStream(streamUrl, streamHeaders)) {
+                    StreamKind.MASTER_PLAYLIST, StreamKind.MEDIA_PLAYLIST -> {
                         val hlsVideos = playlistUtils.extractFromHls(
                             playlistUrl = streamUrl,
                             masterHeaders = streamHeaders,
@@ -340,19 +340,17 @@ class Anilight : Source() {
                             videoNameGen = { quality -> "$quality $audioBadge" },
                             subtitleList = subtitleTracks,
                         )
-                        typeVideos.addAll(hlsVideos)
-                    } else {
-                        typeVideos.add(
-                            Video(
-                                videoUrl = streamUrl,
-                                videoTitle = "${src.quality ?: "HD"} $audioBadge",
-                                headers = streamHeaders,
-                                subtitleTracks = subtitleTracks,
-                            ),
-                        )
+                        // Child playlists served by the site's /proxy relays lack
+                        // an .m3u8 extension, so M3u8Integration.processVideoList
+                        // would skip them and hand raw playlist text to the player
+                        // ("unrecognised file format"). The fragment marker below
+                        // is never transmitted upstream, but lets the local m3u8
+                        // server pick them up so segments (and AES keys) flow
+                        // through AutoDetector's fake-image/junk stripping.
+                        typeVideos.addAll(hlsVideos.map { it.withM3u8MarkerIfNeeded() })
                     }
-                } catch (_: Exception) {
-                    typeVideos.add(
+
+                    StreamKind.PROGRESSIVE -> typeVideos.add(
                         Video(
                             videoUrl = streamUrl,
                             videoTitle = "${src.quality ?: "HD"} $audioBadge",
@@ -360,6 +358,11 @@ class Anilight : Source() {
                             subtitleTracks = subtitleTracks,
                         ),
                     )
+
+                    // Dead proxy / HTML error page / rotated-domain junk: handing
+                    // this to the player is what produced "unrecognised file
+                    // format" — skip it and let a healthy hoster answer instead.
+                    StreamKind.GARBAGE -> continue
                 }
             }
 
@@ -378,6 +381,14 @@ class Anilight : Source() {
             .replace("cdn.mewstream.buzz/anime/", "03nc1.livedns.my/anime/")
             .replace("s2.cinewave2.site/anime/", "03nc1.livedns.my/anime/")
             .replace("s1.streamzone1.site/anime/", "03nc1.livedns.my/anime/")
+            // Server IDs seen in the wild; keeps the hardcoded-server fallback
+            // playable when the API stops listing a given provider.
+            .replace("hls.sparqle.click", "e7nv.sparqle.click")
+            .replace("hls.voltara.click", "j3nd.voltara.click")
+            .replace("hls.cinewave2.site", "p4m9q.cinewave2.site")
+            .replace("hls.nekostream.site", "9hjkrt.nekostream.site")
+            .replace("hls.kotocdn.site", "megap.kotocdn.site")
+            .replace("hls.streamzone1.site", "j5b9s.streamzone1.site")
 
         val workerDomains = listOf(
             "cdn.mewstream.buzz",
@@ -397,6 +408,13 @@ class Anilight : Source() {
         )
 
         return when {
+            // Provider "l"'s CDN (krussdomi) 403s direct fetches, but its own
+            // lb relay works (verified live 2026-09) and rewrites child/audio
+            // URIs to the same worker — routing keeps provider l playable.
+            url.contains("krussdomi.com") -> {
+                "$API_BASE/lb/l/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
+            }
+
             workerDomains.any { url.contains(it) } -> {
                 "$API_BASE/lb/misa/proxy?url=${URLEncoder.encode(url, "UTF-8")}"
             }
@@ -413,9 +431,64 @@ class Anilight : Source() {
         }
     }
 
+    // ====================== Stream classification =========================
+
+    /**
+     * Proxies hosted behind [API_BASE] serve playlists without an .m3u8
+     * suffix, so URL-shape checks misroute them. Classify by content instead:
+     * peek the first bytes and look for real HLS tags.
+     */
+    private enum class StreamKind { MASTER_PLAYLIST, MEDIA_PLAYLIST, PROGRESSIVE, GARBAGE }
+
+    private fun classifyStream(url: String, requestHeaders: Headers): StreamKind {
+        val body = try {
+            client.newCall(GET(url, requestHeaders)).execute().use { response ->
+                if (!response.isSuccessful) return StreamKind.GARBAGE
+                // Media playlists start with tags; 4KB is plenty and keeps memory flat.
+                response.peekBody(4096L).string()
+            }
+        } catch (_: Exception) {
+            return StreamKind.GARBAGE
+        }
+
+        val trimmed = body.trimStart().removePrefix("\uFEFF")
+        return when {
+            trimmed.startsWith("#EXTM3U") && "#EXT-X-STREAM-INF" in body -> StreamKind.MASTER_PLAYLIST
+            trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXT-X-") -> StreamKind.MEDIA_PLAYLIST
+            trimmed.startsWith("<") || trimmed.startsWith("{") -> StreamKind.GARBAGE
+            else -> StreamKind.PROGRESSIVE
+        }
+    }
+
+    /**
+     * Appends a `#.m3u8` fragment to playlist URLs that lack an .m3u8
+     * extension so [M3u8Integration.processVideoList] routes them through the
+     * local m3u8 server. URL fragments are stripped client-side (OkHttp and
+     * ExoPlayer never send them), so upstream requests stay byte-identical,
+     * while the library's `\.m3u8($|\?|#)` matcher still recognizes them.
+     */
+    private fun Video.withM3u8MarkerIfNeeded(): Video {
+        if (videoUrl.contains(".m3u8", ignoreCase = true)) return this
+        return Video(
+            videoUrl = "$videoUrl#.m3u8",
+            videoTitle = videoTitle,
+            headers = headers,
+            subtitleTracks = subtitleTracks,
+            audioTracks = audioTracks,
+        )
+    }
+
     private fun resolveStreamHeaders(streamUrl: String): Headers = when {
         streamUrl.contains("animegg.org") -> headers.newBuilder()
             .set("Referer", "https://www.animegg.org/")
+            .build()
+
+        // Site-hosted proxy endpoints (API_BASE/proxy, /lb/<server>/proxy) are
+        // gated on the site's own origin — anonymous fetches get HTML error
+        // pages that used to surface to the player as "video".
+        streamUrl.contains("anilight.") || streamUrl.contains("/proxy") -> headers.newBuilder()
+            .set("Referer", "$baseUrl/")
+            .set("Origin", baseUrl)
             .build()
 
         else -> headers
