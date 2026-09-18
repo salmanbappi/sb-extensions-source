@@ -339,11 +339,10 @@ class Anilight : Source() {
                 val streamUrl = resolveStreamUrl(rawUrl)
                 val streamHeaders = resolveStreamHeaders(streamUrl)
 
-                when (val check = classifyStream(streamUrl, streamHeaders)) {
+                val check = classifyStream(streamUrl, streamHeaders)
+                when (check.kind) {
                     StreamKind.MASTER_PLAYLIST, StreamKind.MEDIA_PLAYLIST -> {
-                        if (check.kind == StreamKind.MASTER_PLAYLIST &&
-                            "#EXT-X-MEDIA:TYPE=AUDIO" in check.body
-                        ) {
+                        if (check.kind == StreamKind.MASTER_PLAYLIST && "#EXT-X-MEDIA:TYPE=AUDIO" in check.body) {
                             // Master carries independent audio renditions (provider
                             // "l"): splitting it into per-quality Videos kills audio
                             // because ExoPlayer cannot sync separate HLS audio
