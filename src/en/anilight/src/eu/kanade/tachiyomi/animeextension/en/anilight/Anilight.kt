@@ -311,11 +311,13 @@ class Anilight : Source() {
                     subUrl.contains("1oe.lostproject.club") -> {
                         "$API_BASE/proxy/captions?url=${URLEncoder.encode(subUrl, "UTF-8")}"
                     }
+
                     // Provider "l" gatekeeper 403s direct subtitle fetches; its
                     // lb relay serves them fine (verified live 2026-09).
                     subUrl.contains("krussdomi.com") -> {
                         "$API_BASE/lb/l/proxy?url=${URLEncoder.encode(subUrl, "UTF-8")}"
                     }
+
                     else -> subUrl
                 }
                 Track(
