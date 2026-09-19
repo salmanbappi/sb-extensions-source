@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.anilight
 
 import androidx.preference.ListPreference
+import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -312,17 +313,20 @@ class Anilight : Source() {
         }
 
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_KEY, emptySet())?.toSet().orEmpty()
 
-        return providerMap.map { (providerId, types) ->
-            val displayName = providerId.replaceFirstChar { it.uppercase() }
-            val tip = tipMap[providerId]
-            Hoster(
-                hosterName = if (tip.isNullOrBlank()) displayName else "$displayName · $tip",
-                // megaplay embeds are per-episode rather than per-provider, so
-                // they ride along in two extra fields.
-                hosterUrl = "$animeId|$epNum|$providerId|${types.distinct().joinToString(",")}|$embedSub|$embedDub",
-            )
-        }.sortedByDescending { it.providerId() == prefServer }
+        return providerMap
+            .filterKeys { it !in excludedServers }
+            .map { (providerId, types) ->
+                val displayName = providerId.replaceFirstChar { it.uppercase() }
+                val tip = tipMap[providerId]
+                Hoster(
+                    hosterName = if (tip.isNullOrBlank()) displayName else "$displayName · $tip",
+                    // megaplay embeds are per-episode rather than per-provider, so
+                    // they ride along in two extra fields.
+                    hosterUrl = "$animeId|$epNum|$providerId|${types.distinct().joinToString(",")}|$embedSub|$embedDub",
+                )
+            }.sortedByDescending { it.providerId() == prefServer }
     }
 
     private fun Hoster.providerId(): String = hosterUrl.split("|").getOrNull(2).orEmpty()
@@ -680,13 +684,22 @@ class Anilight : Source() {
             // playable providers (verified live 2026-09-19). near is currently
             // rate-limited at its origin and light/rem/raye drop episodes per
             // show.
-            entries = arrayOf("Meg", "L", "Mello", "Misa", "Misora", "Near", "Raye", "Rem", "Ryu", "Vid", "Light")
-            entryValues = arrayOf("meg", "l", "mello", "misa", "misora", "near", "raye", "rem", "ryu", "vid", "light")
+            entries = PROVIDER_ENTRIES
+            entryValues = PROVIDER_VALUES
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
                 preferences.edit().putString(key, newValue as String).commit()
             }
+        }.also(screen::addPreference)
+
+        MultiSelectListPreference(screen.context).apply {
+            key = PREF_EXCLUDE_KEY
+            title = "Exclude Servers"
+            summary = "Servers to hide from the episode's server list"
+            entries = PROVIDER_ENTRIES
+            entryValues = PROVIDER_VALUES
+            setDefaultValue(emptySet<String>())
         }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
@@ -728,6 +741,29 @@ class Anilight : Source() {
             "vid" to "Hard Sub, Embed",
         )
 
+        /**
+         * Every server the site can expose, with the same labels the episode's
+         * server list shows. Shared by the "Preferred Server" and
+         * "Exclude Servers" pickers so the two can never drift apart.
+         */
+        private val PROVIDER_ENTRIES = arrayOf(
+            "Meg · Embed",
+            "L · Soft Sub, Fast",
+            "Mello · Hard Sub, Fast",
+            "Misa · Soft Sub, Fast",
+            "Misora · Hard Sub, Fast",
+            "Near · Hard Sub, Fast",
+            "Raye · Soft Sub, Fast",
+            "Rem · Soft Sub, Fast",
+            "Ryu · Hard sub, Fast",
+            "Vid · Hard Sub, Embed",
+            "Light · Hard Sub, Fast",
+        )
+
+        private val PROVIDER_VALUES = arrayOf(
+            "meg", "l", "mello", "misa", "misora", "near", "raye", "rem", "ryu", "vid", "light",
+        )
+
         /** Alternate origins the misa CDN rotates through. */
         private val MISA_MIRRORS = listOf(
             "https://ncdn.imgnex.top",
@@ -756,6 +792,8 @@ class Anilight : Source() {
         private const val PREF_AUDIO_DEFAULT = "Soft Sub"
 
         private const val PREF_SERVER_KEY = "pref_server"
+
+        private const val PREF_EXCLUDE_KEY = "pref_exclude_servers"
 
         // MegaPlay is what the website itself selects by default, and it is
         // the only source that exists for essentially every episode.
