@@ -367,7 +367,7 @@ class Anilight : Source() {
                 .mapNotNull { track ->
                     val subUrl = track.url ?: return@mapNotNull null
                     Track(
-                        url = proxyCaption(subUrl),
+                        url = proxyCaption(subUrl, providerId),
                         lang = track.label ?: track.lang ?: "English",
                     )
                 }
@@ -473,8 +473,23 @@ class Anilight : Source() {
 
     private fun apiProxy(path: String, target: String): String = "$API_BASE/$path?url=${enc(target)}"
 
-    /** Subtitles that 403 on direct fetches are served through the API. */
-    private fun proxyCaption(subUrl: String): String = if (CAPTION_PROXY_HOSTS.any { subUrl.contains(it) }) apiProxy("proxy/captions", subUrl) else subUrl
+    /**
+     * Subtitles that 403 on direct fetches are served through a proxy.
+     *
+     * krussdomi's caption CDN (`subst.` / `subbl.krussdomi.com`) rejects
+     * everything but its own worker — including the site's `/proxy/captions`
+     * route, which answers `Proxy failed with status 403`. Provider "l" uses
+     * `subst.` for every track, which is why its subtitle list renders but
+     * every download failed.
+     */
+    private fun proxyCaption(subUrl: String, providerId: String): String = when {
+        subUrl.contains(KROSSDOMI_HOST) ->
+            apiProxy("lb/${if (providerId == "raye") "raye" else "l"}/proxy", subUrl)
+
+        CAPTION_PROXY_HOSTS.any { subUrl.contains(it) } -> apiProxy("proxy/captions", subUrl)
+
+        else -> subUrl
+    }
 
     private suspend fun videosFromCandidate(
         candidateUrl: String,
@@ -722,7 +737,14 @@ class Anilight : Source() {
             "https://fetch.nexabloom.top",
         )
 
-        private val CAPTION_PROXY_HOSTS = listOf("1oe.lostproject.club", "subbl.krussdomi.com")
+        /**
+         * Caption CDNs that answer 403 to anonymous fetches. krussdomi is
+         * handled separately because it needs its own worker rather than the
+         * `/proxy/captions` route.
+         */
+        private val CAPTION_PROXY_HOSTS = listOf("1oe.lostproject.club")
+
+        private const val KROSSDOMI_HOST = "krussdomi.com"
 
         /** Chunk responses that mean the CDN node is gone rather than flaky. */
         private val DEAD_CHUNK_CODES = setOf(404, 410)
