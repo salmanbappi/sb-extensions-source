@@ -92,7 +92,9 @@ object FourAnimoHlsServer : NanoHTTPD(0) {
 
             val rawData = fetchBytes(url, headers)
             val cleanData = stripImageHeader(rawData)
-            newChunkedResponse(Status.OK, "video/mp2t", ByteArrayInputStream(cleanData))
+            // cleanData is fully materialised, so advertise its exact length
+            // rather than streaming it chunked.
+            newFixedLengthResponse(Status.OK, "video/mp2t", ByteArrayInputStream(cleanData), cleanData.size.toLong())
         } catch (e: Exception) {
             newFixedLengthResponse(Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Error: ${e.message}")
         }

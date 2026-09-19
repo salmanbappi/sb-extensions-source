@@ -1,7 +1,7 @@
 ext {
     extName = 'Vidbox'
     extClass = '.Vidbox'
-    extVersionCode = 2
+    extVersionCode = 3
     isNsfw = false
 }
 

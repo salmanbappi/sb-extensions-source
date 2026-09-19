@@ -46,6 +46,9 @@ class LocalProxyServer(
         private const val REFRESH_WAIT_MAX_MS = 10000L
         private const val TAG = "AnikotoProxy"
         private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        /** Statuses that mean "the CDN wants a real browser" rather than a bad URL. */
+        private val BROWSER_FALLBACK_CODES = setOf(403, 429, 503)
     }
 
     private val fetchClient: OkHttpClient = client
@@ -571,8 +574,7 @@ class LocalProxyServer(
     private fun Int?.orZero(): Int = this ?: 0
 
     private fun fetchPlaylistText(url: String, headers: Headers): String {
-        val isWaf = isWafBlockedHost(url)
-        if (isWaf && webViewFetcher != null) {
+        if (isWafBlockedHost(url) && webViewFetcher != null) {
             try {
                 return webViewFetcher.fetchText(url)
             } catch (e: Exception) {
@@ -581,17 +583,36 @@ class LocalProxyServer(
             }
         }
         val request = Request.Builder().url(url).headers(headers).build()
-        fetchClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw UpstreamHttpException(response.code, url, "Upstream ${response.code}")
+        try {
+            fetchClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw UpstreamHttpException(response.code, url, "Upstream ${response.code}")
+                }
+                val body = response.body ?: throw RuntimeException("Empty body")
+                val text = body.string()
+                if (!text.startsWith("#EXTM3U")) {
+                    throw RuntimeException("Not an m3u8 (starts with ${text.take(30)})")
+                }
+                return text
             }
-            val body = response.body ?: throw RuntimeException("Empty body")
-            val text = body.string()
-            if (!text.startsWith("#EXTM3U")) {
-                throw RuntimeException("Not an m3u8 (starts with ${text.take(30)})")
-            }
-            return text
+        } catch (e: UpstreamHttpException) {
+            if (e.code !in BROWSER_FALLBACK_CODES) throw e
+            return fetchPlaylistViaWebView(url, e)
+        } catch (e: Exception) {
+            return fetchPlaylistViaWebView(url, e)
         }
+    }
+
+    /** CDN hosts rotate behind Cloudflare; the app's WebView is what gets past the challenge. */
+    private fun fetchPlaylistViaWebView(url: String, cause: Exception): String {
+        val fallback = webViewFetcher
+            ?: throw (cause as? RuntimeException ?: RuntimeException(cause.message, cause))
+        logi("fetchPlaylistText: ${cause.message?.take(50)} — retrying via WebView for ${url.take(60)}")
+        val text = fallback.fetchText(url)
+        if (!text.startsWith("#EXTM3U")) {
+            throw RuntimeException("WebView response is not an m3u8 (starts with ${text.take(30)})")
+        }
+        return text
     }
 
     /** Thrown when an upstream host rejects a request (e.g. an expired segment URL). */
@@ -602,8 +623,7 @@ class LocalProxyServer(
     ) : RuntimeException(message)
 
     private fun fetchSegment(url: String, headers: Headers, retry: Boolean = true): ByteArray {
-        val isWaf = isWafBlockedHost(url)
-        if (isWaf && webViewFetcher != null) {
+        if (isWafBlockedHost(url) && webViewFetcher != null) {
             try {
                 return webViewFetcher.fetchBytes(url)
             } catch (e: Exception) {
@@ -613,6 +633,7 @@ class LocalProxyServer(
         }
         val request = Request.Builder().url(url).headers(headers).build()
         var lastError: Exception? = null
+        var usedWebView = false
         val attempts = if (retry) 3 else 1
         for (i in 0 until attempts) {
             try {
@@ -625,13 +646,17 @@ class LocalProxyServer(
                 }
             } catch (e: Exception) {
                 lastError = e
-                if (isWaf && webViewFetcher != null) {
-                    logi("fetchSegment: OkHttp failed (${e.message?.take(50)}), falling back to WebView for ${url.take(60)}")
+                // Any CDN host may be Cloudflare-challenged, not just the known WAF ones, so try the
+                // app's WebView once before giving up on this segment.
+                val browserNeeded = e !is UpstreamHttpException || e.code in BROWSER_FALLBACK_CODES
+                if (!usedWebView && browserNeeded && webViewFetcher != null) {
+                    usedWebView = true
+                    logi("fetchSegment: ${e.message?.take(50)} — retrying via WebView for ${url.take(60)}")
                     try {
                         return webViewFetcher.fetchBytes(url)
                     } catch (eFallback: Exception) {
                         loge("fetchSegment: WebView fallback also failed: ${eFallback.message}")
-                        throw eFallback
+                        lastError = eFallback
                     }
                 }
                 logw("Fetch attempt ${i + 1} failed: ${e.message}")

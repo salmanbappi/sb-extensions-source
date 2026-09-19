@@ -2,7 +2,7 @@ ext {
     extName = 'Fanush'
     extClass = '.Fanush'
     themePkg = 'jellyfin'
-    overrideVersionCode = 1014
+    overrideVersionCode = 1015
     isNsfw = false
 }
 

@@ -43,6 +43,9 @@ class SkipDataDto(
 class SourceResponseDto(
     @Serializable(with = SourcesSerializer::class) val sources: String = "",
     val tracks: List<TrackDto>? = null,
+    // Newer MegaPlay responses omit `sources` entirely and carry the master playlist URL only
+    // inside this AES-encrypted, base64url payload — see AniWaveExtractor.decryptEncPayload.
+    val enc: String = "",
 )
 
 @Serializable
@@ -50,6 +53,12 @@ class TrackDto(
     val file: String = "",
     val kind: String = "",
     val label: String = "",
+)
+
+/** Decrypted shape of the MegaPlay `enc` payload: `{"file": "<master m3u8>"}`. */
+@Serializable
+class EncPayload(
+    val file: String = "",
 )
 
 @Serializable

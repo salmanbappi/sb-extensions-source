@@ -86,6 +86,7 @@ class KwikExtractor(
             headers = kwikHeaders.newBuilder()
                 .set("Referer", hlsStream.referer)
                 .build(),
+            initialized = true,
         )
     }
 
@@ -113,6 +114,7 @@ class KwikExtractor(
             videoUrl = videoUrl,
             videoTitle = quality,
             headers = kwikHeaders,
+            initialized = true,
         )
     }
 

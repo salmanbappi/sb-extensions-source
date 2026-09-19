@@ -140,7 +140,10 @@ class M3u8HttpServer(
             }
             Log.d(tag, "Segment processing completed successfully, data size: ${segmentData.size} bytes")
             val inputStream = ByteArrayInputStream(segmentData)
-            newChunkedResponse(Status.OK, "video/mp2t", inputStream)
+            // Vendored copy of :lib:m3u8server — keep the fixed-length response
+            // in sync: the segment is fully buffered, so sending it chunked only
+            // costs the player the ability to size/seek it before EOF.
+            newFixedLengthResponse(Status.OK, "video/mp2t", inputStream, segmentData.size.toLong())
         } catch (e: UpstreamStatusException) {
             Log.w(tag, "Upstream segment HTTP ${e.code} for $url: ${e.message}")
             passThroughStatus(e)

@@ -627,12 +627,12 @@ class FourAnimo : Source() {
     }
 
     // ============================ Recommendations =============================
-    override fun relatedAnimeListRequest(anime: SAnime): Request {
+    fun relatedAnimeListRequest(anime: SAnime): Request {
         val url = if (anime.url.startsWith("http")) anime.url else "$baseUrl${anime.url}"
         return GET(url, headers)
     }
 
-    override fun relatedAnimeListParse(response: Response): List<SAnime> {
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
         val html = response.body.string()
         val payload = extractNextPayload(html)
         return parseAnimeCardList(payload)

@@ -1,12 +1,27 @@
 package eu.kanade.tachiyomi.multisrc.anikototheme
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.graphics.Color
+import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
+import android.text.SpannableString
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.util.Base64
 import android.util.Log
 import android.widget.Toast
-import androidx.preference.MultiSelectListPreference
+import androidx.preference.EditTextPreference
+import androidx.preference.ListPreference
+import androidx.preference.Preference
+import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
+import androidx.preference.newPlainPreference
+import androidx.preference.unselectable
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
@@ -16,14 +31,13 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimitHost
 import extensions.utils.Source
-import extensions.utils.addEditTextPreference
-import extensions.utils.addListPreference
-import extensions.utils.addSwitchPreference
 import extensions.utils.asJsoup
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -43,9 +57,24 @@ import java.util.concurrent.TimeUnit
 abstract class AnikotoTheme : Source() {
 
     abstract override val name: String
-    abstract override val baseUrl: String
+
+    /** Default site, used until the user picks a mirror in settings. */
+    abstract val defaultBaseUrl: String
+
     abstract override val lang: String
     override val supportsLatest = true
+
+    /**
+     * Mirrors offered in Settings → Playback → Preferred domain as `label to url`. Empty (or a
+     * single entry) hides the picker, which is the case for the single-domain skins.
+     */
+    protected open val domainMirrors: List<Pair<String, String>> = emptyList()
+
+    private val preferredDomain: String
+        get() = preferences.getString(PREF_DOMAIN, defaultBaseUrl)?.takeIf { it.isNotBlank() } ?: defaultBaseUrl
+
+    final override val baseUrl: String
+        get() = if (domainMirrors.size > 1) preferredDomain else defaultBaseUrl
 
     protected open val bmetaSelector = "div.bmeta"
     protected open val scoreLabel = "MAL"
@@ -54,8 +83,12 @@ abstract class AnikotoTheme : Source() {
     protected open val synopsisSelector = "div.synopsis div.content"
     protected open val detailPosterSelector = "div.poster img"
     protected open val popularAnimeSelector = "div.ani.items > div.item"
-    protected open val serverSelector = "li[data-link-id], .server, div.item, .item"
-    protected open val typeSelector = "div.types > div.type, div.servers > div.type, div.ani-server-wrapper > div.type, .server-type, div.type"
+
+    // Server entries differ per site skin: anikoto uses li[data-link-id], sogo uses
+    // a.server[data-link-id], suge uses div.server[data-link-id]. Cover all three so the
+    // shared getHosterList works on every theme without per-site overrides.
+    protected open val serverSelector = "li[data-link-id], a.server[data-link-id], div.server[data-link-id], .server[data-link-id], .server, div.item, .item"
+    protected open val typeSelector = "div.servers > div.type, div.types > div.type, div.ani-server-wrapper > div.type, .server-type, div.type, div.server-type"
     protected open val useMapper = false
 
     protected open fun getVrf(animeId: String): String = URLEncoder.encode(AnikotoRC4.encodeVrf(animeId), "UTF-8")
@@ -126,6 +159,9 @@ abstract class AnikotoTheme : Source() {
     }
     private val smartSearch by lazy { SmartSearch(webViewFetcher) }
 
+    /** The read-only "Details" row, kept so the phrase examples stay in sync while editing. */
+    private var smartDetailsPref: Preference? = null
+
     // ---- Preferences ----
 
     private val preferredQuality: String
@@ -133,9 +169,6 @@ abstract class AnikotoTheme : Source() {
 
     private val preferredAudio: String
         get() = preferences.getString(PREF_AUDIO, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
-
-    private val titleLang: String
-        get() = preferences.getString(PREF_TITLE_LANG, PREF_TITLE_LANG_DEFAULT) ?: PREF_TITLE_LANG_DEFAULT
 
     private val prefetchBuffer: String
         get() = preferences.getString(PREF_BUFFER, PREF_BUFFER_DEFAULT) ?: PREF_BUFFER_DEFAULT
@@ -159,6 +192,30 @@ abstract class AnikotoTheme : Source() {
         get() = preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT)
             ?: PREF_SMART_SEARCH_PHRASE_DEFAULT
 
+    /** Selected engine; "auto" resolves to Gemini when a key is configured, else Google. */
+    private val smartSearchEngine: String
+        get() = when (val engine = preferences.getString(PREF_SMART_ENGINE, PREF_SMART_ENGINE_DEFAULT)) {
+            SmartSearch.Engine.AUTO -> if (geminiApiKey.isNotBlank()) SmartSearch.Engine.GEMINI else SmartSearch.Engine.GOOGLE
+            null -> PREF_SMART_ENGINE_DEFAULT
+            else -> engine
+        }
+
+    private val geminiApiKey: String
+        get() = preferences.getString(PREF_GEMINI_KEY, PREF_GEMINI_KEY_DEFAULT) ?: PREF_GEMINI_KEY_DEFAULT
+
+    private val geminiModel: String
+        get() {
+            val selected = preferences.getString(PREF_GEMINI_MODEL, PREF_GEMINI_MODEL_DEFAULT) ?: PREF_GEMINI_MODEL_DEFAULT
+            if (selected != PREF_GEMINI_MODEL_CUSTOM) {
+                return selected.ifBlank { PREF_GEMINI_MODEL_DEFAULT }
+            }
+            val custom = preferences.getString(PREF_GEMINI_CUSTOM_MODEL, "")?.trim().orEmpty()
+            return custom.ifBlank { PREF_GEMINI_MODEL_DEFAULT }
+        }
+
+    private val copySmartSearchResponse: Boolean
+        get() = preferences.getBoolean(PREF_SMART_COPY_RESPONSE, false)
+
     // ---- Headers ----
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -168,7 +225,14 @@ abstract class AnikotoTheme : Source() {
         .set("Accept-Language", "en-US,en;q=0.9")
 
     private fun ajaxHeaders(slug: String): Headers {
-        val referer = if (slug.isEmpty()) "$baseUrl/" else "$baseUrl/watch/$slug/ep-1"
+        // Suge's detail pages live under /anime/ — keep the Referer on a same-origin detail
+        // URL so /ajax/server?get= sees an expected referer on every skin.
+        val clean = getCleanSlug(slug)
+        val referer = if (baseUrl.contains("animesuge")) {
+            if (clean.isEmpty()) "$baseUrl/" else "$baseUrl/anime/$clean/ep-1"
+        } else {
+            if (slug.isEmpty()) "$baseUrl/" else "$baseUrl/watch/$slug/ep-1"
+        }
         return headers.newBuilder()
             .set("X-Requested-With", "XMLHttpRequest")
             .set("Accept", "application/json, text/javascript, */*; q=0.01")
@@ -209,15 +273,28 @@ abstract class AnikotoTheme : Source() {
         return GET(urlBuilder.build())
     }
 
-    protected suspend fun showToast(message: String) {
+    protected suspend fun showToast(message: String, duration: Int = Toast.LENGTH_LONG) {
         try {
             val app = Injekt.get<Application>()
             withContext(Dispatchers.Main) {
-                Toast.makeText(app, message, Toast.LENGTH_LONG).show()
+                Toast.makeText(app, message, duration).show()
             }
         } catch (e: Exception) {
             loge("SmartSearch: failed to show toast", e)
         }
+    }
+
+    /** Copies the smart-search query/answer to the clipboard; false when the copy failed. */
+    protected suspend fun copyToClipboard(text: String): Boolean = try {
+        val app = Injekt.get<Application>()
+        withContext(Dispatchers.Main) {
+            val clipboard = app.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("AniKoto smart search response", text))
+        }
+        true
+    } catch (e: Exception) {
+        loge("SmartSearch: clipboard copy failed", e)
+        false
     }
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
@@ -239,16 +316,38 @@ abstract class AnikotoTheme : Source() {
         val title = if (cachedTitle != null) {
             cachedTitle
         } else {
-            val resolved = smartSearch.resolve(strippedQuery)
-            if (resolved == null) {
-                logw("SmartSearch: AI resolution failed, falling back to normal search")
-                smartSearch.cacheTitle(strippedQuery, strippedQuery)
-                showToast("AI search was unable to initiate and fell back to normal search")
-                val response = client.newCall(getSearchAnimeRequest(page, query, filters)).execute()
-                return parseAnimeList(response.asJsoup())
+            when (val resolved = smartSearch.resolve(strippedQuery, smartSearchEngine, geminiApiKey, geminiModel)) {
+                is SmartSearch.ResolveResult.Success -> {
+                    smartSearch.cacheTitle(strippedQuery, resolved.title)
+                    if (copySmartSearchResponse &&
+                        copyToClipboard("Query: $strippedQuery\nTitle: ${resolved.title}")
+                    ) {
+                        showToast("Smart search: query and result copied to clipboard", Toast.LENGTH_SHORT)
+                    }
+                    resolved.title
+                }
+
+                is SmartSearch.ResolveResult.Failure -> {
+                    logw("SmartSearch: resolution FAILED — ${resolved.userMessage}")
+                    var message = "Smart search failed: ${resolved.userMessage}"
+                    if (copySmartSearchResponse) {
+                        val payload = buildString {
+                            append("Query: ").append(strippedQuery)
+                            append("\nError: ").append(resolved.userMessage).append("\n")
+                            val detail = resolved.detail
+                            if (!detail.isNullOrBlank()) {
+                                append("\n--- raw engine response ---\n").append(detail.take(20000))
+                            }
+                        }
+                        if (copyToClipboard(payload)) {
+                            message += " (response copied to clipboard)"
+                        }
+                    }
+                    showToast(message)
+                    val response = client.newCall(getSearchAnimeRequest(page, query, filters)).execute()
+                    return parseAnimeList(response.asJsoup())
+                }
             }
-            smartSearch.cacheTitle(strippedQuery, resolved)
-            resolved
         }
 
         logi("SmartSearch: searching AniKoto for \"$title\" (page $page)")
@@ -280,16 +379,39 @@ abstract class AnikotoTheme : Source() {
     }
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val response = client.newCall(GET("$baseUrl/watch/${anime.url}/ep-1")).execute()
+        val detailUrl = if (baseUrl.contains("animesuge")) {
+            val path = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
+            val clean = getCleanSlug(path)
+            "$baseUrl/anime/$clean"
+        } else {
+            "$baseUrl/watch/${anime.url}/ep-1"
+        }
+        val response = client.newCall(GET(detailUrl)).execute()
         return parseAnimeDetails(response.asJsoup(), anime.url)
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         logi("getEpisodeList(url=${anime.url})")
         val slug = anime.url
-        val detailResponse = client.newCall(GET("$baseUrl/watch/$slug/ep-1")).execute()
-        val detailDoc = detailResponse.asJsoup()
-        val watchMain = detailDoc.selectFirst("#watch-page, #watch-main, .watch-wrap")
+        // Suge's detail pages live under /anime/ — probe the right detail path per skin.
+        val detailUrls = if (baseUrl.contains("animesuge")) {
+            val cleanSlug = getCleanSlug(slug)
+            listOf("$baseUrl/anime/$cleanSlug", "$baseUrl/anime/$cleanSlug/ep-1")
+        } else {
+            listOf("$baseUrl/watch/$slug/ep-1")
+        }
+        val detailDoc = detailUrls.firstNotNullOfOrNull { url ->
+            runCatching {
+                val doc = client.newCall(GET(url)).execute().asJsoup()
+                val watchMain = doc.selectFirst("#watch-page, #watch-main, .watch-wrap, .favourite[data-id], [data-id]")
+                val animeId = watchMain?.attr("data-id")
+                if (animeId.isNullOrEmpty()) null else doc
+            }.getOrNull()
+        } ?: run {
+            loge("getEpisodeList: no watch main element or data-id found")
+            return emptyList()
+        }
+        val watchMain = detailDoc.selectFirst("#watch-page, #watch-main, .watch-wrap, .favourite[data-id], [data-id]")
         val animeId = watchMain?.attr("data-id") ?: run {
             loge("getEpisodeList: no watch main element or data-id found")
             return emptyList()
@@ -309,9 +431,11 @@ abstract class AnikotoTheme : Source() {
         }
 
         val epDoc = Jsoup.parse(ajaxJson.result)
+        // data-num is present on anikoto + sogo skins; suge uses data-slug instead.
         val elements = epDoc.select("ul.ep-range a, .ep-range a, .range a, a[data-ids]")
         val episodes = elements.mapNotNull { element ->
-            val num = element.attr("data-num")
+            var num = element.attr("data-num")
+            if (num.isEmpty()) num = element.attr("data-slug")
             if (num.isEmpty()) return@mapNotNull null
             val malId = element.attr("data-mal")
             val timestamp = element.attr("data-timestamp")
@@ -319,10 +443,13 @@ abstract class AnikotoTheme : Source() {
             val hasSub = element.attr("data-sub") == "1"
             val hasDub = element.attr("data-dub") == "1"
             var title = element.attr("title")
+            // Sogo puts the display number in the li title / link text instead of a[title].
+            if (title.isBlank()) title = element.text().trim()
+            if (title.isBlank()) title = element.parent()?.attr("title")?.trim() ?: ""
             if (title.isBlank()) title = "Episode $num"
             val meta = EpisodeMeta(slug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
-                url = "/watch/${getCleanSlug(slug)}/ep-$num"
+                url = meta.encode()
                 name = title
                 episode_number = num.toFloatOrNull() ?: 0.0f
                 date_upload = (timestamp.toLongOrNull() ?: 0L) * 1000L
@@ -400,8 +527,6 @@ abstract class AnikotoTheme : Source() {
         logi("getHosterList: EpisodeMeta parsed OK: slug=${meta.slug} num=${meta.epNum} mal=${meta.malId} ts=${meta.timestamp} hasSub=${meta.hasSub} hasDub=${meta.hasDub}")
 
         val tasks = mutableListOf<HosterTask>()
-        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
-        val excludedAudios = preferences.getStringSet(PREF_EXCLUDE_AUDIO_KEY, emptySet()) ?: emptySet()
 
         // PATH A: Primary Server List
         if (meta.dataIds.isNotEmpty()) {
@@ -413,33 +538,26 @@ abstract class AnikotoTheme : Source() {
                 logi("PATH A: parsed status=${pJson.status}, result HTML length = ${pJson.result.length}")
                 if (pJson.status == 200 && pJson.result.isNotEmpty()) {
                     val pDoc = Jsoup.parse(pJson.result)
-                    for (element in pDoc.select(typeSelector)) {
-                        var dataType = element.attr("data-type")
-                        if (dataType.isEmpty()) {
-                            // Fallback if structure is different
-                            dataType = "sub"
+                    // The server list HTML is a fragment whose type wrappers may be the
+                    // document root's direct children — select from the fragment root and
+                    // also fall back to any bare server entries (some skins omit types).
+                    val typeBlocks = pDoc.select(typeSelector)
+                    if (typeBlocks.isNotEmpty()) {
+                        for (element in typeBlocks) {
+                            parseServerBlock(element, tasks, meta)
                         }
-                        val audioLabel = when (dataType) {
-                            "dub" -> "DUB"
-                            "sub" -> "SUB"
-                            "hsub" -> "HSUB"
-                            else -> dataType.uppercase(Locale.ROOT)
-                        }
-                        if (excludedAudios.any { it.equals(audioLabel, true) }) {
-                            continue
-                        }
-
-                        for (serverElement in element.select(serverSelector)) {
+                    } else {
+                        for (serverElement in pDoc.select(serverSelector)) {
                             var linkId = serverElement.attr("data-link-id")
                             if (linkId.isEmpty()) linkId = serverElement.attr("data-id")
                             val serverName = serverElement.text().trim()
-                            if (excludedServers.any { it.equals(serverName, true) }) {
+                            if (serverName.isEmpty()) {
                                 continue
                             }
                             if (linkId.isNotEmpty()) {
-                                val label = "$audioLabel - $serverName"
-                                tasks.add(HosterTask(label, linkId, dataType, "primary", meta.slug))
-                                logi("  + task (primary): $label")
+                                val label = "SUB - $serverName"
+                                tasks.add(HosterTask(label, linkId, "sub", "primary", meta.slug))
+                                logi("  + task (primary, typeless): $label")
                             }
                         }
                     }
@@ -483,14 +601,8 @@ abstract class AnikotoTheme : Source() {
                                 "hsub" -> "HSUB"
                                 else -> token.audio.uppercase(Locale.ROOT)
                             }
-                            if (excludedAudios.any { it.equals(audioLabel, true) }) {
-                                continue
-                            }
                             if (token.serverName == "Kiwi-Stream") {
                                 val serverName = token.serverName
-                                if (excludedServers.any { it.equals(serverName, true) }) {
-                                    continue
-                                }
                                 val label = "$audioLabel - $serverName"
                                 tasks.add(HosterTask(label, token.token, token.audio, "mapper", meta.slug))
                                 logi("  + task (mapper): $label")
@@ -611,11 +723,25 @@ abstract class AnikotoTheme : Source() {
     }
 
     open suspend fun fetchFreshEpisodeMeta(slug: String, epNum: String): EpisodeMeta? {
+        // Suge's detail pages live under /anime/ — probe the right detail path per skin.
+        val detailPaths = if (baseUrl.contains("animesuge")) {
+            val cleanSlug = getCleanSlug(slug)
+            listOf("$baseUrl/anime/$cleanSlug", "$baseUrl/anime/$cleanSlug/ep-1")
+        } else {
+            val cleanSlug = getCleanSlug(slug)
+            listOf("$baseUrl/watch/$cleanSlug/ep-$epNum")
+        }
         try {
             val cleanSlug = getCleanSlug(slug)
-            val detailResponse = client.newCall(GET("$baseUrl/watch/$cleanSlug/ep-$epNum")).execute()
-            val detailDoc = detailResponse.asJsoup()
-            val watchMain = detailDoc.selectFirst("#watch-page, #watch-main, .watch-wrap")
+            val detailDoc = detailPaths.firstNotNullOfOrNull { url ->
+                runCatching {
+                    val doc = client.newCall(GET(url)).execute().asJsoup()
+                    val watchMain = doc.selectFirst("#watch-page, #watch-main, .watch-wrap, .favourite[data-id], [data-id]")
+                    val animeId = watchMain?.attr("data-id")
+                    if (animeId.isNullOrEmpty()) null else doc
+                }.getOrNull()
+            } ?: return null
+            val watchMain = detailDoc.selectFirst("#watch-page, #watch-main, .watch-wrap, .favourite[data-id], [data-id]")
             val animeId = watchMain?.attr("data-id") ?: return null
             if (animeId.isEmpty()) return null
 
@@ -628,7 +754,8 @@ abstract class AnikotoTheme : Source() {
             val epDoc = Jsoup.parse(ajaxJson.result)
             val elements = epDoc.select("ul.ep-range a, .ep-range a, .range a, a[data-ids]")
             for (element in elements) {
-                val num = element.attr("data-num")
+                var num = element.attr("data-num")
+                if (num.isEmpty()) num = element.attr("data-slug")
                 if (num == epNum) {
                     val malId = element.attr("data-mal")
                     val timestamp = element.attr("data-timestamp")
@@ -636,6 +763,8 @@ abstract class AnikotoTheme : Source() {
                     val hasSub = element.attr("data-sub") == "1"
                     val hasDub = element.attr("data-dub") == "1"
                     var title = element.attr("title")
+                    if (title.isBlank()) title = element.text().trim()
+                    if (title.isBlank()) title = element.parent()?.attr("title")?.trim() ?: ""
                     if (title.isBlank()) title = "Episode $num"
                     return EpisodeMeta(cleanSlug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
                 }
@@ -672,6 +801,36 @@ abstract class AnikotoTheme : Source() {
             }
 
             else -> null
+        }
+    }
+
+    private fun parseServerBlock(
+        element: org.jsoup.nodes.Element,
+        tasks: MutableList<HosterTask>,
+        meta: EpisodeMeta,
+    ) {
+        var dataType = element.attr("data-type")
+        if (dataType.isEmpty()) {
+            // Fallback if structure is different
+            dataType = "sub"
+        }
+        val audioLabel = when (dataType.lowercase(Locale.ROOT)) {
+            "dub" -> "DUB"
+            "sub" -> "SUB"
+            "hsub" -> "HSUB"
+            else -> dataType.uppercase(Locale.ROOT)
+        }
+
+        for (serverElement in element.select(serverSelector)) {
+            var linkId = serverElement.attr("data-link-id")
+            if (linkId.isEmpty()) linkId = serverElement.attr("data-id")
+            val serverName = serverElement.text().trim()
+            if (serverName.isEmpty()) continue
+            if (linkId.isNotEmpty()) {
+                val label = "$audioLabel - $serverName"
+                tasks.add(HosterTask(label, linkId, dataType, "primary", meta.slug))
+                logi("  + task (primary): $label")
+            }
         }
     }
 
@@ -780,21 +939,25 @@ abstract class AnikotoTheme : Source() {
     }
 
     private fun parseAnimeDetails(doc: Document, slug: String): SAnime {
-        val useJp = titleLang == "jp"
-        val binfo = doc.selectFirst("#w-info .binfo") ?: doc.selectFirst("div.binfo") ?: doc.selectFirst("#w-info")
+        // Sogo flattens the layout: #w-info directly contains .info (no .binfo wrapper).
+        val binfo = doc.selectFirst("#w-info .binfo") ?: doc.selectFirst("div.binfo") ?: doc.selectFirst("#w-info .info") ?: doc.selectFirst("#w-info")
             ?: return SAnime.create().apply { url = slug }
-        val bmeta = doc.selectFirst(bmetaSelector)
+        // Sogo's meta rows are "Label: <span>value</span>" (ownText works); anikoto uses the same.
+        val bmeta = doc.selectFirst(bmetaSelector) ?: binfo.selectFirst(bmetaSelector) ?: doc.selectFirst("div.bl-meta") ?: binfo
+            ?: return SAnime.create().apply { url = slug }
 
         // Build meta map from bmeta
         val metaMap = mutableMapOf<String, String>()
-        bmeta?.select("div.meta > div")?.forEach { el ->
-            val label = el.ownText().removeSuffix(":").trim()
+        bmeta.select("div.meta > div").forEach { el ->
+            var label = el.ownText().removeSuffix(":").trim()
+            // Sogo wraps labels in links sometimes ("Premiered: FALL 2022" with no ownText).
+            if (label.isEmpty()) label = el.text().substringBefore(":").trim()
             val value = el.select("span").text().trim()
             if (label.isNotEmpty() && value.isNotEmpty()) metaMap[label] = value
         }
 
-        val genresText = bmeta?.select("div:contains(Genres) span a")?.eachText()?.joinToString(", ") ?: ""
-        val studiosText = bmeta?.select("div:contains(Studios) span a")?.eachText()?.joinToString(", ") ?: ""
+        val genresText = bmeta.select("div:contains(Genres) span a, .genre-list span a").eachText().joinToString(", ")
+        val studiosText = bmeta.select("div:contains(Studios) span a").eachText().joinToString(", ")
         val statusText = metaMap["Status"] ?: ""
 
         val altTitles = binfo.selectFirst(aliasSelector)?.text()
@@ -822,17 +985,10 @@ abstract class AnikotoTheme : Source() {
         return SAnime.create().apply {
             url = slug
             val h1 = binfo.selectFirst("h1.title")
-            title = if (useJp) {
-                val jpTitle = h1?.attr("data-jp")
-                if (!jpTitle.isNullOrEmpty()) jpTitle else h1?.text() ?: slug
-            } else {
-                h1?.text() ?: slug
-            }
-            thumbnail_url = if (detailPosterSelector.startsWith("section#w-info")) {
-                doc.selectFirst(detailPosterSelector)?.absUrl("src")
-            } else {
-                binfo.selectFirst(detailPosterSelector)?.absUrl("src")
-            }
+            title = h1?.text() ?: slug
+            thumbnail_url = doc.selectFirst(detailPosterSelector)
+                ?.absUrl("src")
+                ?: binfo.selectFirst("div.poster img")?.absUrl("src")
             description = desc
             genre = genresText
             status = animeStatus
@@ -844,113 +1000,341 @@ abstract class AnikotoTheme : Source() {
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         try {
-            // --- Playback Settings ---
-            screen.addListPreference(
-                key = PREF_QUALITY,
-                default = PREF_QUALITY_DEFAULT,
-                title = "Playback: Preferred quality",
-                summary = "Sorts videos so this quality is on top. Currently: %s",
-                entries = listOf("1080p", "720p", "480p", "360p"),
-                entryValues = listOf("1080", PREF_QUALITY_DEFAULT, "480", "360"),
-            )
-            screen.addListPreference(
-                key = PREF_AUDIO,
-                default = PREF_AUDIO_DEFAULT,
-                title = "Playback: Preferred audio",
-                summary = "Sub, Dub, or Hardsub first. Currently: %s",
-                entries = listOf("Sub", "Dub", "Hardsub"),
-                entryValues = listOf(PREF_AUDIO_DEFAULT, "A-DUB", "H-SUB"),
-            )
-            screen.addListPreference(
-                key = PREF_SERVER,
-                default = PREF_SERVER_DEFAULT,
-                title = "Playback: Preferred video server",
-                summary = "Which video server to try first. Currently: %s",
-                entries = listOf("Auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream"),
-                entryValues = listOf("auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream"),
-            )
-            screen.addListPreference(
-                key = PREF_BUFFER,
-                default = PREF_BUFFER_DEFAULT,
-                title = "Playback: Pre-fetch buffer",
-                summary = "How much to download ahead of playback. Currently: %s",
-                entries = listOf("10%", "20%", "30%", "50%", "100%"),
-                entryValues = listOf("10", "20", "30", "50", "100"),
-            )
+            // ── Playback ────────────────────────────────────────────────
+            PreferenceCategory(screen.context).apply {
+                title = "Playback"
+                screen.addPreference(this)
 
-            // --- Exclusion / Content Filters ---
-            MultiSelectListPreference(screen.context).apply {
-                key = PREF_EXCLUDE_SERVERS_KEY
-                title = "Exclude: Exclude Servers"
-                entries = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
-                entryValues = arrayOf("VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
-                setDefaultValue(emptySet<String>())
-                summary = "Select servers to exclude from the video list"
-            }.also { screen.addPreference(it) }
+                // Mirror picker — only meaningful for skins that publish several domains.
+                if (domainMirrors.size > 1) {
+                    ListPreference(screen.context).apply {
+                        key = PREF_DOMAIN
+                        title = "Preferred domain"
+                        entries = domainMirrors.map { it.first }.toTypedArray()
+                        entryValues = domainMirrors.map { it.second }.toTypedArray()
+                        setDefaultValue(defaultBaseUrl)
+                        summary = "Currently: %s"
+                    }.also { addPreference(it) }
+                }
 
-            MultiSelectListPreference(screen.context).apply {
-                key = PREF_EXCLUDE_AUDIO_KEY
-                title = "Exclude: Exclude Audio"
-                entries = arrayOf("Sub", "Dub", "Hsub")
-                entryValues = arrayOf("SUB", "DUB", "HSUB")
-                setDefaultValue(emptySet<String>())
-                summary = "Select audio formats to exclude from the video list"
-            }.also { screen.addPreference(it) }
+                ListPreference(screen.context).apply {
+                    key = PREF_QUALITY
+                    title = "Preferred quality"
+                    entries = arrayOf("1080p", "720p", "480p", "360p")
+                    entryValues = arrayOf("1080", PREF_QUALITY_DEFAULT, "480", "360")
+                    setDefaultValue(PREF_QUALITY_DEFAULT)
+                    summary = "Currently: %s"
+                }.also { addPreference(it) }
 
-            if (useMapper) {
-                screen.addSwitchPreference(
-                    key = PREF_ENABLE_KIWI_KEY,
-                    default = PREF_ENABLE_KIWI_DEFAULT,
-                    title = "Exclude: Enable Kiwi-Stream",
-                    summary = "Fetching Kiwi-Stream from external sources",
-                )
+                ListPreference(screen.context).apply {
+                    key = PREF_AUDIO
+                    title = "Preferred audio"
+                    entries = arrayOf("Sub", "Dub", "Hardsub")
+                    entryValues = arrayOf(PREF_AUDIO_DEFAULT, "A-DUB", "H-SUB")
+                    setDefaultValue(PREF_AUDIO_DEFAULT)
+                    summary = "Currently: %s"
+                }.also { addPreference(it) }
+
+                ListPreference(screen.context).apply {
+                    key = PREF_BUFFER
+                    title = "Pre-fetch buffer"
+                    entries = arrayOf("10%", "20%", "30%", "50%", "100%")
+                    entryValues = arrayOf("10", "20", "30", "50", "100")
+                    setDefaultValue(PREF_BUFFER_DEFAULT)
+                    summary = "Currently: %s"
+                }.also { addPreference(it) }
+
+                ListPreference(screen.context).apply {
+                    key = PREF_SERVER
+                    title = "Preferred server"
+                    entries = arrayOf("Auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
+                    entryValues = arrayOf("auto", "VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream")
+                    setDefaultValue(PREF_SERVER_DEFAULT)
+                    summary = "Currently: %s"
+                }.also { addPreference(it) }
             }
 
-            // --- Episode Metadata Settings ---
-            screen.addListPreference(
-                key = PREF_TITLE_LANG,
-                default = PREF_TITLE_LANG_DEFAULT,
-                title = "Metadata: Title language",
-                summary = "Show English or Japanese titles. Currently: %s",
-                entries = listOf("English", "Japanese"),
-                entryValues = listOf(PREF_TITLE_LANG_DEFAULT, "jp"),
-            )
-            screen.addSwitchPreference(
-                key = PREF_LOAD_THUMBNAILS,
-                default = true,
-                title = "Metadata: Load episode thumbnails",
-                summary = "Fetching preview images from external sources",
-            )
-            screen.addSwitchPreference(
-                key = PREF_LOAD_TITLES,
-                default = true,
-                title = "Metadata: Load episode titles",
-                summary = "Fetching episode titles from external sources",
-            )
-            screen.addSwitchPreference(
-                key = PREF_LOAD_DESCRIPTIONS,
-                default = true,
-                title = "Metadata: Load episode descriptions",
-                summary = "Fetching episode descriptions from external sources",
-            )
+            // ── Servers ─────────────────────────────────────────────────
+            if (useMapper) {
+                PreferenceCategory(screen.context).apply {
+                    title = "Servers"
+                    screen.addPreference(this)
 
-            // --- Smart Search Settings ---
-            screen.addSwitchPreference(
-                key = PREF_SMART_SEARCH,
-                default = PREF_SMART_SEARCH_DEFAULT,
-                title = "Smart Search: Enable smart search",
-                summary = "AI resolves descriptive queries and corrects spelling",
-            )
-            screen.addEditTextPreference(
-                key = PREF_SMART_SEARCH_PHRASE,
-                default = PREF_SMART_SEARCH_PHRASE_DEFAULT,
-                title = "Smart Search: Activation phrase",
-                summary = "Type this at the start of your search to trigger AI. Leave empty to use AI for all searches.",
-                dialogMessage = "Type this at the start of your search to trigger AI.\nCase-insensitive. Must be followed by a space.\nLeave empty to use AI for all searches.",
-            )
+                    SwitchPreferenceCompat(screen.context).apply {
+                        key = PREF_ENABLE_KIWI_KEY
+                        title = "Enable Kiwi-Stream"
+                        summaryOn = "Fetching Kiwi-Stream from external sources"
+                        summaryOff = "Kiwi-Stream disabled"
+                        setDefaultValue(PREF_ENABLE_KIWI_DEFAULT)
+                    }.also { addPreference(it) }
+                }
+            }
+
+            // ── Episode metadata ────────────────────────────────────────
+            PreferenceCategory(screen.context).apply {
+                title = "Episode metadata"
+                screen.addPreference(this)
+
+                SwitchPreferenceCompat(screen.context).apply {
+                    key = PREF_LOAD_THUMBNAILS
+                    title = "Load episode thumbnails"
+                    summaryOn = "Fetching preview images from external sources"
+                    summaryOff = "Episode thumbnails disabled (faster episode list loading)"
+                    setDefaultValue(true)
+                }.also { addPreference(it) }
+
+                SwitchPreferenceCompat(screen.context).apply {
+                    key = PREF_LOAD_TITLES
+                    title = "Load episode titles"
+                    summaryOn = "Fetching episode titles from external sources"
+                    summaryOff = "Using default episode numbers only"
+                    setDefaultValue(true)
+                }.also { addPreference(it) }
+
+                SwitchPreferenceCompat(screen.context).apply {
+                    key = PREF_LOAD_DESCRIPTIONS
+                    title = "Load episode descriptions"
+                    summaryOn = "Fetching episode descriptions from external sources"
+                    summaryOff = "Episode descriptions disabled"
+                    setDefaultValue(true)
+                }.also { addPreference(it) }
+            }
+
+            // ── Smart Search ────────────────────────────────────────────
+            PreferenceCategory(screen.context).apply {
+                title = "Smart Search"
+                screen.addPreference(this)
+
+                migrateLegacySmartSearchValues()
+
+                SwitchPreferenceCompat(screen.context).apply {
+                    key = PREF_SMART_SEARCH
+                    title = "Smart Search"
+                    summary = "Search spelling correction and smarter description searching"
+                    setDefaultValue(PREF_SMART_SEARCH_DEFAULT)
+                }.also { addPreference(it) }
+
+                val enginePref = ListPreference(screen.context).apply {
+                    key = PREF_SMART_ENGINE
+                    title = "AI engine"
+                    entries = arrayOf("Google Gemini API", "Google AI Search")
+                    entryValues = arrayOf(SmartSearch.Engine.GEMINI, SmartSearch.Engine.GOOGLE)
+                    setDefaultValue(PREF_SMART_ENGINE_DEFAULT)
+                    summary = "Currently: %s"
+                }.also { addPreference(it) }
+
+                val keyPref = EditTextPreference(screen.context).apply {
+                    key = PREF_GEMINI_KEY
+                    title = "Gemini API key"
+                    dialogTitle = "Gemini API key"
+                    setDefaultValue(PREF_GEMINI_KEY_DEFAULT)
+                    updateGeminiKeySummary(this, null)
+                    setOnPreferenceChangeListener { _, newValue ->
+                        updateGeminiKeySummary(this, newValue as? String)
+                        true
+                    }
+                }.also { addPreference(it) }
+
+                val modelPref = ListPreference(screen.context).apply {
+                    key = PREF_GEMINI_MODEL
+                    title = "Gemini model"
+                    entries = arrayOf("Gemini 3.1 Flash Lite", "Gemini 3.5 Flash Lite", "Gemini 3.8 Flash", "Custom model ID")
+                    entryValues = (GEMINI_MODELS + PREF_GEMINI_MODEL_CUSTOM).toTypedArray()
+                    setDefaultValue(PREF_GEMINI_MODEL_DEFAULT)
+                    summary = "Currently: %s"
+                }.also { addPreference(it) }
+
+                val customPref = EditTextPreference(screen.context).apply {
+                    key = PREF_GEMINI_CUSTOM_MODEL
+                    title = "Custom model ID"
+                    dialogTitle = "Custom model ID"
+                    setDefaultValue(PREF_GEMINI_CUSTOM_MODEL_DEFAULT)
+                    updateCustomModelSummary(this, null)
+                    setOnPreferenceChangeListener { _, newValue ->
+                        updateCustomModelSummary(this, newValue as? String)
+                        true
+                    }
+                }.also { addPreference(it) }
+
+                val testPref = newPlainPreference(screen.context)?.apply {
+                    key = PREF_GEMINI_TEST
+                    title = "Test connection"
+                    summary = "Sends a tiny test request with the key and model above."
+                    setOnPreferenceClickListener {
+                        val apiKey = geminiApiKey
+                        val model = geminiModel
+                        CoroutineScope(Dispatchers.IO).launch {
+                            showToast("Testing Gemini $model …")
+                            val error = SmartSearch.testGemini(apiKey, model)
+                            showToast(error ?: "Gemini works! ($model)")
+                        }
+                        true
+                    }
+                }?.also { addPreference(it) }
+
+                SwitchPreferenceCompat(screen.context).apply {
+                    key = PREF_SMART_COPY_RESPONSE
+                    title = "Copy response"
+                    setDefaultValue(false)
+                }.also { addPreference(it) }
+
+                val phrasePref = EditTextPreference(screen.context).apply {
+                    key = PREF_SMART_SEARCH_PHRASE
+                    title = "Activation phrase"
+                    dialogTitle = "Activation phrase"
+                    dialogMessage = "Type this at the start of your search to trigger AI.\n" +
+                        "Case-insensitive. Must be followed by a space.\n" +
+                        "Leave empty to use AI for all searches.\n\n" +
+                        "Examples:\n" +
+                        "• <phrase> the anime with a russian girl\n" +
+                        "• <phrase> narutp\n" +
+                        "• <phrase> anime about a spy\n\n" +
+                        "Note: ~5-8s latency per AI search."
+                    setDefaultValue(PREF_SMART_SEARCH_PHRASE_DEFAULT)
+                    updatePhraseSummary(
+                        this,
+                        preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT)
+                            ?: PREF_SMART_SEARCH_PHRASE_DEFAULT,
+                    )
+                    setOnPreferenceChangeListener { _, newValue ->
+                        updatePhraseSummary(this, newValue as? String)
+                        smartDetailsPref?.let { updateDetailsSummary(it, newValue as? String) }
+                        true
+                    }
+                }.also { addPreference(it) }
+
+                applyEngineVisibility(enginePref, keyPref, modelPref, customPref, testPref)
+
+                // Visibility follows the stored value, so re-apply it after the write lands.
+                enginePref.setOnPreferenceChangeListener { _, _ ->
+                    Handler(Looper.getMainLooper()).post {
+                        applyEngineVisibility(enginePref, keyPref, modelPref, customPref, testPref)
+                    }
+                    true
+                }
+                modelPref.setOnPreferenceChangeListener { _, _ ->
+                    Handler(Looper.getMainLooper()).post {
+                        applyEngineVisibility(enginePref, keyPref, modelPref, customPref, testPref)
+                    }
+                    true
+                }
+            }
+
+            // ── Details ─────────────────────────────────────────────────
+            PreferenceCategory(screen.context).apply {
+                title = "Details"
+                screen.addPreference(this)
+
+                newPlainPreference(screen.context)?.apply {
+                    key = PREF_SMART_DETAILS
+                    unselectable()
+                    updateDetailsSummary(this, null)
+                    smartDetailsPref = this
+                }?.also { addPreference(it) }
+            }
         } catch (e: Exception) {
             loge("setupPreferenceScreen CRASHED", e)
         }
+    }
+
+    /** Moves pre-v16.12 values ("auto" engine, off-list model ids) into the new layout. */
+    private fun migrateLegacySmartSearchValues() {
+        try {
+            val engine = preferences.getString(PREF_SMART_ENGINE, PREF_SMART_ENGINE_DEFAULT)
+            if (engine == "auto") {
+                val migrated = if (geminiApiKey.isNotBlank()) SmartSearch.Engine.GEMINI else SmartSearch.Engine.GOOGLE
+                preferences.edit().putString(PREF_SMART_ENGINE, migrated).apply()
+            }
+
+            val model = preferences.getString(PREF_GEMINI_MODEL, PREF_GEMINI_MODEL_DEFAULT) ?: PREF_GEMINI_MODEL_DEFAULT
+            if (model != PREF_GEMINI_MODEL_CUSTOM && model !in GEMINI_MODELS) {
+                preferences.edit()
+                    .putString(PREF_GEMINI_MODEL, PREF_GEMINI_MODEL_CUSTOM)
+                    .putString(PREF_GEMINI_CUSTOM_MODEL, model)
+                    .apply()
+            }
+        } catch (e: Exception) {
+            logw("SmartSearch: legacy preference migration failed: ${e.message}")
+        }
+    }
+
+    /** Gemini-only rows are hidden while the Google engine is selected. */
+    private fun applyEngineVisibility(
+        enginePref: ListPreference,
+        keyPref: EditTextPreference,
+        modelPref: ListPreference,
+        customPref: EditTextPreference,
+        testPref: Preference?,
+    ) {
+        try {
+            val engine = preferences.getString(PREF_SMART_ENGINE, PREF_SMART_ENGINE_DEFAULT)
+                ?: PREF_SMART_ENGINE_DEFAULT
+            val gemini = engine != SmartSearch.Engine.GOOGLE
+            val customModel = preferences.getString(PREF_GEMINI_MODEL, PREF_GEMINI_MODEL_DEFAULT) == PREF_GEMINI_MODEL_CUSTOM
+
+            keyPref.setVisible(gemini)
+            modelPref.setVisible(gemini)
+            testPref?.setVisible(gemini)
+            customPref.setVisible(gemini && customModel)
+        } catch (e: Exception) {
+            logw("SmartSearch: engine visibility update failed: ${e.message}")
+        }
+    }
+
+    private fun updateGeminiKeySummary(pref: EditTextPreference, overrideValue: String?) {
+        val value = (overrideValue ?: preferences.getString(PREF_GEMINI_KEY, PREF_GEMINI_KEY_DEFAULT) ?: "").trim()
+        pref.summary = when {
+            value.isEmpty() -> "Not set"
+            value.length <= 8 -> "••••"
+            else -> "••••${value.takeLast(4)}"
+        }
+    }
+
+    private fun updateCustomModelSummary(pref: EditTextPreference, overrideValue: String?) {
+        val value = (overrideValue ?: preferences.getString(PREF_GEMINI_CUSTOM_MODEL, PREF_GEMINI_CUSTOM_MODEL_DEFAULT) ?: "").trim()
+        pref.summary = value.ifEmpty { "Not set" }
+    }
+
+    private fun updateDetailsSummary(pref: Preference, overridePhrase: String?) {
+        val phrase = (
+            overridePhrase
+                ?: preferences.getString(PREF_SMART_SEARCH_PHRASE, PREF_SMART_SEARCH_PHRASE_DEFAULT)
+                ?: PREF_SMART_SEARCH_PHRASE_DEFAULT
+            ).trim()
+        val display = phrase.ifEmpty { "(empty)" }
+        val prefix = if (phrase.isEmpty()) "" else "$phrase "
+
+        pref.title = "Details"
+        pref.summary = "Type your activation phrase at the start of your search to trigger AI.\n" +
+            "Leave empty to use AI for all searches.\n" +
+            "Case-insensitive. Must be followed by a space.\n\n" +
+            "Your phrase: \"$display\"\n\n" +
+            "Examples:\n" +
+            "${prefix}the anime with a russian girl\n" +
+            "${prefix}narutp\n" +
+            "${prefix}anime about a spy\n\n" +
+            "Note: ~5-8s latency per AI search."
+    }
+
+    private fun updatePhraseSummary(pref: EditTextPreference, phrase: String?) {
+        val displayPhrase = phrase?.trim()?.ifBlank { "(empty — AI used for all)" } ?: "(empty — AI used for all)"
+        val text = "Currently: $displayPhrase"
+        val spannable = SpannableString(text)
+        val phraseStart = "Currently: ".length
+        val phraseEnd = text.length
+        spannable.setSpan(
+            ForegroundColorSpan(Color.parseColor("#dc2626")),
+            phraseStart,
+            phraseEnd,
+            SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        spannable.setSpan(
+            StyleSpan(Typeface.BOLD),
+            phraseStart,
+            phraseEnd,
+            SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        pref.summary = spannable
     }
 
     protected fun getCleanSlug(slug: String): String {
@@ -976,12 +1360,12 @@ abstract class AnikotoTheme : Source() {
     }
 
     companion object {
+        private const val PREF_DOMAIN = "pref_domain"
+
         private const val PREF_QUALITY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "720"
         private const val PREF_AUDIO = "pref_audio"
         private const val PREF_AUDIO_DEFAULT = "SUB"
-        private const val PREF_TITLE_LANG = "pref_title_lang"
-        private const val PREF_TITLE_LANG_DEFAULT = "en"
         private const val PREF_BUFFER = "pref_buffer"
         private const val PREF_BUFFER_DEFAULT = "10"
         private const val PREF_SERVER = "pref_server"
@@ -991,18 +1375,34 @@ abstract class AnikotoTheme : Source() {
         private const val PREF_LOAD_DESCRIPTIONS = "pref_load_descriptions"
 
         private const val PREF_SMART_SEARCH = "pref_smart_search"
-        private const val PREF_SMART_SEARCH_DEFAULT = false
+        private const val PREF_SMART_SEARCH_DEFAULT = true
         private const val PREF_SMART_SEARCH_PHRASE = "pref_smart_search_phrase"
         private const val PREF_SMART_SEARCH_PHRASE_DEFAULT = "?"
+        private const val PREF_SMART_ENGINE = "pref_smart_engine"
+        private const val PREF_SMART_ENGINE_DEFAULT = SmartSearch.Engine.GOOGLE
+        private const val PREF_SMART_COPY_RESPONSE = "pref_smart_copy_response"
+        private const val PREF_SMART_DETAILS = "pref_smart_details"
+
+        private const val PREF_GEMINI_KEY = "pref_gemini_key"
+        private const val PREF_GEMINI_KEY_DEFAULT = ""
+        private const val PREF_GEMINI_MODEL = "pref_gemini_model"
+        private const val PREF_GEMINI_MODEL_DEFAULT = "gemini-3.1-flash-lite"
+        private const val PREF_GEMINI_MODEL_CUSTOM = "custom"
+        private const val PREF_GEMINI_CUSTOM_MODEL = "pref_gemini_custom_model"
+        private const val PREF_GEMINI_CUSTOM_MODEL_DEFAULT = ""
+        private const val PREF_GEMINI_TEST = "pref_gemini_test"
+
+        private val GEMINI_MODELS = listOf(
+            PREF_GEMINI_MODEL_DEFAULT,
+            "gemini-3.5-flash-lite",
+            "gemini-3.8-flash",
+        )
 
         private const val TAG = "Anikoto"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         private const val PREF_ENABLE_KIWI_KEY = "pref_enable_kiwi"
         private const val PREF_ENABLE_KIWI_DEFAULT = true
-
-        private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
-        private const val PREF_EXCLUDE_AUDIO_KEY = "pref_exclude_audio"
 
         private val HOSTER_PRIORITY = listOf("Kiwi-Stream", "VidCloud-1", "VidPlay-1", "Vidstream-2", "HD-1")
 
