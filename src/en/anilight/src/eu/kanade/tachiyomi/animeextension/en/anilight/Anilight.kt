@@ -24,6 +24,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import java.net.URLEncoder
+import java.net.UnknownHostException
 import kotlin.time.Duration.Companion.seconds
 
 class Anilight : Source() {
@@ -43,6 +44,8 @@ class Anilight : Source() {
     private val doodExtractor by lazy { DoodExtractor(client) }
 
     private val megaPlayExtractor by lazy { MegaPlayExtractor(client, playlistUtils) }
+
+    private val streamProxy by lazy { AniLightStreamProxy(client) }
 
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
@@ -481,33 +484,59 @@ class Anilight : Source() {
     ): List<Video> {
         val streamHeaders = streamHeaders()
 
-        val body = try {
+        val fetched = try {
             client.newCall(GET(candidateUrl, streamHeaders)).execute().use { response ->
                 if (!response.isSuccessful) return emptyList()
-                response.peekBody(PEEK_BYTES).string()
+                // The effective URL matters: several proxies answer with
+                // relative child paths that only resolve against the redirect
+                // target.
+                response.peekBody(PEEK_BYTES).string() to response.request.url.toString()
             }
         } catch (_: Exception) {
             return emptyList()
         }
+        val body = fetched.first
 
         val trimmed = body.trimStart().removePrefix("\uFEFF")
         return when {
             trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXT-X-") -> when {
-                // A master carrying independent audio renditions (provider
-                // "l"/"raye") must stay whole: splitting it into per-quality
-                // Videos kills audio because ExoPlayer cannot sync separate
-                // HLS audio playlists through MergingMediaSource. The local
-                // m3u8 server rewrites the variant lines while leaving
-                // #EXT-X-MEDIA URIs intact for ExoPlayer's native handling.
-                body.contains("#EXT-X-MEDIA:TYPE=AUDIO") || !body.contains("#EXT-X-STREAM-INF") ->
+                // A master carrying independent audio renditions (providers
+                // "l" and "raye") must stay whole — splitting it into
+                // per-quality Videos kills audio because ExoPlayer cannot sync
+                // separate HLS audio playlists through MergingMediaSource. It
+                // also has to go through the dedicated loopback relay rather
+                // than the shared m3u8 server: that one rewrites bare URI
+                // lines only, leaving the `#EXT-X-MEDIA` audio playlists to be
+                // fetched straight from the worker, where every chunk is
+                // disguised as a `.jpg` with an `image/jpeg` content type.
+                body.contains("#EXT-X-MEDIA:TYPE=AUDIO") ->
                     listOf(
                         Video(
-                            videoUrl = candidateUrl.withM3u8FragmentIfNeeded(),
+                            videoUrl = streamProxy.relay(candidateUrl, "$baseUrl/"),
                             videoTitle = "Auto $audioBadge",
                             headers = streamHeaders,
                             subtitleTracks = subtitleTracks,
                         ),
                     )
+
+                !body.contains("#EXT-X-STREAM-INF") -> {
+                    // Plain media playlist. Its chunks are what the player
+                    // actually pulls, so a playlist whose first chunk host is
+                    // gone (the retired misora `*.nukitashi.top` nodes) would
+                    // otherwise surface as a bare "loading failed" mid-play.
+                    if (!firstChunkIsAlive(body, fetched.second, streamHeaders)) {
+                        emptyList()
+                    } else {
+                        listOf(
+                            Video(
+                                videoUrl = candidateUrl.withM3u8FragmentIfNeeded(),
+                                videoTitle = "Auto $audioBadge",
+                                headers = streamHeaders,
+                                subtitleTracks = subtitleTracks,
+                            ),
+                        )
+                    }
+                }
 
                 else -> try {
                     playlistUtils.extractFromHls(
@@ -533,6 +562,34 @@ class Anilight : Source() {
                     subtitleTracks = subtitleTracks,
                 ),
             )
+        }
+    }
+
+    /**
+     * Probes the first chunk a media playlist points at.
+     *
+     * Only unambiguous deaths count as dead — a host that no longer resolves,
+     * or an explicit 404/410. Anything else (timeout, 403, 5xx) is treated as
+     * transient so a flaky CDN never loses a video that would have played.
+     */
+    private fun firstChunkIsAlive(playlist: String, baseUrl: String, requestHeaders: Headers): Boolean {
+        val uri = playlist.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+            ?: return true
+
+        // Master playlists descend into another playlist; verified separately.
+        if (uri.contains(".m3u8", ignoreCase = true)) return true
+
+        val chunkUrl = baseUrl.toHttpUrlOrNull()?.resolve(uri)?.toString() ?: uri
+        return try {
+            client.newCall(GET(chunkUrl, requestHeaders)).execute().use { response ->
+                response.isSuccessful || response.code !in DEAD_CHUNK_CODES
+            }
+        } catch (_: UnknownHostException) {
+            false
+        } catch (_: Exception) {
+            true
         }
     }
 
@@ -666,6 +723,9 @@ class Anilight : Source() {
         )
 
         private val CAPTION_PROXY_HOSTS = listOf("1oe.lostproject.club", "subbl.krussdomi.com")
+
+        /** Chunk responses that mean the CDN node is gone rather than flaky. */
+        private val DEAD_CHUNK_CODES = setOf(404, 410)
 
         private const val PREF_TITLE_LANG_KEY = "pref_title_lang"
         private const val PREF_TITLE_LANG_DEFAULT = "english"
