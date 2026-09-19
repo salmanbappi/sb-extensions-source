@@ -32,9 +32,9 @@ class Cinejoy : Source() {
 
     override val name = "Cinejoy"
 
-    override val baseUrl = "https://cinejoy.to"
+    override val baseUrl = "https://cinejoy.pk"
 
-    private val sheguApiUrl = "https://api.shegu.st"
+    private val apiBaseUrl = "https://api.wing.st"
 
     override val lang = "en"
 
@@ -313,10 +313,10 @@ class Cinejoy : Source() {
     }
 
     private fun getActiveServers(): List<String> = runCatching {
-        val response = client.newCall(GET("$sheguApiUrl/servers", headers)).execute()
-        val dto = response.parseAs<SheguServersResponseDto>()
+        val response = client.newCall(GET("$apiBaseUrl/servers", headers)).execute()
+        val dto = response.parseAs<WingServersResponseDto>()
         dto.servers?.filter { it.status == "ok" && it.name != "Canaias" }?.mapNotNull { it.name }?.ifEmpty { null }
-    }.getOrNull() ?: listOf("Lisbon", "Nebula", "Solara", "Athens", "Joy", "Castle", "Sakura")
+    }.getOrNull() ?: DEFAULT_SERVERS
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val parts = hoster.hosterUrl.split("|")
@@ -425,7 +425,7 @@ class Cinejoy : Source() {
         var capturedUrl: String? = null
         var webView: WebView? = null
 
-        val scraperHtml = CinejoyScraper.HTML
+        val scraperHtml = SCRAPER_HTML
 
         Handler(Looper.getMainLooper()).post {
             try {
@@ -459,7 +459,7 @@ class Cinejoy : Source() {
                         }
                     }
 
-                    loadDataWithBaseURL("https://cinejoy.to", scraperHtml, "text/html", "UTF-8", null)
+                    loadDataWithBaseURL(baseUrl, scraperHtml, "text/html", "UTF-8", null)
                 }
             } catch (_: Exception) {
                 latch.countDown()
@@ -499,7 +499,7 @@ class Cinejoy : Source() {
 
     // ============================== Settings ==============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        val serverList = listOf("Lisbon", "Nebula", "Solara", "Athens", "Joy", "Castle", "Sakura")
+        val serverList = DEFAULT_SERVERS
 
         screen.addListPreference(
             key = PREF_SERVER_KEY,
@@ -537,5 +537,49 @@ class Cinejoy : Source() {
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
+
+        private val DEFAULT_SERVERS = listOf("Lisbon", "Nebula", "Solara", "Athens")
+
+        /**
+         * The upstream scraper bundle has the retired `api.shegu.st` backend baked into its
+         * obfuscated string table. The service moved to `api.wing.st` (same routes: `/servers`,
+         * `/crush.wasm`, `POST /g`), so requests are transparently rewritten at the network
+         * boundary instead of patching the encrypted payload.
+         */
+        private const val HOST_REWRITE_SHIM = """
+            <script>
+            (function () {
+                var OLD_HOST = "api.shegu.st";
+                var NEW_HOST = "api.wing.st";
+                function rewrite(value) {
+                    return typeof value === "string" ? value.split(OLD_HOST).join(NEW_HOST) : value;
+                }
+                var nativeFetch = window.fetch;
+                if (typeof nativeFetch === "function") {
+                    window.fetch = function (input, init) {
+                        try {
+                            if (typeof input === "string") {
+                                input = rewrite(input);
+                            } else if (input && typeof input.url === "string") {
+                                input = rewrite(input.url);
+                            }
+                        } catch (e) {}
+                        return nativeFetch.call(this, input, init);
+                    };
+                }
+                var nativeOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function (method, url) {
+                    try {
+                        arguments[1] = rewrite(url);
+                    } catch (e) {}
+                    return nativeOpen.apply(this, arguments);
+                };
+            })();
+            </script>
+        """.trimIndent()
+
+        private val SCRAPER_HTML: String by lazy {
+            CinejoyScraper.HTML.replaceFirst("<head>", "<head>$HOST_REWRITE_SHIM")
+        }
     }
 }
