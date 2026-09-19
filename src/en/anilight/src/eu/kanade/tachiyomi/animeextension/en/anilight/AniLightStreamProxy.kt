@@ -127,9 +127,11 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
             when {
                 trimmed.isEmpty() -> append('\n')
 
-                trimmed.startsWith(MEDIA_TAG) -> append(MEDIA_URI_REGEX.replace(line) { match ->
-                    "URI=\"${relay(resolve(match.groupValues[1], baseUrl), referer)}\""
-                }).append('\n')
+                trimmed.startsWith(MEDIA_TAG) -> append(
+                    MEDIA_URI_REGEX.replace(line) { match ->
+                        "URI=\"${relay(resolve(match.groupValues[1], baseUrl), referer)}\""
+                    },
+                ).append('\n')
 
                 trimmed.startsWith("#") -> append(line).append('\n')
 
@@ -138,8 +140,7 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
         }
     }
 
-    private fun resolve(uri: String, baseUrl: String): String =
-        baseUrl.toHttpUrlOrNull()?.resolve(uri)?.toString() ?: uri
+    private fun resolve(uri: String, baseUrl: String): String = baseUrl.toHttpUrlOrNull()?.resolve(uri)?.toString() ?: uri
 
     private fun isPlaylist(body: ByteArray): Boolean {
         val head = body.decodeToString(0, minOf(body.size, 512)).trimStart('\uFEFF', ' ', '\n', '\r', '\t')
@@ -197,8 +198,7 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
         out.flush()
     }
 
-    private fun encode(value: String): String =
-        Base64.encodeToString(value.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    private fun encode(value: String): String = Base64.encodeToString(value.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 
     private fun decode(value: String): String? = runCatching {
         String(Base64.decode(value, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING), Charsets.UTF_8)
