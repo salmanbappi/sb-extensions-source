@@ -546,7 +546,7 @@ class Cinejoy : Source() {
          * `/crush.wasm`, `POST /g`), so requests are transparently rewritten at the network
          * boundary instead of patching the encrypted payload.
          */
-        private const val HOST_REWRITE_SHIM = """
+        private val HOST_REWRITE_SHIM = """
             <script>
             (function () {
                 var OLD_HOST = "api.shegu.st";
