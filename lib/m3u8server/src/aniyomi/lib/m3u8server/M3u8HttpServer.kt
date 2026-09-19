@@ -132,7 +132,12 @@ class M3u8HttpServer(
             }
             Log.d(tag, "Segment processing completed successfully, data size: ${segmentData.size} bytes")
             val inputStream = ByteArrayInputStream(segmentData)
-            newChunkedResponse(Status.OK, "video/mp2t", inputStream)
+            // The whole segment is already buffered, so declare its exact
+            // length instead of using chunked transfer-encoding: players can
+            // then size and seek the segment without waiting for EOF. This
+            // matches the fixed-length/chunked fallback pattern already used
+            // by the lunar/reanime/shuttletv proxies.
+            newFixedLengthResponse(Status.OK, "video/mp2t", inputStream, segmentData.size.toLong())
         } catch (e: UpstreamStatusException) {
             Log.w(tag, "Upstream segment HTTP ${e.code} for $url: ${e.message}")
             passThroughStatus(e)

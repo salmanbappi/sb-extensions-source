@@ -2,22 +2,27 @@ package eu.kanade.tachiyomi.animeextension.all.netmirror
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.os.SystemClock
+import android.util.Log
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.AnimeSourceFactory
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.NetworkHelper
 import extensions.utils.Source
+import extensions.utils.UrlUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.FormBody
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -25,8 +30,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.util.UUID
 import java.util.concurrent.TimeUnit
+
+private const val TAG = "NetMirror"
+private const val DEFAULT_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 12; RMX2117 Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/147.0.7727.55 Mobile Safari/537.36 /OS.Gatu v3.0"
+private const val APP_REQUESTED_WITH = "app.netmirror.netmirrornew"
 
 class NetMirror : AnimeSourceFactory {
     override fun createSources(): List<AnimeSource> = listOf(
@@ -51,6 +60,9 @@ class CNCVerseSource(
     override val lang = "all"
     override val supportsLatest = false
 
+    private val mobileHomeUrl: String
+        get() = "$baseUrl/mobile/home?app=1"
+
     private val ottPath: String
         get() = when (ott) {
             "nf" -> ""
@@ -64,64 +76,130 @@ class CNCVerseSource(
         else -> "https://imgcdn.kim/hs/v/$id.jpg"
     }
 
+    /**
+     * Cookie header for site requests: this source's own bypass cookie **plus** whatever the
+     * app's cookie jar holds for the host — notably the `cf_clearance` that
+     * [CloudflareInterceptor] solved. Replacing the header outright would throw the clearance
+     * away and force a fresh WebView challenge on literally every request.
+     */
+    private fun siteCookieHeader(url: HttpUrl, cookieVal: String): String {
+        val parts = mutableListOf<String>()
+        if (cookieVal.isNotEmpty()) parts.add("t_hash_t=$cookieVal")
+        parts.add("ott=$ott")
+        parts.add("hd=on")
+        if (studio.isNotEmpty()) parts.add("studio=$studio")
+        network.client.cookieJar.loadForRequest(url)
+            .filter { cookie -> parts.none { it.startsWith("${cookie.name}=") } }
+            .forEach { cookie -> parts.add("${cookie.name}=${cookie.value}") }
+        return parts.joinToString("; ")
+    }
+
+    private fun mediaCookieHeader(url: HttpUrl): String {
+        val parts = mutableListOf("hd=on")
+        network.client.cookieJar.loadForRequest(url)
+            .filter { cookie -> cookie.name != "hd" }
+            .forEach { cookie -> parts.add("${cookie.name}=${cookie.value}") }
+        return parts.joinToString("; ")
+    }
+
+    /** True when a response is an HTML page (verification/ad wall) instead of expected JSON. */
+    private fun isHtmlResponse(response: Response): Boolean {
+        if (response.header("Content-Type").orEmpty().contains("html", ignoreCase = true)) return true
+        return try {
+            response.peekBody(256).string().trimStart().startsWith("<")
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Determines whether the server returned the verification / ad wall instead of real content.
+     * For HTML pages like /mobile/home, HTML is expected and only rejected if it lacks content trays
+     * or contains the ad wall prompt ("We Need Support").
+     * For .php API endpoints (search.php, post.php, playlist.php, episodes.php), HTML means
+     * the session was rejected since JSON was expected.
+     */
+    private fun isVerificationWall(url: String, response: Response): Boolean {
+        if (response.code == 302 || response.request.url.toString().contains("verify")) {
+            return true
+        }
+        if (url.contains("/mobile/home")) {
+            val peek = try {
+                response.peekBody(32768).string()
+            } catch (e: Exception) {
+                ""
+            }
+            if (peek.contains("<title>Home - Android Mobile</title>", ignoreCase = true) ||
+                peek.contains("tray-container") ||
+                peek.contains("<article")
+            ) {
+                return false
+            }
+            return true
+        }
+        if (url.contains(".php")) {
+            return isHtmlResponse(response)
+        }
+        return false
+    }
+
     override val client: OkHttpClient = network.client.newBuilder()
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(120, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
-            if (url.contains("net52.cc") || url.contains("net11.cc")) {
-                var cookieVal = getBypassCookie()
-                if (cookieVal.isNotEmpty()) {
-                    var cookieHeader = buildString {
-                        append("t_hash_t=$cookieVal")
-                        append("; ott=$ott")
-                        append("; hd=on")
-                        if (studio.isNotEmpty()) {
-                            append("; studio=$studio")
-                        }
-                    }
-                    val refererUrl = if (url.contains("/home")) "$baseUrl/mobile/home?app=1" else "$baseUrl/home"
-                    var newRequest = request.newBuilder()
-                        .header("Cookie", cookieHeader)
-                        .header("Referer", refererUrl)
-                        .build()
-                    var response = chain.proceed(newRequest)
+            if (!url.contains("net52.cc") && !url.contains("net11.cc")) {
+                return@addInterceptor chain.proceed(request)
+            }
 
-                    if (response.code == 302 || response.request.url.toString().contains("verify")) {
-                        response.close()
-                        clearBypassCookie()
-                        cookieVal = getBypassCookie(force = true)
-                        if (cookieVal.isNotEmpty()) {
-                            cookieHeader = buildString {
-                                append("t_hash_t=$cookieVal")
-                                append("; ott=$ott")
-                                append("; hd=on")
-                                if (studio.isNotEmpty()) {
-                                    append("; studio=$studio")
-                                }
-                            }
-                            newRequest = request.newBuilder()
-                                .header("Cookie", cookieHeader)
-                                .header("Referer", refererUrl)
-                                .build()
-                            response = chain.proceed(newRequest)
-                        }
-                    }
-                    return@addInterceptor response
+            val refererUrl = if (url.contains("/mobile/")) mobileHomeUrl else "$baseUrl/home"
+            var cookieVal = getBypassCookie()
+            var response = chain.proceed(
+                request.newBuilder()
+                    .header("Cookie", siteCookieHeader(request.url, cookieVal))
+                    .header("Referer", refererUrl)
+                    .build(),
+            )
+
+            // Retry once if the response hit the verification / ad wall
+            val rejected = isVerificationWall(url, response)
+            if (rejected) {
+                Log.w(TAG, "bypass cookie rejected or missing for $url (HTTP ${response.code}) — refreshing")
+                response.close()
+                clearBypassCookie()
+                cookieVal = getBypassCookie(force = true)
+                if (cookieVal.isNotEmpty()) {
+                    response = chain.proceed(
+                        request.newBuilder()
+                            .header("Cookie", siteCookieHeader(request.url, cookieVal))
+                            .header("Referer", refererUrl)
+                            .build(),
+                    )
                 }
             }
-            chain.proceed(request)
+            response
         }
         .addInterceptor { chain ->
             val request = chain.request()
             val url = request.url.toString()
             if (url.contains(".m3u8") || url.contains(".vtt")) {
-                val newRequest = request.newBuilder()
-                    .header("Cookie", "hd=on")
-                    .build()
-                return@addInterceptor chain.proceed(newRequest)
+                val existingCookie = request.header("Cookie")
+                val cookie = if (!existingCookie.isNullOrEmpty()) {
+                    existingCookie
+                } else {
+                    mediaCookieHeader(request.url)
+                }
+                return@addInterceptor chain.proceed(
+                    request.newBuilder()
+                        .header("Cookie", cookie)
+                        .build(),
+                )
             }
             chain.proceed(request)
         }
+        .addInterceptor(CloudflareInterceptor(network.client, DEFAULT_USER_AGENT))
         .build()
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
@@ -137,7 +215,7 @@ class CNCVerseSource(
         .set("Sec-Fetch-Site", "same-origin")
         .set("Sec-Fetch-User", "?1")
         .set("Upgrade-Insecure-Requests", "1")
-        .set("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0")
+        .set("User-Agent", DEFAULT_USER_AGENT)
         .set("X-Requested-With", "XMLHttpRequest")
 
     // ============================== Popular ===============================
@@ -149,20 +227,29 @@ class CNCVerseSource(
         val animeList = mutableListOf<SAnime>()
         val articles = document.select(".tray-container article, #top10 .top10-post")
         for (element in articles) {
-            val id = element.selectFirst("a")?.attr("data-post") ?: element.attr("data-post") ?: continue
-            val title = element.selectFirst("img")?.attr("alt")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("img")?.attr("title")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("a")?.attr("title")?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst(".card-title")?.text()?.takeIf { it.isNotEmpty() }
-                ?: element.selectFirst("h3")?.text()?.takeIf { it.isNotEmpty() }
+            val id = element.selectFirst("a")?.attr("data-post")
+                ?: element.attr("data-post")
+                ?: continue
+            if (id.isEmpty()) continue
+
+            val title = element.selectFirst("img")?.attr("alt")?.takeIf { it.isNotBlank() }
+                ?: element.selectFirst("img")?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: element.selectFirst("a")?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: element.selectFirst(".card-title")?.text()?.takeIf { it.isNotBlank() }
+                ?: element.selectFirst("h3")?.text()?.takeIf { it.isNotBlank() }
                 ?: ""
-            if (id.isNotEmpty()) {
-                val anime = SAnime.create()
-                anime.title = title
-                anime.url = id
-                anime.thumbnail_url = getPosterUrl(id)
-                animeList.add(anime)
+
+            val img = element.selectFirst("img")
+            val thumbnail = img?.attr("data-src")?.takeIf { it.isNotBlank() }
+                ?: img?.attr("src")?.takeIf { it.isNotBlank() }
+                ?: getPosterUrl(id)
+
+            val anime = SAnime.create().apply {
+                this.title = title
+                this.url = id
+                this.thumbnail_url = thumbnail
             }
+            animeList.add(anime)
         }
         return AnimesPage(animeList.distinctBy { it.url }, false)
     }
@@ -349,107 +436,228 @@ class CNCVerseSource(
 
     // ============================ Video Links =============================
 
-    override fun videoListRequest(episode: SEpisode): Request {
-        val apiBase = getApiUrl()
-        val url = "$apiBase/newtv/player.php?id=${episode.url}"
+    /*
+     * NetMirror publishes per-episode streams through the mobile playlist endpoint
+     * (`/mobile/playlist.php`, `/mobile/pv/playlist.php`, `/mobile/hs/playlist.php`) — the same
+     * endpoint the reference "CNC Verse Mobile" plugin uses.
+     *
+     * NetMirror requires a valid `t_hash_t` session cookie to generate genuine playback tokens.
+     * Without it, `playlist.php` generates `/mobile/hls/<id>.m3u8?in=unknown::db`, which returns
+     * HTTP 404 Apache Not Found on NetMirror's CDN.
+     *
+     * The bypass flow scrapes `data-addhash` from `mobile/home?app=1`, pings `userver.net52.cc`,
+     * and polls `mobile/verify2.php` until the server-side ad verification timer settles with
+     * `{"statusup":"All Done"}` and issues the 12-hour `t_hash_t` cookie.
+     */
 
-        val ottValue = if (ott == "dp") "hs" else ott
-        val headers = Headers.Builder()
-            .add("Ott", ottValue)
-            .add("Usertoken", "")
-            .add("Cache-Control", "no-cache, no-store, must-revalidate")
-            .add("Pragma", "no-cache")
-            .add("Expires", "0")
-            .add("X-Requested-With", "NetmirrorNewTV v1.0")
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
-            .add("Accept", "application/json, text/plain, */*")
-            .build()
+    private fun videoListHeaders(): Headers = headers.newBuilder()
+        .set("Accept", "*/*")
+        .set("Referer", mobileHomeUrl)
+        .set("User-Agent", DEFAULT_USER_AGENT)
+        .set("X-Requested-With", APP_REQUESTED_WITH)
+        .set("Sec-Fetch-Dest", "empty")
+        .set("Sec-Fetch-Mode", "cors")
+        .set("Sec-Fetch-Site", "same-origin")
+        .removeAll("Sec-Fetch-User")
+        .removeAll("Upgrade-Insecure-Requests")
+        .build()
 
-        return GET(url, headers)
+    private fun videoListUrl(episode: SEpisode): String {
+        val path = if (ottPath.isEmpty()) "playlist.php" else "$ottPath/playlist.php"
+        // IMPORTANT: never read episode.name here. The hoster flow (Source.getVideoList(hoster))
+        // constructs SEpisode with only `url` set, and `name` is lateinit — reading it throws
+        // UninitializedPropertyAccessException before any request is made ("No available videos").
+        // playlist.php only needs the id; verified live: id, id+tm, and id+t+tm all return
+        // identical valid playlists.
+        return "$baseUrl/mobile/$path?id=${episode.url}&tm=${System.currentTimeMillis() / 1000}"
+    }
+
+    override fun videoListRequest(episode: SEpisode): Request = GET(videoListUrl(episode), videoListHeaders())
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> = try {
+        val request = videoListRequest(episode)
+        val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
+        videoListParse(response)
+    } catch (e: Throwable) {
+        Log.e(TAG, "getVideoList error for episode ${episode.url}", e)
+        emptyList()
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val json = response.body.string()
-        val jsonObj = JSONObject(json)
-        val status = jsonObj.optString("status")
-        val videoLink = jsonObj.optString("video_link")
-        val referer = jsonObj.optString("referer")
+        val requestUrl = response.request.url.toString()
+        val rawBody = response.body.string()
+        Log.i(
+            TAG,
+            "videoListParse: HTTP ${response.code} ct=${response.header("Content-Type").orEmpty()} " +
+                "len=${rawBody.length} hasCookie=${getBypassCookie().isNotEmpty()}",
+        )
+        var playlist = parsePlaylist(rawBody)
 
-        if ((status != "ok" && status != "otp") || videoLink.isEmpty()) {
+        if (playlist == null) {
+            Log.w(TAG, "Invalid playlist or bypass cookie expired, forcing refresh...")
+            clearBypassCookie()
+            getBypassCookie(force = true)
+            playlist = try {
+                client.newCall(GET(requestUrl, videoListHeaders())).execute().use { retry ->
+                    val retryBody = retry.body.string()
+                    Log.i(TAG, "playlist retry: HTTP ${retry.code} len=${retryBody.length}")
+                    parsePlaylist(retryBody)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Retry playlist.php request failed", e)
+                null
+            }
+        }
+
+        if (playlist == null) {
+            val reason = if (rawBody.contains("in=unknown::db")) "invalid session token" else "non-JSON body"
+            displayToast("NetMirror: no playlist (HTTP ${response.code}, len=${rawBody.length}, $reason)")
             return emptyList()
         }
 
-        val cookieVal = getBypassCookie()
+        Log.i(TAG, "playlist parsed: ${playlist.length()} items")
+        return buildVideos(playlist)
+    }
+
+    private fun parsePlaylist(body: String): JSONArray? = try {
+        if (body.contains("in=unknown::db")) {
+            Log.w(TAG, "parsePlaylist: body contains in=unknown::db (session token rejected)")
+            null
+        } else {
+            JSONArray(body).takeIf { it.length() > 0 }
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "parsePlaylist: not JSON (${e.javaClass.simpleName}: ${e.message}) len=${body.length}")
+        null
+    }
+
+    private fun buildVideos(playlist: JSONArray): List<Video> {
         val cookieHeader = buildString {
+            val cookieVal = getBypassCookie()
             if (cookieVal.isNotEmpty()) {
                 append("t_hash_t=$cookieVal; ")
             }
-            append("ott=$ott; ")
-            append("hd=on")
+            append("ott=$ott; hd=on")
             if (studio.isNotEmpty()) {
                 append("; studio=$studio")
             }
         }
 
-        val videoHeaders = Headers.Builder()
-            .set("Referer", referer.ifEmpty { getApiUrl() })
-            .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0")
-            .set("Cookie", cookieHeader)
-            .build()
+        val sources = mutableListOf<Pair<String, String>>()
+        val subtitleTracks = mutableListOf<Track>()
+
+        for (i in 0 until playlist.length()) {
+            val item = playlist.optJSONObject(i) ?: continue
+
+            item.optJSONArray("sources")?.let { array ->
+                for (j in 0 until array.length()) {
+                    val source = array.optJSONObject(j) ?: continue
+                    val file = source.optString("file").replace("\\", "")
+                    if (file.isEmpty()) continue
+                    val sourceUrl = UrlUtils.fixUrl(file, baseUrl)
+                    if (sources.none { it.second == sourceUrl }) {
+                        sources.add(source.optString("label") to sourceUrl)
+                    }
+                }
+            }
+
+            item.optJSONArray("tracks")?.let { array ->
+                for (j in 0 until array.length()) {
+                    val track = array.optJSONObject(j) ?: continue
+                    if (!track.optString("kind").equals("captions", true)) continue
+                    val file = track.optString("file").replace("\\", "")
+                    val trackUrl = UrlUtils.fixUrl(file, baseUrl)
+                    if (trackUrl.isEmpty() || subtitleTracks.any { it.url == trackUrl }) continue
+                    subtitleTracks.add(Track(trackUrl, track.optString("label").ifEmpty { "Subtitle" }))
+                }
+            }
+        }
+
+        if (sources.isEmpty()) {
+            Log.w(TAG, "buildVideos: playlist contained no sources")
+            displayToast("NetMirror: playlist contained no sources (${playlist.length()} items)")
+            return emptyList()
+        }
+
+        Log.i(TAG, "buildVideos: ${sources.size} sources, ${subtitleTracks.size} subtitle tracks")
+        for ((label, sourceUrl) in sources) {
+            val host = runCatching { java.net.URI(sourceUrl).host }.getOrNull() ?: "?"
+            Log.d(TAG, "source: label='$label' host=$host")
+        }
 
         val playlistUtils = PlaylistUtils(client, headers)
 
-        val masterHeadersGen = { baseHeaders: Headers, ref: String ->
-            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
-            headers.newBuilder().apply {
-                if (cookieVal.isNotEmpty()) {
-                    set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
-                }
-            }.build()
+        val masterHeadersGen: (Headers, String) -> Headers = { baseHeaders, ref ->
+            playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
+                .set("Cookie", cookieHeader)
+                .set("User-Agent", DEFAULT_USER_AGENT)
+                .set("X-Requested-With", APP_REQUESTED_WITH)
+                .set("Referer", mobileHomeUrl)
+                .set("Accept", "*/*")
+                .build()
         }
 
-        val videoHeadersGen = { baseHeaders: Headers, ref: String, videoUrl: String ->
-            val headers = playlistUtils.generateMasterHeaders(baseHeaders, ref)
-            headers.newBuilder().apply {
-                if (cookieVal.isNotEmpty()) {
-                    set("Cookie", "t_hash_t=$cookieVal; ott=$ott; hd=on" + if (studio.isNotEmpty()) "; studio=$studio" else "")
-                }
-            }.build()
+        val videoHeadersGen: (Headers, String, String) -> Headers = { baseHeaders, ref, _ ->
+            playlistUtils.generateMasterHeaders(baseHeaders, ref).newBuilder()
+                .set("Cookie", cookieHeader)
+                .set("User-Agent", DEFAULT_USER_AGENT)
+                .set("X-Requested-With", APP_REQUESTED_WITH)
+                .set("Referer", mobileHomeUrl)
+                .set("Accept", "*/*")
+                .build()
         }
 
-        val videos = try {
-            playlistUtils.extractFromHls(
-                playlistUrl = videoLink,
-                referer = referer.ifEmpty { getApiUrl() },
-                masterHeadersGen = masterHeadersGen,
-                videoHeadersGen = videoHeadersGen,
-                videoNameGen = { "$name - $it" },
-            )
-        } catch (e: Exception) {
-            emptyList()
-        }
+        val videos = mutableListOf<Video>()
+        val seen = mutableSetOf<String>()
 
-        val mappedVideos = videos.map { video ->
-            if (video.subtitleTracks.isEmpty()) {
-                video
-            } else {
-                Video(
-                    videoUrl = video.videoUrl,
-                    videoTitle = video.videoTitle,
-                    headers = video.headers,
-                    subtitleTracks = video.subtitleTracks.map { track ->
-                        if (track.url.endsWith(".m3u8")) {
-                            Track(track.url.substringBeforeLast(".m3u8") + ".vtt", track.lang)
-                        } else {
-                            track
-                        }
-                    },
-                    audioTracks = video.audioTracks,
+        for ((label, sourceUrl) in sources) {
+            val qualityParam = QUALITY_PARAM_REGEX.find(sourceUrl)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }
+            val fallbackName = qualityParam ?: label.ifEmpty { "Video" }
+
+            val extracted = try {
+                playlistUtils.extractFromHls(
+                    playlistUrl = sourceUrl,
+                    referer = mobileHomeUrl,
+                    masterHeadersGen = masterHeadersGen,
+                    videoHeadersGen = videoHeadersGen,
+                    videoNameGen = { quality -> if (quality == "Video") fallbackName else quality },
+                    subtitleList = subtitleTracks,
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to extract from HLS $sourceUrl", e)
+                emptyList()
+            }
+
+            val expanded = extracted.ifEmpty {
+                listOf(
+                    Video(
+                        videoUrl = sourceUrl,
+                        videoTitle = fallbackName,
+                        headers = videoHeadersGen(headers, mobileHomeUrl, sourceUrl),
+                        resolution = qualityParam?.let { RESOLUTION_REGEX.find(it)?.groupValues?.get(1)?.toIntOrNull() },
+                        subtitleTracks = subtitleTracks,
+                    ),
+                )
+            }
+
+            for (video in expanded) {
+                if (!seen.add(IN_PARAM_REGEX.replace(video.videoUrl, ""))) continue
+                videos.add(
+                    Video(
+                        videoUrl = video.videoUrl,
+                        videoTitle = video.videoTitle,
+                        headers = video.headers,
+                        resolution = RESOLUTION_REGEX.find(video.videoTitle)?.groupValues?.get(1)?.toIntOrNull(),
+                        subtitleTracks = video.subtitleTracks,
+                        audioTracks = video.audioTracks,
+                    ),
                 )
             }
         }
 
-        return mappedVideos.sortVideos()
+        val result = videos.sortVideos()
+        Log.i(TAG, "buildVideos: returning ${result.size} videos")
+        return result
     }
 
     override fun videoUrlParse(response: Response): String = throw UnsupportedOperationException()
@@ -484,82 +692,13 @@ class CNCVerseSource(
     override fun getFilterList(): AnimeFilterList = AnimeFilterList()
 
     companion object {
+        private val ADDHASH_REGEX = Regex("""data-addhash="([^"]+)"""")
+        private val QUALITY_PARAM_REGEX = Regex("""[?&]q=([^&]+)""")
+        private val RESOLUTION_REGEX = Regex("""(\d{3,4})p""")
+        private val IN_PARAM_REGEX = Regex("""[?&]in=[^&]*""")
+
         private val sharedPreferences: SharedPreferences by lazy {
             Injekt.get<Application>().getSharedPreferences("cncverse_shared_prefs", 0)
-        }
-
-        private var resolvedApiUrl = ""
-
-        @Synchronized
-        private fun getApiUrl(): String {
-            if (resolvedApiUrl.isNotEmpty()) return resolvedApiUrl
-
-            val newTvBaseHeaders = mapOf(
-                "Cache-Control" to "no-cache, no-store, must-revalidate",
-                "Pragma" to "no-cache",
-                "Expires" to "0",
-                "X-Requested-With" to "NetmirrorNewTV v1.0",
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0",
-                "Accept" to "application/json, text/plain, */*",
-            )
-
-            val newTvDomains = listOf(
-                "aHR0cHM6Ly9tb2JpbGVkZXRlY3RzLmNvbQ==",
-                "aHR0cHM6Ly9tb2JpbGVkZXRlY3QuYXBw",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmFydA==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmNj",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmNsaWNr",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lmluaw==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LmxpdmU=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnBybw==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNob3A=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNpdGU=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnNwYWNl",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnN0b3Jl",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0LnZpcA==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lndpa2k=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0Lnh5eg==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5hcnQ=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5jYw==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5pbmZv",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5pbms=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5saXZl",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5wcm8=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy5zdG9yZQ==",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy50b3A=",
-                "aHR0cHM6Ly9tb2JpZGV0ZWN0cy54eXo=",
-            )
-
-            val directClient = OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .build()
-
-            for (encoded in newTvDomains) {
-                val base = decodeBase64(encoded).trimEnd('/')
-                try {
-                    val request = Request.Builder()
-                        .url("$base/checknewtv.php")
-                        .apply {
-                            newTvBaseHeaders.forEach { (k, v) -> addHeader(k, v) }
-                        }
-                        .build()
-
-                    directClient.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val json = response.body?.string() ?: ""
-                            val tokenHash = JSONObject(json).optString("token_hash")
-                            if (tokenHash.isNotEmpty()) {
-                                resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
-                                return resolvedApiUrl
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Try next domain
-                }
-            }
-            throw Exception("Failed to resolve NewTV API base URL")
         }
 
         private var cookieValue = ""
@@ -571,66 +710,111 @@ class CNCVerseSource(
             val savedCookie = if (force) null else sharedPreferences.getString("nf_cookie", null)
             val savedTimestamp = if (force) 0L else sharedPreferences.getLong("nf_cookie_timestamp", 0L)
 
-            if (!savedCookie.isNullOrEmpty() && now - savedTimestamp < 54_000_000) {
+            if (!savedCookie.isNullOrEmpty() && (savedCookie.contains("::") || savedCookie.contains("%3A%3A")) && now - savedTimestamp < 43_200_000L) {
                 cookieValue = savedCookie
                 cookieTimestamp = savedTimestamp
                 return savedCookie
             }
 
             try {
-                val formBody = FormBody.Builder()
-                    .add("g-recaptcha-response", UUID.randomUUID().toString())
+                Log.d(TAG, "Starting NetMirror bypass flow...")
+
+                val network = Injekt.get<NetworkHelper>()
+                val bypassClient = network.client.newBuilder()
+                    .addInterceptor(CloudflareInterceptor(network.client, DEFAULT_USER_AGENT))
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .followRedirects(true)
+                    .followSslRedirects(true)
                     .build()
 
-                val directClient = OkHttpClient.Builder()
-                    .followRedirects(false)
-                    .followSslRedirects(false)
+                // Step 1: Scrape data-addhash from mobile home
+                val homeRequest = Request.Builder()
+                    .url("https://net52.cc/mobile/home?app=1")
+                    .header("User-Agent", DEFAULT_USER_AGENT)
+                    .header("X-Requested-With", APP_REQUESTED_WITH)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .build()
+
+                val homeHtml = bypassClient.newCall(homeRequest).execute().use { it.body.string() }
+                val addhash = ADDHASH_REGEX.find(homeHtml)?.groupValues?.get(1).orEmpty()
+                if (addhash.isEmpty()) {
+                    Log.w(TAG, "Failed to scrape data-addhash from mobile/home")
+                    return cookieValue
+                }
+                Log.d(TAG, "Scraped addhash: $addhash")
+
+                // Step 2: Handshake ping to userver (fire and ignore, quick timeout)
+                try {
+                    val pingClient = OkHttpClient.Builder()
+                        .connectTimeout(3, TimeUnit.SECONDS)
+                        .readTimeout(3, TimeUnit.SECONDS)
+                        .build()
+                    val pingRequest = Request.Builder()
+                        .url("https://userver.net52.cc/?hee5=$addhash&a=y&t=${System.currentTimeMillis()}")
+                        .header("User-Agent", DEFAULT_USER_AGENT)
+                        .header("X-Requested-With", APP_REQUESTED_WITH)
+                        .build()
+                    pingClient.newCall(pingRequest).execute().close()
+                } catch (e: Exception) {
+                    Log.d(TAG, "userver ping note: ${e.message}")
+                }
+
+                // Step 3: Poll verify2.php until "All Done"
+                val formBody = FormBody.Builder()
+                    .add("verify", addhash)
+                    .build()
+
+                val pollClient = OkHttpClient.Builder()
                     .connectTimeout(15, TimeUnit.SECONDS)
                     .readTimeout(15, TimeUnit.SECONDS)
                     .build()
 
-                val request = Request.Builder()
-                    .url("https://net52.cc/verify.php")
-                    .post(formBody)
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-                    .header("Accept-Encoding", "gzip, deflate, br, zstd")
-                    .header("Accept-Language", "en-US,en;q=0.9")
-                    .header("Cache-Control", "max-age=0")
-                    .header("Connection", "keep-alive")
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Origin", "https://net22.cc")
-                    .header("Referer", "https://net22.cc/verify2")
-                    .header("sec-ch-ua", "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"")
-                    .header("sec-ch-ua-mobile", "?0")
-                    .header("sec-ch-ua-platform", "\"Windows\"")
-                    .header("Sec-Fetch-Dest", "document")
-                    .header("Sec-Fetch-Mode", "navigate")
-                    .header("Sec-Fetch-Site", "same-origin")
-                    .header("Sec-Fetch-User", "?1")
-                    .header("Upgrade-Insecure-Requests", "1")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
-                    .build()
+                for (attempt in 1..10) {
+                    SystemClock.sleep(if (attempt == 1) 4000L else 5000L)
 
-                directClient.newCall(request).execute().use { response ->
-                    val setCookieHeaders = response.headers.values("Set-Cookie")
-                    for (header in setCookieHeaders) {
-                        if (header.startsWith("t_hash_t=")) {
-                            val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
-                            if (cookie.isNotEmpty()) {
-                                cookieValue = cookie
-                                cookieTimestamp = now
-                                sharedPreferences.edit()
-                                    .putString("nf_cookie", cookie)
-                                    .putLong("nf_cookie_timestamp", now)
-                                    .apply()
-                                return cookie
+                    val verifyRequest = Request.Builder()
+                        .url("https://net52.cc/mobile/verify2.php")
+                        .post(formBody)
+                        .header("User-Agent", DEFAULT_USER_AGENT)
+                        .header("X-Requested-With", "XMLHttpRequest")
+                        .header("Referer", "https://net52.cc/mobile/home?app=1")
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .build()
+
+                    val (bodyStr, setCookieHeaders) = try {
+                        pollClient.newCall(verifyRequest).execute().use { resp ->
+                            resp.body.string() to resp.headers.values("Set-Cookie")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "verify2 poll error (attempt $attempt): ${e.message}")
+                        "" to emptyList<String>()
+                    }
+
+                    Log.d(TAG, "verify2 attempt $attempt: $bodyStr")
+
+                    if (bodyStr.contains("\"statusup\":\"All Done\"") || bodyStr.contains("All Done")) {
+                        for (header in setCookieHeaders) {
+                            if (header.contains("t_hash_t=")) {
+                                val cookie = header.substringAfter("t_hash_t=").substringBefore(";")
+                                if (cookie.isNotEmpty()) {
+                                    cookieValue = cookie
+                                    cookieTimestamp = System.currentTimeMillis()
+                                    sharedPreferences.edit()
+                                        .putString("nf_cookie", cookie)
+                                        .putLong("nf_cookie_timestamp", cookieTimestamp)
+                                        .apply()
+                                    Log.i(TAG, "Successfully acquired bypass cookie t_hash_t on attempt $attempt")
+                                    return cookie
+                                }
                             }
                         }
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Error acquiring bypass cookie", e)
             }
+
             return cookieValue
         }
 
@@ -643,7 +827,5 @@ class CNCVerseSource(
                 .remove("nf_cookie_timestamp")
                 .apply()
         }
-
-        private fun decodeBase64(value: String): String = String(android.util.Base64.decode(value, android.util.Base64.DEFAULT))
     }
 }

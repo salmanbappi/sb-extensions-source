@@ -58,8 +58,6 @@ abstract class Source :
 
     override fun seasonListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
     override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
-    override fun relatedAnimeListRequest(anime: SAnime): Request = throw UnsupportedOperationException()
-    override fun relatedAnimeListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
 
     open fun videoListRequest(episode: SEpisode): Request = throw UnsupportedOperationException()
     open fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
@@ -80,6 +78,8 @@ abstract class Source :
         val response = client.newCall(request).await()
         return videoListParse(response)
     }
+
+    override suspend fun resolveVideo(video: Video): Video = video
 
     private suspend fun okhttp3.Call.await(): Response = withContext(Dispatchers.IO) { execute() }
 }

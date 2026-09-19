@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.animesuge
 
 import android.util.Base64
-import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -22,9 +21,6 @@ import eu.kanade.tachiyomi.multisrc.anikototheme.TypeFilter
 import eu.kanade.tachiyomi.multisrc.anikototheme.YearFilter
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
-import extensions.utils.addEditTextPreference
-import extensions.utils.addListPreference
-import extensions.utils.addSwitchPreference
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.Jsoup
 import java.net.URLEncoder
@@ -32,7 +28,7 @@ import java.net.URLEncoder
 class AnimeSuge : AnikotoTheme() {
 
     override val name = "AnimeSuge"
-    override val baseUrl = "https://animesuge.cz"
+    override val defaultBaseUrl = "https://animesuge.cz"
     override val lang = "en"
 
     override val popularAnimeSelector = "div.main-card > div.item, div.items > div.item, div.item"
@@ -269,7 +265,9 @@ class AnimeSuge : AnikotoTheme() {
 
             val meta = EpisodeMeta(slug, num.toString(), malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
-                url = "/watch/${getCleanSlug(slug)}/ep-$num"
+                // Encode the full EpisodeMeta in the URL fragment so getHosterList can
+                // discover servers without a refetch (same contract as the theme).
+                url = meta.encode()
                 name = title
                 episode_number = num.toFloat()
                 date_upload = (timestamp.toLongOrNull() ?: 0L) * 1000L
@@ -333,10 +331,21 @@ class AnimeSuge : AnikotoTheme() {
 
     override suspend fun fetchFreshEpisodeMeta(slug: String, epNum: String): EpisodeMeta? {
         try {
+            // Suge stores plain slugs in EpisodeMeta (getCleanSlug strips /watch/ + /anime/),
+            // so probe the canonical detail paths in order.
             val cleanSlug = getCleanSlug(slug)
-            val detailResponse = client.newCall(GET("$baseUrl/anime/$cleanSlug")).execute()
-            val detailDoc = detailResponse.asJsoup()
-
+            val detailDoc = listOf(
+                "$baseUrl/anime/$cleanSlug",
+                "$baseUrl/anime/$cleanSlug/ep-1",
+                "$baseUrl/watch/$cleanSlug/ep-$epNum",
+            ).firstNotNullOfOrNull { url ->
+                runCatching {
+                    val doc = client.newCall(GET(url)).execute().asJsoup()
+                    val hasId = doc.selectFirst(".favourite[data-id], [data-id]") != null ||
+                        mangaIdRegex.containsMatchIn(doc.html())
+                    if (hasId) doc else null
+                }.getOrNull()
+            } ?: return null
             val animeId = detailDoc.selectFirst(".favourite[data-id], [data-id]")?.attr("data-id")
                 ?: mangaIdRegex.find(detailDoc.html())?.groupValues?.get(1)
                 ?: return null
@@ -379,104 +388,8 @@ class AnimeSuge : AnikotoTheme() {
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        try {
-            // --- Playback Settings ---
-            screen.addListPreference(
-                key = "pref_quality",
-                default = "720",
-                title = "Playback: Preferred quality",
-                summary = "Sorts videos so this quality is on top. Currently: %s",
-                entries = listOf("1080p", "720p", "480p", "360p"),
-                entryValues = listOf("1080", "720", "480", "360"),
-            )
-            screen.addListPreference(
-                key = "pref_audio",
-                default = "SUB",
-                title = "Playback: Preferred audio",
-                summary = "Sub, Dub, or Hardsub first. Currently: %s",
-                entries = listOf("Sub", "Dub", "Hardsub"),
-                entryValues = listOf("SUB", "A-DUB", "H-SUB"),
-            )
-            screen.addListPreference(
-                key = "pref_server",
-                default = "auto",
-                title = "Playback: Preferred video server",
-                summary = "Which video server to try first. Currently: %s",
-                entries = listOf("Auto", "VidPlay-1", "HD-1", "Megaplay-1", "Vidwish-1"),
-                entryValues = listOf("auto", "VidPlay-1", "HD-1", "Megaplay-1", "Vidwish-1"),
-            )
-            screen.addListPreference(
-                key = "pref_buffer",
-                default = "10",
-                title = "Playback: Pre-fetch buffer",
-                summary = "How much to download ahead of playback. Currently: %s",
-                entries = listOf("10%", "20%", "30%", "50%", "100%"),
-                entryValues = listOf("10", "20", "30", "50", "100"),
-            )
-
-            // --- Exclusion / Content Filters ---
-            MultiSelectListPreference(screen.context).apply {
-                key = "pref_exclude_servers"
-                title = "Exclude: Exclude Servers"
-                entries = arrayOf("VidPlay-1", "HD-1", "Megaplay-1", "Vidwish-1")
-                entryValues = arrayOf("VidPlay-1", "HD-1", "Megaplay-1", "Vidwish-1")
-                setDefaultValue(emptySet<String>())
-                summary = "Select servers to exclude from the video list"
-            }.also { screen.addPreference(it) }
-
-            MultiSelectListPreference(screen.context).apply {
-                key = "pref_exclude_audio"
-                title = "Exclude: Exclude Audio"
-                entries = arrayOf("Sub", "Dub", "Hsub")
-                entryValues = arrayOf("SUB", "DUB", "HSUB")
-                setDefaultValue(emptySet<String>())
-                summary = "Select audio formats to exclude from the video list"
-            }.also { screen.addPreference(it) }
-
-            // --- Episode Metadata Settings ---
-            screen.addListPreference(
-                key = "pref_title_lang",
-                default = "en",
-                title = "Metadata: Preferred title language",
-                summary = "Preferred language for episode titles. Currently: %s",
-                entries = listOf("English", "Japanese (Romaji)"),
-                entryValues = listOf("en", "jp"),
-            )
-            screen.addSwitchPreference(
-                key = "pref_load_thumbnails",
-                default = true,
-                title = "Metadata: Load episode thumbnails",
-                summary = "Fetching preview images from external sources",
-            )
-            screen.addSwitchPreference(
-                key = "pref_load_titles",
-                default = true,
-                title = "Metadata: Load episode titles",
-                summary = "Fetching episode titles from external sources",
-            )
-            screen.addSwitchPreference(
-                key = "pref_load_descriptions",
-                default = true,
-                title = "Metadata: Load episode descriptions",
-                summary = "Fetching episode descriptions from external sources",
-            )
-
-            // --- Smart Search Settings ---
-            screen.addSwitchPreference(
-                key = "pref_smart_search",
-                default = false,
-                title = "Smart Search: Enable smart search",
-                summary = "AI resolves descriptive queries and corrects spelling",
-            )
-            screen.addEditTextPreference(
-                key = "pref_smart_search_phrase",
-                default = "?",
-                title = "Smart Search: Activation phrase",
-                summary = "Type this at the start of your search to trigger AI. Leave empty to use AI for all searches.",
-                dialogMessage = "Type this at the start of your search to trigger AI.\nCase-insensitive. Must be followed by a space.\nLeave empty to use AI for all searches.",
-            )
-        } catch (e: Exception) {
-            // ignore
-        }
+        // The shared theme screen covers playback, servers, episode metadata, smart search and
+        // details; the old exclude/title-language rows here were never read by the source.
+        super.setupPreferenceScreen(screen)
     }
 }

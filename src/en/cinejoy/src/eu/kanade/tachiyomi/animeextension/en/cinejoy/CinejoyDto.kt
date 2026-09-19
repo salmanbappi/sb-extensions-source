@@ -88,12 +88,12 @@ data class TmdbEpisodeDto(
 )
 
 @Serializable
-data class SheguServersResponseDto(
-    val servers: List<SheguServerDto>? = null,
+data class WingServersResponseDto(
+    val servers: List<WingServerDto>? = null,
 )
 
 @Serializable
-data class SheguServerDto(
+data class WingServerDto(
     val name: String? = null,
     val status: String? = null,
     val language: String? = null,

@@ -25,6 +25,7 @@ import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
 class Vegamovies : Source() {
@@ -65,7 +66,24 @@ class Vegamovies : Source() {
 
     private fun parseAnimeListPage(response: Response, page: Int): AnimesPage {
         val doc = response.asJsoup()
-        val animeList = doc.select("article.post-item, div.post-item").mapNotNull { element ->
+        val hasNext = doc.select(".wp-pagenavi a[href*=/page/${page + 1}/]").isNotEmpty()
+        return AnimesPage(parseAnimeList(doc), hasNext)
+    }
+
+    private fun parseSearchPage(response: Response, page: Int): AnimesPage {
+        val doc = response.asJsoup()
+        val animeList = parseAnimeList(doc)
+        // DLE search pagination is JS-driven: javascript:list_submit(N).
+        // Next page exists when a link targeting page + 1 is present.
+        val hasNext = doc.select("a[onclick*=list_submit]").any { el ->
+            Regex("""list_submit\((\d+)\)""").find(el.attr("onclick"))
+                ?.groupValues?.get(1)?.toIntOrNull() == page + 1
+        }
+        return AnimesPage(animeList, hasNext)
+    }
+
+    private fun parseAnimeList(doc: Document): List<SAnime> {
+        return doc.select("article.post-item, div.post-item").mapNotNull { element ->
             val linkEl = element.selectFirst("h3.entry-title a, a.blog-img, a") ?: return@mapNotNull null
             val href = linkEl.attr("href")
             if (href.isBlank() || href == "$baseUrl/" || href.contains("#")) return@mapNotNull null
@@ -81,18 +99,22 @@ class Vegamovies : Source() {
                 fetch_type = FetchType.Episodes
             }
         }
-
-        val hasNext = doc.select(".wp-pagenavi a[href*=/page/${page + 1}/]").isNotEmpty()
-        return AnimesPage(animeList, hasNext)
     }
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         if (query.isNotBlank()) {
+            // Site runs DataLife Engine: WP-style /?s= URLs ignore the query
+            // and return the homepage. Use the DLE search endpoint instead.
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val url = "$baseUrl/page/$page/?s=$encodedQuery"
+            val url = if (page > 1) {
+                val resultFrom = (page - 1) * 25 + 1
+                "$baseUrl/?do=search&subaction=search&story=$encodedQuery&search_start=$page&result_from=$resultFrom"
+            } else {
+                "$baseUrl/?do=search&subaction=search&story=$encodedQuery"
+            }
             val response = client.newCall(GET(url, headers)).execute()
-            return parseAnimeListPage(response, page)
+            return parseSearchPage(response, page)
         }
 
         var categoryUrl: String? = null
@@ -646,9 +668,9 @@ class Vegamovies : Source() {
     }
 
     // ============================ Recommendations ========================
-    override fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
+    fun relatedAnimeListRequest(anime: SAnime): Request = GET("$baseUrl${anime.url}", headers)
 
-    override fun relatedAnimeListParse(response: Response): List<SAnime> {
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
         val doc = response.asJsoup()
         return doc.select("article.post-item, div.recent-posts li").mapNotNull { element ->
             val linkEl = element.selectFirst("a") ?: return@mapNotNull null

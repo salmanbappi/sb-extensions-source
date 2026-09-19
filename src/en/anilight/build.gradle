@@ -1,13 +1,15 @@
 ext {
     extName = 'AniLight'
     extClass = '.Anilight'
-    extVersionCode = 12
+    extVersionCode = 21
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
+    implementation(project(":lib:unpacker"))
+    implementation(project(":lib:dood-extractor"))
     implementation(project(":lib:playlist-utils"))
     implementation(project(":lib:m3u8server"))
 }

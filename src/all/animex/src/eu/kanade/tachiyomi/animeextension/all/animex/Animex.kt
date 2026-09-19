@@ -80,9 +80,19 @@ class Animex : Source() {
         }
         val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val encodedHeaders = encodeHeaders(headers)
-        val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
+        val path = if (url.contains(".m3u8") || url.contains(".txt")) "playlist.m3u8" else "segment.ts"
         val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
         return "http://127.0.0.1:${proxy!!.port}/$path?$query"
+    }
+
+    private fun getSubtitleProxyUrl(url: String, headers: Headers?): String {
+        if (proxy == null) {
+            proxy = LocalProxyServer(client, json).apply { start() }
+        }
+        val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val encodedHeaders = encodeHeaders(headers)
+        val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
+        return "http://127.0.0.1:${proxy!!.port}/subtitle.vtt?$query"
     }
 
     private fun encodeHeaders(headers: Headers?): String? {
@@ -230,6 +240,8 @@ class Animex : Source() {
         val server = preferences.getString("pref_preferred_server", "beep") ?: "beep"
         return if (server == "auto") "beep" else server
     }
+
+    private fun getPreferredQuality(): String = preferences.getString("pref_preferred_quality", "1080") ?: "1080"
 
     // ============================== POPULAR / LATEST ==============================
 
@@ -767,12 +779,13 @@ class Animex : Source() {
                                                 if (get("Origin") == null) set("Origin", "https://animex.one")
                                                 if (get("Referer") == null) set("Referer", "https://animex.one/")
                                             }
-                                            if (providerId.equals("sora", ignoreCase = true)) {
-                                                if (get("Referer") == null) set("Referer", "https://animex.one/")
-                                            }
                                         }.build()
 
-                                        if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+                                        // NEKO serves HLS with .txt extensions (master.txt, index-v1-a1.txt),
+                                        // so also trust the API-provided MIME type (video/mpegurl).
+                                        val isHls = streamUrl.contains(".m3u8", ignoreCase = true) ||
+                                            source.type?.contains("mpegurl", ignoreCase = true) == true
+                                        if (isHls) {
                                             try {
                                                 val playlistUtils = PlaylistUtils(client, headers)
                                                 val playlistVideos = playlistUtils.extractFromHls(
@@ -855,6 +868,7 @@ class Animex : Source() {
         }
 
         val preferredServer = getPreferredServer()
+        val preferredQuality = getPreferredQuality()
         videos.sortWith(
             compareBy<Video> { video ->
                 val matchesPreferred = when (preferredType) {
@@ -872,29 +886,42 @@ class Animex : Source() {
                 }
                 if (matchesCategory) 0 else 1
             }.thenBy { video ->
+                if (video.videoTitle.contains(preferredQuality, ignoreCase = true)) 0 else 1
+            }.thenBy { video ->
                 val isPreferredServer = video.videoTitle.contains(preferredServer, ignoreCase = true)
                 if (isPreferredServer) 0 else 1
             },
         )
 
         return videos.map { video ->
-            val isTargetServer = video.videoTitle.contains("mimi", ignoreCase = true) ||
-                video.videoTitle.contains("vee", ignoreCase = true) ||
-                video.videoTitle.contains("yuki", ignoreCase = true) ||
-                video.videoUrl.contains("mimi", ignoreCase = true) ||
-                video.videoUrl.contains("vee", ignoreCase = true) ||
-                video.videoUrl.contains("yuki", ignoreCase = true)
+            // Subtitle hosts (e.g. lostproject.club) fail TLS handshake on some device
+            // networks, so always fetch subtitle tracks through the local proxy.
+            val proxiedSubtitles = video.subtitleTracks.map { track ->
+                if (track.url.startsWith("http://127.0.0.1")) {
+                    track
+                } else {
+                    Track(getSubtitleProxyUrl(track.url, video.headers), track.lang)
+                }
+            }
 
-            if (isTargetServer && video.videoUrl.contains(".m3u8")) {
+            // Route every non-direct-media stream through the local proxy: providers
+            // like Loli/Sora serve extension-less or .txt/JPEG-disguised HLS playlists
+            // with picky CDNs, which mpv cannot handle natively.
+            val isDirectMedia = video.videoUrl.contains(".mp4", ignoreCase = true) ||
+                video.videoUrl.contains(".mkv", ignoreCase = true) ||
+                video.videoUrl.contains(".webm", ignoreCase = true) ||
+                video.videoUrl.contains(".mpd", ignoreCase = true)
+
+            if (isDirectMedia) {
+                video.copy(subtitleTracks = proxiedSubtitles)
+            } else {
                 Video(
                     videoUrl = getProxyUrl(video.videoUrl, video.headers),
                     videoTitle = video.videoTitle,
-                    subtitleTracks = video.subtitleTracks,
+                    subtitleTracks = proxiedSubtitles,
                     audioTracks = video.audioTracks,
                     headers = video.headers,
                 )
-            } else {
-                video
             }
         }
     }
@@ -1016,10 +1043,19 @@ class Animex : Source() {
         }.also { screen.addPreference(it) }
 
         ListPreference(screen.context).apply {
+            key = "pref_preferred_quality"
+            title = "Preferred Quality"
+            entries = arrayOf("1080p", "720p", "480p", "360p")
+            entryValues = arrayOf("1080", "720", "480", "360")
+            setDefaultValue("1080")
+            summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        ListPreference(screen.context).apply {
             key = "pref_preferred_server"
             title = "Preferred Server"
-            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
-            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
+            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu", "Zuna", "Loli", "Sora")
+            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu", "zuna", "loli", "sora")
             setDefaultValue("beep")
             summary = "%s"
         }.also { screen.addPreference(it) }
@@ -1027,8 +1063,8 @@ class Animex : Source() {
         MultiSelectListPreference(screen.context).apply {
             key = "pref_disabled_servers"
             title = "Disable Servers"
-            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu")
-            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu")
+            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu", "Zuna", "Loli", "Sora")
+            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu", "zuna", "loli", "sora")
             setDefaultValue(emptySet<String>())
         }.also { screen.addPreference(it) }
     }
@@ -1345,7 +1381,8 @@ private class LocalProxyServer(
             when {
                 path.contains("playlist.m3u8") -> servePlaylist(targetUrl, headers, encodedHeaders, output)
                 path.contains("key.bin") -> serveKey(targetUrl, headers, output)
-                else -> serveSegment(targetUrl, headers, output)
+                path.contains("subtitle.vtt") -> serveText(targetUrl, headers, output, "text/vtt")
+                else -> serveSegment(targetUrl, headers, encodedHeaders, output)
             }
         } catch (_: Exception) {
             try {
@@ -1381,28 +1418,88 @@ private class LocalProxyServer(
         val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val path = when {
             isKey || url.contains(".key") || url.contains("key.bin") -> "key.bin"
-            url.contains(".m3u8") -> "playlist.m3u8"
+            url.contains(".m3u8") || url.contains(".txt") -> "playlist.m3u8"
             else -> "segment.ts"
         }
         val query = "url=$encoded" + if (!headersStr.isNullOrEmpty()) "&headers=$headersStr" else ""
         return "http://127.0.0.1:$port/$path?$query"
     }
 
+    // HTTP/1.1-preferring client: some provider CDNs reset HTTP/2 connections from
+    // mobile networks, which surfaces as TLS/connection exceptions in OkHttp.
+    private val httpClient: OkHttpClient by lazy {
+        client.newBuilder().protocols(listOf(okhttp3.Protocol.HTTP_1_1)).build()
+    }
+
+    private fun Response.silentClose() {
+        try {
+            close()
+        } catch (_: Exception) {}
+    }
+
     private fun fetchWithRetry(targetUrl: String, headers: Headers): Response {
-        var response = client.newCall(GET(targetUrl, headers)).execute()
-        if (response.code == 403) {
-            response.close()
-            val fallbackHeaders = headers.newBuilder()
-                .set("Referer", "https://animex.one/")
-                .build()
-            response = client.newCall(GET(targetUrl, fallbackHeaders)).execute()
-            if (response.code == 403) {
-                response.close()
-                val noRefererHeaders = headers.newBuilder().removeAll("Referer").build()
-                response = client.newCall(GET(targetUrl, noRefererHeaders)).execute()
+        val fallbackHeaders = headers.newBuilder()
+            .set("Referer", "https://animex.one/")
+            .build()
+        val noRefererHeaders = headers.newBuilder().removeAll("Referer").build()
+        val httpUrl = targetUrl.replaceFirst("https://", "http://")
+
+        // Transport/header ladder: TLS/HTTP2 resets on some CDNs need HTTP/1.1,
+        // and a few hosts only respond over plain HTTP on flaky mobile networks.
+        // Attempt = (url, headers, force HTTP/1.1)
+        val attempts = mutableListOf(
+            Triple(targetUrl, headers, false),
+            Triple(targetUrl, fallbackHeaders, false),
+            Triple(targetUrl, noRefererHeaders, false),
+            Triple(targetUrl, headers, true),
+            Triple(targetUrl, fallbackHeaders, true),
+            Triple(httpUrl, noRefererHeaders, true),
+        )
+
+        // NEKO CDN hosts rotate; their Referer/Origin allowlist does too.
+        val isNekoCdn = targetUrl.contains("premilkyway", ignoreCase = true) ||
+            targetUrl.contains("otakuhg", ignoreCase = true) ||
+            targetUrl.contains("brandidentity", ignoreCase = true) ||
+            targetUrl.contains("vibevibe", ignoreCase = true)
+        if (isNekoCdn) {
+            attempts.add(
+                1,
+                Triple(
+                    targetUrl,
+                    headers.newBuilder().set("Referer", "https://premilkyway.com/").build(),
+                    false,
+                ),
+            )
+            attempts.add(
+                2,
+                Triple(
+                    targetUrl,
+                    headers.newBuilder()
+                        .set("Referer", "https://otakuhg.site/")
+                        .set("Origin", "https://otakuhg.site")
+                        .build(),
+                    false,
+                ),
+            )
+        }
+
+        var lastResponse: Response? = null
+        var lastError: Exception? = null
+        for ((url, requestHeaders, useHttp1) in attempts) {
+            try {
+                val callClient = if (useHttp1) httpClient else client
+                val response = callClient.newCall(GET(url, requestHeaders)).execute()
+                if (response.isSuccessful) {
+                    lastResponse?.silentClose()
+                    return response
+                }
+                lastResponse?.silentClose()
+                lastResponse = response
+            } catch (e: Exception) {
+                lastError = e
             }
         }
-        return response
+        return lastResponse ?: throw lastError ?: java.io.IOException("All proxy fetch attempts failed for $targetUrl")
     }
 
     private fun servePlaylist(targetUrl: String, headers: Headers, encodedHeaders: String?, output: OutputStream) {
@@ -1413,8 +1510,18 @@ private class LocalProxyServer(
             return
         }
 
-        val content = response.body.string()
-        response.close()
+        val rawBytes = response.body.bytes()
+        response.silentClose()
+
+        // Some providers wrap playlists in image (JPEG/PNG) data. Strip everything
+        // before the #EXTM3U marker so mpv/ffmpeg sees clean playlist text.
+        val marker = "#EXTM3U".toByteArray(Charsets.US_ASCII)
+        val markerIndex = findAsciiMarker(rawBytes, marker, rawBytes.size)
+        val content = if (markerIndex > 0) {
+            String(rawBytes, markerIndex, rawBytes.size - markerIndex, Charsets.UTF_8)
+        } else {
+            String(rawBytes, Charsets.UTF_8)
+        }
         val lines = content.split(Regex("""\r?\n"""))
         val builder = StringBuilder(content.length * 2)
 
@@ -1459,6 +1566,25 @@ private class LocalProxyServer(
         output.flush()
     }
 
+    private fun serveText(targetUrl: String, headers: Headers, output: OutputStream, contentType: String) {
+        val response = fetchWithRetry(targetUrl, headers)
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.silentClose()
+            return
+        }
+
+        val bytes = response.body.bytes()
+        response.silentClose()
+
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: ${bytes.size}\r\n".toByteArray())
+        output.write("Content-Type: $contentType\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        output.write(bytes)
+        output.flush()
+    }
+
     private fun serveKey(targetUrl: String, headers: Headers, output: OutputStream) {
         val response = fetchWithRetry(targetUrl, headers)
         if (!response.isSuccessful) {
@@ -1478,7 +1604,7 @@ private class LocalProxyServer(
         output.flush()
     }
 
-    private fun serveSegment(targetUrl: String, headers: Headers, output: OutputStream) {
+    private fun serveSegment(targetUrl: String, headers: Headers, encodedHeaders: String?, output: OutputStream) {
         val response = fetchWithRetry(targetUrl, headers)
         if (!response.isSuccessful) {
             output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
@@ -1495,6 +1621,14 @@ private class LocalProxyServer(
             val read = inputStream.read(headerBuffer, totalRead, headerBuffer.size - totalRead)
             if (read == -1) break
             totalRead += read
+        }
+
+        // Some providers (e.g. Loli/Sora) serve HLS playlists disguised as .jpg/.png
+        // files. If the payload contains playlist text, treat it as a playlist
+        // instead of a media segment.
+        if (looksLikePlaylist(headerBuffer)) {
+            response.close()
+            return servePlaylist(targetUrl, headers, encodedHeaders, output)
         }
 
         val sample = if (totalRead == headerBuffer.size) headerBuffer else headerBuffer.copyOf(totalRead)
@@ -1521,6 +1655,29 @@ private class LocalProxyServer(
         }
         output.flush()
         response.close()
+    }
+
+    private fun looksLikePlaylist(data: ByteArray): Boolean {
+        if (data.isEmpty()) return false
+        val marker = "#EXTM3U".toByteArray(Charsets.US_ASCII)
+        val extX = "#EXT-X".toByteArray(Charsets.US_ASCII)
+        return findAsciiMarker(data, marker, minOf(data.size, 65536)) >= 0 ||
+            findAsciiMarker(data, extX, minOf(data.size, 65536)) >= 0
+    }
+
+    private fun findAsciiMarker(data: ByteArray, marker: ByteArray, limit: Int): Int {
+        val maxStart = minOf(data.size, limit) - marker.size
+        if (maxStart < 0) return -1
+        var i = 0
+        while (i <= maxStart) {
+            if (data[i] == marker[0]) {
+                var j = 1
+                while (j < marker.size && data[i + j] == marker[j]) j++
+                if (j == marker.size) return i
+            }
+            i++
+        }
+        return -1
     }
 
     private fun detectSkipBytes(data: ByteArray): Int {

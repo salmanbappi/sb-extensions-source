@@ -1013,7 +1013,7 @@ class Seanime :
         return "\"$escaped\""
     }
 
-    override fun relatedAnimeListRequest(anime: SAnime): okhttp3.Request {
+    fun relatedAnimeListRequest(anime: SAnime): okhttp3.Request {
         val url = anime.url
         val mediaId = when {
             url.startsWith("library:") -> url.removePrefix("library:").toIntOrNull()
@@ -1081,7 +1081,7 @@ class Seanime :
             .build()
     }
 
-    override fun relatedAnimeListParse(response: Response): List<SAnime> {
+    fun relatedAnimeListParse(response: Response): List<SAnime> {
         if (!response.isSuccessful) {
             response.close()
             return emptyList()

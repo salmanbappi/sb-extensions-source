@@ -47,8 +47,20 @@ data class SkipData(
 
 @Serializable
 data class VidTubeSourcesResponse(
-    @Serializable(with = SourcesSerializer::class) val sources: String = "",
+    val sources: VidTubeSources? = null,
     val tracks: List<VidTubeTrack> = emptyList(),
+    val intro: VidTubeSkipPoint? = null,
+    val outro: VidTubeSkipPoint? = null,
+    val server: Int = 0,
+    // MegaPlay-style encrypted payload (AES-256-CBC, base64url). When `sources` is
+    // absent this carries the only master playlist URL ({"file": "..."} after decrypt).
+    val enc: String = "",
+)
+
+@Serializable
+data class VidTubeSkipPoint(
+    val start: Double = 0.0,
+    val end: Double = 0.0,
 )
 
 @Serializable
@@ -60,27 +72,31 @@ data class VidTubeTrack(
 
 /**
  * The hoster serves `sources` either as a plain string (the master m3u8 URL), as a JSON object
- * (`{"file": "..."}`), or as an array of such values depending on the endpoint and day. Normalize
- * all three shapes to a String.
+ * (`{"file": "..."}`), or as an array of such values depending on the endpoint and day. This
+ * deserializer normalizes all three shapes into [VidTubeSources].
  */
-object SourcesSerializer : KSerializer<String> {
+@Serializable(with = VidTubeSourcesSerializer::class)
+data class VidTubeSources(
+    val file: String = "",
+)
+
+object VidTubeSourcesSerializer : KSerializer<VidTubeSources> {
     override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
 
-    override fun deserialize(decoder: Decoder): String = when (val element = (decoder as JsonDecoder).decodeJsonElement()) {
+    private fun elementToFile(element: JsonElement): String = when (element) {
         is JsonObject -> element["file"]?.jsonPrimitive?.content ?: ""
-
-        is JsonArray -> element.firstOrNull()?.let {
-            when (it) {
-                is JsonObject -> it["file"]?.jsonPrimitive?.content ?: ""
-                is JsonPrimitive -> it.content
-                else -> ""
-            }
-        } ?: ""
-
+        is JsonArray -> element.firstOrNull()?.let { elementToFile(it) } ?: ""
         is JsonPrimitive -> element.content
     }
 
-    override fun serialize(encoder: Encoder, value: String): Unit = throw UnsupportedOperationException("Serialization not supported")
+    override fun deserialize(decoder: Decoder): VidTubeSources {
+        val element = (decoder as JsonDecoder).decodeJsonElement()
+        // `sources` is sometimes an explicit JSON null — treat it as "no direct sources".
+        if (element is JsonPrimitive && element.contentOrNull == null) return VidTubeSources("")
+        return VidTubeSources(elementToFile(element))
+    }
+
+    override fun serialize(encoder: Encoder, value: VidTubeSources): Unit = throw UnsupportedOperationException("Serialization not supported")
 }
 
 data class EpisodeMeta(

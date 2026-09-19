@@ -1,7 +1,7 @@
 ext {
     extName = 'Roar zone tv'
     extClass = '.RoarZoneTV'
-    extVersionCode = 1
+    extVersionCode = 2
     isNsfw = false
 }
 

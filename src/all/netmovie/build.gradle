@@ -2,7 +2,7 @@ ext {
     extName = 'NetMovie'
     extClass = '.NetMovie'
     author = '@salmanbappi'
-    extVersionCode = 3
+    extVersionCode = 4
     isNsfw = false
 }
 
