@@ -251,8 +251,7 @@ class Senshi :
         return list.sortedByDescending { it.episode_number }
     }
 
-    private fun formatEpNum(num: Float): String =
-        if (num % 1f == 0f) num.toInt().toString() else num.toString()
+    private fun formatEpNum(num: Float): String = if (num % 1f == 0f) num.toInt().toString() else num.toString()
 
     private fun parseDate(dateStr: String): Long {
         if (dateStr.isBlank() || dateStr == "null") return 0L
@@ -389,8 +388,7 @@ class Senshi :
         }
     }
 
-    private fun resolveUrl(base: String, uri: String): String =
-        base.toHttpUrlOrNull()?.resolve(uri)?.toString() ?: uri
+    private fun resolveUrl(base: String, uri: String): String = base.toHttpUrlOrNull()?.resolve(uri)?.toString() ?: uri
 
     // ========================= EM3U8 Cryptography =========================
 
@@ -400,7 +398,7 @@ class Senshi :
      * `base64(iv[12] || ciphertext || tag[16])`. Plain playlists pass through.
      */
     private fun decryptMaster(payload: String): String? {
-        val trimmed = payload.trimStart().removePrefix("﻿")
+        val trimmed = payload.trimStart().removePrefix("")
         if (!trimmed.startsWith(EM3U8_PREFIX)) {
             return trimmed.takeIf { it.startsWith("#EXTM3U") || it.startsWith("#EXT-X-") }
         }
@@ -435,7 +433,13 @@ class Senshi :
                     else -> it.videoTitle.contains("[Sub]", ignoreCase = true)
                 }
             }.thenByDescending {
-                if (quality == "auto") 0 else if (it.videoTitle.contains(quality, ignoreCase = true)) 1 else 0
+                if (quality == "auto") {
+                    0
+                } else if (it.videoTitle.contains(quality, ignoreCase = true)) {
+                    1
+                } else {
+                    0
+                }
             }.thenByDescending { it.resolution ?: 0 },
         )
     }
@@ -518,11 +522,10 @@ class Senshi :
         },
     ).jsonObject
 
-    private fun fetchText(url: String, requestHeaders: Headers): String =
-        client.newCall(GET(url, requestHeaders)).execute().use { response ->
-            if (!response.isSuccessful) throw Exception("HTTP ${response.code} for $url")
-            response.body.string()
-        }
+    private fun fetchText(url: String, requestHeaders: Headers): String = client.newCall(GET(url, requestHeaders)).execute().use { response ->
+        if (!response.isSuccessful) throw Exception("HTTP ${response.code} for $url")
+        response.body.string()
+    }
 
     private fun JsonObject.string(key: String) = this[key]?.jsonPrimitive?.contentOrNull.orEmpty()
 
@@ -755,8 +758,7 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
         out.flush()
     }
 
-    private fun encode(value: String): String =
-        Base64.encodeToString(value.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    private fun encode(value: String): String = Base64.encodeToString(value.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 
     private fun decode(value: String): String? = runCatching {
         String(Base64.decode(value, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING), Charsets.UTF_8)
