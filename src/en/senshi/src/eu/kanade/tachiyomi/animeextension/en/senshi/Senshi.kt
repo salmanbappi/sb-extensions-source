@@ -713,6 +713,7 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
             }
         } catch (_: Exception) {
             // Dropped connection or upstream failure: the socket just closes.
+            return
         } finally {
             runCatching { socket.close() }
         }
