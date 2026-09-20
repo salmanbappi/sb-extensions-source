@@ -18,8 +18,6 @@ import extensions.utils.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMap
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -311,18 +309,10 @@ class Senshi :
             if (element is JsonArray) element else JsonArray(emptyList())
         }.getOrNull() ?: return emptyList()
 
-        val preferredVersion = preferences.getString(PREF_VERSION_KEY, PREF_VERSION_DEFAULT) ?: PREF_VERSION_DEFAULT
-        val showDub = preferredVersion != "sub-only"
-
         return sources.mapNotNull { it.jsonObject }.parallelCatchingFlatMap { entry ->
             val src = entry["source"]?.jsonObject ?: return@parallelCatchingFlatMap emptyList()
             val masterUrl = src.string("src")
             if (!masterUrl.startsWith("http")) return@parallelCatchingFlatMap emptyList()
-            val audio = src.string("audio")
-            if (!showDub && (audio.contains("dub", ignoreCase = true) || audioBadge.equals("Dub", ignoreCase = true))) {
-                // The master carries both languages anyway; keep the entry and just
-                // let sorting prefer sub — dropping it here would lose exclusives.
-            }
 
             val subtitles = entry.array("tracks").mapNotNull { item ->
                 val track = item.jsonObject
@@ -464,7 +454,6 @@ class Senshi :
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
             title = "Preferred quality",
-            summary = "%s",
             entries = listOf("Auto (all qualities)", "1080p", "480p"),
             entryValues = listOf("auto", "1080p", "480p"),
             default = PREF_QUALITY_DEFAULT,
@@ -473,7 +462,6 @@ class Senshi :
         screen.addListPreference(
             key = PREF_VERSION_KEY,
             title = "Preferred version",
-            summary = "%s",
             entries = listOf("Sub preferred", "Sub only", "Dub only"),
             entryValues = listOf("sub-pref", "sub-only", "dub-only"),
             default = PREF_VERSION_DEFAULT,
@@ -595,7 +583,7 @@ class Senshi :
  * handed to the player directly:
  *
  * - [serveText] hosts the extension-decrypted mini-master playlists.
- * - Extensionless `/s/*` URLs relay variant playlists, audio renditions and
+ * - The extensionless relay URLs serve variant playlists, audio renditions and
  *   chunks; playlists are re-served as HLS and chunks as `video/mp2t`, with
  *   clean TS passed through untouched. No `.m3u8` suffix ever appears, so the
  *   shared m3u8server (if ever stacked) leaves these URLs alone.
@@ -615,13 +603,13 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
         start()
         val id = java.util.UUID.randomUUID().toString().replace("-", "")
         textStore[id] = content.toByteArray(Charsets.UTF_8) to mime
-        return "$LOOPBACK:$port$t/idata?id=$id"
+        return "$LOOPBACK:$port$PATH_TEXT/idata?id=$id"
     }
 
     /** Returns the loopback URL relaying [targetUrl] (playlist or chunk). */
     fun relay(targetUrl: String, referer: String): String {
         start()
-        return "$LOOPBACK:$port$s/relay?u=${encode(targetUrl)}&r=${encode(referer)}"
+        return "$LOOPBACK:$port$PATH_RELAY/relay?u=${encode(targetUrl)}&r=${encode(referer)}"
     }
 
     private fun start() {
@@ -669,7 +657,7 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
                 }
                 .toMap()
 
-            if (path.startsWith("$t/idata")) {
+            if (path.startsWith("$PATH_TEXT/idata")) {
                 val stored = params["id"]?.let(textStore::get)
                 if (stored == null) {
                     respond(socket, 404, MIME_TEXT, ByteArray(0), isHead)
@@ -776,8 +764,8 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
 
     private companion object {
         const val LOOPBACK = "http://127.0.0.1"
-        const val t = "/senshi-t"
-        const val s = "/senshi"
+        const val PATH_TEXT = "/senshi-t"
+        const val PATH_RELAY = "/senshi"
         const val MIME_TS = "video/mp2t"
         const val MIME_TEXT = "text/plain"
         const val MEDIA_TAG = "#EXT-X-MEDIA:"
@@ -785,37 +773,4 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
         const val BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
         val MEDIA_URI_REGEX = Regex("""URI="([^"]+)"""")
     }
-}
-
-// ================================ DTOs ====================================
-
-@Serializable
-data class SenshiFilterRequestDto(
-    val page: Int? = null,
-    val limit: Int? = null,
-    val search: String? = null,
-    val sort: String? = null,
-    val type: String? = null,
-    val status: String? = null,
-    val season: String? = null,
-    val language: String? = null,
-    val genres: List<String>? = null,
-    val year: Int? = null,
-)
-
-fun buildFilterRequestJson(json: Json, page: Int, query: String, filters: AnimeFilterList): String {
-    val genres = filters.filterIsInstance<Filters.GenreFilter>().firstOrNull()?.getSelectedValues().orEmpty()
-    val dto = SenshiFilterRequestDto(
-        page = page,
-        limit = 24,
-        search = query.ifBlank { null },
-        sort = filters.filterIsInstance<Filters.SortFilter>().firstOrNull()?.toUriPart(),
-        type = filters.filterIsInstance<Filters.TypeFilter>().firstOrNull()?.toUriPart()?.ifBlank { null },
-        status = filters.filterIsInstance<Filters.StatusFilter>().firstOrNull()?.toUriPart()?.ifBlank { null },
-        season = filters.filterIsInstance<Filters.SeasonFilter>().firstOrNull()?.toUriPart()?.ifBlank { null },
-        language = filters.filterIsInstance<Filters.LanguageFilter>().firstOrNull()?.toUriPart()?.ifBlank { null },
-        genres = genres.ifEmpty { null },
-        year = filters.filterIsInstance<Filters.YearFilter>().firstOrNull()?.state?.toIntOrNull(),
-    )
-    return json.encodeToString(dto)
 }
