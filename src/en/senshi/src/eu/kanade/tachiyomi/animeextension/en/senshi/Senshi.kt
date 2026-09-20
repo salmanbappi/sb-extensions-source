@@ -157,7 +157,7 @@ class Senshi :
         val publicId = anime.url.substringAfter("/anime/").substringBefore("#")
         // `/anime/{public_id}` resolves the short id, and the numeric `id` it
         // returns is what `/episodes/` and `/episode-embeds/` require.
-        val detail = getAnime("$baseUrl/anime/$publicId")
+        val detail = getAnime("/anime/$publicId")
         val numericId = detail["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
         if (numericId.isNotBlank()) {
             anime.setUrlWithoutDomain("/anime/$numericId#$publicId")
@@ -208,7 +208,7 @@ class Senshi :
         val publicId = anime.url.substringAfter("#", "")
         if (numericId.isBlank() && publicId.isNotBlank()) {
             numericId = runCatching {
-                getAnime("$baseUrl/anime/$rawId")["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                getAnime("/anime/$rawId")["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
             }.getOrNull().orEmpty()
             if (numericId.isNotBlank()) {
                 anime.setUrlWithoutDomain("/anime/$numericId#$rawId")
@@ -275,7 +275,7 @@ class Senshi :
         // search rows that skipped details still hold the public id — resolve it.
         val rawId = episode.url.substringAfter("/anime/").substringBefore("#")
         val animeId = rawId.toIntOrNull()?.toString() ?: runCatching {
-            getAnime("$baseUrl/anime/$rawId")["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            getAnime("/anime/$rawId")["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
         }.getOrNull().orEmpty()
         if (animeId.isBlank()) return emptyList()
         val embeds = runCatching {
@@ -323,17 +323,27 @@ class Senshi :
             }
 
             val master = try {
-                decryptMaster(fetchText(masterUrl, streamHeaders()))
+                Em3u8.decrypt(fetchText(masterUrl, streamHeaders()))
             } catch (_: Exception) {
                 return@parallelCatchingFlatMap emptyList()
             } ?: return@parallelCatchingFlatMap emptyList()
 
-            val audioLines = master.lines().filter { it.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") }
+            val referer = "$baseUrl/"
+            // Every playlist in the vidcloud chain — master, variant and audio
+            // renditions — is an EM3U8v1 envelope. Children are therefore routed
+            // back through the loopback relay, which decrypts them before handing
+            // a valid playlist (and clean TS chunks) to the player.
+            val audioLines = master.lines()
+                .filter { it.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") }
+                .map { line ->
+                    URI_ATTR.replace(line) { match ->
+                        "URI=\"${streamProxy.relay(resolveUrl(masterUrl, match.groupValues[1]), referer)}\""
+                    }
+                }
             val streamInfos = Regex("""#EXT-X-STREAM-INF:([^\n]+)\n([^\n]+)""").findAll(master).toList()
             if (streamInfos.isEmpty()) return@parallelCatchingFlatMap emptyList()
 
             val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-            val base = masterUrl.substringBeforeLast("/")
             val videos = streamInfos.mapNotNull { match ->
                 val attrs = match.groupValues[1]
                 val uri = match.groupValues[2].trim()
@@ -343,14 +353,13 @@ class Senshi :
                     else -> Regex("""(\d{3,4})p""").find(uri)?.groupValues?.get(1)?.let { "${it}p" } ?: "Auto"
                 }
 
-                // Preserve the whole decrypted master (with its independent audio
-                // renditions) as a quality-scoped mini-master, so ExoPlayer keeps
-                // both Japanese and English audio in sync instead of going silent.
+                // Keep the audio renditions alongside the single chosen variant, so
+                // ExoPlayer still gets the Japanese/English tracks natively.
                 val miniMaster = buildString {
                     append("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
                     audioLines.forEach { append(it).append('\n') }
                     append("#EXT-X-STREAM-INF:").append(attrs).append('\n')
-                    append(resolveUrl(base, uri)).append('\n')
+                    append(streamProxy.relay(resolveUrl(masterUrl, uri), referer)).append('\n')
                 }
                 val proxyUrl = streamProxy.serveText(miniMaster, MIME_HLS)
                 Video(
@@ -370,7 +379,7 @@ class Senshi :
                         append("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
                         audioLines.forEach { append(it).append('\n') }
                         append("#EXT-X-STREAM-INF:BANDWIDTH=0\n")
-                        append(masterUrl).append('\n')
+                        append(streamProxy.relay(masterUrl, referer)).append('\n')
                     }
                     return@parallelCatchingFlatMap listOf(
                         Video(
@@ -389,36 +398,6 @@ class Senshi :
     }
 
     private fun resolveUrl(base: String, uri: String): String = base.toHttpUrlOrNull()?.resolve(uri)?.toString() ?: uri
-
-    // ========================= EM3U8 Cryptography =========================
-
-    /**
-     * Decrypts an `EM3U8v1:` envelope with the AES-256-GCM key shipped inside the
-     * site's own watch-page bundle (`WatchPage-*.js`: `lr[i] ^ ir[i]`). Layout is
-     * `base64(iv[12] || ciphertext || tag[16])`. Plain playlists pass through.
-     */
-    private fun decryptMaster(payload: String): String? {
-        val trimmed = payload.trimStart().removePrefix("")
-        if (!trimmed.startsWith(EM3U8_PREFIX)) {
-            return trimmed.takeIf { it.startsWith("#EXTM3U") || it.startsWith("#EXT-X-") }
-        }
-        return try {
-            val raw = Base64.decode(trimmed.removePrefix(EM3U8_PREFIX).trim(), Base64.DEFAULT)
-            if (raw.size < 12 + 16 + 1) return null
-            val iv = raw.copyOfRange(0, 12)
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                SecretKeySpec(EM3U8_KEY, "AES"),
-                GCMParameterSpec(128, iv),
-            )
-            // JCE expects ciphertext || tag in a single buffer.
-            val plain = cipher.doFinal(raw, 12, raw.size - 12)
-            String(plain, Charsets.UTF_8).takeIf { it.trimStart().startsWith("#EXTM3U") }
-        } catch (_: Exception) {
-            null
-        }
-    }
 
     // ============================== Sorting ===============================
 
@@ -506,7 +485,8 @@ class Senshi :
         else -> "$baseUrl/$url"
     }
 
-    private fun getAnime(animeUrl: String): JsonObject = getJson("$baseUrl$animeUrl").jsonObject
+    /** Fetches an anime payload from a root-relative path, e.g. `/anime/55911`. */
+    private fun getAnime(path: String): JsonObject = getJson("$baseUrl$path").jsonObject
 
     private fun postJson(url: String, body: JsonObject): JsonObject = json.parseToJsonElement(
         client.newCall(POST(url, headers, body.toString().toRequestBody(JSON_MEDIA_TYPE))).execute().use { response ->
@@ -550,23 +530,8 @@ class Senshi :
 
         const val VIDCLOUD_SOURCES = "https://s.vidcloud.se/_v1/sources"
 
-        const val EM3U8_PREFIX = "EM3U8v1:"
-
-        /**
-         * AES-256-GCM key shipped in the site's watch-page bundle
-         * (`WatchPage-*.js`): `key[i] = lr[i] ^ ir[i]`. Static per deployment;
-         * if streams stop decrypting, re-derive it from a fresh bundle.
-         */
-        val EM3U8_KEY = byteArrayOf(
-            0x6e.toByte(), 0xe2.toByte(), 0x72.toByte(), 0x13.toByte(),
-            0x27.toByte(), 0xed.toByte(), 0x46.toByte(), 0x9b.toByte(),
-            0xb6.toByte(), 0xd9.toByte(), 0x3a.toByte(), 0xb9.toByte(),
-            0xb7.toByte(), 0xa8.toByte(), 0x38.toByte(), 0x04.toByte(),
-            0x51.toByte(), 0x90.toByte(), 0xb5.toByte(), 0xba.toByte(),
-            0x85.toByte(), 0xd9.toByte(), 0xce.toByte(), 0xa3.toByte(),
-            0xb1.toByte(), 0xe1.toByte(), 0x78.toByte(), 0x05.toByte(),
-            0xf7.toByte(), 0xb4.toByte(), 0xae.toByte(), 0xf6.toByte(),
-        )
+        /** Pulls the `URI="..."` attribute out of an `#EXT-X-MEDIA` tag. */
+        val URI_ATTR = Regex("""URI="([^"]+)"""")
 
         const val PREF_TRENDING_KEY = "pref_trending_window"
         const val PREF_TRENDING_DEFAULT = "day"
@@ -577,6 +542,55 @@ class Senshi :
         const val PREF_THUMBNAILS_KEY = "pref_thumbnails"
     }
 }
+// ========================= EM3U8 Cryptography =============================
+
+/**
+ * Decrypts the `EM3U8v1:` envelopes the vidcloud CDN wraps around every playlist
+ * (master, variant and audio renditions alike).
+ *
+ * The 32-byte AES-256-GCM key is shipped in the site's own watch-page bundle
+ * (`WatchPage-*.js`) as `key[i] = lr[i] ^ ir[i]`. Envelope layout is
+ * `base64(iv[12] || ciphertext || tag[16])`, and the JCE expects the tag
+ * appended to the ciphertext, which is already the wire format.
+ */
+private object Em3u8 {
+
+    private const val PREFIX = "EM3U8v1:"
+    private const val IV_LENGTH = 12
+    private const val TAG_LENGTH = 16
+
+    private val KEY = byteArrayOf(
+        0x6e.toByte(), 0xe2.toByte(), 0x72.toByte(), 0x13.toByte(),
+        0x27.toByte(), 0xed.toByte(), 0x46.toByte(), 0x9b.toByte(),
+        0xb6.toByte(), 0xd9.toByte(), 0x3a.toByte(), 0xb9.toByte(),
+        0xb7.toByte(), 0xa8.toByte(), 0x38.toByte(), 0x04.toByte(),
+        0x51.toByte(), 0x90.toByte(), 0xb5.toByte(), 0xba.toByte(),
+        0x85.toByte(), 0xd9.toByte(), 0xce.toByte(), 0xa3.toByte(),
+        0xb1.toByte(), 0xe1.toByte(), 0x78.toByte(), 0x05.toByte(),
+        0xf7.toByte(), 0xb4.toByte(), 0xae.toByte(), 0xf6.toByte(),
+    )
+
+    /** Returns the decrypted playlist, or null when [payload] is not an envelope. */
+    fun decrypt(payload: String): String? {
+        val trimmed = payload.trimStart().removePrefix("\uFEFF")
+        if (!trimmed.startsWith(PREFIX)) return null
+        return try {
+            val raw = Base64.decode(trimmed.removePrefix(PREFIX).trim(), Base64.DEFAULT)
+            if (raw.size < IV_LENGTH + TAG_LENGTH + 1) return null
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(KEY, "AES"),
+                GCMParameterSpec(128, raw.copyOfRange(0, IV_LENGTH)),
+            )
+            String(cipher.doFinal(raw, IV_LENGTH, raw.size - IV_LENGTH), Charsets.UTF_8)
+                .takeIf { it.trimStart().startsWith("#EXTM3U") }
+        } catch (_: Exception) {
+            null
+        }
+    }
+}
+
 // ========================= Loopback HLS Proxy =============================
 
 /**
@@ -604,6 +618,9 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
     /** Hosts an already-decrypted playlist and returns its loopback URL. */
     fun serveText(content: String, mime: String): String {
         start()
+        // Mini-masters are tiny and only referenced while the player holds the
+        // Video, so bound the store instead of growing it for the whole session.
+        if (textStore.size >= MAX_HOSTED_PLAYLISTS) textStore.clear()
         val id = java.util.UUID.randomUUID().toString().replace("-", "")
         textStore[id] = content.toByteArray(Charsets.UTF_8) to mime
         return "$LOOPBACK:$port$PATH_TEXT/idata?id=$id"
@@ -694,8 +711,12 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
                 val body = response.body.bytes()
                 val effectiveUrl = response.request.url.toString()
 
-                if (isPlaylist(body)) {
-                    val rewritten = rewritePlaylist(String(body, Charsets.UTF_8), effectiveUrl, referer)
+                // Playlists arrive as EM3U8v1 envelopes and must be decrypted
+                // before the player can use them; anything else is a media chunk.
+                val text = String(body, Charsets.UTF_8)
+                val playlist = Em3u8.decrypt(text) ?: text.takeIf { isPlaylist(it) }
+                if (playlist != null) {
+                    val rewritten = rewritePlaylist(playlist, effectiveUrl, referer)
                     respond(socket, 200, Senshi.MIME_HLS, rewritten.toByteArray(Charsets.UTF_8), isHead)
                 } else {
                     respond(socket, 200, MIME_TS, body, isHead)
@@ -716,13 +737,13 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
                 trimmed.isEmpty() -> append('\n')
 
                 trimmed.startsWith(MEDIA_TAG) -> append(
-                    MEDIA_URI_REGEX.replace(line) { match ->
+                    Senshi.URI_ATTR.replace(line) { match ->
                         "URI=\"${relay(resolve(match.groupValues[1], baseUrl), referer)}\""
                     },
                 ).append('\n')
 
                 trimmed.startsWith(KEY_TAG) -> append(
-                    MEDIA_URI_REGEX.replace(line) { match ->
+                    Senshi.URI_ATTR.replace(line) { match ->
                         "URI=\"${relay(resolve(match.groupValues[1], baseUrl), referer)}\""
                     },
                 ).append('\n')
@@ -736,14 +757,10 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
 
     private fun resolve(uri: String, baseUrl: String): String = baseUrl.toHttpUrlOrNull()?.resolve(uri)?.toString() ?: uri
 
-    private fun isPlaylist(body: ByteArray): Boolean {
-        val head = body.decodeToString(0, minOf(body.size, 512)).trimStart('﻿', ' ', '\n', '\r', '\t')
-        if (head.startsWith("#EXTM3U") || head.startsWith("#EXT-X-")) return true
-        // The vidcloud CDN encrypts every playlist (`EM3U8v1:` envelope), which
-        // is opaque base64 until decrypted — detect by shape, not by prefix.
-        val compact = head.filterNot { it.isWhitespace() }
-        return compact.startsWith(Senshi.EM3U8_PREFIX) ||
-            (body.size > 64 && compact.length >= 64 && compact.all { it in BASE64_CHARS })
+    /** True for an already-plain-text HLS playlist (envelopes are decrypted first). */
+    private fun isPlaylist(text: String): Boolean {
+        val head = text.trimStart('\uFEFF', ' ', '\n', '\r', '\t')
+        return head.startsWith("#EXTM3U") || head.startsWith("#EXT-X-")
     }
 
     private fun respond(socket: Socket, status: Int, mime: String, body: ByteArray, headOnly: Boolean = false) {
@@ -766,13 +783,12 @@ private class SenshiStreamProxy(private val client: okhttp3.OkHttpClient) {
 
     private companion object {
         const val LOOPBACK = "http://127.0.0.1"
+        const val MAX_HOSTED_PLAYLISTS = 64
         const val PATH_TEXT = "/senshi-t"
         const val PATH_RELAY = "/senshi"
         const val MIME_TS = "video/mp2t"
         const val MIME_TEXT = "text/plain"
         const val MEDIA_TAG = "#EXT-X-MEDIA:"
         const val KEY_TAG = "#EXT-X-KEY:"
-        const val BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
-        val MEDIA_URI_REGEX = Regex("""URI="([^"]+)"""")
     }
 }
