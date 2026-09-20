@@ -20,6 +20,7 @@ import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
@@ -216,7 +217,7 @@ class Senshi :
         }
         if (numericId.isBlank()) return emptyList()
         val episodes = runCatching {
-            getJson("$baseUrl/episodes/$numericId").jsonArray
+            getJsonArray("$baseUrl/episodes/$numericId")
         }.getOrNull() ?: return emptyList()
 
         val showThumbnails = preferences.getBoolean(PREF_THUMBNAILS_KEY, true)
@@ -279,7 +280,7 @@ class Senshi :
         }.getOrNull().orEmpty()
         if (animeId.isBlank()) return emptyList()
         val embeds = runCatching {
-            getJson("$baseUrl/episode-embeds/$animeId/$episodeId").jsonArray
+            getJsonArray("$baseUrl/episode-embeds/$animeId/$episodeId")
         }.getOrNull() ?: return emptyList()
 
         return embeds.mapNotNull { item ->
@@ -486,7 +487,7 @@ class Senshi :
     }
 
     /** Fetches an anime payload from a root-relative path, e.g. `/anime/55911`. */
-    private fun getAnime(path: String): JsonObject = getJson("$baseUrl$path").jsonObject
+    private fun getAnime(path: String): JsonObject = getJson("$baseUrl$path")
 
     private fun postJson(url: String, body: JsonObject): JsonObject = json.parseToJsonElement(
         client.newCall(POST(url, headers, body.toString().toRequestBody(JSON_MEDIA_TYPE))).execute().use { response ->
@@ -495,12 +496,22 @@ class Senshi :
         },
     ).jsonObject
 
-    private fun getJson(url: String): JsonObject = json.parseToJsonElement(
+    private fun getElement(url: String): JsonElement = json.parseToJsonElement(
         client.newCall(GET(url, headers)).execute().use { response ->
             if (!response.isSuccessful) throw Exception("HTTP ${response.code} for $url")
             response.body.string()
         },
-    ).jsonObject
+    )
+
+    /** For endpoints whose top-level payload is a JSON object (`/anime/{id}`, `/anime/filter`). */
+    private fun getJson(url: String): JsonObject = getElement(url).jsonObject
+
+    /**
+     * For endpoints whose top-level payload is a bare JSON array — `/episodes/{id}`
+     * and `/episode-embeds/{id}/{ep}` both return arrays, so they must not go
+     * through [getJson], whose object cast throws and silently yields nothing.
+     */
+    private fun getJsonArray(url: String): JsonArray = getElement(url).jsonArray
 
     private fun fetchText(url: String, requestHeaders: Headers): String = client.newCall(GET(url, requestHeaders)).execute().use { response ->
         if (!response.isSuccessful) throw Exception("HTTP ${response.code} for $url")

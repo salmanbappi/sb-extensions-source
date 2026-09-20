@@ -1,7 +1,7 @@
 ext {
     extName = 'Senshi'
     extClass = '.Senshi'
-    extVersionCode = 7
+    extVersionCode = 8
     isNsfw = false
 }
 
