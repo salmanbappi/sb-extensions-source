@@ -483,12 +483,17 @@ class Senshi :
         }
     }
 
-    private fun fixImageUrl(url: String): String = when {
-        url.startsWith("http://") || url.startsWith("https://") -> url
-        url.startsWith("//") -> "https:$url"
-        url.startsWith("/") -> "$baseUrl$url"
-        url.isBlank() -> url
-        else -> "$baseUrl/$url"
+    private fun fixImageUrl(url: String): String {
+        val resolved = when {
+            url.startsWith("http://") || url.startsWith("https://") -> url
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("/") -> "$baseUrl$url"
+            url.isBlank() -> url
+            else -> "$baseUrl/$url"
+        }
+        return resolved
+            .replace("https://img.anicdn.se", "https://cdn1.anidap.biz")
+            .replace("http://img.anicdn.se", "https://cdn1.anidap.biz")
     }
 
     /** Fetches an anime payload from a root-relative path, e.g. `/anime/55911`. */
