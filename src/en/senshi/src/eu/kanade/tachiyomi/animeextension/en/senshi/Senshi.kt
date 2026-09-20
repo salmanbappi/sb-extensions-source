@@ -161,7 +161,9 @@ class Senshi :
         val detail = getAnime("/anime/$publicId")
         val numericId = detail["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
         if (numericId.isNotBlank()) {
-            anime.setUrlWithoutDomain("/anime/$numericId#$publicId")
+            // Fragments are dropped when Aniyomi stores an anime URL, so keep the
+            // canonical numeric form in the path rather than behind a `#`.
+            anime.setUrlWithoutDomain("/anime/$numericId")
         }
         return anime.apply {
             title = detail.string("title").ifBlank { title }
@@ -201,21 +203,28 @@ class Senshi :
 
     // ============================== Episodes ==============================
 
+    /**
+     * Resolves the numeric anime id that `/episodes/` and `/episode-embeds/`
+     * require. Search rows carry only the short `public_id` (`/anime/04zi6`),
+     * and Aniyomi drops URL fragments when it stores an anime, so a `#…` suffix
+     * can never be relied on to tell the two forms apart — the path segment is
+     * either already numeric or it is a public id to resolve.
+     */
+    private fun resolveAnimeId(url: String): String? {
+        // Accepts "/anime/{id}", "anime/{id}" and absolute forms, with or without
+        // a trailing "#…" / "?…" suffix.
+        val segment = url.substringBefore('#').substringBefore('?').trimEnd('/').substringAfterLast('/')
+        segment.toIntOrNull()?.let { return it.toString() }
+        if (segment.isBlank()) return null
+        return runCatching {
+            getAnime("/anime/$segment")["id"]?.jsonPrimitive?.contentOrNull
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        // anime.url is "/anime/{numericId}#{publicId}" after details (or the
-        // plain "/anime/{publicId}" from a search row).
-        val rawId = anime.url.substringAfter("/anime/").substringBefore("#")
-        var numericId = rawId.toIntOrNull()?.toString().orEmpty()
-        val publicId = anime.url.substringAfter("#", "")
-        if (numericId.isBlank() && publicId.isNotBlank()) {
-            numericId = runCatching {
-                getAnime("/anime/$rawId")["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            }.getOrNull().orEmpty()
-            if (numericId.isNotBlank()) {
-                anime.setUrlWithoutDomain("/anime/$numericId#$rawId")
-            }
-        }
-        if (numericId.isBlank()) return emptyList()
+        val numericId = resolveAnimeId(anime.url) ?: return emptyList()
+        // Persist the resolved numeric id so hoster lookups stay cheap.
+        anime.setUrlWithoutDomain("/anime/$numericId")
         val episodes = runCatching {
             getJsonArray("$baseUrl/episodes/$numericId")
         }.getOrNull() ?: return emptyList()
@@ -272,13 +281,9 @@ class Senshi :
         // Zero-base episode math: season 1 is the raw number; later seasons are
         // offset by (season - 1) * 100 so SEpisode keys stay unique per series.
         val episodeId = if (season <= 1) ep.toInt() else (season - 1) * 100 + ep.toInt()
-        // The episode URL carries the numeric anime id (`/anime/{numericId}#…`);
-        // search rows that skipped details still hold the public id — resolve it.
-        val rawId = episode.url.substringAfter("/anime/").substringBefore("#")
-        val animeId = rawId.toIntOrNull()?.toString() ?: runCatching {
-            getAnime("/anime/$rawId")["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        }.getOrNull().orEmpty()
-        if (animeId.isBlank()) return emptyList()
+        // The episode URL carries the numeric anime id; episodes resolving from a
+        // public-id URL are handled by the same shared resolver.
+        val animeId = resolveAnimeId(episode.url) ?: return emptyList()
         val embeds = runCatching {
             getJsonArray("$baseUrl/episode-embeds/$animeId/$episodeId")
         }.getOrNull() ?: return emptyList()
