@@ -586,7 +586,6 @@ class Senshi :
         const val PREF_THUMBNAILS_KEY = "pref_thumbnails"
     }
 }
-
 // ========================= Loopback HLS Proxy =============================
 
 /**
