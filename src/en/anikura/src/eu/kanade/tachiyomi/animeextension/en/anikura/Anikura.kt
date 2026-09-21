@@ -510,9 +510,8 @@ class Anikura : Source() {
         return ""
     }
 
-    private fun isGenericCatalogDesc(text: String): Boolean =
-        (text.contains("on Anikura", ignoreCase = true) && text.contains("anime discovery catalog", ignoreCase = true)) ||
-            text.contains("Discover Everything Only on Anikura", ignoreCase = true)
+    private fun isGenericCatalogDesc(text: String): Boolean = (text.contains("on Anikura", ignoreCase = true) && text.contains("anime discovery catalog", ignoreCase = true)) ||
+        text.contains("Discover Everything Only on Anikura", ignoreCase = true)
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addListPreference(
