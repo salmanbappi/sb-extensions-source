@@ -106,7 +106,13 @@ class Miruro : Source() {
             .build()
 
     private val extractor by lazy {
-        MiruroExtractor(client, PIPE_KEY, PROXY_KEY, headers, preferences, baseUrl) { providerDisplayName(it) }
+        MiruroExtractor(
+            client = client,
+            headers = headers,
+            preferences = preferences,
+            mirrorBaseUrl = baseUrl,
+            envProvider = { miruroEnv },
+        ) { providerDisplayName(it) }
     }
 
     // ── Cookie-farming: cold-start + per-episode watch-page warm-up ──────
@@ -126,6 +132,10 @@ class Miruro : Source() {
     private fun ensureBaseVisit() {
         if (baseVisitedOnce) return
         baseVisitedOnce = true
+        // Resolve the live frontend config alongside the cookie warm-up: the
+        // stream proxy hosts and default stream referer are published only in
+        // `env2.js` and are rotated by the site.
+        launchEnvFetch()
         val homeUrl = baseUrl
         runCatching {
             val req = Request.Builder()
@@ -609,6 +619,72 @@ class Miruro : Source() {
         return mirrorCache
     }
 
+    // ============================== Frontend env ==============================
+    //
+    // `env2.js` publishes the stream proxy hosts, the obfuscation keys and the
+    // default stream referer. Those rotate (the vault01/02.ultracloud.cc proxy
+    // pair was replaced by s1.watami.win / s1.piltover.li), and a stale host
+    // makes every stream URL unplayable while browsing keeps working — so the
+    // values are refreshed in the background and fall back to the last
+    // known-good set when the file cannot be read.
+
+    @Volatile
+    private var miruroEnv: MiruroEnv = MiruroEnv.DEFAULTS
+
+    @Volatile
+    private var envFetchStarted: Boolean = false
+
+    private fun launchEnvFetch() {
+        if (envFetchStarted) return
+        envFetchStarted = true
+
+        loadEnvFromPrefs()?.let { cached ->
+            miruroEnv = cached
+            logD { "launchEnvFetch: loaded cached env (proxyA=${cached.proxyA}, referer=${cached.refererOrigin})" }
+        }
+
+        scope.launch {
+            runCatching { MiruroEnv.fetch(client, headers, baseUrl) }
+                .onSuccess { fresh ->
+                    miruroEnv = fresh
+                    saveEnvToPrefs(fresh)
+                    logD { "launchEnvFetch: refreshed env (proxyA=${fresh.proxyA}, referer=${fresh.refererOrigin})" }
+                }
+                .onFailure { e ->
+                    Log.w(TAG, "launchEnvFetch: env2.js unavailable (${e.message}); keeping ${miruroEnv.proxyA}")
+                }
+        }
+    }
+
+    private fun loadEnvFromPrefs(): MiruroEnv? {
+        val raw = preferences.getString(PREF_CACHED_ENV_KEY, null) ?: return null
+        return runCatching {
+            val json = JSONObject(raw)
+            MiruroEnv(
+                proxyA = json.getString("proxyA"),
+                proxyB = json.getString("proxyB"),
+                refererOrigin = json.getString("refererOrigin"),
+                pipeKey = json.getString("pipeKey").decodeHex(),
+                proxyKey = json.getString("proxyKey").decodeHex(),
+            )
+        }.getOrNull()
+    }
+
+    private fun saveEnvToPrefs(env: MiruroEnv) {
+        runCatching {
+            val json = JSONObject().apply {
+                put("proxyA", env.proxyA)
+                put("proxyB", env.proxyB)
+                put("refererOrigin", env.refererOrigin)
+                put("pipeKey", env.pipeKey.toHex())
+                put("proxyKey", env.proxyKey.toHex())
+            }
+            preferences.edit().putString(PREF_CACHED_ENV_KEY, json.toString()).apply()
+        }.onFailure { logD { "saveEnvToPrefs failed: ${it.message}" } }
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
+
     private fun getProviderOrder(): List<String> {
         val config = getConfigSync()
         val result = config.providerOrder.filter { key ->
@@ -728,9 +804,7 @@ class Miruro : Source() {
         private const val MAX_FETCH_ATTEMPTS = 3
         private const val ANIME_META_CACHE_CAP = 16
         private const val PREF_CACHED_CONFIG_KEY = "cached_config_json"
-
-        private val PIPE_KEY = "71951034f8fbcf53d89db52ceb3dc22c".decodeHex()
-        private val PROXY_KEY = "a54d389c18527d9fd3e7f0643e27edbe".decodeHex()
+        private const val PREF_CACHED_ENV_KEY = "cached_env_json"
 
         internal const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 

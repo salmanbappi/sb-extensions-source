@@ -19,11 +19,16 @@ import java.util.zip.GZIPInputStream
 
 class MiruroExtractor(
     private val client: OkHttpClient,
-    private val pipeKey: ByteArray,
-    private val proxyKey: ByteArray,
     private val headers: Headers,
     private val preferences: android.content.SharedPreferences,
     private val mirrorBaseUrl: String,
+    /**
+     * Resolves the live frontend configuration (proxy hosts, default stream
+     * referer, obfuscation keys) at call time rather than construction time, so
+     * a refresh from `env2.js` applies to streams built after it lands — see
+     * [MiruroEnv].
+     */
+    private val envProvider: () -> MiruroEnv,
     private val resolveDisplayName: (String) -> String,
 ) {
 
@@ -50,31 +55,18 @@ class MiruroExtractor(
         private const val MEGACLOUD_API_PLACEHOLDER = "https://megacloud.example/decrypt/"
 
         /**
-         * Referer that StreamDto defaults to in [MiruroDto.StreamDto]. The
-         * pipe API populates this as `https://kwik.cx/` for kwik-served HLS
-         * streams (AnimePahe) but leaves the kwik default for many other
-         * providers, including Miruro's own `vault-*.owocdn.top` CDN. Using
-         * the kwik referer to fetch owocdn m3u8 is wrong — that host expects
-         * a Miruro referer (the active mirror baseUrl) and 403s otherwise,
-         * which previously triggered [CloudflareInterceptor] and the crash
-         * chain documented in [MiruroExtractor]'s m3u8 path.
+         * Referer used when a stream does not carry its own. The pipe API used
+         * to default this to `https://kwik.cx/`; the frontend now derives it
+         * from `VITE_REFERER_ORIGIN` (`https://strm.cx` today), which
+         * [MiruroEnv] reads. [FALLBACK_REFERER_ORIGIN] matches
+         * [MiruroEnv.DEFAULTS] so the value is never empty.
          */
-        internal const val KWIK_DEFAULT_REFERER = "https://kwik.cx/"
-
-        /**
-         * Miruro frontend proxy servers (from `VITE_PROXY_A` / `VITE_PROXY_B`
-         * in `env2.js`). The frontend wraps every provider stream URL through
-         * one of these proxies: the proxy fetches the upstream m3u8/segment
-         * and relays it back, bypassing CORS and header-gating that would
-         * 403 a direct fetch from outside the browser.
-         */
-        private const val PROXY_A = "https://vault01.ultracloud.cc/"
-        private const val PROXY_B = "https://vault02.ultracloud.cc/"
+        internal const val FALLBACK_REFERER_ORIGIN = "https://strm.cx"
 
         /**
          * FNV-1a 32-bit hash constants (IETF RFC 7020).
-         * Used by the frontend to deterministically select between
-         * [PROXY_A] and [PROXY_B] based on episode/anilist IDs.
+         * Used by the frontend to deterministically select between the two
+         * proxy hosts based on episode/anilist IDs.
          */
         private const val FNV_OFFSET_BASIS: Int = 2166136261.toInt()
         private const val FNV_PRIME: Int = 16777619
@@ -102,10 +94,10 @@ class MiruroExtractor(
 
         /**
          * FNV-1a 32-bit hash of a string, returning the hash mod 2 to
-         * deterministically select between [PROXY_A] (even) and [PROXY_B]
-         * (odd). Mirrors the frontend's `Xb()` function.
+         * deterministically select between proxy A (even) and proxy B (odd).
+         * Mirrors the frontend's `mr(e, t)` / `fr()` pair.
          *
-         * If [seed] is blank, defaults to 0 (→ PROXY_A).
+         * If [seed] is blank, defaults to 0 (→ proxy A).
          */
         private fun fnv1aMod2(seed: String): Int {
             if (seed.isEmpty()) return 0
@@ -116,30 +108,30 @@ class MiruroExtractor(
             }
             return hash and 1
         }
+    }
 
-        /**
-         * Build a Miruro proxy URL wrapping [streamUrl] and [referer]
-         * through `vault01/02.ultracloud.cc`. The proxy fetches the upstream
-         * content and relays it, bypassing CORS/403s from direct fetches.
-         *
-         * URL format (from frontend `cx()` / `lx()`):
-         * `{proxyBase}{xorEncode(streamUrl)}~{xorEncode(referer)}/pl.m3u8`
-         *
-         * If [proxyKey] is empty, returns the original [streamUrl] unchanged
-         * (no proxy wrapping possible).
-         */
-        fun buildProxiedUrl(
-            streamUrl: String,
-            referer: String,
-            proxyKey: ByteArray,
-            proxySeed: String,
-        ): String {
-            if (proxyKey.isEmpty()) return streamUrl
-            val proxyBase = if (fnv1aMod2(proxySeed) == 0) PROXY_A else PROXY_B
-            val obfUrl = xorEncode(streamUrl, proxyKey)
-            val obfReferer = xorEncode(referer, proxyKey)
-            return "${proxyBase}$obfUrl~$obfReferer/pl.m3u8"
-        }
+    /**
+     * Build a Miruro proxy URL wrapping [streamUrl] and [referer] through one
+     * of the hosts published in `env2.js`. The proxy fetches the upstream
+     * content and relays it, bypassing CORS/403s from direct fetches.
+     *
+     * URL format (frontend `Er()` → `Dr()`):
+     * `{proxyBase}{xorEncode(streamUrl)}~{xorEncode(referer)}/pl.m3u8`
+     *
+     * If the obfuscation key is empty, returns the original [streamUrl]
+     * unchanged (no proxy wrapping possible).
+     */
+    private fun buildProxiedUrl(
+        streamUrl: String,
+        referer: String,
+        proxySeed: String,
+    ): String {
+        val env = envProvider()
+        if (env.proxyKey.isEmpty()) return streamUrl
+        val proxyBase = if (fnv1aMod2(proxySeed) == 0) env.proxyA else env.proxyB
+        val obfUrl = xorEncode(streamUrl, env.proxyKey)
+        val obfReferer = xorEncode(referer, env.proxyKey)
+        return "${proxyBase}$obfUrl~$obfReferer/pl.m3u8"
     }
 
     /**
@@ -218,10 +210,15 @@ class MiruroExtractor(
         }
 
         return try {
+            val key = envProvider().pipeKey
+            if (key.isEmpty()) {
+                Log.e(TAG, "decryptResponse: no pipe key available")
+                return ""
+            }
             val decoded = Base64.decode(bodyStr, Base64.URL_SAFE)
             val data = decoded
             for (i in data.indices) {
-                data[i] = (data[i].toInt() xor pipeKey[i % pipeKey.size].toInt()).toByte()
+                data[i] = (data[i].toInt() xor key[i % key.size].toInt()).toByte()
             }
 
             val result = GZIPInputStream(java.io.ByteArrayInputStream(data)).use { gzipStream ->
@@ -306,11 +303,11 @@ class MiruroExtractor(
 
             when (stream.type.lowercase()) {
                 "hls" -> {
-                    val proxyReferer = stream.referer.trim().ifEmpty { KWIK_DEFAULT_REFERER }
+                    val proxyReferer = stream.referer.trim()
+                        .ifEmpty { envProvider().refererOrigin.ifBlank { FALLBACK_REFERER_ORIGIN } }
                     val proxiedUrl = buildProxiedUrl(
                         streamUrl = stream.url,
                         referer = proxyReferer,
-                        proxyKey = proxyKey,
                         proxySeed = proxySeed,
                     )
                     if (proxiedUrl != stream.url) {

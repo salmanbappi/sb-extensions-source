@@ -107,7 +107,13 @@ data class StreamDto(
     val codec: String = "",
     val audio: String = "",
     val fansub: String = "",
-    val referer: String = "https://kwik.cx/",
+    /**
+     * Referer to forward to the origin CDN through Miruro's stream proxy.
+     * Left blank when the pipe API omits it so the caller can substitute the
+     * live `VITE_REFERER_ORIGIN` from `env2.js` (see [MiruroEnv]); the old
+     * `https://kwik.cx/` default belongs to the retired kwik-based player.
+     */
+    val referer: String = "",
     val isActive: Boolean = true,
 )
 
