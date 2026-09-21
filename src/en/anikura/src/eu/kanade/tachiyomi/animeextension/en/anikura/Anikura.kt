@@ -401,7 +401,7 @@ class Anikura : Source() {
         }
     }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
 
         return sortedWith(
