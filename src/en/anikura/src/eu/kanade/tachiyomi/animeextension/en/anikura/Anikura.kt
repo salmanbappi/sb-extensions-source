@@ -259,6 +259,61 @@ class Anikura : Source() {
             }
         }
 
+        // Extract episode thumbnails / stills
+        val epThumbnails = mutableMapOf<Int, String>()
+        val stillMatches = Regex("""/api/episode-(?:still|thumbs)/[0-9]+/(\d+)\?src=([^\"`'\\s\\]+)""").findAll(html)
+        for (m in stillMatches) {
+            val num = m.groupValues[1].toIntOrNull() ?: continue
+            val rawSrc = m.groupValues[2]
+            val decodedUrl = try {
+                val decoded = URLDecoder.decode(rawSrc, "UTF-8")
+                if (decoded.startsWith("http")) decoded else UrlUtils.fixUrl(decoded, MAIN_BASE_URL)
+            } catch (_: Exception) {
+                UrlUtils.fixUrl(rawSrc, MAIN_BASE_URL)
+            }
+            if (!epThumbnails.containsKey(num)) {
+                epThumbnails[num] = decodedUrl
+            }
+        }
+
+        val jsonThumbnails = Regex("""\\\"(?:thumbnails|episodeThumbnails)\\\":\{([^}]+)\}""").findAll(html)
+        for (tm in jsonThumbnails) {
+            val pairs = Regex("""\\\"(\d+)\\\":\\\"([^\\\"]+)\\\"""").findAll(tm.groupValues[1])
+            for (p in pairs) {
+                val num = p.groupValues[1].toIntOrNull() ?: continue
+                if (!epThumbnails.containsKey(num)) {
+                    val rawPath = p.groupValues[2]
+                    val url = if (rawPath.contains("src=")) {
+                        try {
+                            URLDecoder.decode(rawPath.substringAfter("src="), "UTF-8")
+                        } catch (_: Exception) {
+                            UrlUtils.fixUrl(rawPath, MAIN_BASE_URL)
+                        }
+                    } else {
+                        UrlUtils.fixUrl(rawPath, MAIN_BASE_URL)
+                    }
+                    epThumbnails[num] = url
+                }
+            }
+        }
+
+        // Extract episode descriptions
+        val epDescriptions = mutableMapOf<Int, String>()
+        val descMatches = Regex("""\\\"episodeDescriptions\\\":\{([^}]+)\}""").findAll(html)
+        for (dm in descMatches) {
+            val pairs = Regex("""\\\"(\d+)\\\":\\\"([^\\\"]+)\\\"""").findAll(dm.groupValues[1])
+            for (p in pairs) {
+                val num = p.groupValues[1].toIntOrNull() ?: continue
+                if (!epDescriptions.containsKey(num)) {
+                    val text = p.groupValues[2]
+                        .replace(Regex("""\\\""""), "\"")
+                        .replace(Regex("""\\n"""), "\n")
+                        .replace(Regex("""\\/"""), "/")
+                    epDescriptions[num] = Parser.unescapeEntities(text, false).trim()
+                }
+            }
+        }
+
         val cleanAnimeUrl = anime.url.substringBefore("#")
         val episodes = epTitles.map { (num, title) ->
             SEpisode.create().apply {
@@ -269,6 +324,8 @@ class Anikura : Source() {
                     "Episode $num: $title"
                 }
                 episode_number = num.toFloat()
+                preview_url = epThumbnails[num] ?: anime.thumbnail_url
+                epDescriptions[num]?.let { summary = it }
             }
         }
 
