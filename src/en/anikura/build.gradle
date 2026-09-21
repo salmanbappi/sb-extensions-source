@@ -1,0 +1,13 @@
+ext {
+    extName = 'Anikura'
+    extClass = '.Anikura'
+    extVersionCode = 1
+    baseUrl = 'https://anikura.club'
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+}
