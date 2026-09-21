@@ -17,7 +17,7 @@ import okhttp3.Response
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 
-class MiruroExtractor(
+internal class MiruroExtractor(
     private val client: OkHttpClient,
     private val headers: Headers,
     private val preferences: android.content.SharedPreferences,
