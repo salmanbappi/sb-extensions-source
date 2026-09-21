@@ -1162,8 +1162,7 @@ class Miruro : Source() {
 
     // ============================== Details ===============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request =
-        if (isTrialExpired) GET(EXPIRED_BASE_URL) else buildPipeRequest("info/${anime.url}", "GET")
+    override fun animeDetailsRequest(anime: SAnime): Request = if (isTrialExpired) GET(EXPIRED_BASE_URL) else buildPipeRequest("info/${anime.url}", "GET")
 
     override fun animeDetailsParse(response: Response): SAnime {
         if (isTrialExpired) return trialExpiredAnime()
@@ -1597,6 +1596,7 @@ class Miruro : Source() {
                                 }
                             }
                         }
+
                         FillerType.MIXED_MANGA -> {
                             if (preferences.fillerMarkMixed && fillerMode != "hide") {
                                 ep.scanlator = buildString {
@@ -1606,6 +1606,7 @@ class Miruro : Source() {
                                 }
                             }
                         }
+
                         FillerType.ANIME_CANON -> {
                             if (preferences.fillerMarkMixed && fillerMode != "hide") {
                                 ep.scanlator = buildString {
@@ -1615,6 +1616,7 @@ class Miruro : Source() {
                                 }
                             }
                         }
+
                         FillerType.MANGA_CANON -> { /* no mark needed */ }
                     }
                 }
@@ -2206,7 +2208,9 @@ class Miruro : Source() {
         is JSONObject -> coverImage.optString("extraLarge", "")
             .ifEmpty { coverImage.optString("large", "") }
             .ifEmpty { coverImage.optString("medium", "") }
+
         is String -> coverImage
+
         else -> ""
     }
 

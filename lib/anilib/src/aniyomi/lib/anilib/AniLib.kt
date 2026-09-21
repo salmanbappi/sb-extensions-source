@@ -289,6 +289,7 @@ object AniLib {
                         persistRateLimitState(prefs)
                         null
                     }
+
                     !response.isSuccessful -> {
                         val errorBody = runCatching {
                             response.peekBody(MAX_ERROR_BODY_BYTES).string()
@@ -299,6 +300,7 @@ object AniLib {
                         Log.e(TAG, "AniList request failed: HTTP ${response.code} — $detail")
                         null
                     }
+
                     else -> {
                         val result = response.parseGraphQLAs<T>()
                         cacheKey?.let { key ->
