@@ -205,9 +205,7 @@ class Anikura : Source() {
 
         val score = Regex("""\\\"score\\\":\\\"([^\\\"]+)\\\"""").find(html)?.groupValues?.get(1)?.toDoubleOrNull()
 
-        val descriptionRaw = Regex("""<meta[^>]+name="description"[^>]+content="([^"]+)"""").find(html)?.groupValues?.get(1)
-            ?.let { Parser.unescapeEntities(it, false) }
-            ?: doc.selectFirst("div.description, div.synopsis")?.text()?.trim()
+        val descriptionRaw = extractDescription(html, doc)
 
         return anime.apply {
             this.title = title
@@ -459,6 +457,62 @@ class Anikura : Source() {
             UrlUtils.fixUrl(rawUrl, MAIN_BASE_URL)
         }
     }
+
+    private fun extractDescription(html: String, doc: Document): String {
+        // 1. Next.js RSC un-truncated text: \"text\":\"...\",\"limit\":160
+        val rscText = Regex("""\\\"text\\\":\\\"([^$][^\"]+)\\\",\\\"limit\\\":160""").find(html)?.groupValues?.get(1)
+            ?.replace(Regex("""\\\""""), "\"")
+            ?.replace(Regex("""\\n"""), "\n")
+            ?.replace(Regex("""\\/"""), "/")
+            ?.let { Parser.unescapeEntities(it, false).trim() }
+
+        if (!rscText.isNullOrBlank() && !isGenericCatalogDesc(rscText)) {
+            return rscText
+        }
+
+        // 2. Standalone RSC string push: self.__next_f.push([1,"\"...\""])
+        val pushMatches = Regex("""self\.__next_f\.push\(\[1,\"(.*?)\"\]\)""").findAll(html)
+        for (m in pushMatches) {
+            val p = m.groupValues[1]
+            if (p.startsWith("\\\"") && p.length > 100) {
+                val cleaned = p.removePrefix("\\\"").removeSuffix("\\\"")
+                    .replace(Regex("""\\\""""), "\"")
+                    .replace(Regex("""\\n"""), "\n")
+                    .replace(Regex("""\\u003cbr\\u003e"""), "\n")
+                    .replace(Regex("""\\/"""), "/")
+                    .let { Parser.unescapeEntities(it, false).trim() }
+
+                if (!cleaned.startsWith("{") && !cleaned.startsWith("[") && !isGenericCatalogDesc(cleaned)) {
+                    return cleaned
+                }
+            }
+        }
+
+        // 3. DOM paragraph inside Description section
+        val domP = doc.selectFirst("p.text-cloud, p.whitespace-pre-line, section:has(h2:contains(Description)) p")?.let { p ->
+            val clone = p.clone()
+            clone.select("button, svg").remove()
+            clone.text().trim()
+        }
+
+        if (!domP.isNullOrBlank() && !isGenericCatalogDesc(domP)) {
+            return domP
+        }
+
+        // 4. Fallback: <meta name="description"> if not generic
+        val metaDesc = Regex("""<meta[^>]+name="description"[^>]+content="([^"]+)"""").find(html)?.groupValues?.get(1)
+            ?.let { Parser.unescapeEntities(it, false).trim() }
+
+        if (!metaDesc.isNullOrBlank() && !isGenericCatalogDesc(metaDesc)) {
+            return metaDesc
+        }
+
+        return ""
+    }
+
+    private fun isGenericCatalogDesc(text: String): Boolean =
+        (text.contains("on Anikura", ignoreCase = true) && text.contains("anime discovery catalog", ignoreCase = true)) ||
+            text.contains("Discover Everything Only on Anikura", ignoreCase = true)
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         screen.addListPreference(
