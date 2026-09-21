@@ -1,7 +1,7 @@
 ext {
     extName = 'Anikura'
     extClass = '.Anikura'
-    extVersionCode = 2
+    extVersionCode = 3
     baseUrl = 'https://anikura.club'
     isNsfw = false
 }
@@ -10,4 +10,5 @@ apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:m3u8server"))
 }

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.anikura
 
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -56,6 +57,7 @@ class Anikura : Source() {
         .add("Accept-Language", "en-US,en;q=0.9")
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -359,7 +361,7 @@ class Anikura : Source() {
             .set("x-anikura-player", "1")
             .build()
 
-        return try {
+        val rawVideos = try {
             if (streamUrl.contains(".m3u8")) {
                 val videos = playlistUtils.extractFromHls(
                     playlistUrl = streamUrl,
@@ -368,7 +370,7 @@ class Anikura : Source() {
                     subtitleList = subtitleTracks,
                 )
                 if (videos.isNotEmpty()) {
-                    videos.sortVideos()
+                    videos
                 } else {
                     listOf(
                         Video(
@@ -399,6 +401,40 @@ class Anikura : Source() {
                 ),
             )
         }
+
+        val proxiedVideos = rawVideos.map { video ->
+            val proxyInputUrl = if (video.videoUrl.contains(".m3u8", ignoreCase = true)) {
+                if (video.videoUrl.contains(".m3u8?", ignoreCase = true) || video.videoUrl.endsWith(".m3u8", ignoreCase = true) || video.videoUrl.contains(".m3u8#", ignoreCase = true)) {
+                    video.videoUrl
+                } else {
+                    "${video.videoUrl}#.m3u8"
+                }
+            } else {
+                "${video.videoUrl}#.m3u8"
+            }
+
+            val proxied = m3u8Integration.processVideoList(
+                listOf(
+                    Video(
+                        videoUrl = proxyInputUrl,
+                        videoTitle = video.videoTitle,
+                        subtitleTracks = video.subtitleTracks,
+                        audioTracks = video.audioTracks,
+                        headers = video.headers ?: streamHeaders,
+                    ),
+                ),
+            ).firstOrNull() ?: video
+
+            Video(
+                videoUrl = proxied.videoUrl,
+                videoTitle = video.videoTitle,
+                subtitleTracks = proxied.subtitleTracks,
+                audioTracks = proxied.audioTracks,
+                headers = video.headers ?: streamHeaders,
+            )
+        }
+
+        return proxiedVideos.sortVideos()
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
