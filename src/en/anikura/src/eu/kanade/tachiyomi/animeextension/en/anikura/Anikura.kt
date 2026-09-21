@@ -16,11 +16,7 @@ import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.UrlUtils
 import extensions.utils.asJsoup
-import java.net.URLDecoder
-import java.net.URLEncoder
-import java.util.Locale
 import keiyoushi.utils.addListPreference
-import kotlin.time.Duration.Companion.seconds
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -29,6 +25,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.parser.Parser
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
 
 class Anikura : Source() {
 
@@ -90,16 +90,22 @@ class Anikura : Source() {
         filters.forEach { filter ->
             when (filter) {
                 is Filters.SortFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
+
                 is Filters.StatusFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
+
                 is Filters.FormatFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("format", filter.toUriPart())
+
                 is Filters.AudioFilter -> if (!filter.isDefault()) urlBuilder.addQueryParameter("audio", filter.toUriPart())
+
                 is Filters.YearFilter -> if (filter.state.isNotBlank()) urlBuilder.addQueryParameter("year", filter.state.trim())
+
                 is Filters.GenreFilter -> {
                     val included = filter.getIncluded()
                     if (included.isNotEmpty()) {
                         urlBuilder.addQueryParameter("genre", included.joinToString(","))
                     }
                 }
+
                 else -> {}
             }
         }
