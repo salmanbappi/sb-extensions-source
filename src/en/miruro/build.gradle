@@ -1,0 +1,17 @@
+ext {
+    extName = 'Miruro.tv'
+    extClass = '.Miruro'
+    extVersionCode = 13
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:anilib"))
+    implementation(project(":lib:m3u8server"))
+    implementation(project(":lib:cloudflare-interceptor"))
+    implementation(project(":lib:megacloud-extractor"))
+    implementation(project(":lib:rapidcloud-extractor"))
+    implementation(project(":lib:universal-extractor"))
+}

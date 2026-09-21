@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-feature android:name="tachiyomi.animeextension" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="${appName}"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:allowBackup,android:icon,android:label">
+
+        <meta-data
+            android:name="tachiyomi.animeextension.class"
+            android:value="${extClass}" />
+        <meta-data
+            android:name="tachiyomi.animeextension.author"
+            android:value="${author}" />
+        <meta-data
+            android:name="tachiyomi.animeextension.nsfw"
+            android:value="${nsfw}" />
+        <meta-data
+            android:name="tachiyomi.animeextension.versionId"
+            android:value="2"
+            tools:replace="android:value" />
+
+        <activity
+            android:name=".MiruroUrlActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="www.miruro.tv"
+                    android:pathPrefix="/watch/"
+                    android:scheme="https" />
+                <data
+                    android:host="www.miruro.to"
+                    android:pathPrefix="/watch/"
+                    android:scheme="https" />
+                <data
+                    android:host="www.miruro.bz"
+                    android:pathPrefix="/watch/"
+                    android:scheme="https" />
+                <data
+                    android:host="www.miruro.ru"
+                    android:pathPrefix="/watch/"
+                    android:scheme="https" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
