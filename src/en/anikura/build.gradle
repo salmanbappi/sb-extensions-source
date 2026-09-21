@@ -1,7 +1,7 @@
 ext {
     extName = 'Anikura'
     extClass = '.Anikura'
-    extVersionCode = 5
+    extVersionCode = 6
     baseUrl = 'https://anikura.club'
     isNsfw = false
 }

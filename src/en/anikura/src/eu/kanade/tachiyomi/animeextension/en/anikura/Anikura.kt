@@ -18,6 +18,7 @@ import extensions.utils.Source
 import extensions.utils.UrlUtils
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSwitchPreference
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -259,9 +260,11 @@ class Anikura : Source() {
             }
         }
 
+        val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, PREF_SHOW_THUMBNAILS_DEFAULT)
+
         // Extract episode thumbnails / stills
         val epThumbnails = mutableMapOf<Int, String>()
-        val stillMatches = Regex("""/api/episode-(?:still|thumbs)/[0-9]+/(\d+)\?src=([^\"`'\\s\\]+)""").findAll(html)
+        val stillMatches = Regex("""/api/episode-(?:still|thumbs)/[0-9]+/(\d+)\?src=([^\s"'\\<>&]+)""").findAll(html)
         for (m in stillMatches) {
             val num = m.groupValues[1].toIntOrNull() ?: continue
             val rawSrc = m.groupValues[2]
@@ -285,7 +288,9 @@ class Anikura : Source() {
                     val rawPath = p.groupValues[2]
                     val url = if (rawPath.contains("src=")) {
                         try {
-                            URLDecoder.decode(rawPath.substringAfter("src="), "UTF-8")
+                            val extracted = rawPath.substringAfter("src=").substringBefore("&")
+                            val decoded = URLDecoder.decode(extracted, "UTF-8")
+                            if (decoded.startsWith("http")) decoded else UrlUtils.fixUrl(decoded, MAIN_BASE_URL)
                         } catch (_: Exception) {
                             UrlUtils.fixUrl(rawPath, MAIN_BASE_URL)
                         }
@@ -324,7 +329,9 @@ class Anikura : Source() {
                     "Episode $num: $title"
                 }
                 episode_number = num.toFloat()
-                preview_url = epThumbnails[num] ?: anime.thumbnail_url
+                if (showThumbnails) {
+                    preview_url = epThumbnails[num] ?: anime.thumbnail_url
+                }
                 epDescriptions[num]?.let { summary = it }
             }
         }
@@ -571,6 +578,12 @@ class Anikura : Source() {
         text.contains("Discover Everything Only on Anikura", ignoreCase = true)
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        screen.addSwitchPreference(
+            key = PREF_SHOW_THUMBNAILS_KEY,
+            title = PREF_SHOW_THUMBNAILS_TITLE,
+            summary = PREF_SHOW_THUMBNAILS_SUMMARY,
+            default = PREF_SHOW_THUMBNAILS_DEFAULT,
+        )
         screen.addListPreference(
             key = PREF_SERVER_KEY,
             title = "Preferred Server",
@@ -599,6 +612,11 @@ class Anikura : Source() {
         private const val TRIAL_EXPIRATION_TIMESTAMP = TRIAL_START_TIMESTAMP + TRIAL_DURATION_MS
 
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+        private const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
+        private const val PREF_SHOW_THUMBNAILS_TITLE = "Show episode thumbnails"
+        private const val PREF_SHOW_THUMBNAILS_SUMMARY = "Fetch and display preview images in the episode list."
+        private const val PREF_SHOW_THUMBNAILS_DEFAULT = true
 
         private const val PREF_SERVER_KEY = "pref_server"
         private const val PREF_SERVER_DEFAULT = "AniKoto"
