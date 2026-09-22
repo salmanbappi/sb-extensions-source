@@ -92,6 +92,8 @@ class Miruro : Source() {
     private val SharedPreferences.preferredStreamType by preferences.delegate(PREF_STREAM_TYPE_KEY, PREF_STREAM_TYPE_DEFAULT)
     private val SharedPreferences.preferredQuality by preferences.delegate(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)
     private val SharedPreferences.episodeSortOrder by preferences.delegate(PREF_EPISODE_SORT_KEY, PREF_EPISODE_SORT_DEFAULT)
+    private val SharedPreferences.episodeThumbnails by preferences.delegate(PREF_EPISODE_THUMBNAILS_KEY, PREF_EPISODE_THUMBNAILS_DEFAULT)
+    private val SharedPreferences.episodeSummaries by preferences.delegate(PREF_EPISODE_SUMMARIES_KEY, PREF_EPISODE_SUMMARIES_DEFAULT)
     private val SharedPreferences.descriptionTruncation by preferences.delegate(PREF_DESCRIPTION_TRUNCATE_KEY, PREF_DESCRIPTION_TRUNCATE_DEFAULT)
     private val SharedPreferences.showProviderInScanlator by preferences.delegate(PREF_SHOW_PROVIDER_IN_SCANLATOR_KEY, PREF_SHOW_PROVIDER_IN_SCANLATOR_DEFAULT)
     private val SharedPreferences.includeAllProviders by preferences.delegate(PREF_INCLUDE_ALL_PROVIDERS_KEY, PREF_INCLUDE_ALL_PROVIDERS_DEFAULT)
@@ -885,6 +887,14 @@ class Miruro : Source() {
         private val PREF_EPISODE_SORT_VALUES = listOf("descending", "ascending")
         private const val PREF_EPISODE_SORT_DEFAULT = "descending"
 
+        private const val PREF_EPISODE_THUMBNAILS_KEY = "episode_thumbnails"
+        private const val PREF_EPISODE_THUMBNAILS_TITLE = "Episode thumbnails"
+        private const val PREF_EPISODE_THUMBNAILS_DEFAULT = true
+
+        private const val PREF_EPISODE_SUMMARIES_KEY = "episode_summaries"
+        private const val PREF_EPISODE_SUMMARIES_TITLE = "Episode summaries"
+        private const val PREF_EPISODE_SUMMARIES_DEFAULT = true
+
         private const val PREF_DESCRIPTION_TRUNCATE_KEY = "description_truncation"
         private const val PREF_DESCRIPTION_TRUNCATE_TITLE = "Description Truncation"
         private val PREF_DESCRIPTION_TRUNCATE_ENTRIES = listOf("No Limit", "750 characters", "500 characters", "300 characters", "150 characters", "75 characters")
@@ -936,6 +946,7 @@ class Miruro : Source() {
         private val BR_REGEX = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
         private val CLOSE_P_REGEX = Regex("</p>", RegexOption.IGNORE_CASE)
         private val HTML_TAG_REGEX = Regex("<[^>]+>")
+        private val HTML_ENTITY_REGEX = Regex("&(amp|lt|gt|quot|#39|apos|nbsp);")
         private val QUALITY_REGEX = Regex("""(\d+)p""")
 
         val SCANLATOR_SUB_TYPES = setOf("sub", "dub", "ssub", "h-sub")
@@ -1267,6 +1278,8 @@ class Miruro : Source() {
             null
         }
 
+        snapshot?.let { cacheAnimeArtwork(anilistId, it) }
+
         val malId = snapshot?.malId
             ?: try {
                 JSONObject(mediaJson).let { it.optJSONObject("media") ?: it }.optInt("idMal", 0).takeIf { it > 0 }
@@ -1472,7 +1485,7 @@ class Miruro : Source() {
         }
 
         val crossProviderMap = mutableMapOf<Float, MutableMap<String, MutableMap<String, String>>>()
-        val episodeMetaMap = mutableMapOf<Float, Pair<Double, String>>()
+        val episodeMetaMap = mutableMapOf<Float, EpisodeMeta>()
         val providerSubTypesMap = mutableMapOf<String, List<String>>()
 
         for (providerKey in availableProviders) {
@@ -1487,14 +1500,26 @@ class Miruro : Source() {
                     val epJson = typeEpisodes.getJSONObject(i)
                     val number = epJson.optDouble("number", 0.0).toFloat()
                     val id = epJson.optString("id", "")
-                    val title = epJson.optString("title", "")
+                    val title = epJson.optNonBlankString("title").orEmpty()
 
                     val providerEpIds = crossProviderMap.getOrPut(number) { mutableMapOf() }
                         .getOrPut(providerKey) { mutableMapOf() }
                     providerEpIds[subType] = id
 
-                    if (number !in episodeMetaMap) {
-                        episodeMetaMap[number] = epJson.optDouble("number", 0.0) to title
+                    val existing = episodeMetaMap[number]
+                    if (existing == null) {
+                        episodeMetaMap[number] = EpisodeMeta(
+                            number = epJson.optDouble("number", 0.0),
+                            title = title,
+                            image = epJson.optNonBlankString("image"),
+                            summary = epJson.optNonBlankString("description"),
+                        )
+                    } else {
+                        // The first provider to list an episode wins, but mirrors that
+                        // ship titles without artwork only fill the gaps they left.
+                        if (existing.title.isBlank()) existing.title = title
+                        if (existing.image == null) existing.image = epJson.optNonBlankString("image")
+                        if (existing.summary == null) existing.summary = epJson.optNonBlankString("description")
                     }
                 }
             }
@@ -1528,11 +1553,11 @@ class Miruro : Source() {
                 .filter { it.value.containsKey(providerKey) }
                 .forEach { (number, providerEpMap) ->
                     if (seenNumbers.add(number)) {
-                        val (rawNumber, title) = episodeMetaMap[number] ?: return@forEach
+                        val meta = episodeMetaMap[number] ?: return@forEach
                         val fallbackProviders = providerEpMap.filterKeys { it != providerKey }
                         episodes.add(
                             buildMergedEpisode(
-                                rawNumber, title, providerKey, preferredSubType,
+                                meta, providerKey, preferredSubType,
                                 providerEpMap[providerKey] ?: emptyMap(),
                                 providerSubTypesMap[providerKey] ?: emptyList(),
                                 showProvider,
@@ -1557,6 +1582,7 @@ class Miruro : Source() {
                             try {
                                 val snapshot = AniLib.fetchMediaDetails(client, anilistId, preferences)
                                 if (snapshot != null) {
+                                    cacheAnimeArtwork(anilistId, snapshot)
                                     AniLib.extractAiringSchedule(snapshot).schedule.also { schedule ->
                                         if (schedule.isNotEmpty()) {
                                             getOrCreateMeta(anilistId).airingSchedule = schedule
@@ -1622,8 +1648,17 @@ class Miruro : Source() {
             episodeZero + episodeRest.reversed()
         }
 
+        val animeMeta = anilistId?.let { getMeta(it) }
+        val isMovie = jsonObj.optJSONObject("mappings")
+            ?.optString("format")
+            ?.equals("MOVIE", ignoreCase = true) == true
+        val movieArtwork = if (isMovie) animeMeta?.artwork else null
+        val movieSynopsis = if (isMovie) animeMeta?.synopsis else null
+
         for (ep in result) {
             val epNum = Math.round(ep.episode_number)
+            val anizipEpisode = epTitles?.episodes?.get(epNum)
+            val pipeMeta = episodeMetaMap[ep.episode_number]
 
             ep.date_upload = airingSchedule[ep.episode_number] ?: 0L
             if (ep.date_upload == 0L) {
@@ -1633,6 +1668,21 @@ class Miruro : Source() {
                 fillerResult?.episodes?.get(epNum)?.airDate?.let { date ->
                     if (date > 0L) ep.date_upload = date
                 }
+            }
+
+            // Episode artwork/synopsis come straight from the pipe payload — the
+            // providers ship TheTVDB/TMDB stills and blurbs the website itself hides.
+            // ani.zip (already fetched for titles) backfills gaps, and a movie
+            // falls back to the anime's own artwork/synopsis since Miruro exposes
+            // no per-episode metadata for films.
+            if (preferences.episodeThumbnails && ep.preview_url.isNullOrBlank()) {
+                ep.preview_url = pipeMeta?.image
+                    ?: anizipEpisode?.resolvedImage
+                    ?: movieArtwork
+            }
+            if (preferences.episodeSummaries && ep.summary.isNullOrBlank()) {
+                ep.summary = (pipeMeta?.summary ?: anizipEpisode?.resolvedSummary ?: movieSynopsis)
+                    ?.let { decodeHtmlEntities(it) }
             }
 
             if (ep.name == "Episode ${ep.episode_number.toInt()}" ||
@@ -1701,9 +1751,24 @@ class Miruro : Source() {
         return result
     }
 
+    /**
+     * Per-episode metadata harvested from the pipe `episodes` payload.
+     *
+     * Miruro's own providers already ship episode artwork (`image`, a TheTVDB/TMDB
+     * still) and a synopsis (`description`) for every episode, but the website
+     * never renders them — so they are carried through here instead of relying on
+     * a third-party API. Numbers are merged across mirrors, so a field the primary
+     * provider leaves empty can still be filled by another one.
+     */
+    private class EpisodeMeta(
+        val number: Double,
+        var title: String,
+        var image: String?,
+        var summary: String?,
+    )
+
     private fun buildMergedEpisode(
-        number: Double,
-        title: String,
+        meta: EpisodeMeta,
         provider: String,
         preferredSubType: String,
         subTypeIds: Map<String, String>,
@@ -1713,6 +1778,8 @@ class Miruro : Source() {
         providerSubTypesMap: Map<String, List<String>> = emptyMap(),
         anilistId: Int? = null,
     ): SEpisode {
+        val number = meta.number
+        val title = meta.title
         val defaultSubType = subTypeIds.keys.firstOrNull { it == preferredSubType }
             ?: allSubTypes.firstOrNull { it in subTypeIds }
             ?: subTypeIds.keys.first()
@@ -1781,6 +1848,10 @@ class Miruro : Source() {
         val anilistId: Int,
         var malId: Int? = null,
         @Volatile var airingSchedule: Map<Float, Long>? = null,
+        /** Anime-level banner (or cover) — last-resort artwork for movie episodes. */
+        @Volatile var artwork: String? = null,
+        /** Stripped anime synopsis — last-resort summary for movie episodes. */
+        @Volatile var synopsis: String? = null,
     )
 
     private val animeMetaCache = ConcurrentHashMap<Int, AnimeMeta>()
@@ -1793,6 +1864,18 @@ class Miruro : Source() {
     }
 
     private fun getMeta(anilistId: Int): AnimeMeta? = animeMetaCache[anilistId]
+
+    /** Remembers anime-level artwork/synopsis for the movie-episode fallback. */
+    private fun cacheAnimeArtwork(anilistId: Int, snapshot: MediaSnapshot) {
+        val meta = getOrCreateMeta(anilistId)
+        if (meta.artwork == null) {
+            meta.artwork = snapshot.bannerImage?.ifBlank { null }
+                ?: AniLib.resolveCoverUrl(snapshot.coverImage).ifBlank { null }
+        }
+        if (meta.synopsis == null) {
+            meta.synopsis = stripHtml(snapshot.description.orEmpty()).ifBlank { null }
+        }
+    }
 
     override fun videoListRequest(episode: SEpisode): Request {
         if (isTrialExpired) return GET(EXPIRED_BASE_URL)
@@ -2133,6 +2216,20 @@ class Miruro : Source() {
             summary = "%s",
         )
 
+        screen.addSwitchPreference(
+            key = PREF_EPISODE_THUMBNAILS_KEY,
+            title = PREF_EPISODE_THUMBNAILS_TITLE,
+            default = PREF_EPISODE_THUMBNAILS_DEFAULT,
+            summary = "Shows the artwork Miruro's own providers expose (TheTVDB/TMDB stills), with ani.zip as fallback.",
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_EPISODE_SUMMARIES_KEY,
+            title = PREF_EPISODE_SUMMARIES_TITLE,
+            default = PREF_EPISODE_SUMMARIES_DEFAULT,
+            summary = "Shows episode synopses from the provider, with ani.zip as fallback.",
+        )
+
         screen.addListPreference(
             key = PREF_DESCRIPTION_TRUNCATE_KEY,
             title = PREF_DESCRIPTION_TRUNCATE_TITLE,
@@ -2262,6 +2359,28 @@ class Miruro : Source() {
         .replace(CLOSE_P_REGEX, "\n")
         .replace(HTML_TAG_REGEX, "")
         .trim()
+
+    /**
+     * Reads a string field, treating both a JSON `null` and a literal `"null"`
+     * (which `JSONObject.optString` produces for null values) as absent.
+     */
+    private fun JSONObject.optNonBlankString(name: String): String? {
+        if (isNull(name)) return null
+        return optString(name, "").takeIf { it.isNotBlank() && it != "null" }
+    }
+
+    /** Decodes the handful of HTML entities that provider blurbs occasionally embed. */
+    private fun decodeHtmlEntities(input: String): String = HTML_ENTITY_REGEX.replace(input) {
+        when (it.groupValues[1]) {
+            "amp" -> "&"
+            "lt" -> "<"
+            "gt" -> ">"
+            "quot" -> "\""
+            "#39", "apos" -> "'"
+            "nbsp" -> " "
+            else -> it.value
+        }
+    }
 
     private fun validateResponse(response: Response): Response {
         val code = response.code

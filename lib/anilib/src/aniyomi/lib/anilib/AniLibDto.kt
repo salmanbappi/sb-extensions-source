@@ -381,6 +381,13 @@ data class AnizipEpisode(
     val airDate: String? = null,
     val airdate: String? = null,
     val runtime: Int? = null,
+    /** Short synopsis from TheTVDB. */
+    val overview: String? = null,
+    /** Longer synopsis (usually the Crunchyroll blurb) with a trailing `Source: …` line. */
+    val summary: String? = null,
+    /** TheTVDB episode still, suitable for an episode preview image. */
+    val image: String? = null,
+    val rating: String? = null,
 ) {
     val resolvedTitle: String?
         get() = title?.en?.ifEmpty { null }
@@ -390,6 +397,18 @@ data class AnizipEpisode(
     val resolvedAirDate: String?
         get() = airDate?.ifEmpty { null }
             ?: airdate?.ifEmpty { null }
+
+    /**
+     * Best available episode synopsis: the curated [overview] first, otherwise
+     * [summary] with its provenance footer (`Source: Crunchyroll`) stripped.
+     */
+    val resolvedSummary: String?
+        get() = overview?.ifBlank { null }
+            ?: summary?.substringBefore("\nSource:")?.trim()?.ifBlank { null }
+
+    /** Episode still URL, or null when ani.zip has no artwork for this episode. */
+    val resolvedImage: String?
+        get() = image?.ifBlank { null }
 }
 
 /**
