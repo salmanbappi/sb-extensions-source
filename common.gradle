@@ -43,10 +43,17 @@ android {
         }
         assert extClass.startsWith(".")
         manifestPlaceholders = [
-                appName : "Aniyomi: $extName",
-                author  : "salmanbappi",
-                extClass: extClass,
-                nsfw    : project.ext.find("isNsfw") ? 1 : 0,
+                appName       : "Aniyomi: $extName",
+                // Bare name for the modern 'aniyomix.name' key: the loader uses it
+                // verbatim and does NOT strip the "Aniyomi: " prefix.
+                extName       : extName,
+                author        : "salmanbappi",
+                extClass      : extClass,
+                nsfw          : project.ext.find("isNsfw") ? 1 : 0,
+                // Modern content rating: 0 = Safe, 1 = Mixed, 2 = NSFW.
+                contentWarning: project.ext.find("isNsfw") ? 2 : 0,
+                // Advertised extensions-lib version; per-module override: ext { libVersion = 17 }.
+                extensionLib  : project.ext.find("libVersion") ?: "16",
         ]
         String baseUrl = project.ext.find("baseUrl") ?: ""
         if (theme != null && !baseUrl.isEmpty()) {
@@ -126,15 +133,10 @@ dependencies {
     compileOnly(libs.bundles.common)
 }
 
-configurations.configureEach {
-    resolutionStrategy.eachDependency { DependencyResolveDetails details ->
-        if (details.requested.group == 'org.jetbrains.kotlin' && details.requested.name == 'kotlin-stdlib-jdk8' && details.requested.version == '1.7.0') {
-            details.useVersion(libs.versions.kotlin.version.get())
-            details.because 'Fix problems with dev.datlag JsUnpacker'
-        }
-    }
-}
-
+// NOTE: the former `kotlin-stdlib-jdk8:1.7.0 -> libs.versions.kotlin.version` force
+// (a workaround for dev.datlag JsUnpacker) was removed: nothing in this repo depends
+// on JsUnpacker any more, and `libs.versions.kotlin.version` is not a valid catalog
+// accessor — the block would have thrown if the constraint had ever matched.
 
 tasks.register("writeManifestFile") {
     doLast {

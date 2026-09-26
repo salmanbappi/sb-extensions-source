@@ -317,7 +317,7 @@ object AnimePaheHlsServer {
         mpvArgs = mpvArgs,
         ffmpegStreamArgs = ffmpegStreamArgs,
         ffmpegVideoArgs = ffmpegVideoArgs,
-        internalData = internalData,
+        memo = memo,
         initialized = true,
     )
 
@@ -332,7 +332,7 @@ object AnimePaheHlsServer {
         mpvArgs = mpvArgs,
         ffmpegStreamArgs = ffmpegStreamArgs,
         ffmpegVideoArgs = ffmpegVideoArgs,
-        internalData = internalData,
+        memo = memo,
         initialized = true,
     )
 

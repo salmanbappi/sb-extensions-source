@@ -6,6 +6,10 @@ import eu.kanade.tachiyomi.animesource.model.TimeStamp
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import okhttp3.Headers
 import okhttp3.Response
 
@@ -15,16 +19,23 @@ abstract class AnimeHttpHosterSource : AnimeHttpSource() {
 
     override fun seasonListParse(response: Response) = throw UnsupportedOperationException()
 
+    // extensions-lib v17: abstract on AnimeSource and implemented nowhere in the
+    // AnimeCatalogueSource/AnimeHttpSource chain, so every concrete source must
+    // provide it. Default off; override to opt into related entries.
+    override val supportsRelatedAnime: Boolean = false
+
     protected fun legacyHoster(
         hosterUrl: String = "",
         hosterName: String = "",
         videoList: List<Video>? = null,
-        internalData: String = "",
-    ) = try {
-        Hoster(hosterUrl, hosterName, videoList, internalData, lazy = false)
-    } catch (_: Throwable) {
-        Hoster(hosterUrl, hosterName, videoList, internalData)
-    }
+        legacyData: String = "",
+    ) = Hoster(
+        hosterUrl = hosterUrl,
+        hosterName = hosterName,
+        videoList = videoList,
+        lazy = false,
+        memo = legacyData.toLegacyMemo(),
+    )
 
     fun legacyVideo(
         videoUrl: String = "",
@@ -39,34 +50,24 @@ abstract class AnimeHttpHosterSource : AnimeHttpSource() {
         mpvArgs: List<Pair<String, String>> = emptyList(),
         ffmpegStreamArgs: List<Pair<String, String>> = emptyList(),
         ffmpegVideoArgs: List<Pair<String, String>> = emptyList(),
-        internalData: String = "",
+        legacyData: String = "",
         initialized: Boolean = false,
-    ) = try {
-        Video(
-            videoUrl = videoUrl,
-            videoTitle = videoTitle,
-            resolution = resolution,
-            bitrate = bitrate,
-            headers = headers,
-            preferred = preferred,
-            subtitleTracks = subtitleTracks,
-            audioTracks = audioTracks,
-            timestamps = timestamps,
-            mpvArgs = mpvArgs,
-            ffmpegStreamArgs = ffmpegStreamArgs,
-            ffmpegVideoArgs = ffmpegVideoArgs,
-            internalData = internalData,
-            initialized = initialized,
-        )
-    } catch (_: Throwable) {
-        Video(
-            videoUrl = videoUrl,
-            videoTitle = videoTitle,
-            headers = headers,
-            subtitleTracks = subtitleTracks,
-            audioTracks = audioTracks,
-        )
-    }
+    ) = Video(
+        videoUrl = videoUrl,
+        videoTitle = videoTitle,
+        resolution = resolution,
+        bitrate = bitrate,
+        headers = headers,
+        preferred = preferred,
+        subtitleTracks = subtitleTracks,
+        audioTracks = audioTracks,
+        timestamps = timestamps,
+        mpvArgs = mpvArgs,
+        ffmpegStreamArgs = ffmpegStreamArgs,
+        ffmpegVideoArgs = ffmpegVideoArgs,
+        memo = legacyData.toLegacyMemo(),
+        initialized = initialized,
+    )
 
     fun Video.copyLegacy(
         videoUrl: String = this.videoUrl,
@@ -81,7 +82,7 @@ abstract class AnimeHttpHosterSource : AnimeHttpSource() {
         mpvArgs: List<Pair<String, String>> = this.mpvArgs,
         ffmpegStreamArgs: List<Pair<String, String>> = this.ffmpegStreamArgs,
         ffmpegVideoArgs: List<Pair<String, String>> = this.ffmpegVideoArgs,
-        internalData: String = this.internalData,
+        legacyData: String = this.memo.legacyInternalData(),
         initialized: Boolean = this.initialized,
     ): Video = legacyVideo(
         videoUrl = videoUrl,
@@ -96,7 +97,28 @@ abstract class AnimeHttpHosterSource : AnimeHttpSource() {
         mpvArgs = mpvArgs,
         ffmpegStreamArgs = ffmpegStreamArgs,
         ffmpegVideoArgs = ffmpegVideoArgs,
-        internalData = internalData,
+        legacyData = legacyData,
         initialized = initialized,
     )
 }
+
+/**
+ * Key under which a source's opaque Hoster -> Video payload is carried in [JsonObject] memo.
+ *
+ * extensions-lib v17 deprecates `Hoster.internalData` / `Video.internalData` (a String) at
+ * ERROR level in favour of `memo: JsonObject`. These helpers keep the ergonomic String API
+ * so existing sources only need to swap the property they read/write.
+ */
+const val LEGACY_DATA_KEY = "aniyomi.legacyData"
+
+/** Wraps a legacy `internalData` String into a memo object (empty String -> empty memo). */
+fun String.toLegacyMemo(): JsonObject =
+    if (isEmpty()) {
+        JsonObject(emptyMap())
+    } else {
+        buildJsonObject { put(LEGACY_DATA_KEY, JsonPrimitive(this@toLegacyMemo)) }
+    }
+
+/** Reads the legacy `internalData` String back out of a memo object. */
+fun JsonObject.legacyInternalData(): String =
+    (this[LEGACY_DATA_KEY] as? JsonPrimitive)?.contentOrNull ?: ""

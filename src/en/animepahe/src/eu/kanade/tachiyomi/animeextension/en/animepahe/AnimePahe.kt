@@ -23,7 +23,9 @@ import keiyoushi.utils.addEditTextPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.legacyInternalData
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.toLegacyMemo
 import keiyoushi.utils.tryParse
 import keiyoushi.utils.useAsJsoup
 import kotlinx.coroutines.CancellationException
@@ -594,7 +596,7 @@ class AnimePahe :
                 hosterUrl = "",
                 hosterName = hosterName,
                 videoList = null,
-                internalData = combinedData,
+                memo = combinedData.toLegacyMemo(),
                 lazy = false,
             )
         }
@@ -622,13 +624,13 @@ class AnimePahe :
 
     // ==================== Video Extraction & Sorting ======================
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        if (hoster.internalData.isBlank()) return emptyList()
+        if (hoster.memo.legacyInternalData().isBlank()) return emptyList()
 
         val useHLS = preferences.getBoolean(PREF_LINK_TYPE_KEY, PREF_LINK_TYPE_DEFAULT)
         val cfUA = cfBypassUserAgent
         val videoList = mutableListOf<Video>()
 
-        hoster.internalData.split("|||").forEach { dataStr ->
+        hoster.memo.legacyInternalData().split("|||").forEach { dataStr ->
             val parts = dataStr.split("###")
             if (parts.size != 3) return@forEach
 
@@ -641,7 +643,7 @@ class AnimePahe :
                     Video(
                         videoUrl = "",
                         videoTitle = quality,
-                        internalData = "mp4_pahe::$paheWinLink",
+                        memo = "mp4_pahe::$paheWinLink".toLegacyMemo(),
                         initialized = false,
                     ),
                 )
@@ -699,8 +701,8 @@ class AnimePahe :
 
     // ======================== Video Resolution ============================
     override suspend fun resolveVideo(video: Video): Video? {
-        if (video.internalData.startsWith("mp4_pahe::")) {
-            val paheWinLink = video.internalData.removePrefix("mp4_pahe::")
+        if (video.memo.legacyInternalData().startsWith("mp4_pahe::")) {
+            val paheWinLink = video.memo.legacyInternalData().removePrefix("mp4_pahe::")
             val cfUA = cfBypassUserAgent
 
             return try {

@@ -81,5 +81,13 @@ abstract class Source :
 
     override suspend fun resolveVideo(video: Video): Video = video
 
+    /**
+     * extensions-lib v17 declares `supportsRelatedAnime` as an abstract member of
+     * `AnimeSource`, and neither `AnimeCatalogueSource` nor `AnimeHttpSource`
+     * implements it. Providing the default here keeps every downstream source
+     * compiling; override it (together with `getRelatedAnimeList`) to opt in.
+     */
+    override val supportsRelatedAnime: Boolean = false
+
     private suspend fun okhttp3.Call.await(): Response = withContext(Dispatchers.IO) { execute() }
 }

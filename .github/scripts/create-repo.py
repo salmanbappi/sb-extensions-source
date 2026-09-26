@@ -10,6 +10,8 @@ PACKAGE_NAME_REGEX = re.compile(r"package: name='([^']+)'")
 VERSION_CODE_REGEX = re.compile(r"versionCode='([^']+)'")
 VERSION_NAME_REGEX = re.compile(r"versionName='([^']+)'")
 IS_NSFW_REGEX = re.compile(r"'tachiyomi.animeextension.nsfw' value='([^']+)'")
+# Modern extensions-lib v17 metadata: 0 = Safe, 1 = Mixed, 2 = NSFW (> 0 means NSFW).
+CONTENT_WARNING_REGEX = re.compile(r"'aniyomix.contentWarning' value='([^']+)'")
 APPLICATION_LABEL_REGEX = re.compile(r"^application-label:'([^']+)'", re.MULTILINE)
 APPLICATION_ICON_320_REGEX = re.compile(r"^application-icon-(?:320|480|640|240|160):'([^']+)'", re.MULTILINE)
 APPLICATION_ICON_FALLBACK_REGEX = re.compile(r"(?:application-icon(?:-\d+)?|icon)='([^']+)'")
@@ -95,8 +97,25 @@ if REPO_APK_DIR.is_dir():
         version_code = int(code_match[1]) if code_match else 0
         ver_match = VERSION_NAME_REGEX.search(package_info)
         version_name = ver_match[1] if ver_match else "1.0"
+        # Mirror the host app loader (AnimeExtensionLoader.kt):
+        # isNsfw = (contentWarning > 0) || (nsfw == 1)
+        # Checking both ensures an extension with either modern or legacy metadata
+        # (or both) is indexed with the correct NSFW status.
+        cw_match = CONTENT_WARNING_REGEX.search(badging)
         nsfw_match = IS_NSFW_REGEX.search(badging)
-        is_nsfw = int(nsfw_match[1]) if nsfw_match else 0
+        is_nsfw = 0
+        if cw_match:
+            try:
+                if int(cw_match[1]) > 0:
+                    is_nsfw = 1
+            except ValueError:
+                pass
+        if not is_nsfw and nsfw_match:
+            try:
+                if int(nsfw_match[1]) == 1:
+                    is_nsfw = 1
+            except ValueError:
+                pass
 
         common_data = {
             "name": app_name,

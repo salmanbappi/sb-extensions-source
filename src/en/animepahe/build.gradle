@@ -1,6 +1,9 @@
 ext {
     extName = 'AnimePahe'
     extClass = '.AnimePahe'
+    // Requires extensions-lib v17: the Hoster -> Video hand-off now uses `memo`
+    // (Hoster.internalData / Video.internalData are @Deprecated(ERROR) in v17).
+    libVersion = 17
     extVersionCode = 83
 }
 

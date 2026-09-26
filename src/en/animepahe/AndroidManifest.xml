@@ -11,6 +11,19 @@
         android:usesCleartextTraffic="true"
         tools:replace="android:allowBackup,android:icon,android:label">
 
+        <!-- Modern extensions-lib v17 metadata. 'aniyomix.name' is used verbatim by
+             the loader, so it must be the BARE name (no "Aniyomi: " prefix). -->
+        <meta-data
+            android:name="aniyomix.name"
+            android:value="${extName}" />
+        <meta-data
+            android:name="aniyomix.contentWarning"
+            android:value="${contentWarning}" />
+        <meta-data
+            android:name="aniyomix.extensionLib"
+            android:value="${extensionLib}" />
+
+        <!-- Legacy keys: still read by older hosts and by the repo indexer. -->
         <meta-data
             android:name="tachiyomi.animeextension.class"
             android:value="${extClass}" />
