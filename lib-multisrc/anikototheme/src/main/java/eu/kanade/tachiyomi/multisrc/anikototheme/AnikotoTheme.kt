@@ -1522,8 +1522,6 @@ abstract class AnikotoTheme : Source() {
         private const val PREF_ENABLE_KIWI_DEFAULT = true
 
         private val HOSTER_PRIORITY = listOf("Kiwi-Stream", "VidCloud-1", "VidPlay-1", "Vidstream-2", "HD-1")
-
-        @Volatile
     }
 }
 
