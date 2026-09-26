@@ -5,7 +5,7 @@ import java.net.URI
 /**
  * Shared parser for HLS playlists.
  *
- * Both the extractors (initial resolve) and [LocalProxyServer] (periodic re-mint of expiring
+ * Both the extractors (initial resolve) and [AnikotoHttpServer] (periodic re-mint of expiring
  * segment URLs, and master-level re-mint when the variant URL itself dies) need to turn playlist
  * bodies into structured data, so the logic lives here instead of being duplicated.
  */
@@ -15,8 +15,8 @@ internal object HlsPlaylistParser {
     private val NAME_REGEX = Regex("""NAME="([^"]+)"""")
     private val BANDWIDTH_REGEX = Regex("""BANDWIDTH=(\d+)""")
 
-    fun parseVariantSegments(text: String, variantUrl: String): List<LocalProxyServer.SegmentInfo> {
-        val result = mutableListOf<LocalProxyServer.SegmentInfo>()
+    fun parseVariantSegments(text: String, variantUrl: String): List<AnikotoHttpServer.SegmentInfo> {
+        val result = mutableListOf<AnikotoHttpServer.SegmentInfo>()
         val lines = text.lines()
         var i = 0
         while (i < lines.size) {
@@ -25,7 +25,7 @@ internal object HlsPlaylistParser {
                 val next = lines.getOrNull(i + 1)?.trim() ?: ""
                 if (next.isNotEmpty() && !next.startsWith("#")) {
                     val fullUrl = URI(variantUrl).resolve(next).toString()
-                    result.add(LocalProxyServer.SegmentInfo(fullUrl, duration))
+                    result.add(AnikotoHttpServer.SegmentInfo(fullUrl, duration))
                     i += 2
                 } else {
                     i++

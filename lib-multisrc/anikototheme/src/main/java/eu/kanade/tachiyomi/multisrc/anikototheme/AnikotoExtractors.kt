@@ -287,7 +287,7 @@ class AnikotoExtractors(
         iframeUrl: String,
         audioType: String,
         hosterName: String,
-    ): LocalProxyServer.AudioStream? {
+    ): AnikotoHttpServer.AudioStream? {
         logi("resolveVidTube: START hoster=$hosterName audio=$audioType")
         return try {
             val host = extractHost(iframeUrl) ?: "vidtube.site"
@@ -313,7 +313,7 @@ class AnikotoExtractors(
             logi("resolveVidTube: [3/5] master already verified")
 
             val subtitles = sources.tracks.map { track ->
-                LocalProxyServer.SubtitleData(track.file, track.label, inferLang(track.label))
+                AnikotoHttpServer.SubtitleData(track.file, track.label, inferLang(track.label))
             }
             if (subtitles.isNotEmpty()) {
                 logi("resolveVidTube: subs=${subtitles.size} track(s)")
@@ -338,7 +338,7 @@ class AnikotoExtractors(
                                 val segs = HlsPlaylistParser.parseVariantSegments(varText, vi.url)
                                 logi("resolveVidTube:   variant ${vi.quality}(${vi.bandwidth}): ${segs.size} segments")
                                 if (segs.isNotEmpty()) {
-                                    LocalProxyServer.VariantData(
+                                    AnikotoHttpServer.VariantData(
                                         quality = vi.quality,
                                         bandwidth = vi.bandwidth,
                                         resolution = vi.resolution,
@@ -373,7 +373,7 @@ class AnikotoExtractors(
             }
 
             logi("resolveVidTube: SUCCESS hoster=$hosterName audio=$audioLabel variants=${variantDataList.size} subs=${subtitles.size} referer=https://$host/")
-            LocalProxyServer.AudioStream(
+            AnikotoHttpServer.AudioStream(
                 audioType = audioType,
                 audioLabel = audioLabel,
                 hosterName = hosterName,
@@ -392,7 +392,7 @@ class AnikotoExtractors(
         iframeUrl: String,
         audioType: String,
         hosterName: String,
-    ): LocalProxyServer.AudioStream? {
+    ): AnikotoHttpServer.AudioStream? {
         logi("resolveKiwi: START hoster=$hosterName audio=$audioType")
         return try {
             val fragment = iframeUrl.substringAfter("#", "")
@@ -435,7 +435,7 @@ class AnikotoExtractors(
                                     val segs = HlsPlaylistParser.parseVariantSegments(varText, vi.url)
                                     logd("resolveKiwi:   variant ${vi.quality}: ${segs.size} segments (no filter)")
                                     if (segs.isNotEmpty()) {
-                                        LocalProxyServer.VariantData(
+                                        AnikotoHttpServer.VariantData(
                                             quality = vi.quality,
                                             bandwidth = vi.bandwidth,
                                             resolution = vi.resolution,
@@ -465,7 +465,7 @@ class AnikotoExtractors(
                 val audioLabel = if (audioType == "sub") "H-SUB" else "A-DUB"
 
                 logi("resolveKiwi: SUCCESS hoster=$hosterName audio=$audioLabel variants=${variantDataList.size} referer=https://vibeplayer.site/")
-                LocalProxyServer.AudioStream(
+                AnikotoHttpServer.AudioStream(
                     audioType = audioType,
                     audioLabel = audioLabel,
                     hosterName = hosterName,
