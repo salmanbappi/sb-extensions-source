@@ -3,6 +3,8 @@ ext {
     extClass = '.AnimePahe'
     // Requires extensions-lib v17: the Hoster -> Video hand-off now uses `memo`
     // (Hoster.internalData / Video.internalData are @Deprecated(ERROR) in v17).
+    // Advertising 17 also requires the patched repo Inspector — see
+    // scripts/patch_inspector.py and verify with `python3 scripts/cli.py v17-compat`.
     libVersion = 17
     extVersionCode = 83
 }
