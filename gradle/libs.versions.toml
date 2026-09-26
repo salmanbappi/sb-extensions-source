@@ -30,6 +30,12 @@ injekt-core = { module = "com.github.null2264.injekt:injekt-core", version = "41
 # Host-pinned: AniZen (the target app) ships jsoup 1.21.2 / OkHttp 5.3.2 at runtime.
 # These are compileOnly, so raising them past the host risks NoSuchMethodError in-app.
 jsoup = { module = "org.jsoup:jsoup", version = "1.22.1" }
+# jsoup declares org.jspecify:jspecify with <scope>provided</scope>, so Gradle never
+# puts it on the compile classpath. Kotlin 2.4 needs it: without it compilation fails
+# with MISSING_DEPENDENCY_IN_INFERRED_TYPE_ANNOTATION_ERROR wherever a jsoup return
+# value (e.g. selectFirst) is used in an inferred-type position. Version matches the
+# one jsoup itself compiles against.
+jspecify = { module = "org.jspecify:jspecify", version = "1.0.0" }
 commons-text = { module = "org.apache.commons:commons-text", version = "1.13.0" }
 kotlin-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 kotlin-protobuf = { module = "org.jetbrains.kotlinx:kotlinx-serialization-protobuf", version.ref = "serialization" }
@@ -53,4 +59,4 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
 
 [bundles]
-common = ["coroutines-core", "coroutines-android", "injekt-core", "rxjava", "kotlin-protobuf", "kotlin-json", "kotlin-json-okio", "jsoup", "okhttp", "aniyomi-lib", "quickjs"]
+common = ["coroutines-core", "coroutines-android", "injekt-core", "rxjava", "kotlin-protobuf", "kotlin-json", "kotlin-json-okio", "jsoup", "jspecify", "okhttp", "aniyomi-lib", "quickjs"]
