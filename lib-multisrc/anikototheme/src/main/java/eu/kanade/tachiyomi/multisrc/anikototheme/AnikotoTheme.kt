@@ -26,7 +26,6 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimeRelation
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
-import eu.kanade.tachiyomi.animesource.model.HttpServer
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SAnimeEpisodeUpdate
 import eu.kanade.tachiyomi.animesource.model.SAnimeSeasonUpdate
@@ -168,15 +167,6 @@ abstract class AnikotoTheme : Source() {
      * but must not force a full episode-list fetch when the list was already loaded for this anime.
      */
     private val malIdBySlug = java.util.concurrent.ConcurrentHashMap<String, String>()
-
-    /** Resolved streams for the episode whose hoster list was built last; see [createHttpServer]. */
-    @Volatile
-    private var stagedProxyPlaylist: AnikotoHttpServer.Playlist? = null
-    private var stagedProxyPrefetch: Int = 10
-
-    /** The server handed to the app by [createHttpServer], so quality switches can reach it. */
-    @Volatile
-    private var liveProxyServer: AnikotoHttpServer? = null
 
     /** The read-only "Details" row, kept so the phrase examples stay in sync while editing. */
     private var smartDetailsPref: Preference? = null
@@ -745,19 +735,31 @@ abstract class AnikotoTheme : Source() {
             logi("  resolved: ${stream.hosterName} [${stream.audioLabel}] — ${stream.variants.size} variants, ${stream.subtitles.size} subs")
         }
 
-        // extensions-lib v17: the app owns the local server lifecycle. It calls createHttpServer()
-        // when a video starts, so stage the resolved session here and hand it over at that point.
-        val proxyPlaylist = AnikotoHttpServer.Playlist(resolvedStreams)
-        val proxyPrefetch = prefetchBuffer.toIntOrNull() ?: 10
-        stagedProxyPlaylist = proxyPlaylist
-        stagedProxyPrefetch = proxyPrefetch
-        val proxyUrl = HttpServer.PLACEHOLDER_URL
-        logi("getHosterList: proxy session staged (prefetch=$proxyPrefetch%, ${resolvedStreams.size} stream(s))")
+        val server = LocalProxyServer(
+            client = proxyFetchClient,
+            segmentHeaders = Headers.Builder()
+                .set("User-Agent", USER_AGENT)
+                .set("Referer", "https://vidtube.site/")
+                .set("Accept", "*/*")
+                .build(),
+            webViewFetcher = webViewFetcher,
+        )
+        server.playlist = LocalProxyServer.Playlist(resolvedStreams)
+        server.reResolveStream = { staleStream ->
+            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                reResolveStream(staleStream)
+            }
+        }
+        server.prefetchCount = prefetchBuffer.toIntOrNull() ?: 10
+        server.start()
+        val proxyUrl = server.baseUrl
+        logi("getHosterList: proxy started at $proxyUrl (prefetch=${server.prefetchCount}%)")
+        swapProxyServer(server)
 
         logi("getHosterList: building Video objects (grouped by server)...")
         val linkedHashMap = mutableMapOf<String, MutableList<Video>>()
         resolvedStreams.forEachIndexed { i, audioStream ->
-            val subtitleTracks = AnikotoHttpServer.subtitleTracksFor(proxyPlaylist, audioStream.audioType)
+            val subtitleTracks = server.getSubtitleTracks(audioStream.audioType)
             for (variant in audioStream.variants) {
                 val videoUrl = "$proxyUrl/variant/${audioStream.audioType}/${variant.quality}.m3u8"
                 val audioPrefix = audioStream.audioLabel.split(" - ").firstOrNull() ?: audioStream.audioLabel
@@ -867,41 +869,11 @@ abstract class AnikotoTheme : Source() {
     override suspend fun getVideoList(episode: SEpisode): List<Video> = getHosterList(episode).flatMap { it.videoList ?: emptyList() }
 
     override suspend fun resolveVideo(video: Video): Video {
-        liveProxyServer?.onQualitySwitch()
+        activeProxyServer?.onQualitySwitch()
         return video
     }
 
-    /**
-     * extensions-lib v17 hands the local server's lifecycle to the app: it calls this as soon as a
-     * video whose URL contains [HttpServer.PLACEHOLDER_URL] is played, starts the returned server,
-     * and rewrites `http://localhost:1` to the real local port on the video and its tracks.
-     *
-     * The resolved session is staged by [getHosterList]; the server itself keeps no state beyond it.
-     */
-    override fun createHttpServer(): HttpServer? {
-        val playlist = stagedProxyPlaylist ?: return null
-        val server = AnikotoHttpServer(
-            client = proxyFetchClient,
-            segmentHeaders = Headers.Builder()
-                .set("User-Agent", USER_AGENT)
-                .set("Referer", "https://vidtube.site/")
-                .set("Accept", "*/*")
-                .build(),
-            webViewFetcher = webViewFetcher,
-        ).apply {
-            this.playlist = playlist
-            this.prefetchCount = stagedProxyPrefetch
-            this.reResolveStream = { staleStream ->
-                kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-                    reResolveStream(staleStream)
-                }
-            }
-        }
-        liveProxyServer = server
-        return server
-    }
-
-    private suspend fun reResolveStream(staleStream: AnikotoHttpServer.AudioStream): AnikotoHttpServer.AudioStream? {
+    private suspend fun reResolveStream(staleStream: LocalProxyServer.AudioStream): LocalProxyServer.AudioStream? {
         val iframeUrl = staleStream.iframeUrl
         if (iframeUrl.isBlank()) return null
         val host = iframeUrl.substringAfter("://").substringBefore("/")
@@ -951,7 +923,7 @@ abstract class AnikotoTheme : Source() {
         }
     }
 
-    private suspend fun resolveStreamForTask(task: HosterTask, slug: String): AnikotoHttpServer.AudioStream? {
+    private suspend fun resolveStreamForTask(task: HosterTask, slug: String): LocalProxyServer.AudioStream? {
         logi("--- resolving: ${task.label} ---")
         return try {
             val encodedToken = URLEncoder.encode(task.token, "UTF-8")
@@ -1524,6 +1496,14 @@ abstract class AnikotoTheme : Source() {
         private val HOSTER_PRIORITY = listOf("Kiwi-Stream", "VidCloud-1", "VidPlay-1", "Vidstream-2", "HD-1")
 
         @Volatile
+        private var activeProxyServer: LocalProxyServer? = null
+
+        @Synchronized
+        private fun swapProxyServer(newServer: LocalProxyServer): LocalProxyServer {
+            activeProxyServer?.let { runCatching { it.stop() } }
+            activeProxyServer = newServer
+            return newServer
+        }
     }
 }
 

@@ -1,35 +1,38 @@
 package eu.kanade.tachiyomi.multisrc.anikototheme
 
 import android.util.Log
-import eu.kanade.tachiyomi.animesource.model.HttpServer
 import eu.kanade.tachiyomi.animesource.model.Track
-import fi.iki.elonen.NanoHTTPD
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import uy.kohesive.injekt.api.get
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileInputStream
+import java.io.InputStream
 import java.io.OutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 import kotlin.math.min
 
-class AnikotoHttpServer(
+class LocalProxyServer(
     client: OkHttpClient,
     private val segmentHeaders: Headers,
     private val webViewFetcher: WebViewFetcher? = null,
-) : HttpServer() {
+) {
     companion object {
+        private const val IDLE_TIMEOUT_MS = 600000L
         private const val MAX_CACHE_ENTRIES = 30
         private const val MAX_CONCURRENT_PREFETCHES = 5
+        private const val SOCKET_READ_TIMEOUT_MS = 120000
 
         // Hosters (VidTube/Kiwi) mint segment URLs that expire some minutes after the playlist is
         // resolved. Re-fetch the variant playlist on this cadence while playing so segments past
@@ -46,27 +49,19 @@ class AnikotoHttpServer(
 
         /** Statuses that mean "the CDN wants a real browser" rather than a bad URL. */
         private val BROWSER_FALLBACK_CODES = setOf(403, 429, 503)
-
-        /**
-         * Subtitle tracks for [audioType] as placeholder URLs. The app rewrites
-         * [HttpServer.PLACEHOLDER_URL] to the live local port (see `Video.copyHttpServer`), which is
-         * also what makes `Video.usesHttpServer()` detect that this video needs a local server.
-         */
-        fun subtitleTracksFor(playlist: Playlist?, audioType: String): List<Track> {
-            val streams = playlist?.streams ?: return emptyList()
-            val stream = streams.firstOrNull { it.audioType == audioType } ?: return emptyList()
-            return stream.subtitles.mapIndexed { i, sub ->
-                Track("${HttpServer.PLACEHOLDER_URL}/sub/$audioType/$i", sub.label)
-            }
-        }
     }
 
     private val fetchClient: OkHttpClient = client
 
     var prefetchCount: Int = 10
+    private val running = AtomicBoolean(false)
     private val lastActivityMs = AtomicLong(System.currentTimeMillis())
     private val executor = Executors.newCachedThreadPool { runnable ->
         Thread(runnable, "AnikotoProxy-Worker").apply { isDaemon = true }
+    }
+
+    private val idleMonitorThread = Thread({ idleMonitor() }, "AnikotoProxy-IdleMonitor").apply {
+        isDaemon = true
     }
 
     private val proxyCacheDir: File by lazy {
@@ -90,6 +85,9 @@ class AnikotoHttpServer(
     private val prefetchGeneration = AtomicLong(0L)
     private val activePrefetches = AtomicLong(0L)
 
+    private var serverSocket: ServerSocket? = null
+    private var acceptThread: Thread? = null
+
     var playlist: Playlist? = null
 
     /**
@@ -102,18 +100,11 @@ class AnikotoHttpServer(
 
     private val variantStates = ConcurrentHashMap<String, VariantState>()
 
-    /**
-     * Reply metadata for the request currently being served. The handlers still write their body
-     * into an [OutputStream]; this records the status/content type (or a file to stream) so [serve]
-     * can turn it into a NanoHTTPD response. Thread-local so concurrent requests cannot race.
-     */
-    private class Reply {
-        var status: Int = 200
-        var contentType: String = "application/octet-stream"
-        var file: File? = null
-    }
+    val port: Int
+        get() = serverSocket?.localPort ?: -1
 
-    private val reply = ThreadLocal.withInitial { Reply() }
+    val baseUrl: String
+        get() = "http://127.0.0.1:$port"
 
     private fun logi(msg: String) = Log.i(TAG, msg)
     private fun logw(msg: String) = Log.w(TAG, msg)
@@ -193,61 +184,37 @@ class AnikotoHttpServer(
         }
     }
 
-    override fun start() {
+    fun start() {
+        if (running.get()) return
         clearCache()
         variantStates.clear()
+        val ss = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
+        ss.soTimeout = 0
+        serverSocket = ss
+        running.set(true)
         lastActivityMs.set(System.currentTimeMillis())
-        super.start()
-        logi("Proxy server started on $url (prefetch=$prefetchCount% of total segments)")
+
+        acceptThread = Thread({ acceptLoop() }, "AnikotoProxy-Accept").apply {
+            isDaemon = true
+            start()
+        }
+        idleMonitorThread.start()
+        logi("Proxy server started on $baseUrl (prefetch=$prefetchCount% of total segments)")
     }
 
-    override fun stop() {
-        logi("Stopping proxy server")
-        runCatching { executor.shutdownNow() }
-        reResolveStream = null
-        clearCache()
-        fetching.clear()
-        variantStates.clear()
-        prefetchGeneration.incrementAndGet()
-        activePrefetches.set(0L)
-        runCatching { super.stop() }
-    }
-
-    /**
-     * NanoHTTPD entry point. The request handlers below still write their body through an
-     * [OutputStream]; we capture that per request and translate it into a NanoHTTPD [NanoHTTPD.Response],
-     * so the streaming logic (segment re-mint, prefetch, disk cache) is unchanged from the previous
-     * hand-rolled socket server. The app owns the lifecycle: it starts us via `createHttpServer()`
-     * and substitutes [HttpServer.PLACEHOLDER_URL] with [url] before handing the video to the player.
-     */
-    override fun serve(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
-        touchActivity()
-        val meta = Reply()
-        reply.set(meta)
-        val buffer = ByteArrayOutputStream()
-        try {
-            routeRequest(session.uri ?: "/", buffer)
-        } catch (e: Exception) {
-            loge("Route error for ${session.uri}: ${e.message}")
-            return NanoHTTPD.newFixedLengthResponse(
-                NanoHTTPD.Response.Status.INTERNAL_ERROR,
-                "text/plain",
-                "Internal Server Error: ${e.message}",
-            )
+    fun stop() {
+        if (running.getAndSet(false)) {
+            logi("Stopping proxy server")
+            runCatching { serverSocket?.close() }
+            runCatching { acceptThread?.interrupt() }
+            runCatching { executor.shutdownNow() }
+            reResolveStream = null
+            clearCache()
+            fetching.clear()
+            variantStates.clear()
+            prefetchGeneration.incrementAndGet()
+            activePrefetches.set(0L)
         }
-
-        val status = NanoHTTPD.Response.Status.lookup(meta.status) ?: NanoHTTPD.Response.Status.OK
-        val file = meta.file
-        val response = if (file != null && file.exists()) {
-            NanoHTTPD.newFixedLengthResponse(status, meta.contentType, FileInputStream(file), file.length())
-        } else {
-            val bytes = buffer.toByteArray()
-            NanoHTTPD.newFixedLengthResponse(status, meta.contentType, ByteArrayInputStream(bytes), bytes.size.toLong())
-        }
-        response.addHeader("Cache-Control", "no-cache")
-        response.addHeader("Access-Control-Allow-Origin", "*")
-        response.addHeader("Accept-Ranges", "bytes")
-        return response
     }
 
     fun onQualitySwitch() {
@@ -258,6 +225,64 @@ class AnikotoHttpServer(
 
     private fun touchActivity() {
         lastActivityMs.set(System.currentTimeMillis())
+    }
+
+    private fun idleMonitor() {
+        while (running.get()) {
+            try {
+                Thread.sleep(5000L)
+                val idleMs = System.currentTimeMillis() - lastActivityMs.get()
+                if (idleMs > IDLE_TIMEOUT_MS) {
+                    logi("Idle ${idleMs / 1000}s — auto-shutting down")
+                    stop()
+                    return
+                }
+            } catch (e: InterruptedException) {
+                break
+            }
+        }
+    }
+
+    private fun acceptLoop() {
+        val ss = serverSocket ?: return
+        while (running.get()) {
+            try {
+                val socket = ss.accept()
+                socket.soTimeout = SOCKET_READ_TIMEOUT_MS
+                executor.execute { handleClient(socket) }
+            } catch (e: Exception) {
+                if (running.get()) {
+                    loge("accept() failed: ${e.message}")
+                }
+                break
+            }
+        }
+    }
+
+    private fun handleClient(socket: Socket) {
+        socket.use { s ->
+            val input = s.getInputStream()
+            val output = s.getOutputStream()
+            val line = readLine(input) ?: return
+            touchActivity()
+            val parts = line.split(" ")
+            if (parts.size >= 3 && parts[0] == "GET") {
+                val path = parts[1]
+                var nextLine: String?
+                while (true) {
+                    nextLine = readLine(input)
+                    if (nextLine.isNullOrEmpty()) break
+                }
+                runCatching {
+                    routeRequest(path, output)
+                }.onFailure { e ->
+                    loge("Route error for $path: ${e.message}")
+                    runCatching { sendError(output, 500, "Internal Server Error: ${e.message}") }
+                }
+            } else {
+                sendError(output, 405, "Method Not Allowed")
+            }
+        }
     }
 
     private fun routeRequest(path: String, output: OutputStream) {
@@ -307,7 +332,7 @@ class AnikotoHttpServer(
         sb.append("#EXT-X-MEDIA-SEQUENCE:0\n")
         state.segments.forEachIndexed { i, seg ->
             sb.append("#EXTINF:${seg.duration},\n")
-            sb.append("$url/seg/$audioType/$quality/$i\n")
+            sb.append("$baseUrl/seg/$audioType/$quality/$i\n")
         }
         sb.append("#EXT-X-ENDLIST\n")
         sendText(output, "application/vnd.apple.mpegurl", sb.toString())
@@ -741,7 +766,15 @@ class AnikotoHttpServer(
         }
     }
 
-    fun getSubtitleTracks(audioType: String): List<Track> = subtitleTracksFor(playlist, audioType)
+    fun getSubtitleTracks(audioType: String): List<Track> {
+        val pl = playlist ?: return emptyList()
+        val stream = pl.streams.firstOrNull { it.audioType == audioType } ?: return emptyList()
+        val tracks = stream.subtitles.mapIndexed { i, sub ->
+            Track("$baseUrl/sub/$audioType/$i", sub.label)
+        }
+        logi("getSubtitleTracks($audioType): ${tracks.size} tracks")
+        return tracks
+    }
 
     private fun requireValidSegment(data: ByteArray, offset: Int, key: String) {
         val servedSize = data.size - offset
@@ -801,11 +834,21 @@ class AnikotoHttpServer(
     }
 
     private fun sendFile(output: OutputStream, contentType: String, file: File) {
-        // Streamed straight from disk by serve(); record it rather than buffering the segment.
-        val meta = reply.get()
-        meta.status = 200
-        meta.contentType = contentType
-        meta.file = file
+        val length = file.length()
+        val header = "HTTP/1.1 200 OK\r\nContent-Type: $contentType\r\nContent-Length: $length\r\nConnection: close\r\nAccept-Ranges: bytes\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
+        try {
+            output.write(header.toByteArray(Charsets.UTF_8))
+            file.inputStream().use { input ->
+                val buffer = ByteArray(16384)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    output.write(buffer, 0, bytesRead)
+                }
+            }
+            output.flush()
+        } catch (e: Exception) {
+            logw("sendFile failed: ${e.message}")
+        }
     }
 
     private fun detectSegmentOffset(data: ByteArray): Int {
@@ -833,13 +876,30 @@ class AnikotoHttpServer(
         return videoStart
     }
 
+    private fun readLine(input: InputStream): String? {
+        val baos = ByteArrayOutputStream()
+        while (true) {
+            val b = input.read()
+            if (b == -1) {
+                if (baos.size() == 0) return null
+                return baos.toString("UTF-8")
+            }
+            if (b != 10) {
+                if (b != 13) {
+                    baos.write(b)
+                }
+            } else {
+                return baos.toString("UTF-8")
+            }
+        }
+    }
+
     private fun sendText(output: OutputStream, contentType: String, text: String) {
-        val meta = reply.get()
-        meta.status = 200
-        meta.contentType = contentType
-        meta.file = null
+        val body = text.toByteArray(Charsets.UTF_8)
+        val header = "HTTP/1.1 200 OK\r\nContent-Type: $contentType\r\nContent-Length: ${body.size}\r\nConnection: close\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
         try {
-            output.write(text.toByteArray(Charsets.UTF_8))
+            output.write(header.toByteArray(Charsets.UTF_8))
+            output.write(body)
             output.flush()
         } catch (e: Exception) {
             logw("sendText failed: ${e.message}")
@@ -847,12 +907,11 @@ class AnikotoHttpServer(
     }
 
     private fun sendBytes(output: OutputStream, contentType: String, body: ByteArray, offset: Int = 0) {
-        val meta = reply.get()
-        meta.status = 200
-        meta.contentType = contentType
-        meta.file = null
+        val length = body.size - offset
+        val header = "HTTP/1.1 200 OK\r\nContent-Type: $contentType\r\nContent-Length: $length\r\nConnection: close\r\nAccept-Ranges: bytes\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
         try {
-            output.write(body, offset, body.size - offset)
+            output.write(header.toByteArray(Charsets.UTF_8))
+            output.write(body, offset, length)
             output.flush()
         } catch (e: Exception) {
             logw("sendBytes failed: ${e.message}")
@@ -860,12 +919,11 @@ class AnikotoHttpServer(
     }
 
     private fun sendError(output: OutputStream, code: Int, message: String) {
-        val meta = reply.get()
-        meta.status = code
-        meta.contentType = "text/plain"
-        meta.file = null
+        val body = "$code: $message\n".toByteArray(Charsets.UTF_8)
+        val header = "HTTP/1.1 $code $message\r\nContent-Type: text/plain\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
         try {
-            output.write("$code: $message\n".toByteArray(Charsets.UTF_8))
+            output.write(header.toByteArray(Charsets.UTF_8))
+            output.write(body)
             output.flush()
         } catch (e: Exception) {
             // ignore
