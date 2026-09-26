@@ -19,7 +19,7 @@ abstract class Dooplay(
 
     // extensions-lib v17 keeps `supportsRelatedAnime` abstract on the source
     // interfaces; the theme base supplies the default for all its variants.
-    override val supportsRelatedAnime: Boolean = false
+    open override val supportsRelatedAnime: Boolean = false
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/trending/page/$page/", headers)
     override fun popularAnimeParse(response: Response): AnimesPage = TODO("Not yet implemented")

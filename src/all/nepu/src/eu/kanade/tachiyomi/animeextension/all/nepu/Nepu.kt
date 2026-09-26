@@ -48,7 +48,7 @@ class Nepu : ParsedAnimeHttpSource() {
 
     // extensions-lib v17 keeps `supportsRelatedAnime` abstract on the source
     // interfaces; ParsedAnimeHttpSource does not supply a default.
-    override val supportsRelatedAnime: Boolean = false
+    open override val supportsRelatedAnime: Boolean = false
 
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
 

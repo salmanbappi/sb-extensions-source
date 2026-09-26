@@ -11,6 +11,17 @@
         android:usesCleartextTraffic="true"
         tools:replace="android:allowBackup,android:icon,android:label">
 
+        <!-- Modern extensions-lib v17 metadata; 'aniyomix.name' must be the BARE name. -->
+        <meta-data
+            android:name="aniyomix.name"
+            android:value="${extName}" />
+        <meta-data
+            android:name="aniyomix.contentWarning"
+            android:value="${contentWarning}" />
+        <meta-data
+            android:name="aniyomix.extensionLib"
+            android:value="${extensionLib}" />
+
         <meta-data
             android:name="tachiyomi.animeextension.class"
             android:value="${extClass}" />

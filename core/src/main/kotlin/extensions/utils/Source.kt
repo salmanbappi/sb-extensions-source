@@ -89,7 +89,7 @@ abstract class Source : ConfigurableAnimeSource, AnimeHttpSource() {
      * implements it. Providing the default here keeps every downstream source and
      * theme compiling; override it (together with `getRelatedAnimeList`) to opt in.
      */
-    override val supportsRelatedAnime: Boolean = false
+    open override val supportsRelatedAnime: Boolean = false
 
     private suspend fun okhttp3.Call.await(): Response = withContext(Dispatchers.IO) { execute() }
 }

@@ -36,6 +36,10 @@ jsoup = { module = "org.jsoup:jsoup", version = "1.22.1" }
 # value (e.g. selectFirst) is used in an inferred-type position. Version matches the
 # one jsoup itself compiles against.
 jspecify = { module = "org.jspecify:jspecify", version = "1.0.0" }
+# extensions-lib v17 declares nanohttpd as compileOnly and does not expose it,
+# so a source cannot subclass HttpServer without pulling it in here. Version
+# matches the one the AniZen app bundles at runtime.
+nanohttpd = { module = "org.nanohttpd:nanohttpd", version = "2.3.1" }
 commons-text = { module = "org.apache.commons:commons-text", version = "1.13.0" }
 kotlin-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 kotlin-protobuf = { module = "org.jetbrains.kotlinx:kotlinx-serialization-protobuf", version.ref = "serialization" }
@@ -59,4 +63,4 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
 
 [bundles]
-common = ["coroutines-core", "coroutines-android", "injekt-core", "rxjava", "kotlin-protobuf", "kotlin-json", "kotlin-json-okio", "jsoup", "jspecify", "okhttp", "aniyomi-lib", "quickjs"]
+common = ["coroutines-core", "coroutines-android", "injekt-core", "rxjava", "kotlin-protobuf", "kotlin-json", "kotlin-json-okio", "jsoup", "jspecify", "nanohttpd", "okhttp", "aniyomi-lib", "quickjs"]

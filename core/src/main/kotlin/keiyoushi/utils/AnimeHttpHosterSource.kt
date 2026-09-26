@@ -22,7 +22,7 @@ abstract class AnimeHttpHosterSource : AnimeHttpSource() {
     // extensions-lib v17: abstract on AnimeSource and implemented nowhere in the
     // AnimeCatalogueSource/AnimeHttpSource chain, so every concrete source must
     // provide it. Default off; override to opt into related entries.
-    override val supportsRelatedAnime: Boolean = false
+    open override val supportsRelatedAnime: Boolean = false
 
     protected fun legacyHoster(
         hosterUrl: String = "",
