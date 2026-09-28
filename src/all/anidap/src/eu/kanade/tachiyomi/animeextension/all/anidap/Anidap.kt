@@ -20,6 +20,7 @@ import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
+import extensions.utils.parseAs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -62,19 +63,27 @@ class Anidap :
     private var proxy: LocalProxyServer? = null
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
+        .add("User-Agent", USER_AGENT)
         .add("Referer", "$baseUrl/")
         .add("Origin", baseUrl)
 
-    // ============================== Proxy (mimi / yuki / loli only) =======
+    // ============================== Proxy =================================
+    //
+    // Every provider except the ones listed in PLAIN_PROVIDERS plays through a
+    // loopback server that re-issues each playlist / key / segment request with
+    // the headers the web player would have sent. It is needed because
+    //   * sora segments only answer with `Origin: https://krussdomi.com`,
+    //   * uwu is an AES-128 playlist whose key and segments need `Referer: kwik.cx`,
+    //   * yuki / momo segments are `.jpg`-named transport streams,
+    // and players do not forward the video headers to every child request.
 
-    private fun getProxyUrl(url: String, sourceHeaders: Headers? = null): String {
+    private fun getProxyUrl(url: String, sourceHeaders: Headers? = null, fileName: String? = null): String {
         if (proxy == null) {
             proxy = LocalProxyServer(client, json).apply { start() }
         }
         val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val encodedHeaders = encodeHeaders(sourceHeaders)
-        val path = if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
+        val path = fileName ?: if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
         val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
         return "http://127.0.0.1:${proxy!!.port}/$path?$query"
     }
@@ -311,7 +320,7 @@ class Anidap :
         val serversRequest = GET("https://chad.anidap.lol/rest/api/servers?id=$animeId&epNum=$epNum", headers)
         val response = client.newCall(serversRequest).execute()
         val serversData = runCatching {
-            json.decodeFromString<ServersResponse>(response.body.string())
+            response.parseAs<ServersResponse>(json)
         }.getOrNull() ?: ServersResponse()
 
         val disabledServers = preferences.getStringSet("pref_disabled_servers", emptySet()) ?: emptySet()
@@ -319,21 +328,21 @@ class Anidap :
         val subProviders = serversData.data?.subProviders ?: serversData.subProviders ?: emptyList()
         val dubProviders = serversData.data?.dubProviders ?: serversData.dubProviders ?: emptyList()
 
-        val proxiedServers = setOf("mimi", "yuki", "loli")
-
         // Combine sub & dub for all servers into single hoster per server
         data class ServerInfo(val tip: String?, val hasSub: Boolean, val hasDub: Boolean)
         val serverMap = linkedMapOf<String, ServerInfo>()
 
         for (server in subProviders) {
-            if (disabledServers.contains(server.id)) continue
-            val existing = serverMap[server.id]
-            serverMap[server.id] = ServerInfo(server.tip ?: existing?.tip, true, existing?.hasDub ?: false)
+            val id = server.id?.takeIf { it.isNotBlank() } ?: continue
+            if (disabledServers.contains(id)) continue
+            val existing = serverMap[id]
+            serverMap[id] = ServerInfo(server.tip ?: existing?.tip, true, existing?.hasDub ?: false)
         }
         for (server in dubProviders) {
-            if (disabledServers.contains(server.id)) continue
-            val existing = serverMap[server.id]
-            serverMap[server.id] = ServerInfo(server.tip ?: existing?.tip, existing?.hasSub ?: false, true)
+            val id = server.id?.takeIf { it.isNotBlank() } ?: continue
+            if (disabledServers.contains(id)) continue
+            val existing = serverMap[id]
+            serverMap[id] = ServerInfo(server.tip ?: existing?.tip, existing?.hasSub ?: false, true)
         }
 
         val hosters = serverMap.map { (id, info) ->
@@ -347,7 +356,9 @@ class Anidap :
                 info.hasDub -> "Dub"
                 else -> "Sub"
             }
-            val prefix = if (id in proxiedServers) "proxy" else "plain"
+            // Unknown providers default to the proxy: it injects whatever headers
+            // the API advertised, which is strictly safer than the plain path.
+            val prefix = if (id.lowercase() in PLAIN_PROVIDERS) "plain" else "proxy"
             Hoster(
                 hosterName = "${id.uppercase()} [$subType] [$audioLabel]",
                 hosterUrl = "$prefix|$animeId|$epNum|$id|${if (info.hasSub) "1" else "0"}|${if (info.hasDub) "1" else "0"}",
@@ -378,80 +389,60 @@ class Anidap :
         return videos.sortVideos()
     }
 
-    /** Fetch videos for mimi/yuki/loli through the local proxy (injects Referer per segment). */
+    /** Fetch videos for proxied servers through the local proxy (injects CDN headers per request). */
     private fun fetchProxiedVideos(animeId: String, epNum: String, providerId: String, type: String): List<Video> {
-        val requestUrl = "https://chad.anidap.lol/rest/api/sources?id=$animeId&epNum=$epNum&type=$type&providerId=$providerId"
-        val response = client.newCall(GET(requestUrl, headers)).execute()
-        val sourcesData = runCatching {
-            json.decodeFromString<SourcesResponse>(response.body.string())
-        }.getOrNull() ?: return emptyList()
-
-        val sources = sourcesData.data?.sources ?: sourcesData.sources ?: emptyList()
+        val sourcesData = fetchSources(animeId, epNum, providerId, type) ?: return emptyList()
+        val sources = sourcesData.sourceList()
         if (sources.isEmpty()) return emptyList()
 
-        val rawSubs = sourcesData.data?.subtitles ?: sourcesData.subtitles
-            ?: sourcesData.data?.tracks ?: sourcesData.tracks ?: emptyList()
-        val subtitles = rawSubs.mapNotNull { track ->
-            val trackUrl = track.url ?: return@mapNotNull null
-            Track(url = trackUrl, lang = track.label ?: track.lang ?: "Sub")
-        }
-
-        val apiHeaders = sourcesData.data?.apiHeaders ?: sourcesData.apiHeaders ?: emptyMap()
-        val referer = apiHeaders["Referer"] ?: apiHeaders["referer"]
-        val sourceHeaders = headers.newBuilder().apply {
-            referer?.let { set("Referer", it) }
-        }.build()
-
-        return sources.mapNotNull { src ->
-            val rawUrl = src.url ?: return@mapNotNull null
-            val finalUrl = transformSourceUrl(rawUrl, providerId)
-            val titleLabel = "${type.uppercase()} - ${providerId.uppercase()} - ${src.quality ?: "Auto"}"
-            if (finalUrl.contains(".m3u8")) {
-                Video(
-                    videoUrl = getProxyUrl(finalUrl, sourceHeaders),
-                    videoTitle = titleLabel,
-                    headers = headers,
-                    subtitleTracks = subtitles,
-                )
-            } else {
-                Video(
-                    videoUrl = finalUrl,
-                    videoTitle = titleLabel,
-                    headers = sourceHeaders,
-                    subtitleTracks = subtitles,
-                )
-            }
-        }
-    }
-
-    /** Fetch videos for all other servers using existing extractors. */
-    private fun fetchPlainVideos(animeId: String, epNum: String, providerId: String, type: String): List<Video> {
-        val requestUrl = "https://chad.anidap.lol/rest/api/sources?id=$animeId&epNum=$epNum&type=$type&providerId=$providerId"
-        val response = client.newCall(GET(requestUrl, headers)).execute()
-        val sourcesData = runCatching {
-            json.decodeFromString<SourcesResponse>(response.body.string())
-        }.getOrNull() ?: return emptyList()
-
-        val sources = sourcesData.data?.sources ?: sourcesData.sources ?: emptyList()
-        if (sources.isEmpty()) return emptyList()
-
-        val rawSubs = sourcesData.data?.subtitles ?: sourcesData.subtitles
-            ?: sourcesData.data?.tracks ?: sourcesData.tracks ?: emptyList()
-        val subtitles = rawSubs.mapNotNull { track ->
-            val trackUrl = track.url ?: return@mapNotNull null
-            Track(url = trackUrl, lang = track.label ?: track.lang ?: "Sub")
-        }
-
-        val apiHeaders = sourcesData.data?.apiHeaders ?: sourcesData.apiHeaders ?: emptyMap()
-        val referer = apiHeaders["Referer"] ?: apiHeaders["referer"]
-        val sourceHeaders = headers.newBuilder().apply {
-            referer?.let { set("Referer", it) }
-        }.build()
+        val sourceHeaders = buildSourceHeaders(providerId, sourcesData.headerMap())
+        val subtitles = proxySubtitles(sourcesData.subtitleList(), sourceHeaders)
 
         val videos = mutableListOf<Video>()
         for (src in sources) {
             val rawUrl = src.url ?: continue
-            val finalUrl = transformSourceUrl(rawUrl, providerId)
+            val finalUrl = applySourceRewrites(rawUrl, providerId)
+            val titleLabel = "${type.uppercase()} - ${providerId.uppercase()} - ${src.quality ?: "Auto"}"
+
+            if (isHls(src, finalUrl)) {
+                // Parse the master through the proxy so every quality becomes its own
+                // entry while the player keeps talking to loopback.
+                videos.addAll(
+                    playlistUtils.extractFromHls(
+                        playlistUrl = getProxyUrl(finalUrl, sourceHeaders),
+                        masterHeaders = headers,
+                        videoHeaders = headers,
+                        videoNameGen = { quality -> "$titleLabel - $quality" },
+                        subtitleList = subtitles,
+                    ),
+                )
+            } else {
+                videos.add(
+                    Video(
+                        videoUrl = finalUrl,
+                        videoTitle = titleLabel,
+                        headers = sourceHeaders,
+                        subtitleTracks = subtitles,
+                    ),
+                )
+            }
+        }
+        return videos
+    }
+
+    /** Fetch videos for all other servers using existing extractors. */
+    private fun fetchPlainVideos(animeId: String, epNum: String, providerId: String, type: String): List<Video> {
+        val sourcesData = fetchSources(animeId, epNum, providerId, type) ?: return emptyList()
+        val sources = sourcesData.sourceList()
+        if (sources.isEmpty()) return emptyList()
+
+        val sourceHeaders = buildSourceHeaders(providerId, sourcesData.headerMap())
+        val subtitles = proxySubtitles(sourcesData.subtitleList(), sourceHeaders)
+        val videos = mutableListOf<Video>()
+
+        for (src in sources) {
+            val rawUrl = src.url ?: continue
+            val finalUrl = applySourceRewrites(rawUrl, providerId)
             val titleLabel = "${type.uppercase()} - ${providerId.uppercase()} - ${src.quality ?: "Auto"}"
 
             when {
@@ -463,7 +454,7 @@ class Anidap :
                     videos.addAll(okruExtractor.videosFromUrl(finalUrl))
                 }
 
-                finalUrl.contains(".m3u8") -> {
+                isHls(src, finalUrl) -> {
                     val playlistVideos = playlistUtils.extractFromHls(
                         playlistUrl = finalUrl,
                         masterHeaders = sourceHeaders,
@@ -489,46 +480,119 @@ class Anidap :
         return videos
     }
 
-    private fun transformSourceUrl(url: String, providerId: String): String = when (providerId.lowercase()) {
-        "shiro" -> "${b(url)}&origin=https://kem.clvd.xyz/"
-        "kami" -> "${b(url)}&origin=https://krussdomi.com"
-        "vee" -> if (url.startsWith("https://cdn.animeonsen.xyz")) url else "${b(url)}&origin=https://www.animeonsen.xyz/"
-        "yuki" -> f(url, "https://megaplay.buzz")
-        "uwu" -> f(url, "https://kwik.cx/")
-        "miku" -> f(url, "https://allanime.uns.bio")
-        "mochi" -> url.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
-        "mimi" -> url.replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
-        else -> url
+    private fun fetchSources(animeId: String, epNum: String, providerId: String, type: String): SourcesResponse? {
+        val requestUrl = "https://chad.anidap.lol/rest/api/sources" +
+            "?id=$animeId&epNum=$epNum&type=$type&providerId=$providerId"
+        return runCatching {
+            val response = client.newCall(GET(requestUrl, headers)).execute()
+            response.parseAs<SourcesResponse>(json)
+        }.getOrNull()
     }
 
-    private fun b(url: String): String {
-        val bytes = url.toByteArray()
-        val xored = ByteArray(bytes.size) { i -> (bytes[i].toInt() xor 137).toByte() }
-        val hex = xored.joinToString("") { "%02x".format(it) }
-        return "https://crs.24stream.xyz/media/$hex"
-    }
-
-    private fun f(url: String, referer: String): String {
-        val urlBytes = url.toByteArray()
-        val refBytes = referer.toByteArray()
-        val combined = ByteArray(urlBytes.size + 1 + refBytes.size)
-        System.arraycopy(urlBytes, 0, combined, 0, urlBytes.size)
-        combined[urlBytes.size] = 0
-        System.arraycopy(refBytes, 0, combined, urlBytes.size + 1, refBytes.size)
-
-        val key = "10b06cdc1ca48c9fb0b94af97cc040cf".toByteArray()
-        for (i in combined.indices) {
-            combined[i] = (combined[i].toInt() xor key[i % key.size].toInt()).toByte()
+    /**
+     * Headers for the provider CDNs. Starts from what the API advertises and adds the
+     * origin/referer that the provider's segment hosts actually enforce.
+     */
+    private fun buildSourceHeaders(providerId: String, apiHeaders: Map<String, String>): Headers {
+        val builder = Headers.Builder()
+            .set("User-Agent", USER_AGENT)
+            .set("Accept", "*/*")
+        for ((key, value) in apiHeaders) {
+            if (key.isNotBlank() && value.isNotBlank()) builder.set(key, value)
         }
 
-        val base64 = Base64.encodeToString(combined, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val domain = SITES_DOMAINS[siteIndex % SITES_DOMAINS.size]
-        siteIndex++
-        return "$domain/uwu/$base64"
+        when (providerId.lowercase()) {
+            "yuki", "momo" -> {
+                builder.set("Origin", "https://megaplay.buzz")
+                builder.set("Referer", "https://megaplay.buzz/")
+            }
+
+            // st1.*.xyz only answers when Origin is the krussdomi player.
+            "sora" -> builder.set("Origin", "https://krussdomi.com")
+
+            "uwu" -> builder.set("Referer", "https://kwik.cx/")
+            "kiwi" -> builder.set("Referer", "https://anidb.app/")
+            "miku" -> builder.set("Referer", "https://allanime.uns.bio")
+            "zuna" -> builder.set("Referer", "https://zokoanime.video/")
+            "mimi" -> builder.set("Referer", "https://hawk.aniwatchtv.site/")
+            "shiro" -> builder.set("Referer", "https://kem.clvd.xyz/")
+            else -> {}
+        }
+
+        // PlaylistUtils does this too; some CDNs reject a mismatched Origin.
+        if (builder.get("Origin") == null) {
+            builder.get("Referer")
+                ?.toHttpUrlOrNull()
+                ?.let { builder.set("Origin", "${it.scheme}://${it.host}") }
+        }
+        return builder.build()
     }
 
+    private fun proxySubtitles(tracks: List<SubtitleItem>, sourceHeaders: Headers): List<Track> = tracks.mapNotNull { track ->
+        val trackUrl = track.url ?: return@mapNotNull null
+        // The subtitle CDNs sit behind the same hotlink checks as the segments.
+        Track(
+            url = getProxyUrl(trackUrl, sourceHeaders, fileName = "subtitle.vtt"),
+            lang = track.label ?: track.lang ?: "Sub",
+        )
+    }
+
+    private fun isHls(src: SourceItem, url: String): Boolean =
+        src.type?.contains("mpegurl", ignoreCase = true) == true ||
+            url.contains(".m3u8") ||
+            url.contains("index.txt")
+
+    private fun SourcesResponse.sourceList(): List<SourceItem> =
+        data?.sources ?: sources ?: emptyList()
+
+    private fun SourcesResponse.subtitleList(): List<SubtitleItem> =
+        data?.subtitles ?: subtitles ?: data?.tracks ?: tracks ?: emptyList()
+
+    private fun SourcesResponse.headerMap(): Map<String, String> =
+        data?.apiHeaders ?: apiHeaders ?: emptyMap()
+
+    /**
+     * Rewrites a provider source URL onto the host/path that currently serves it,
+     * mirroring the web player's `HOST_HANDLERS` map. Providers that only need
+     * request headers are covered by [buildSourceHeaders] instead.
+     */
+    private fun applySourceRewrites(url: String, providerId: String): String {
+        var result = url
+            .replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
+
+        val playEngPrefix = "https://playeng.animeapps.top"
+        if (result.startsWith("$playEngPrefix/r2/")) {
+            result = "https://bd.aniwatchtv.site/media" +
+                result.removePrefix(playEngPrefix).replaceFirst("/r2", "")
+        }
+
+        return when (providerId.lowercase()) {
+            "shiro" -> "${hexEncodedMediaUrl(result)}&origin=https://kem.clvd.xyz/"
+            "beep" -> when {
+                result.startsWith("https://bd.24stream.xyz/media") -> result
+                result.startsWith("https://bd.aniwatchtv.site/media") -> result
+                result.startsWith("/") -> "https://bd.aniwatchtv.site/media${result.replace("/r2", "")}"
+                else -> "https://bd.aniwatchtv.site/media" +
+                    result.replace(Regex("""https?://[^/]+"""), "").replace("/r2", "")
+            }
+
+            "mochi" -> result.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
+            else -> result
+        }
+    }
+
+    /** shiro hides the real URL behind a byte-XORed hex blob served by its own media host. */
+    private fun hexEncodedMediaUrl(url: String): String {
+        val hex = url.toByteArray().joinToString("") { byte ->
+            "%02x".format((byte.toInt() and 0xFF) xor 137)
+        }
+        return "$SHIRO_MEDIA_BASE/media/$hex"
+    }
+
+    private fun String.toHttpUrlOrNull(): okhttp3.HttpUrl? = runCatching { toHttpUrl() }.getOrNull()
+
     private fun sortHostersByPreference(hosters: List<Hoster>): List<Hoster> {
-        val preferredServer = preferences.getString("pref_preferred_server", "mimi") ?: "mimi"
+        val preferredServer = preferences.getString("pref_preferred_server", "yuki") ?: "yuki"
         return hosters.sortedWith(
             compareBy { hoster ->
                 val name = hoster.hosterName.lowercase()
@@ -554,9 +618,9 @@ class Anidap :
             key = "pref_preferred_server"
             title = "Preferred Server"
             summary = "Preferred video server hoster"
-            entries = arrayOf("Mimi", "Beep", "Yuki", "Kiwi", "Vee", "Miku", "Mochi", "Loli")
-            entryValues = arrayOf("mimi", "beep", "yuki", "kiwi", "vee", "miku", "mochi", "loli")
-            setDefaultValue("mimi")
+            entries = KNOWN_SERVERS.map { it.second }.toTypedArray()
+            entryValues = KNOWN_SERVERS.map { it.first }.toTypedArray()
+            setDefaultValue("yuki")
         }.also { screen.addPreference(it) }
 
         ListPreference(screen.context).apply {
@@ -572,8 +636,8 @@ class Anidap :
             key = "pref_disabled_servers"
             title = "Disabled Servers"
             summary = "Select servers to exclude from video list"
-            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Loli", "Uwu", "Kiwi", "Miku", "Mochi")
-            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "loli", "uwu", "kiwi", "miku", "mochi")
+            entries = KNOWN_SERVERS.map { it.second }.toTypedArray()
+            entryValues = KNOWN_SERVERS.map { it.first }.toTypedArray()
             setDefaultValue(emptySet<String>())
         }.also { screen.addPreference(it) }
 
@@ -651,7 +715,7 @@ class Anidap :
 
     @Serializable
     private data class ServerItem(
-        val id: String,
+        val id: String? = null,
         val tip: String? = null,
     )
 
@@ -678,6 +742,7 @@ class Anidap :
     private data class SourceItem(
         val url: String? = null,
         val quality: String? = null,
+        val type: String? = null,
     )
 
     @Serializable
@@ -688,14 +753,35 @@ class Anidap :
     )
 
     companion object {
-        private val SITES_DOMAINS = listOf(
-            "https://cx.aniwatchtv.site",
-            "https://nsx.aniwatchtv.site",
-            "https://pro.aniwatchtv.site",
-            "https://rl2.aniwatchtv.site",
-            "https://rrl.aniwatchtv.site",
+        private const val USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0"
+
+        /** shiro's media host, which serves the XOR-hex encoded stream URL. */
+        private const val SHIRO_MEDIA_BASE = "https://hls.dramavideo.se"
+
+        /**
+         * Providers that play straight from the API URL. Everything else goes through
+         * the local proxy, so a provider the API adds later still gets its headers.
+         */
+        private val PLAIN_PROVIDERS = setOf("zuna")
+
+        /** Provider ids currently returned by the API, plus legacy ids, for the settings screen. */
+        private val KNOWN_SERVERS = listOf(
+            "yuki" to "Yuki",
+            "momo" to "Momo",
+            "zuna" to "Zuna",
+            "sora" to "Sora",
+            "uwu" to "Uwu",
+            "loli" to "Loli",
+            "mimi" to "Mimi",
+            "beep" to "Beep",
+            "vee" to "Vee",
+            "kiwi" to "Kiwi",
+            "miku" to "Miku",
+            "mochi" to "Mochi",
+            "shiro" to "Shiro",
+            "neko" to "Neko",
         )
-        private var siteIndex = 0
     }
 }
 
@@ -763,6 +849,7 @@ private class LocalProxyServer(
             when {
                 path.contains("playlist.m3u8") -> servePlaylist(targetUrl, hdrs, encodedHeaders, output)
                 path.contains("key.bin") -> serveKey(targetUrl, hdrs, output)
+                path.contains("subtitle.vtt") -> serveText(targetUrl, hdrs, output, "text/vtt")
                 else -> serveSegment(targetUrl, hdrs, output)
             }
         } catch (_: Exception) {
@@ -792,6 +879,7 @@ private class LocalProxyServer(
         val path = when {
             isKey || url.contains(".key") || url.contains("key.bin") -> "key.bin"
             url.contains(".m3u8") -> "playlist.m3u8"
+            url.contains(".vtt") || url.contains(".srt") || url.contains("subtitle") -> "subtitle.vtt"
             else -> "segment.ts"
         }
         val query = "url=$encoded" + if (!headersStr.isNullOrEmpty()) "&headers=$headersStr" else ""
@@ -853,6 +941,23 @@ private class LocalProxyServer(
         output.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
         output.write("Connection: close\r\n\r\n".toByteArray())
         output.write(bodyBytes)
+        output.flush()
+    }
+
+    private fun serveText(targetUrl: String, hdrs: okhttp3.Headers, output: OutputStream, contentType: String) {
+        val response = fetchWithRetry(targetUrl, hdrs)
+        if (!response.isSuccessful) {
+            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response.close()
+            return
+        }
+        val bytes = response.body.bytes()
+        response.close()
+        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        output.write("Content-Length: ${bytes.size}\r\n".toByteArray())
+        output.write("Content-Type: $contentType\r\n".toByteArray())
+        output.write("Connection: close\r\n\r\n".toByteArray())
+        output.write(bytes)
         output.flush()
     }
 
