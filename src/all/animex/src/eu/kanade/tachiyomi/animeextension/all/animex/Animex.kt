@@ -27,6 +27,7 @@ import extensions.utils.Source
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -237,8 +238,26 @@ class Animex : Source() {
     }
 
     private fun getPreferredServer(): String {
-        val server = preferences.getString("pref_preferred_server", "beep") ?: "beep"
-        return if (server == "auto") "beep" else server
+        val server = preferences.getString("pref_preferred_server", "yuki") ?: "yuki"
+        return if (server == "auto") "yuki" else server
+    }
+
+    /**
+     * pp.animex.one answers 5xx whenever an upstream provider is slow — yuki's
+     * gateway times out (504) after ~26s on roughly half of the requests, sora
+     * occasionally 500s. A single retry recovers most of those episodes instead
+     * of silently dropping the provider from the video list.
+     */
+    private suspend fun fetchWithApiRetry(request: Request, attempts: Int = 2): Response {
+        var response = client.newCall(request).execute()
+        var attempt = 1
+        while (attempt < attempts && response.code in 500..599) {
+            response.close()
+            delay(700)
+            response = client.newCall(request).execute()
+            attempt++
+        }
+        return response
     }
 
     private fun getPreferredQuality(): String = preferences.getString("pref_preferred_quality", "1080") ?: "1080"
@@ -652,13 +671,17 @@ class Animex : Source() {
         val preferredType = preferences.getString("pref_preferred_type", "soft") ?: "soft"
 
         val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
-        val serversResponse = client.newCall(serversRequest).execute()
+        val serversResponse = fetchWithApiRetry(serversRequest)
         if (!serversResponse.isSuccessful) {
             serversResponse.close()
             return emptyList()
         }
 
-        val serversData = json.decodeFromString<ServersResponse>(serversResponse.body.string())
+        val serversData = try {
+            json.decodeFromString<ServersResponse>(serversResponse.body.string())
+        } finally {
+            serversResponse.close()
+        }
         val disabledServers = preferences.getStringSet("pref_disabled_servers", emptySet()) ?: emptySet()
 
         val allTasks = (serversData.subProviders.map { it to "sub" } + serversData.dubProviders.map { it to "dub" })
@@ -744,7 +767,7 @@ class Animex : Source() {
                     } else {
                         val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$apiType&providerId=$providerId", headers)
                         try {
-                            client.newCall(sourcesRequest).execute().use { sourcesResponse ->
+                            fetchWithApiRetry(sourcesRequest).use { sourcesResponse ->
                                 if (sourcesResponse.isSuccessful) {
                                     val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
                                     val subtitleTracks = sourcesData.tracks?.mapNotNull { track ->
@@ -774,6 +797,12 @@ class Animex : Source() {
                                             removeAll("Accept")
                                             sourcesData.headers?.forEach { (key, value) ->
                                                 set(key, value)
+                                            }
+                                            // Sora's playlists load without it, but its segment hosts
+                                            // (st1.*.xyz) only answer when the request carries the
+                                            // krussdomi player origin — every segment 403s otherwise.
+                                            if (providerId.equals("sora", ignoreCase = true)) {
+                                                set("Origin", "https://krussdomi.com")
                                             }
                                             if (providerId.equals("uwu", ignoreCase = true) || providerId.equals("owo", ignoreCase = true)) {
                                                 if (get("Origin") == null) set("Origin", "https://animex.one")
@@ -1056,7 +1085,7 @@ class Animex : Source() {
             title = "Preferred Server"
             entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu", "Zuna", "Loli", "Sora")
             entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu", "zuna", "loli", "sora")
-            setDefaultValue("beep")
+            setDefaultValue("yuki")
             summary = "%s"
         }.also { screen.addPreference(it) }
 
