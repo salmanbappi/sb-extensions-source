@@ -511,11 +511,17 @@ class Anidap :
             "sora" -> builder.set("Origin", "https://krussdomi.com")
 
             "uwu" -> builder.set("Referer", "https://kwik.cx/")
+
             "kiwi" -> builder.set("Referer", "https://anidb.app/")
+
             "miku" -> builder.set("Referer", "https://allanime.uns.bio")
+
             "zuna" -> builder.set("Referer", "https://zokoanime.video/")
+
             "mimi" -> builder.set("Referer", "https://hawk.aniwatchtv.site/")
+
             "shiro" -> builder.set("Referer", "https://kem.clvd.xyz/")
+
             else -> {}
         }
 
@@ -537,19 +543,15 @@ class Anidap :
         )
     }
 
-    private fun isHls(src: SourceItem, url: String): Boolean =
-        src.type?.contains("mpegurl", ignoreCase = true) == true ||
-            url.contains(".m3u8") ||
-            url.contains("index.txt")
+    private fun isHls(src: SourceItem, url: String): Boolean = src.type?.contains("mpegurl", ignoreCase = true) == true ||
+        url.contains(".m3u8") ||
+        url.contains("index.txt")
 
-    private fun SourcesResponse.sourceList(): List<SourceItem> =
-        data?.sources ?: sources ?: emptyList()
+    private fun SourcesResponse.sourceList(): List<SourceItem> = data?.sources ?: sources ?: emptyList()
 
-    private fun SourcesResponse.subtitleList(): List<SubtitleItem> =
-        data?.subtitles ?: subtitles ?: data?.tracks ?: tracks ?: emptyList()
+    private fun SourcesResponse.subtitleList(): List<SubtitleItem> = data?.subtitles ?: subtitles ?: data?.tracks ?: tracks ?: emptyList()
 
-    private fun SourcesResponse.headerMap(): Map<String, String> =
-        data?.apiHeaders ?: apiHeaders ?: emptyMap()
+    private fun SourcesResponse.headerMap(): Map<String, String> = data?.apiHeaders ?: apiHeaders ?: emptyMap()
 
     /**
      * Rewrites a provider source URL onto the host/path that currently serves it,
@@ -568,15 +570,21 @@ class Anidap :
 
         return when (providerId.lowercase()) {
             "shiro" -> "${hexEncodedMediaUrl(result)}&origin=https://kem.clvd.xyz/"
+
             "beep" -> when {
                 result.startsWith("https://bd.24stream.xyz/media") -> result
+
                 result.startsWith("https://bd.aniwatchtv.site/media") -> result
+
                 result.startsWith("/") -> "https://bd.aniwatchtv.site/media${result.replace("/r2", "")}"
-                else -> "https://bd.aniwatchtv.site/media" +
-                    result.replace(Regex("""https?://[^/]+"""), "").replace("/r2", "")
+
+                else ->
+                    "https://bd.aniwatchtv.site/media" +
+                        result.replace(Regex("""https?://[^/]+"""), "").replace("/r2", "")
             }
 
             "mochi" -> result.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
+
             else -> result
         }
     }
