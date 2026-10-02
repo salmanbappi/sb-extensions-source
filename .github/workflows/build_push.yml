@@ -214,6 +214,7 @@ jobs:
           token: ${{ secrets.BOT_PAT }}
           ref: main
           path: repo
+          fetch-depth: 0
 
       - name: Merge repo
         env:
@@ -230,12 +231,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://github.com/salmanbappi/extensions-repo.git
+          git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
           git fetch origin
           git reset origin/main
           git add -A
           git commit --amend -m "$COMMIT_MESSAGE" --no-sign --allow-empty || echo "No changes to commit"
-          git push origin HEAD:main --force
-          git push origin HEAD:repo --force
+          git push origin HEAD:main HEAD:repo --force
 
       - name: Purge cached index on jsDelivr
         run: |
