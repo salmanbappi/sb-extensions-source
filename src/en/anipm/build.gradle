@@ -1,7 +1,7 @@
 ext {
     extName = 'Ani.pm'
     extClass = '.AniPm'
-    extVersionCode = 2
+    extVersionCode = 3
     isNsfw = false
 }
 
