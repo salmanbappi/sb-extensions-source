@@ -61,38 +61,36 @@ class AniPm : Source() {
 
     // =============================== Search Anime ==============================
 
-    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        return if (query.isNotBlank()) {
-            val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-            val url = "$baseUrl/api/anime/search?q=$encoded"
-            val response = client.newCall(GET(url, headers)).execute()
-            val dto = response.parseAs<AnimeListResponseDto>(json)
-            val animeList = (dto.items ?: emptyList()).map { it.toSAnime(baseUrl) }
-            AnimesPage(animeList, false)
-        } else {
-            var sort = "popular"
-            var genre = ""
-            var format = ""
+    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage = if (query.isNotBlank()) {
+        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+        val url = "$baseUrl/api/anime/search?q=$encoded"
+        val response = client.newCall(GET(url, headers)).execute()
+        val dto = response.parseAs<AnimeListResponseDto>(json)
+        val animeList = (dto.items ?: emptyList()).map { it.toSAnime(baseUrl) }
+        AnimesPage(animeList, false)
+    } else {
+        var sort = "popular"
+        var genre = ""
+        var format = ""
 
-            for (filter in filters) {
-                when (filter) {
-                    is SortFilter -> sort = filter.toUriPart()
-                    is GenreFilter -> genre = filter.toUriPart()
-                    is FormatFilter -> format = filter.toUriPart()
-                    else -> {}
-                }
+        for (filter in filters) {
+            when (filter) {
+                is SortFilter -> sort = filter.toUriPart()
+                is GenreFilter -> genre = filter.toUriPart()
+                is FormatFilter -> format = filter.toUriPart()
+                else -> {}
             }
-
-            val urlBuilder = "$baseUrl/api/anime/catalog?page=$page".toHttpUrl().newBuilder()
-            if (sort.isNotBlank()) urlBuilder.addQueryParameter("sort", sort)
-            if (genre.isNotBlank()) urlBuilder.addQueryParameter("genre", genre)
-            if (format.isNotBlank()) urlBuilder.addQueryParameter("format", format)
-
-            val response = client.newCall(GET(urlBuilder.build(), headers)).execute()
-            val dto = response.parseAs<AnimeCatalogResponseDto>(json)
-            val animeList = (dto.items ?: emptyList()).map { it.toSAnime(baseUrl) }
-            AnimesPage(animeList, dto.hasNextPage ?: false)
         }
+
+        val urlBuilder = "$baseUrl/api/anime/catalog?page=$page".toHttpUrl().newBuilder()
+        if (sort.isNotBlank()) urlBuilder.addQueryParameter("sort", sort)
+        if (genre.isNotBlank()) urlBuilder.addQueryParameter("genre", genre)
+        if (format.isNotBlank()) urlBuilder.addQueryParameter("format", format)
+
+        val response = client.newCall(GET(urlBuilder.build(), headers)).execute()
+        val dto = response.parseAs<AnimeCatalogResponseDto>(json)
+        val animeList = (dto.items ?: emptyList()).map { it.toSAnime(baseUrl) }
+        AnimesPage(animeList, dto.hasNextPage ?: false)
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
