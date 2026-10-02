@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.parseAs
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import java.net.URLEncoder
@@ -30,6 +31,12 @@ class AniPm : Source() {
     override val lang = "en"
 
     override val supportsLatest = true
+
+    override val headers: Headers by lazy {
+        Headers.Builder()
+            .set("User-Agent", DEFAULT_USER_AGENT)
+            .build()
+    }
 
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
@@ -229,9 +236,17 @@ class AniPm : Source() {
         } ?: emptyList()
 
         // 5. Extract videos from HLS master playlist
-        val streamHeaders = headers.newBuilder()
+        val streamHeadersBuilder = headers.newBuilder()
+            .set("User-Agent", DEFAULT_USER_AGENT)
             .set("Referer", "https://embed.settlar.io/")
-            .build()
+            .set("Origin", "https://embed.settlar.io")
+
+        embedDto.keyProof?.let {
+            if (it.isNotBlank()) {
+                streamHeadersBuilder.set("X-Settlar-Key-Proof", it)
+            }
+        }
+        val streamHeaders = streamHeadersBuilder.build()
 
         val rawVideos = try {
             playlistUtils.extractFromHls(
@@ -306,6 +321,8 @@ class AniPm : Source() {
     }
 
     companion object {
+        private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
 

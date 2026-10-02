@@ -106,6 +106,7 @@ data class SettlarSessionDto(
 data class EmbedPlayerSessionDto(
     val source: String? = null,
     val subtitles: List<SubtitleTrackDto>? = null,
+    val keyProof: String? = null,
 )
 
 @Serializable
