@@ -42,6 +42,7 @@ class AniPm : Source() {
     }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    private val localProxy by lazy { LocalProxy(client) }
 
     // ============================== Popular Anime ==============================
 
@@ -273,10 +274,12 @@ class AniPm : Source() {
 
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
 
-        return videos.sortedWith(
+        val sortedVideos = videos.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefQuality) }
                 .thenByDescending { it.resolution ?: 0 },
         )
+
+        return localProxy.proxyVideos(sortedVideos)
     }
 
     // ============================== Preferences ================================
