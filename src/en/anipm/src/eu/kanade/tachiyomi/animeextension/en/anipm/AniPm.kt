@@ -32,11 +32,8 @@ class AniPm : Source() {
 
     override val supportsLatest = true
 
-    override val headers: Headers by lazy {
-        Headers.Builder()
-            .set("User-Agent", DEFAULT_USER_AGENT)
-            .build()
-    }
+    override fun headersBuilder() = super.headersBuilder()
+        .add("User-Agent", DEFAULT_USER_AGENT)
 
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
