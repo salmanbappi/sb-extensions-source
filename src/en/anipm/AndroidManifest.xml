@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-feature android:name="tachiyomi.animeextension" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="${appName}"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:allowBackup,android:icon,android:label">
+
+        <!-- Modern extensions-lib v17 metadata (read by Aniyomi 0.18.2.1+ / AniZen).
+             'aniyomix.name' must be the BARE name: the loader does not strip "Aniyomi: ". -->
+        <meta-data
+            android:name="aniyomix.name"
+            android:value="${extName}" />
+        <meta-data
+            android:name="aniyomix.contentWarning"
+            android:value="${contentWarning}" />
+        <meta-data
+            android:name="aniyomix.extensionLib"
+            android:value="${extensionLib}" />
+
+        <!-- Legacy keys: still read by older hosts AND by the repo indexer
+             (.github/scripts/create-repo.py parses tachiyomi.animeextension.nsfw). -->
+        <meta-data
+            android:name="tachiyomi.animeextension.class"
+            android:value="${extClass}" />
+        <meta-data
+            android:name="tachiyomi.animeextension.versionId"
+            android:value="2" />
+        <meta-data
+            android:name="tachiyomi.animeextension.nsfw"
+            android:value="${nsfw}" />
+        <meta-data
+            android:name="tachiyomi.animeextension.author"
+            android:value="${author}" />
+    </application>
+</manifest>
