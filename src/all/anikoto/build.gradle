@@ -4,7 +4,7 @@ ext {
     themePkg = 'anikototheme'
     // Uses extensions-lib v17 APIs via the theme (memo/related/combined-update).
     libVersion = 17
-    overrideVersionCode = 59
+    overrideVersionCode = 60
 }
 
 apply from: "$rootDir/common.gradle"

@@ -31,7 +31,7 @@ class LocalProxyServer(
     companion object {
         private const val IDLE_TIMEOUT_MS = 600000L
         private const val MAX_CACHE_ENTRIES = 30
-        private const val MAX_CONCURRENT_PREFETCHES = 5
+        private const val MAX_CONCURRENT_PREFETCHES = 2
         private const val SOCKET_READ_TIMEOUT_MS = 120000
 
         // Hosters (VidTube/Kiwi) mint segment URLs that expire some minutes after the playlist is
@@ -74,7 +74,8 @@ class LocalProxyServer(
     }
 
     private data class CachedSegment(
-        val file: File,
+        val file: File? = null,
+        val data: ByteArray? = null,
         val size: Long,
     )
 
@@ -175,7 +176,7 @@ class LocalProxyServer(
 
     fun clearCache() {
         synchronized(cacheOrder) {
-            segmentCache.values.forEach { runCatching { it.file.delete() } }
+            segmentCache.values.forEach { runCatching { it.file?.delete() } }
             segmentCache.clear()
             cacheOrder.clear()
         }
@@ -261,7 +262,7 @@ class LocalProxyServer(
 
     private fun handleClient(socket: Socket) {
         socket.use { s ->
-            val input = s.getInputStream()
+            val input = s.getInputStream().buffered()
             val output = s.getOutputStream()
             val line = readLine(input) ?: return
             touchActivity()
@@ -352,12 +353,20 @@ class LocalProxyServer(
         val cacheKey = "$audioType/$quality/$index"
         touchActivity()
         val cached = segmentCache[cacheKey]
-        if (cached != null && cached.file.exists()) {
-            logi("CACHE HIT: $cacheKey (${cached.size} bytes)")
-            sendFile(output, "video/MP2T", cached.file)
-            maybeRefreshVariant(stream, state)
-            triggerPrefetch(state, audioType, quality, index)
-            return
+        if (cached != null) {
+            if (cached.data != null) {
+                logi("CACHE HIT (RAM): $cacheKey (${cached.size} bytes)")
+                sendBytes(output, "video/MP2T", cached.data)
+                maybeRefreshVariant(stream, state)
+                triggerPrefetch(state, audioType, quality, index)
+                return
+            } else if (cached.file != null && cached.file.exists()) {
+                logi("CACHE HIT (DISK): $cacheKey (${cached.size} bytes)")
+                sendFile(output, "video/MP2T", cached.file)
+                maybeRefreshVariant(stream, state)
+                triggerPrefetch(state, audioType, quality, index)
+                return
+            }
         }
 
         if (fetching[cacheKey] == true) {
@@ -368,12 +377,20 @@ class LocalProxyServer(
                 waited += 50
             }
             val waitedSegment = segmentCache[cacheKey]
-            if (waitedSegment != null && waitedSegment.file.exists()) {
-                logi("FETCH WAIT SUCCEEDED: $cacheKey (${waitedSegment.size} bytes)")
-                sendFile(output, "video/MP2T", waitedSegment.file)
-                maybeRefreshVariant(stream, state)
-                triggerPrefetch(state, audioType, quality, index)
-                return
+            if (waitedSegment != null) {
+                if (waitedSegment.data != null) {
+                    logi("FETCH WAIT SUCCEEDED (RAM): $cacheKey (${waitedSegment.size} bytes)")
+                    sendBytes(output, "video/MP2T", waitedSegment.data)
+                    maybeRefreshVariant(stream, state)
+                    triggerPrefetch(state, audioType, quality, index)
+                    return
+                } else if (waitedSegment.file != null && waitedSegment.file.exists()) {
+                    logi("FETCH WAIT SUCCEEDED (DISK): $cacheKey (${waitedSegment.size} bytes)")
+                    sendFile(output, "video/MP2T", waitedSegment.file)
+                    maybeRefreshVariant(stream, state)
+                    triggerPrefetch(state, audioType, quality, index)
+                    return
+                }
             }
             logw("FETCH WAIT FAILED, fetching synchronously: $cacheKey")
         }
@@ -394,13 +411,9 @@ class LocalProxyServer(
                 val hexStr = segBytes.copyOfRange(offset, min(offset + 8, segBytes.size)).joinToString("") { String.format("%02x", it) }
                 logw("WARNING: segment $cacheKey doesn't start with 0x47! First 8 bytes: $hexStr")
             }
+            // Send to player immediately from memory to minimize buffering latency
+            sendBytes(output, "video/MP2T", segBytes, offset)
             cacheSegment(cacheKey, segBytes, offset)
-            val newlyCached = segmentCache[cacheKey]
-            if (newlyCached != null && newlyCached.file.exists()) {
-                sendFile(output, "video/MP2T", newlyCached.file)
-            } else {
-                sendBytes(output, "video/MP2T", segBytes, offset)
-            }
             triggerPrefetch(state, audioType, quality, index)
         } catch (e: Exception) {
             loge("Segment fetch failed ($cacheKey): ${e.message}")
@@ -811,13 +824,17 @@ class LocalProxyServer(
                 os.write(data, offset, servedSize)
             }
 
-            val cached = CachedSegment(tempFile, servedSize.toLong())
+            val cached = CachedSegment(
+                file = tempFile,
+                data = data.copyOfRange(offset, data.size),
+                size = servedSize.toLong(),
+            )
 
             synchronized(cacheOrder) {
                 val existing = segmentCache.remove(key)
                 if (existing != null) {
                     cacheOrder.remove(key)
-                    existing.file.delete()
+                    existing.file?.delete()
                 }
 
                 while (cacheOrder.isNotEmpty() && segmentCache.size >= MAX_CACHE_ENTRIES) {

@@ -42,7 +42,7 @@ class AnikotoExtractors(
         private const val MEGAPLAY_AES_IV = "W0;27ToaUpl_P%'c"
 
         // Limit concurrent variant playlist fetches to avoid rate limits (matches v4 APK)
-        private val variantSemaphore = Semaphore(2)
+        private val variantSemaphore = Semaphore(6)
     }
 
     private fun logi(msg: String) = Log.i(TAG, msg)
@@ -262,11 +262,15 @@ class AnikotoExtractors(
                 val (masterM3u8, tracks) = parsed
 
                 val masterText = try {
-                    fetchString(masterM3u8, segHeaders(extractHost(masterM3u8) ?: host))
+                    fetchString(masterM3u8, segHeaders(host))
                 } catch (e: Exception) {
-                    lastError = "$endpoint s=${s.ifEmpty { "-" }} master: ${e.message}"
-                    logw("resolveVidTube: master did not verify ($lastError)")
-                    continue
+                    try {
+                        fetchString(masterM3u8, segHeaders(extractHost(masterM3u8) ?: host))
+                    } catch (e2: Exception) {
+                        lastError = "$endpoint s=${s.ifEmpty { "-" }} master: ${e2.message}"
+                        logw("resolveVidTube: master did not verify ($lastError)")
+                        continue
+                    }
                 }
                 if (!masterText.startsWith("#EXTM3U")) {
                     lastError = "$endpoint s=${s.ifEmpty { "-" }} master is not m3u8"
