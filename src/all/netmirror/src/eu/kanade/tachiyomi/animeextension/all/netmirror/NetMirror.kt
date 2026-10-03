@@ -36,6 +36,7 @@ private const val TAG = "NetMirror"
 private const val DEFAULT_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 12; RMX2117 Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/147.0.7727.55 Mobile Safari/537.36 /OS.Gatu v3.0"
 private const val APP_REQUESTED_WITH = "app.netmirror.netmirrornew"
+private const val BASE_URL = "https://net52.cc"
 
 class NetMirror : AnimeSourceFactory {
     override fun createSources(): List<AnimeSource> = listOf(
@@ -56,7 +57,7 @@ class CNCVerseSource(
     override val id: Long,
 ) : Source() {
 
-    override val baseUrl = "https://net52.cc"
+    override val baseUrl = BASE_URL
     override val lang = "all"
     override val supportsLatest = false
 
@@ -116,19 +117,19 @@ class CNCVerseSource(
      * Determines whether the server returned the verification / ad wall instead of real content.
      * For HTML pages like /mobile/home, HTML is expected and only rejected if it lacks content trays
      * or contains the ad wall prompt ("We Need Support").
-     * For .php API endpoints (search.php, post.php, playlist.php, episodes.php), HTML means
-     * the session was rejected since JSON was expected.
+     * For .php API endpoints (search.php, post.php, playlist.php, episodes.php), HTML or error tokens
+     * mean the session was rejected since genuine JSON was expected.
      */
     private fun isVerificationWall(url: String, response: Response): Boolean {
         if (response.code == 302 || response.request.url.toString().contains("verify")) {
             return true
         }
+        val peek = try {
+            response.peekBody(32768).string()
+        } catch (e: Exception) {
+            ""
+        }
         if (url.contains("/mobile/home")) {
-            val peek = try {
-                response.peekBody(32768).string()
-            } catch (e: Exception) {
-                ""
-            }
             if (peek.contains("<title>Home - Android Mobile</title>", ignoreCase = true) ||
                 peek.contains("tray-container") ||
                 peek.contains("<article")
@@ -138,7 +139,13 @@ class CNCVerseSource(
             return true
         }
         if (url.contains(".php")) {
-            return isHtmlResponse(response)
+            if (isHtmlResponse(response) ||
+                peek.contains("Invalid User", ignoreCase = true) ||
+                peek.contains("in=unknown::db")
+            ) {
+                return true
+            }
+            return false
         }
         return false
     }
@@ -170,13 +177,19 @@ class CNCVerseSource(
                 response.close()
                 clearBypassCookie()
                 cookieVal = getBypassCookie(force = true)
-                if (cookieVal.isNotEmpty()) {
-                    response = chain.proceed(
-                        request.newBuilder()
-                            .header("Cookie", siteCookieHeader(request.url, cookieVal))
-                            .header("Referer", refererUrl)
-                            .build(),
-                    )
+                if (cookieVal.isEmpty()) {
+                    throw java.io.IOException("NetMirror: Failed to acquire bypass cookie")
+                }
+                response = chain.proceed(
+                    request.newBuilder()
+                        .header("Cookie", siteCookieHeader(request.url, cookieVal))
+                        .header("Referer", refererUrl)
+                        .build(),
+                )
+                if (isVerificationWall(url, response)) {
+                    response.close()
+                    clearBypassCookie()
+                    throw java.io.IOException("NetMirror: Ad verification wall not cleared after cookie refresh")
                 }
             }
             response
@@ -693,6 +706,8 @@ class CNCVerseSource(
 
     companion object {
         private val ADDHASH_REGEX = Regex("""data-addhash="([^"]+)"""")
+        private val QURY_REGEX = Regex("""(?:var\s+)?Qury\s*=\s*["']([^"']+)["']""")
+        private val VSITE_REGEX = Regex("""(?:var\s+)?Vsite2\s*=\s*["']([^"']+)["']""")
         private val QUALITY_PARAM_REGEX = Regex("""[?&]q=([^&]+)""")
         private val RESOLUTION_REGEX = Regex("""(\d{3,4})p""")
         private val IN_PARAM_REGEX = Regex("""[?&]in=[^&]*""")
@@ -728,9 +743,9 @@ class CNCVerseSource(
                     .followSslRedirects(true)
                     .build()
 
-                // Step 1: Scrape data-addhash from mobile home
+                // Step 1: Scrape data-addhash, Qury, and Vsite2 from mobile home
                 val homeRequest = Request.Builder()
-                    .url("https://net52.cc/mobile/home?app=1")
+                    .url("$BASE_URL/mobile/home?app=1")
                     .header("User-Agent", DEFAULT_USER_AGENT)
                     .header("X-Requested-With", APP_REQUESTED_WITH)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
@@ -742,18 +757,24 @@ class CNCVerseSource(
                     Log.w(TAG, "Failed to scrape data-addhash from mobile/home")
                     return cookieValue
                 }
-                Log.d(TAG, "Scraped addhash: $addhash")
+                val qury = QURY_REGEX.find(homeHtml)?.groupValues?.get(1) ?: "ffr455"
+                val vsite = VSITE_REGEX.find(homeHtml)?.groupValues?.get(1) ?: "userver"
+                Log.d(TAG, "Scraped addhash=$addhash, qury=$qury, vsite=$vsite")
 
-                // Step 2: Handshake ping to userver (fire and ignore, quick timeout)
+                // Step 2: Handshake ping to userver (fire and ignore redirect, quick timeout)
                 try {
                     val pingClient = OkHttpClient.Builder()
-                        .connectTimeout(3, TimeUnit.SECONDS)
-                        .readTimeout(3, TimeUnit.SECONDS)
+                        .connectTimeout(5, TimeUnit.SECONDS)
+                        .readTimeout(5, TimeUnit.SECONDS)
+                        .followRedirects(false)
+                        .followSslRedirects(false)
                         .build()
+                    val pingUrl = "https://$vsite.net52.cc/?$qury=$addhash&a=y&t=${System.currentTimeMillis()}"
                     val pingRequest = Request.Builder()
-                        .url("https://userver.net52.cc/?hee5=$addhash&a=y&t=${System.currentTimeMillis()}")
+                        .url(pingUrl)
                         .header("User-Agent", DEFAULT_USER_AGENT)
                         .header("X-Requested-With", APP_REQUESTED_WITH)
+                        .header("Referer", "$BASE_URL/mobile/home?app=1")
                         .build()
                     pingClient.newCall(pingRequest).execute().close()
                 } catch (e: Exception) {
@@ -770,15 +791,15 @@ class CNCVerseSource(
                     .readTimeout(15, TimeUnit.SECONDS)
                     .build()
 
-                for (attempt in 1..10) {
-                    SystemClock.sleep(if (attempt == 1) 4000L else 5000L)
+                for (attempt in 1..15) {
+                    SystemClock.sleep(if (attempt == 1) 3000L else 4000L)
 
                     val verifyRequest = Request.Builder()
-                        .url("https://net52.cc/mobile/verify2.php")
+                        .url("$BASE_URL/mobile/verify2.php")
                         .post(formBody)
                         .header("User-Agent", DEFAULT_USER_AGENT)
                         .header("X-Requested-With", "XMLHttpRequest")
-                        .header("Referer", "https://net52.cc/mobile/home?app=1")
+                        .header("Referer", "$BASE_URL/mobile/home?app=1")
                         .header("Content-Type", "application/x-www-form-urlencoded")
                         .build()
 
