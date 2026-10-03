@@ -37,6 +37,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Response
 import java.io.OutputStream
 import java.net.InetAddress
@@ -508,7 +509,10 @@ class Anidap :
             }
 
             // st1.*.xyz only answers when Origin is the krussdomi player.
-            "sora" -> builder.set("Origin", "https://krussdomi.com")
+            "sora" -> {
+                builder.set("Origin", "https://krussdomi.com")
+                builder.set("Referer", "https://krussdomi.com/")
+            }
 
             "uwu" -> builder.set("Referer", "https://kwik.cx/")
 
@@ -799,6 +803,12 @@ private class LocalProxyServer(
     private val client: OkHttpClient,
     private val json: Json,
 ) {
+    private val http1Client by lazy {
+        client.newBuilder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .build()
+    }
+
     private val executor = Executors.newCachedThreadPool()
     private val running = AtomicBoolean(false)
     private var serverSocket: ServerSocket? = null
@@ -895,11 +905,24 @@ private class LocalProxyServer(
     }
 
     private fun fetchWithRetry(targetUrl: String, hdrs: okhttp3.Headers): okhttp3.Response {
-        var response = client.newCall(GET(targetUrl, hdrs)).execute()
+        val isKrussdomi = targetUrl.contains("krussdomi.com") || targetUrl.contains("subst")
+        val clientToUse = if (isKrussdomi) http1Client else client
+        var response = runCatching {
+            clientToUse.newCall(GET(targetUrl, hdrs)).execute()
+        }.getOrElse {
+            http1Client.newCall(GET(targetUrl, hdrs)).execute()
+        }
         if (response.code == 403) {
             response.close()
-            val fallback = hdrs.newBuilder().set("Referer", "https://anidap.lol/").build()
-            response = client.newCall(GET(targetUrl, fallback)).execute()
+            val fallback = if (isKrussdomi) {
+                hdrs.newBuilder()
+                    .set("Origin", "https://krussdomi.com")
+                    .set("Referer", "https://krussdomi.com/")
+                    .build()
+            } else {
+                hdrs.newBuilder().set("Referer", "https://anidap.lol/").build()
+            }
+            response = http1Client.newCall(GET(targetUrl, fallback)).execute()
         }
         return response
     }
@@ -953,10 +976,18 @@ private class LocalProxyServer(
     }
 
     private fun serveText(targetUrl: String, hdrs: okhttp3.Headers, output: OutputStream, contentType: String) {
-        val response = fetchWithRetry(targetUrl, hdrs)
-        if (!response.isSuccessful) {
-            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
-            response.close()
+        var response = runCatching { fetchWithRetry(targetUrl, hdrs) }.getOrNull()
+        if (response == null || !response.isSuccessful) {
+            response?.close()
+            if (targetUrl.contains("krussdomi.com") || targetUrl.contains("subst")) {
+                val uwuUrl = "https://cdnx.aniwatchtv.site/uwu/" + encodeUwu(targetUrl, "https://krussdomi.com")
+                response = runCatching { fetchWithRetry(uwuUrl, hdrs) }.getOrNull()
+            }
+        }
+        if (response == null || !response.isSuccessful) {
+            val code = response?.code ?: 500
+            output.write("HTTP/1.1 $code Error\r\nConnection: close\r\n\r\n".toByteArray())
+            response?.close()
             return
         }
         val bytes = response.body.bytes()
@@ -967,6 +998,20 @@ private class LocalProxyServer(
         output.write("Connection: close\r\n\r\n".toByteArray())
         output.write(bytes)
         output.flush()
+    }
+
+    private fun encodeUwu(url: String, origin: String): String {
+        val r = url.toByteArray(Charsets.UTF_8)
+        val s = origin.toByteArray(Charsets.UTF_8)
+        val n = ByteArray(r.size + 1 + s.size)
+        System.arraycopy(r, 0, n, 0, r.size)
+        n[r.size] = 0
+        System.arraycopy(s, 0, n, r.size + 1, s.size)
+        val c = "10b06cdc1ca48c9fb0b94af97cc040cf".toByteArray(Charsets.UTF_8)
+        for (i in n.indices) {
+            n[i] = (n[i].toInt() xor c[i % c.size].toInt()).toByte()
+        }
+        return Base64.encodeToString(n, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     }
 
     private fun serveKey(targetUrl: String, hdrs: okhttp3.Headers, output: OutputStream) {
