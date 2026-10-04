@@ -395,10 +395,14 @@ class Oneshows :
         }
         val season = if (!isMovie && path.startsWith("tv/")) {
             path.split("/").getOrNull(1) ?: "1"
-        } else "1"
+        } else {
+            "1"
+        }
         val ep = if (!isMovie && path.startsWith("tv/")) {
             path.split("/").getOrNull(2) ?: "1"
-        } else "1"
+        } else {
+            "1"
+        }
         val subPath = if (isMovie) "movie/$id" else "tv/$id/$season/$ep"
 
         // Multi-source Subtitle Resolution
@@ -535,7 +539,9 @@ class Oneshows :
                                 headers = vidrockHeaders,
                                 subtitleTracks = subTracks,
                             )
-                        } else null
+                        } else {
+                            null
+                        }
                     }
                 }
 
