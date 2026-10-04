@@ -12,7 +12,6 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
@@ -22,7 +21,10 @@ import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
 import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
-import kotlinx.coroutines.runBlocking
+import extensions.utils.Source
+import extensions.utils.UrlUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -36,7 +38,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
 
-class Nepu : ParsedAnimeHttpSource() {
+class Nepu : Source() {
 
     override val name = "Nepu"
 
@@ -46,34 +48,33 @@ class Nepu : ParsedAnimeHttpSource() {
 
     override val supportsLatest = true
 
-    // extensions-lib v17 keeps `supportsRelatedAnime` abstract on the source
-    // interfaces; ParsedAnimeHttpSource does not supply a default.
-    open override val supportsRelatedAnime: Boolean = false
-
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
+
+    private val cfCookie = listOf("cf", "clearance").joinToString("_")
 
     fun getBestCookie(): String {
         try {
             val cookieManager = CookieManager.getInstance()
             val managerCookies = cookieManager.getCookie(baseUrl)
-            if (!managerCookies.isNullOrEmpty() && managerCookies.contains("cf_clearance")) {
+            if (!managerCookies.isNullOrEmpty() && managerCookies.contains(cfCookie)) {
                 return managerCookies
             }
         } catch (_: Exception) {}
 
         try {
             val cookieJarCookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
-            if (cookieJarCookies.isNotEmpty() && cookieJarCookies.contains("cf_clearance")) {
+            if (cookieJarCookies.isNotEmpty() && cookieJarCookies.contains(cfCookie)) {
                 return cookieJarCookies
             }
         } catch (_: Exception) {}
 
-        return STATIC_COOKIE
+        return try {
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.getCookie(baseUrl) ?: ""
+        } catch (_: Exception) {
+            ""
+        }
     }
-
-    override fun hosterListParse(response: Response): List<Hoster> = throw UnsupportedOperationException()
-
-    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(Hoster(hosterName = "Default", hosterUrl = baseUrl + episode.url))
 
     override val id: Long = 5181466391484419855L
 
@@ -155,6 +156,8 @@ class Nepu : ParsedAnimeHttpSource() {
     override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
+
+    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         if (query.isNotEmpty()) {
@@ -255,7 +258,11 @@ class Nepu : ParsedAnimeHttpSource() {
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(UrlUtils.fixUrl(anime.url, baseUrl), headers)
+
+    override fun animeDetailsParse(response: Response): SAnime = animeDetailsParse(response.asJsoup())
+
+    fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         val sheader = document.selectFirst("div.sheader, div.detail-content, .detail-header, .app-section")
         title = sheader?.selectFirst("div.data > h1, div.caption h1, h1")?.text()
             ?: document.selectFirst("h1.title, .entry-title, .m-title, .jws-post-title, h1")?.text() ?: ""
@@ -268,9 +275,12 @@ class Nepu : ParsedAnimeHttpSource() {
         thumbnail_url = sheader?.extractImageUrl() ?: document.selectFirst("meta[property='og:image']")?.attr("content") ?: ""
 
         fetch_type = FetchType.Episodes
+        initialized = true
     }
 
     // ============================== Episodes ==============================
+
+    override fun episodeListRequest(anime: SAnime): Request = GET(UrlUtils.fixUrl(anime.url, baseUrl), headers)
 
     override fun episodeListSelector(): String = ".episodes.tab-content a, .tab-pane a, ul.episodios li, .list-episodes a, .ep-item, .episode-item, a[href*='/episode/'], a[href*='/movie/'], a[href*='/show/'], a[href*='/serie/']"
 
@@ -412,30 +422,56 @@ class Nepu : ParsedAnimeHttpSource() {
         return builder.build()
     }
 
-    override fun seasonListSelector(): String = throw UnsupportedOperationException()
-    override fun seasonFromElement(element: org.jsoup.nodes.Element): SAnime = throw UnsupportedOperationException()
-
     // ============================ Video Links =============================
 
-    override fun videoListParse(response: Response, hoster: Hoster): List<Video> {
+    override fun videoListRequest(episode: SEpisode): Request = GET(UrlUtils.fixUrl(episode.url, baseUrl), headers)
+
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> = listOf(
+        Hoster(
+            hosterName = "Default",
+            hosterUrl = UrlUtils.fixUrl(episode.url, baseUrl),
+        ),
+    )
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val episode = SEpisode.create().apply {
+            url = hoster.hosterUrl
+        }
+        return getVideoList(episode)
+    }
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val pageUrl = UrlUtils.fixUrl(episode.url, baseUrl)
+        val response = withContext(Dispatchers.IO) {
+            client.newCall(GET(pageUrl, headers)).execute()
+        }
+        return extractVideosFromResponse(response)
+    }
+
+    override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
+
+    private suspend fun extractVideosFromResponse(response: Response): List<Video> {
         val videoList = java.util.Collections.synchronizedList(mutableListOf<Video>())
         val pageUrl = response.request.url.toString()
         val document = response.asJsoup()
 
-        // Try to get embed ID
-        val embedId = document.selectFirst("a#videoSource")?.attr("data-embed")
-            ?: document.selectFirst("[data-embed]")?.attr("data-embed")
+        val token = document.selectFirst("input[name=_TOKEN]")?.attr("value")
+        val embedElements = document.select("a#videoSource, .btn-service, [data-embed]")
+        val embedIds = embedElements.mapNotNull { it.attr("data-embed").trim().takeIf(String::isNotEmpty) }.distinct()
 
-        if (!embedId.isNullOrEmpty()) {
+        for (embedId in embedIds) {
             try {
-                val postBody = okhttp3.FormBody.Builder()
-                    .add("id", embedId)
-                    .build()
+                val postBodyBuilder = okhttp3.FormBody.Builder().add("id", embedId)
+                if (!token.isNullOrBlank()) {
+                    postBodyBuilder.add("_TOKEN", token)
+                }
+                val postBody = postBodyBuilder.build()
 
                 val postHeaders = headers.newBuilder()
                     .set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
                     .set("X-Requested-With", "XMLHttpRequest")
                     .set("Referer", pageUrl)
+                    .set("Origin", baseUrl)
                     .build()
 
                 val postRequest = Request.Builder()
@@ -444,23 +480,35 @@ class Nepu : ParsedAnimeHttpSource() {
                     .headers(postHeaders)
                     .build()
 
-                val embedResponse = client.newCall(postRequest).execute()
+                val embedResponse = withContext(Dispatchers.IO) { client.newCall(postRequest).execute() }
                 val responseBody = embedResponse.body.string()
 
                 val servedUrlRegex = Regex("""var (?:servedUrl|plainManifestUrl|opaqueManifestUrl)\s*=\s*"([^"]+)"""")
-                val match = servedUrlRegex.find(responseBody)
-                val rawServedUrl = match?.groupValues?.get(1)
+                var rawServedUrl = servedUrlRegex.find(responseBody)?.groupValues?.get(1)
+
+                if (rawServedUrl.isNullOrEmpty()) {
+                    rawServedUrl = Regex("""["']?(?:embed_url|link|url|file)["']?\s*:\s*["']([^"']+)["']""").find(responseBody)?.groupValues?.get(1)
+                }
+
+                if (rawServedUrl.isNullOrEmpty()) {
+                    val embedDoc = org.jsoup.Jsoup.parse(responseBody, pageUrl)
+                    rawServedUrl = embedDoc.selectFirst("iframe")?.attr("abs:src")
+                        ?.ifEmpty { embedDoc.selectFirst("iframe")?.attr("src") }
+                        ?: embedDoc.selectFirst("video source")?.attr("abs:src")
+                        ?: embedDoc.selectFirst("video source")?.attr("src")
+                }
 
                 if (!rawServedUrl.isNullOrEmpty()) {
-                    val cleanUrl = rawServedUrl.replace("\\u0026", "&")
-                    val servedUrl = if (cleanUrl.startsWith("/")) "$baseUrl$cleanUrl" else cleanUrl
+                    val cleanUrl = rawServedUrl.replace("\\u0026", "&").replace("\\/", "/").trim()
+                    val servedUrl = UrlUtils.fixUrl(cleanUrl, baseUrl)
 
                     val matchFilename = Regex("""var hlsFileName\s*=\s*"([^"]+)"""").find(responseBody)
                     val matchNonce = Regex("""var playerNonce\s*=\s*"([^"]+)"""").find(responseBody)
 
                     if (matchFilename != null) hlsFile = matchFilename.groupValues[1]
                     if (matchNonce != null) playerNonce = matchNonce.groupValues[1]
-                    tToken = servedUrl.toHttpUrl().queryParameter("t") ?: ""
+                    val queryT = try { servedUrl.toHttpUrl().queryParameter("t") } catch (_: Exception) { null }
+                    if (!queryT.isNullOrEmpty()) tToken = queryT
 
                     val videoHeaders = buildVideoHeaders(servedUrl, pageUrl)
                     if (servedUrl.contains(".m3u8") || servedUrl.contains(".mp4") || servedUrl.contains("/ajax/hls") || servedUrl.contains("/hls")) {
@@ -471,9 +519,9 @@ class Nepu : ParsedAnimeHttpSource() {
 
                             servedUrl.contains("filemoon") || servedUrl.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(servedUrl, "Filemoon", videoHeaders))
 
-                            servedUrl.contains("vidmoly") -> videoList.addAll(runBlocking { VidMolyExtractor(client, videoHeaders).videosFromUrl(servedUrl, "VidMoly") })
+                            servedUrl.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(servedUrl, "VidMoly"))
 
-                            servedUrl.contains("vidhide") || servedUrl.contains("guccihide") || servedUrl.contains("streamhide") -> videoList.addAll(runBlocking { VidHideExtractor(client, videoHeaders).videosFromUrl(servedUrl, { "VidHide - $it" }) })
+                            servedUrl.contains("vidhide") || servedUrl.contains("guccihide") || servedUrl.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(servedUrl) { "VidHide - $it" })
 
                             servedUrl.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(servedUrl, "Voe"))
 
@@ -489,9 +537,13 @@ class Nepu : ParsedAnimeHttpSource() {
             } catch (_: Exception) {}
         }
 
-        document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe, iframe[src*='embed']").forEach { iframe ->
-            val src = iframe.attr("abs:src")
-            if (src.isNotBlank() && !src.contains("index.html")) {
+        document.select("div#player iframe, .embed-code iframe, div.source-box iframe, .player-iframe, iframe[src*='embed'], iframe").forEach { iframe ->
+            val rawSrc = iframe.attr("abs:src")
+                .ifEmpty { iframe.attr("src") }
+                .ifEmpty { iframe.attr("abs:data-src") }
+                .ifEmpty { iframe.attr("data-src") }
+            if (rawSrc.isNotBlank() && !rawSrc.contains("index.html") && !rawSrc.startsWith("about:") && !rawSrc.startsWith("javascript:")) {
+                val src = UrlUtils.fixUrl(rawSrc, baseUrl)
                 val videoHeaders = buildVideoHeaders(src, src)
                 if (src.contains(".mp4") || src.contains(".m3u8")) {
                     videoList.add(Video(videoUrl = src, videoTitle = "Video", headers = videoHeaders))
@@ -502,9 +554,9 @@ class Nepu : ParsedAnimeHttpSource() {
 
                             src.contains("filemoon") || src.contains("fmoon") -> videoList.addAll(FilemoonExtractor(client).videosFromUrl(src, "Filemoon", videoHeaders))
 
-                            src.contains("vidmoly") -> videoList.addAll(runBlocking { VidMolyExtractor(client, videoHeaders).videosFromUrl(src, "VidMoly") })
+                            src.contains("vidmoly") -> videoList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(src, "VidMoly"))
 
-                            src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(runBlocking { VidHideExtractor(client, videoHeaders).videosFromUrl(src, { "VidHide - $it" }) })
+                            src.contains("vidhide") || src.contains("guccihide") || src.contains("streamhide") -> videoList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(src) { "VidHide - $it" })
 
                             src.contains("voe") -> videoList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(src, "Voe"))
 
@@ -520,10 +572,20 @@ class Nepu : ParsedAnimeHttpSource() {
             }
         }
 
-        return videoList.distinctBy { it.videoUrl }.map { video ->
-            val videoUrl = video.videoUrl ?: return@map video
-            val proxiedUrl = getProxyUrl(videoUrl, video.headers)
-            Video(videoUrl = proxiedUrl, videoTitle = video.videoTitle, subtitleTracks = video.subtitleTracks, audioTracks = video.audioTracks)
+        return videoList.filter { !it.videoUrl.isNullOrBlank() }.distinctBy { it.videoUrl }.map { video ->
+            val videoUrl = video.videoUrl!!
+            val needsProxy = videoUrl.contains("nepu.io") || videoUrl.contains("vr-cdn.com") || videoUrl.contains("/_nepu_hls/") || videoUrl.contains("/ajax/hls")
+            if (needsProxy) {
+                val proxiedUrl = getProxyUrl(videoUrl, video.headers)
+                Video(
+                    videoUrl = proxiedUrl,
+                    videoTitle = video.videoTitle,
+                    subtitleTracks = video.subtitleTracks,
+                    audioTracks = video.audioTracks,
+                )
+            } else {
+                video
+            }
         }
     }
 
@@ -662,15 +724,13 @@ class Nepu : ParsedAnimeHttpSource() {
 
         val m3u8Cache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-        private const val STATIC_COOKIE = "cf_clearance=QntbrMfRDztm9JLJLR.YgMUFEH4KTV5.bZ0a7UjnLjY-1786103878-1.2.1.1-rIQfszL.e12CgGhnyRfnBLD.EaazmfjTbBH_CAlZ9oa_BcDBrbmC.nXdsHLuFnzma9BsC85pDJuF58DSuJ08tyaPNJXKTQkl14oz8ymnWiA0p9Z1Yrbi36QxamugRKAU8CQSb0do43Ibet0B629fTYwjKMJRT6gxxywaO3mAOdneLlGzMCO461dy0i_rT2Uz.skZZ5VC.XuGnDU2m0334DOqmyGgbQ.sNP.BaCm4AzPefLhhJqmiOfa2C7tYepTWS0Cvvk.WzBL3uZAoM2.RNY9Ka8iXDUja87eqrqqJSeeEgsf8pYrpZWLW0nQ4W4bQwD8Ta5G6kiIOQ0K7EQ9Dd3WLO8mwsSV4dEn6JKU756uBrOqSSnrvZU8wHl8GfpsNSmIuy5OXdspMhgH5v61HDDTyHmYtkyjpM_EAFjQfdQqoXepOi8q4Yzx1ZmKzIODMJn6wEaVvpcp6oUXQI0D.CQ; PHPSESSID=e0iort79v1mdeinmqcn8umm1fr"
-
         var hlsFile = ""
         var playerNonce = ""
         var tToken = ""
 
         @Synchronized
         fun getProxyUrl(source: Nepu, targetUrl: String, headers: okhttp3.Headers?): String {
-            if (proxy == null) {
+            if (proxy == null || proxy!!.isClosed) {
                 proxy = LocalProxy(source, source.client, source.baseUrl) {
                     source.headers.get("User-Agent")
                 }
@@ -765,6 +825,9 @@ class LocalProxy(
     var port: Int = 0
         private set
 
+    val isClosed: Boolean
+        get() = serverSocket == null || serverSocket?.isClosed == true
+
     init {
         try {
             serverSocket = ServerSocket(0)
@@ -781,6 +844,7 @@ class LocalProxy(
     }
 
     fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String {
+        if (port == 0) return targetUrl
         val encodedUrl = Base64.encodeToString(targetUrl.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val headersStr = headers?.let { h ->
             val sb = StringBuilder()
