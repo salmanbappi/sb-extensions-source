@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import extensions.utils.Source
+import keiyoushi.utils.parallelCatchingFlatMap
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -32,8 +33,9 @@ class TwoDHive : Source() {
 
     override val client: OkHttpClient = network.cloudflareClient
 
+    private val proxy by lazy { TwoDHiveProxy(client) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-    private val extractors by lazy { TwoDHiveExtractors(client, headers, json, playlistUtils) }
+    private val extractors by lazy { TwoDHiveExtractors(client, headers, json, playlistUtils, proxy) }
 
     private inline fun <reified T> Response.parseAs(): T = json.decodeFromString(body.string())
 
@@ -211,7 +213,6 @@ class TwoDHive : Source() {
         val malId = parts[1]
         val epNum = parts[2]
 
-        val videos = mutableListOf<Video>()
         val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
         val types = if (prefAudio.equals("Dub", ignoreCase = true)) {
             listOf("dub", "sub")
@@ -219,30 +220,20 @@ class TwoDHive : Source() {
             listOf("sub", "dub")
         }
 
-        when (provider) {
-            "megaplay" -> {
-                for (type in types) {
-                    runCatching {
-                        videos.addAll(extractors.extractMegaPlay(malId, epNum, type))
-                    }
-                }
+        val videos = when (provider) {
+            "megaplay" -> types.parallelCatchingFlatMap { type ->
+                extractors.extractMegaPlay(malId, epNum, type)
             }
 
-            "babastream" -> {
-                for (type in types) {
-                    runCatching {
-                        videos.addAll(extractors.extractBabaStream(malId, epNum, type))
-                    }
-                }
+            "babastream" -> types.parallelCatchingFlatMap { type ->
+                extractors.extractBabaStream(malId, epNum, type)
             }
 
-            "wavy" -> {
-                for (type in types) {
-                    runCatching {
-                        videos.addAll(extractors.extractWavy(malId, epNum, type))
-                    }
-                }
+            "wavy" -> types.parallelCatchingFlatMap { type ->
+                extractors.extractWavy(malId, epNum, type)
             }
+
+            else -> emptyList()
         }
 
         return videos.sortVideos()
@@ -250,28 +241,20 @@ class TwoDHive : Source() {
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val hosters = getHosterList(episode)
-        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
-        val primaryHoster = hosters.firstOrNull { it.hosterName.contains(prefServer, true) } ?: hosters.firstOrNull()
-
-        return if (primaryHoster != null) {
-            val primaryVideos = getVideoList(primaryHoster)
-            if (primaryVideos.isNotEmpty()) {
-                primaryVideos
-            } else {
-                hosters.filter { it != primaryHoster }.flatMap { getVideoList(it) }.sortVideos()
-            }
-        } else {
-            emptyList()
-        }
+        return hosters.parallelCatchingFlatMap { hoster ->
+            getVideoList(hoster)
+        }.sortVideos()
     }
 
     // ============================== Video Sorting & Preferences ==============================
     override fun List<Video>.sortVideos(): List<Video> {
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
 
         return sortedWith(
             compareBy(
+                { it.videoTitle.contains(prefServer, true).not() },
                 { it.videoTitle.contains(prefAudio, true).not() },
                 { it.videoTitle.contains(prefQuality, true).not() },
             ),

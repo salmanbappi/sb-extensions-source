@@ -18,8 +18,15 @@ class TwoDHiveExtractors(
     private val headers: Headers,
     private val json: Json,
     private val playlistUtils: PlaylistUtils,
+    private val proxy: TwoDHiveProxy,
 ) {
     private val okruExtractor by lazy { OkruExtractor(client) }
+
+    @Volatile
+    private var cachedCapToken: String? = null
+
+    @Volatile
+    private var cachedCapTokenExpiry: Long = 0L
 
     private inline fun <reified T> Response.parseAs(): T = json.decodeFromString(body.string())
     private inline fun <reified T> String.parseAs(): T = json.decodeFromString(this)
@@ -75,25 +82,27 @@ class TwoDHiveExtractors(
 
         val streamRefHeaders = streamHeaders("https://megaplay.buzz/", "https://megaplay.buzz")
 
-        return runCatching {
+        val rawVideos = runCatching {
             playlistUtils.extractFromHls(
                 playlistUrl = masterUrl,
                 referer = "https://megaplay.buzz/",
                 masterHeadersGen = { _, _ -> streamRefHeaders },
                 videoHeadersGen = { _, _, _ -> streamRefHeaders },
                 subtitleList = subtitleTracks,
-                videoNameGen = { quality -> "$quality ($typeTag)" },
+                videoNameGen = { quality -> "MegaPlay - $quality ($typeTag)" },
             )
         }.getOrElse {
             listOf(
                 Video(
                     videoUrl = masterUrl,
-                    videoTitle = "Auto ($typeTag)",
+                    videoTitle = "MegaPlay - Auto ($typeTag)",
                     headers = streamRefHeaders,
                     subtitleTracks = subtitleTracks,
                 ),
             )
         }
+
+        return rawVideos.map { proxy.processVideo(it, "https://megaplay.buzz/") }
     }
 
     // ======================== BabaStream Resolver ========================
@@ -141,7 +150,7 @@ class TwoDHiveExtractors(
 
         // Solve Cap challenge if server requires verification
         if (payload?.t == "error" && payload?.m == "verify" && !cfg.cap.isNullOrBlank()) {
-            val redeemToken = solveCap(cfg.cap)
+            val redeemToken = getOrSolveCapToken(cfg.cap)
             if (!redeemToken.isNullOrBlank()) {
                 val verifyJson = postApi(
                     "/api/cap-verify",
@@ -151,6 +160,19 @@ class TwoDHiveExtractors(
                 if (verifyDto?.t == "ok") {
                     resolvedJson = postApi("/api/resolve", """{"ts":${System.currentTimeMillis()}}""")
                     payload = runCatching { resolvedJson?.parseAs<BabaDecryptedPayloadDto>() }.getOrNull()
+                } else {
+                    val freshToken = solveCap(cfg.cap)
+                    if (!freshToken.isNullOrBlank()) {
+                        val vJson2 = postApi(
+                            "/api/cap-verify",
+                            """{"ts":${System.currentTimeMillis()},"token":"$freshToken","mode":"invisible"}""",
+                        )
+                        val vDto2 = runCatching { vJson2?.parseAs<BabaVerifyResponseDto>() }.getOrNull()
+                        if (vDto2?.t == "ok") {
+                            resolvedJson = postApi("/api/resolve", """{"ts":${System.currentTimeMillis()}}""")
+                            payload = runCatching { resolvedJson?.parseAs<BabaDecryptedPayloadDto>() }.getOrNull()
+                        }
+                    }
                 }
             }
         }
@@ -169,40 +191,43 @@ class TwoDHiveExtractors(
         when (payload.t) {
             "direct" -> {
                 payload.u?.takeIf { it.isNotBlank() }?.let { directUrl ->
-                    videos.add(
-                        Video(
-                            videoUrl = directUrl,
-                            videoTitle = "Direct MP4 ($typeTag)",
-                            headers = streamHeaders,
-                            subtitleTracks = subtitleTracks,
-                        ),
+                    val video = Video(
+                        videoUrl = directUrl,
+                        videoTitle = "BabaStream - Direct MP4 ($typeTag)",
+                        headers = streamHeaders,
+                        subtitleTracks = subtitleTracks,
                     )
+                    val processed = if (directUrl.contains("fbcdn.net") || directUrl.contains("facebook.com")) {
+                        proxy.processDirectVideo(video, embedUrl)
+                    } else {
+                        video
+                    }
+                    videos.add(processed)
                 }
             }
 
             "hls" -> {
                 payload.u?.takeIf { it.isNotBlank() }?.let { hlsUrl ->
-                    videos.addAll(
-                        runCatching {
-                            playlistUtils.extractFromHls(
-                                playlistUrl = hlsUrl,
-                                referer = embedUrl,
-                                masterHeadersGen = { _, _ -> streamHeaders },
-                                videoHeadersGen = { _, _, _ -> streamHeaders },
-                                subtitleList = subtitleTracks,
-                                videoNameGen = { quality -> "$quality ($typeTag)" },
-                            )
-                        }.getOrElse {
-                            listOf(
-                                Video(
-                                    videoUrl = hlsUrl,
-                                    videoTitle = "Auto ($typeTag)",
-                                    headers = streamHeaders,
-                                    subtitleTracks = subtitleTracks,
-                                ),
-                            )
-                        },
-                    )
+                    val rawVideos = runCatching {
+                        playlistUtils.extractFromHls(
+                            playlistUrl = hlsUrl,
+                            referer = embedUrl,
+                            masterHeadersGen = { _, _ -> streamHeaders },
+                            videoHeadersGen = { _, _, _ -> streamHeaders },
+                            subtitleList = subtitleTracks,
+                            videoNameGen = { quality -> "BabaStream - $quality ($typeTag)" },
+                        )
+                    }.getOrElse {
+                        listOf(
+                            Video(
+                                videoUrl = hlsUrl,
+                                videoTitle = "BabaStream - Auto ($typeTag)",
+                                headers = streamHeaders,
+                                subtitleTracks = subtitleTracks,
+                            ),
+                        )
+                    }
+                    videos.addAll(rawVideos.map { proxy.processVideo(it, embedUrl) })
                 }
             }
 
@@ -210,7 +235,7 @@ class TwoDHiveExtractors(
                 payload.u?.takeIf { it.isNotBlank() }?.let { embedTarget ->
                     if (embedTarget.contains("ok.ru")) {
                         videos.addAll(
-                            okruExtractor.videosFromUrl(embedTarget, prefix = "OK.ru ($typeTag) - "),
+                            okruExtractor.videosFromUrl(embedTarget, prefix = "BabaStream - OK.ru ($typeTag) - "),
                         )
                     }
                 }
@@ -218,6 +243,14 @@ class TwoDHiveExtractors(
         }
 
         return videos
+    }
+
+    private fun getOrSolveCapToken(capEndpoint: String): String? {
+        val now = System.currentTimeMillis()
+        if (now < cachedCapTokenExpiry && !cachedCapToken.isNullOrBlank()) {
+            return cachedCapToken
+        }
+        return solveCap(capEndpoint)
     }
 
     private fun solveCap(capEndpoint: String): String? = runCatching {
@@ -257,7 +290,10 @@ class TwoDHiveExtractors(
         ).execute()
 
         val redeemDto = redeemReq.parseAs<CapRedeemResponseDto>()
-        redeemDto.token
+        redeemDto.token?.also {
+            cachedCapToken = it
+            cachedCapTokenExpiry = redeemDto.expires ?: (System.currentTimeMillis() + 3600_000L)
+        }
     }.getOrNull()
 
     // ======================== Wavy Resolver ========================
@@ -278,23 +314,25 @@ class TwoDHiveExtractors(
         val streamHeaders = streamHeaders(embedUrl, "https://wavy.babastream.top")
         val streamUrl = "https://wavy.babastream.top/stream.m3u8"
 
-        return runCatching {
+        val rawVideos = runCatching {
             playlistUtils.extractFromHls(
                 playlistUrl = streamUrl,
                 referer = embedUrl,
                 masterHeadersGen = { _, _ -> streamHeaders },
                 videoHeadersGen = { _, _, _ -> streamHeaders },
-                videoNameGen = { quality -> "$quality ($typeTag)" },
+                videoNameGen = { quality -> "Wavy - $quality ($typeTag)" },
             )
         }.getOrElse {
             listOf(
                 Video(
                     videoUrl = streamUrl,
-                    videoTitle = "Auto ($typeTag)",
+                    videoTitle = "Wavy - Auto ($typeTag)",
                     headers = streamHeaders,
                 ),
             )
         }
+
+        return rawVideos.map { proxy.processVideo(it, embedUrl) }
     }
 
     companion object {
