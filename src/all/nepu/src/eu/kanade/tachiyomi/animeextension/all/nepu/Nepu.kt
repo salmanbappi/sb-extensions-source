@@ -55,7 +55,17 @@ class Nepu : Source() {
 
     override val supportsLatest = true
 
+    private val defaultUserAgent by lazy {
+        try {
+            android.webkit.WebSettings.getDefaultUserAgent(Injekt.get<Application>())
+        } catch (_: Exception) {
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        }
+    }
+
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
+        .set("User-Agent", defaultUserAgent)
+        .set("Referer", "$baseUrl/")
 
     private val cfCookie = listOf("cf", "clearance").joinToString("_")
 
@@ -83,6 +93,16 @@ class Nepu : Source() {
         }
     }
 
+    private fun solveCloudflare(url: String) {
+        try {
+            val getRequest = Request.Builder()
+                .url(url)
+                .headers(headers)
+                .build()
+            client.newCall(getRequest).execute().close()
+        } catch (_: Exception) {}
+    }
+
     override val id: Long = 5181466391484419855L
 
     override val client: OkHttpClient = network.client.newBuilder()
@@ -94,6 +114,7 @@ class Nepu : Source() {
             }
             if (request.url.host.endsWith("nepu.io")) {
                 builder.header("Cookie", getBestCookie())
+                builder.header("User-Agent", defaultUserAgent)
             }
             chain.proceed(builder.build())
         }
@@ -504,6 +525,14 @@ class Nepu : Source() {
             } catch (_: Exception) {}
         }
 
+        // 3. Fallback to UniversalExtractor on pageUrl if still empty
+        if (fallbackList.isEmpty()) {
+            try {
+                val extracted = UniversalExtractor(client).videosFromUrl(pageUrl, buildVideoHeaders(pageUrl, pageUrl), prefix = "Nepu")
+                if (extracted.isNotEmpty()) fallbackList.addAll(extracted)
+            } catch (_: Exception) {}
+        }
+
         return fallbackList.filter { !it.videoUrl.isNullOrBlank() }.distinctBy { it.videoUrl }.map { video ->
             val videoUrl = video.videoUrl!!
             val needsProxy = videoUrl.contains("nepu.io") || videoUrl.contains("vr-cdn.com") || videoUrl.contains("/_nepu_hls/") || videoUrl.contains("/ajax/hls")
@@ -545,10 +574,36 @@ class Nepu : Source() {
                 wv.settings.domStorageEnabled = true
                 wv.settings.databaseEnabled = true
                 wv.settings.mediaPlaybackRequiresUserGesture = false
+                wv.settings.userAgentString = defaultUserAgent
 
                 val cookieManager = CookieManager.getInstance()
                 cookieManager.setAcceptCookie(true)
                 cookieManager.setAcceptThirdPartyCookies(wv, true)
+
+                wv.addJavascriptInterface(
+                    object {
+                        @android.webkit.JavascriptInterface
+                        fun onData(url: String, data: String) {
+                            try {
+                                val servedUrlRegex = Regex("""var (?:servedUrl|plainManifestUrl|opaqueManifestUrl)\s*=\s*"([^"]+)"""")
+                                var rawUrl = servedUrlRegex.find(data)?.groupValues?.get(1)
+                                if (rawUrl.isNullOrEmpty()) {
+                                    rawUrl = Regex("""["']?(?:file|embed_url|link|url)["']?\s*:\s*["']([^"']+)["']""").find(data)?.groupValues?.get(1)
+                                }
+                                if (!rawUrl.isNullOrEmpty()) {
+                                    val cleanUrl = rawUrl.replace("\\u0026", "&").replace("\\/", "/").trim()
+                                    capturedUrls.add(UrlUtils.fixUrl(cleanUrl, baseUrl))
+                                    latch.countDown()
+                                }
+                                val matchFilename = Regex("""var hlsFileName\s*=\s*"([^"]+)"""").find(data)
+                                val matchNonce = Regex("""var playerNonce\s*=\s*"([^"]+)"""").find(data)
+                                if (matchFilename != null) hlsFile = matchFilename.groupValues[1]
+                                if (matchNonce != null) playerNonce = matchNonce.groupValues[1]
+                            } catch (_: Exception) {}
+                        }
+                    },
+                    "androidBridge",
+                )
 
                 wv.webViewClient = object : WebViewClient() {
                     override fun shouldInterceptRequest(
@@ -564,6 +619,50 @@ class Nepu : Source() {
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
+                        val currentTitle = view?.title ?: ""
+                        if (currentTitle.contains("Just a moment", ignoreCase = true) || url?.contains("__cf_chl") == true) {
+                            return
+                        }
+
+                        val jsHook = """
+                            (function() {
+                                if (window.__hooked) return;
+                                window.__hooked = true;
+                                var origOpen = XMLHttpRequest.prototype.open;
+                                var origSend = XMLHttpRequest.prototype.send;
+                                XMLHttpRequest.prototype.open = function(m, u) {
+                                    this.__url = u;
+                                    return origOpen.apply(this, arguments);
+                                };
+                                XMLHttpRequest.prototype.send = function() {
+                                    this.addEventListener('load', function() {
+                                        if (this.__url && (this.__url.indexOf('ajax/embed') !== -1 || this.__url.indexOf('ajax/hls') !== -1)) {
+                                            try { window.androidBridge.onData(this.__url, this.responseText); } catch(e) {}
+                                        }
+                                    });
+                                    return origSend.apply(this, arguments);
+                                };
+                                var origFetch = window.fetch;
+                                if (origFetch) {
+                                    window.fetch = function() {
+                                        var args = arguments;
+                                        var u = (args[0] && args[0].url) || args[0] || '';
+                                        return origFetch.apply(this, args).then(function(res) {
+                                            if (typeof u === 'string' && (u.indexOf('ajax/embed') !== -1 || u.indexOf('ajax/hls') !== -1)) {
+                                                res.clone().text().then(function(txt) {
+                                                    try { window.androidBridge.onData(u, txt); } catch(e) {}
+                                                }).catch(function() {});
+                                            }
+                                            return res;
+                                        });
+                                    };
+                                }
+                                var btn = document.querySelector('a#videoSource, .btn-service.active, .btn-service, [data-embed]');
+                                if (btn) { try { btn.click(); } catch(e) {} }
+                            })();
+                        """.trimIndent()
+                        view?.evaluateJavascript(jsHook, null)
+
                         val jsExtract = """
                             (function() {
                                 var f = (typeof hlsFileName !== 'undefined') ? hlsFileName : '';
@@ -574,8 +673,6 @@ class Nepu : Source() {
                                 if (iframe) src = iframe.src || '';
                                 var video = document.querySelector('video source, video');
                                 if (video) src = video.src || '';
-                                var btn = document.querySelector('a#videoSource, .btn-service.active, .btn-service, [data-embed]');
-                                if (btn) { try { btn.click(); } catch(e) {} }
                                 return JSON.stringify({ f: f, n: n, u: u, src: src });
                             })()
                         """.trimIndent()
@@ -608,14 +705,14 @@ class Nepu : Source() {
                             if (capturedUrls.isNotEmpty()) {
                                 latch.countDown()
                             } else {
-                                handler.postDelayed({ latch.countDown() }, 4000)
+                                handler.postDelayed({ latch.countDown() }, 8000)
                             }
                         }
                     }
                 }
 
                 wv.loadUrl(pageUrl)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 latch.countDown()
             }
         }
@@ -640,17 +737,17 @@ class Nepu : Source() {
         val pageUrl = response.request.url.toString()
         val document = response.asJsoup()
 
-        val token = document.selectFirst("input[name=_TOKEN]")?.attr("value")
-        val embedElements = document.select("a#videoSource, .btn-service, [data-embed]")
-        val embedIds = embedElements.mapNotNull { it.attr("data-embed").trim().takeIf(String::isNotEmpty) }.distinct()
+        val embedElements = document.select("a#videoSource, .btn-service, [data-embed], .server, .servers li, .play-server, [data-id]")
+        val embedIds = embedElements.mapNotNull {
+            val id = it.attr("data-embed").ifEmpty { it.attr("data-id") }.trim()
+            id.takeIf(String::isNotEmpty)
+        }.distinct()
 
         for (embedId in embedIds) {
             try {
-                val postBodyBuilder = okhttp3.FormBody.Builder().add("id", embedId)
-                if (!token.isNullOrBlank()) {
-                    postBodyBuilder.add("_TOKEN", token)
-                }
-                val postBody = postBodyBuilder.build()
+                val postBody = okhttp3.FormBody.Builder()
+                    .add("id", embedId)
+                    .build()
 
                 val postHeaders = headers.newBuilder()
                     .set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
@@ -665,14 +762,19 @@ class Nepu : Source() {
                     .headers(postHeaders)
                     .build()
 
-                val embedResponse = withContext(Dispatchers.IO) { client.newCall(postRequest).execute() }
+                var embedResponse = withContext(Dispatchers.IO) { client.newCall(postRequest).execute() }
+                if (embedResponse.code == 403) {
+                    embedResponse.close()
+                    solveCloudflare(pageUrl)
+                    embedResponse = withContext(Dispatchers.IO) { client.newCall(postRequest).execute() }
+                }
                 val responseBody = embedResponse.body.string()
 
                 val servedUrlRegex = Regex("""var (?:servedUrl|plainManifestUrl|opaqueManifestUrl)\s*=\s*"([^"]+)"""")
                 var rawServedUrl = servedUrlRegex.find(responseBody)?.groupValues?.get(1)
 
                 if (rawServedUrl.isNullOrEmpty()) {
-                    rawServedUrl = Regex("""["']?(?:embed_url|link|url|file)["']?\s*:\s*["']([^"']+)["']""").find(responseBody)?.groupValues?.get(1)
+                    rawServedUrl = Regex("""["']?(?:file|embed_url|link|url)["']?\s*:\s*["']([^"']+)["']""").find(responseBody)?.groupValues?.get(1)
                 }
 
                 if (rawServedUrl.isNullOrEmpty()) {
