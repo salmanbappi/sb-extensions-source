@@ -141,14 +141,21 @@ class TwoDHiveProxy(private val client: OkHttpClient) {
                     respond(sock, 502, "text/plain", "Upstream ${response.code}".toByteArray())
                     return
                 }
-                val rawBytes = response.body.bytes()
-                val offset = findMpegTsOffset(rawBytes)
-                val cleanBytes = if (offset > 0 && offset < rawBytes.size) {
-                    rawBytes.copyOfRange(offset, rawBytes.size)
-                } else {
-                    rawBytes
+                val contentLength = response.body.contentLength()
+                val head = StringBuilder("HTTP/1.1 200 OK\r\n")
+                    .append("Content-Type: video/mp2t\r\n")
+                if (contentLength >= 0) {
+                    head.append("Content-Length: $contentLength\r\n")
                 }
-                respond(sock, 200, "video/mp2t", cleanBytes)
+                head.append("Connection: close\r\n\r\n")
+
+                val out = sock.getOutputStream()
+                out.write(head.toString().toByteArray())
+                if (!method.equals("HEAD", true)) {
+                    response.body.byteStream().copyTo(out)
+                }
+                out.flush()
+                runCatching { sock.shutdownOutput() }
             }
         } catch (e: Exception) {
             runCatching { respond(sock, 502, "text/plain", (e.message ?: "").toByteArray()) }

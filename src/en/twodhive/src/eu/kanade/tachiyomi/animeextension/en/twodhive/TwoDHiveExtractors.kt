@@ -187,8 +187,9 @@ class TwoDHiveExtractors(
         val videos = mutableListOf<Video>()
 
         val subtitleTracks = payload.tracks?.mapNotNull { track ->
-            val trackUrl = track.u?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            Track(trackUrl, track.label ?: "English")
+            val rawUrl = track.u?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val fullTrackUrl = UrlUtils.fixUrl(rawUrl, "https://babastream.top")
+            Track(fullTrackUrl, track.label ?: "English")
         } ?: emptyList()
 
         when (payload.t) {
@@ -232,7 +233,7 @@ class TwoDHiveExtractors(
                             ),
                         )
                     }
-                    videos.addAll(rawVideos.map { proxy.processVideo(it, embedUrl) })
+                    videos.addAll(rawVideos)
                 }
             }
 
@@ -321,25 +322,13 @@ class TwoDHiveExtractors(
         val streamHeaders = streamHeaders(embedUrl, "https://wavy.babastream.top")
         val streamUrl = "https://wavy.babastream.top/stream.m3u8"
 
-        val rawVideos = runCatching {
-            playlistUtils.extractFromHls(
-                playlistUrl = streamUrl,
-                referer = embedUrl,
-                masterHeadersGen = { _, _ -> streamHeaders },
-                videoHeadersGen = { _, _, _ -> streamHeaders },
-                videoNameGen = { quality -> "Wavy - $quality ($typeTag)" },
-            )
-        }.getOrElse {
-            listOf(
-                Video(
-                    videoUrl = streamUrl,
-                    videoTitle = "Wavy - Auto ($typeTag)",
-                    headers = streamHeaders,
-                ),
-            )
-        }
+        val video = Video(
+            videoUrl = streamUrl,
+            videoTitle = "Wavy - 720p ($typeTag)",
+            headers = streamHeaders,
+        )
 
-        return rawVideos.map { proxy.processVideo(it, embedUrl) }
+        return listOf(proxy.processVideo(video, embedUrl))
     }
 
     companion object {
