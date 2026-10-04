@@ -2,12 +2,13 @@ ext {
     extName = 'Nepu'
     extClass = '.Nepu'
     author = '@salmanbappi'
-    extVersionCode = 1172
+    extVersionCode = 1173
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
+    implementation(project(":lib:cloudflare-interceptor"))
     implementation(project(":lib:universal-extractor"))
     implementation(project(":lib:playlist-utils"))
     implementation(project(":lib:dood-extractor"))

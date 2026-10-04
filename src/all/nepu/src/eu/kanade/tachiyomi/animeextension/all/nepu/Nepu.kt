@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.streamtapeextractor.StreamTapeExtractor
@@ -73,6 +74,8 @@ class Nepu : Source() {
         try {
             val cookieManager = CookieManager.getInstance()
             val managerCookies = cookieManager.getCookie(baseUrl)
+                ?: cookieManager.getCookie("$baseUrl/")
+                ?: cookieManager.getCookie("https://nepu.io/")
             if (!managerCookies.isNullOrEmpty() && managerCookies.contains(cfCookie)) {
                 return managerCookies
             }
@@ -87,7 +90,9 @@ class Nepu : Source() {
 
         return try {
             val cookieManager = CookieManager.getInstance()
-            cookieManager.getCookie(baseUrl) ?: ""
+            cookieManager.getCookie(baseUrl)
+                ?: cookieManager.getCookie("$baseUrl/")
+                ?: ""
         } catch (_: Exception) {
             ""
         }
@@ -95,12 +100,17 @@ class Nepu : Source() {
 
     private fun solveCloudflare(url: String) {
         try {
-            val getRequest = Request.Builder()
-                .url(url)
-                .headers(headers)
-                .build()
-            client.newCall(getRequest).execute().close()
-        } catch (_: Exception) {}
+            val cfInterceptor = CloudflareInterceptor(network.client, defaultUserAgent)
+            cfInterceptor.resolveWithWebView(GET(url, headers), network.client)
+        } catch (_: Exception) {
+            try {
+                val getRequest = Request.Builder()
+                    .url(url)
+                    .headers(headers)
+                    .build()
+                client.newCall(getRequest).execute().close()
+            } catch (_: Exception) {}
+        }
     }
 
     override val id: Long = 5181466391484419855L
@@ -113,11 +123,15 @@ class Nepu : Source() {
                 return@addInterceptor chain.proceed(builder.removeHeader("Referer").build())
             }
             if (request.url.host.endsWith("nepu.io")) {
-                builder.header("Cookie", getBestCookie())
+                val cookie = getBestCookie()
+                if (cookie.isNotBlank()) {
+                    builder.header("Cookie", cookie)
+                }
                 builder.header("User-Agent", defaultUserAgent)
             }
             chain.proceed(builder.build())
         }
+        .addInterceptor(CloudflareInterceptor(network.client, defaultUserAgent))
         .build()
 
     // ============================== Popular ===============================
@@ -434,6 +448,7 @@ class Nepu : Source() {
             .set("Referer", referer)
             .set("Origin", origin)
             .set("Accept", "*/*")
+            .set("User-Agent", defaultUserAgent)
 
         val isVideoOnBaseUrl = try {
             val videoHost = videoUrl.toHttpUrl().host
@@ -444,7 +459,10 @@ class Nepu : Source() {
         }
 
         if (isVideoOnBaseUrl) {
-            builder.set("Cookie", getBestCookie())
+            val cookie = getBestCookie()
+            if (cookie.isNotBlank()) {
+                builder.set("Cookie", cookie)
+            }
         }
 
         return builder.build()
@@ -1198,7 +1216,10 @@ class LocalProxy(
                         .set("X-Requested-With", "XMLHttpRequest")
                         .set("Referer", "$baseUrl/")
                         .set("Origin", baseUrl)
-                        .set("Cookie", source.getBestCookie())
+                    val cookie = source.getBestCookie()
+                    if (cookie.isNotBlank()) {
+                        keyHeadersBuilder.set("Cookie", cookie)
+                    }
                     if (!savedUA.isNullOrBlank()) {
                         keyHeadersBuilder.set("User-Agent", savedUA)
                     }
@@ -1252,7 +1273,10 @@ class LocalProxy(
                     targetHeaders.set("Origin", baseUrl)
                 }
                 if (targetHeaders.get("Cookie").isNullOrEmpty()) {
-                    targetHeaders.set("Cookie", source.getBestCookie())
+                    val cookie = source.getBestCookie()
+                    if (cookie.isNotBlank()) {
+                        targetHeaders.set("Cookie", cookie)
+                    }
                 }
             }
 
