@@ -4,6 +4,10 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.util.Base64
 import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -37,7 +41,9 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class Nepu : Source() {
 
@@ -443,10 +449,184 @@ class Nepu : Source() {
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val pageUrl = UrlUtils.fixUrl(episode.url, baseUrl)
-        val response = withContext(Dispatchers.IO) {
-            client.newCall(GET(pageUrl, headers)).execute()
+
+        // 1. Try fast HTTP extraction
+        val directVideos = try {
+            val response = withContext(Dispatchers.IO) {
+                client.newCall(GET(pageUrl, headers)).execute()
+            }
+            extractVideosFromResponse(response)
+        } catch (_: Exception) {
+            emptyList()
         }
-        return extractVideosFromResponse(response)
+
+        if (directVideos.isNotEmpty()) {
+            return directVideos
+        }
+
+        // 2. Fallback to WebView interception to solve Cloudflare on /ajax/embed and capture live streams
+        val capturedUrls = withContext(Dispatchers.IO) {
+            extractVideoUrlsViaWebView(pageUrl)
+        }
+
+        val fallbackList = java.util.Collections.synchronizedList(mutableListOf<Video>())
+        for (rawUrl in capturedUrls) {
+            val videoHeaders = buildVideoHeaders(rawUrl, pageUrl)
+            try {
+                when {
+                    rawUrl.contains(".m3u8") || rawUrl.contains(".mp4") || rawUrl.contains("/ajax/hls") || rawUrl.contains("/hls") -> {
+                        val queryT = try { rawUrl.toHttpUrl().queryParameter("t") } catch (_: Exception) { null }
+                        if (!queryT.isNullOrEmpty()) tToken = queryT
+                        fallbackList.add(Video(videoUrl = rawUrl, videoTitle = "Nepu", headers = videoHeaders))
+                    }
+
+                    rawUrl.contains("dood") -> fallbackList.addAll(DoodExtractor(client).videosFromUrl(rawUrl, "DoodStream"))
+
+                    rawUrl.contains("filemoon") || rawUrl.contains("fmoon") -> fallbackList.addAll(FilemoonExtractor(client).videosFromUrl(rawUrl, "Filemoon", videoHeaders))
+
+                    rawUrl.contains("vidmoly") -> fallbackList.addAll(VidMolyExtractor(client, videoHeaders).videosFromUrl(rawUrl, "VidMoly"))
+
+                    rawUrl.contains("vidhide") || rawUrl.contains("guccihide") || rawUrl.contains("streamhide") -> fallbackList.addAll(VidHideExtractor(client, videoHeaders).videosFromUrl(rawUrl) { "VidHide - $it" })
+
+                    rawUrl.contains("voe") -> fallbackList.addAll(VoeExtractor(client, videoHeaders).videosFromUrl(rawUrl, "Voe"))
+
+                    rawUrl.contains("streamtape") -> fallbackList.addAll(StreamTapeExtractor(client).videosFromUrl(rawUrl, "StreamTape"))
+
+                    else -> {
+                        val extracted = UniversalExtractor(client).videosFromUrl(rawUrl, videoHeaders, prefix = "Nepu")
+                        if (extracted.isNotEmpty()) fallbackList.addAll(extracted)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        return fallbackList.filter { !it.videoUrl.isNullOrBlank() }.distinctBy { it.videoUrl }.map { video ->
+            val videoUrl = video.videoUrl!!
+            val needsProxy = videoUrl.contains("nepu.io") || videoUrl.contains("vr-cdn.com") || videoUrl.contains("/_nepu_hls/") || videoUrl.contains("/ajax/hls")
+            if (needsProxy) {
+                val proxiedUrl = getProxyUrl(videoUrl, video.headers)
+                Video(
+                    videoUrl = proxiedUrl,
+                    videoTitle = video.videoTitle,
+                    subtitleTracks = video.subtitleTracks,
+                    audioTracks = video.audioTracks,
+                )
+            } else {
+                video
+            }
+        }
+    }
+
+    private val videoUrlPatterns = listOf(
+        ".m3u8", ".mp4", "/ajax/hls", "/hls", "/_nepu_hls/", "manifest",
+        "dood", "filemoon", "fmoon", "vidmoly", "vidhide", "guccihide",
+        "streamhide", "voe", "streamtape", "vr-cdn.com",
+    )
+
+    private fun isVideoUrl(url: String): Boolean = videoUrlPatterns.any { url.contains(it, ignoreCase = true) }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun extractVideoUrlsViaWebView(pageUrl: String): List<String> {
+        val capturedUrls = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val latch = CountDownLatch(1)
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        var webView: WebView? = null
+
+        handler.post {
+            try {
+                val context = Injekt.get<Application>()
+                val wv = WebView(context)
+                webView = wv
+                wv.settings.javaScriptEnabled = true
+                wv.settings.domStorageEnabled = true
+                wv.settings.databaseEnabled = true
+                wv.settings.mediaPlaybackRequiresUserGesture = false
+
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+                cookieManager.setAcceptThirdPartyCookies(wv, true)
+
+                wv.webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                    ): WebResourceResponse? {
+                        val url = request?.url?.toString() ?: return null
+                        if (isVideoUrl(url) && !url.startsWith("blob:")) {
+                            capturedUrls.add(url)
+                            latch.countDown()
+                        }
+                        return null
+                    }
+
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        val jsExtract = """
+                            (function() {
+                                var f = (typeof hlsFileName !== 'undefined') ? hlsFileName : '';
+                                var n = (typeof playerNonce !== 'undefined') ? playerNonce : '';
+                                var u = (typeof servedUrl !== 'undefined') ? servedUrl : ((typeof plainManifestUrl !== 'undefined') ? plainManifestUrl : '');
+                                var src = '';
+                                var iframe = document.querySelector('iframe');
+                                if (iframe) src = iframe.src || '';
+                                var video = document.querySelector('video source, video');
+                                if (video) src = video.src || '';
+                                var btn = document.querySelector('a#videoSource, .btn-service.active, .btn-service, [data-embed]');
+                                if (btn) { try { btn.click(); } catch(e) {} }
+                                return JSON.stringify({ f: f, n: n, u: u, src: src });
+                            })()
+                        """.trimIndent()
+
+                        view?.evaluateJavascript(jsExtract) { resultJson ->
+                            try {
+                                if (!resultJson.isNullOrBlank() && resultJson != "null") {
+                                    val cleanJson = if (resultJson.startsWith("\"") && resultJson.endsWith("\"")) {
+                                        org.json.JSONTokener(resultJson).nextValue().toString()
+                                    } else {
+                                        resultJson
+                                    }
+                                    val obj = JSONObject(cleanJson)
+                                    val f = obj.optString("f")
+                                    val n = obj.optString("n")
+                                    val u = obj.optString("u")
+                                    val src = obj.optString("src")
+
+                                    if (f.isNotEmpty()) hlsFile = f
+                                    if (n.isNotEmpty()) playerNonce = n
+                                    if (u.isNotEmpty()) {
+                                        val cleanU = u.replace("\\u0026", "&").replace("\\/", "/").trim()
+                                        capturedUrls.add(UrlUtils.fixUrl(cleanU, baseUrl))
+                                    }
+                                    if (src.isNotEmpty() && !src.contains("about:") && !src.contains("javascript:")) {
+                                        capturedUrls.add(UrlUtils.fixUrl(src, baseUrl))
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                            if (capturedUrls.isNotEmpty()) {
+                                latch.countDown()
+                            } else {
+                                handler.postDelayed({ latch.countDown() }, 4000)
+                            }
+                        }
+                    }
+                }
+
+                wv.loadUrl(pageUrl)
+            } catch (_: Exception) {
+                latch.countDown()
+            }
+        }
+
+        latch.await(20, TimeUnit.SECONDS)
+
+        handler.post {
+            try {
+                webView?.stopLoading()
+                webView?.destroy()
+                webView = null
+            } catch (_: Exception) {}
+        }
+
+        return capturedUrls.distinct()
     }
 
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
