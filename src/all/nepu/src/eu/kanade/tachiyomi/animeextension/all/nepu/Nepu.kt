@@ -507,7 +507,11 @@ class Nepu : Source() {
 
                     if (matchFilename != null) hlsFile = matchFilename.groupValues[1]
                     if (matchNonce != null) playerNonce = matchNonce.groupValues[1]
-                    val queryT = try { servedUrl.toHttpUrl().queryParameter("t") } catch (_: Exception) { null }
+                    val queryT = try {
+                        servedUrl.toHttpUrl().queryParameter("t")
+                    } catch (_: Exception) {
+                        null
+                    }
                     if (!queryT.isNullOrEmpty()) tToken = queryT
 
                     val videoHeaders = buildVideoHeaders(servedUrl, pageUrl)
