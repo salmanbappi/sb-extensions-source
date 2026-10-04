@@ -24,13 +24,11 @@ class TwoDHiveExtractors(
     private inline fun <reified T> Response.parseAs(): T = json.decodeFromString(body.string())
     private inline fun <reified T> String.parseAs(): T = json.decodeFromString(this)
 
-    private fun streamHeaders(referer: String, origin: String? = null): Headers {
-        return headers.newBuilder().apply {
-            set("Referer", referer)
-            if (origin != null) set("Origin", origin)
-            set("User-Agent", headers["User-Agent"] ?: DEFAULT_USER_AGENT)
-        }.build()
-    }
+    private fun streamHeaders(referer: String, origin: String? = null): Headers = headers.newBuilder().apply {
+        set("Referer", referer)
+        if (origin != null) set("Origin", origin)
+        set("User-Agent", headers["User-Agent"] ?: DEFAULT_USER_AGENT)
+    }.build()
 
     // ======================== MegaPlay Resolver ========================
     fun extractMegaPlay(malId: String, epNum: String, type: String): List<Video> {
