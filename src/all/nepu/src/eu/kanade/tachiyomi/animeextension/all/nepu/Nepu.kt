@@ -564,7 +564,7 @@ class Nepu : Source() {
     }
 
     private val videoUrlPatterns = listOf(
-        ".m3u8", ".mp4", "/ajax/hls", "/hls", "/_nepu_hls/", "manifest",
+        ".m3u8", ".mp4", "/ajax/hls", "/hls", "/_nepu_hls/", "manifest", "maho-cdn",
         "dood", "filemoon", "fmoon", "vidmoly", "vidhide", "guccihide",
         "streamhide", "voe", "streamtape", "vr-cdn.com",
     )
@@ -598,7 +598,7 @@ class Nepu : Source() {
                         @android.webkit.JavascriptInterface
                         fun onData(url: String, data: String) {
                             try {
-                                val servedUrlRegex = Regex("""var (?:servedUrl|plainManifestUrl|opaqueManifestUrl)\s*=\s*"([^"]+)"""")
+                                val servedUrlRegex = Regex("""(?:var|let|const)\s+(?:relayManifestUrl|servedUrl|plainManifestUrl|opaqueManifestUrl|manifestUrl)\s*=\s*["']([^"']+)["']""")
                                 var rawUrl = servedUrlRegex.find(data)?.groupValues?.get(1)
                                 if (rawUrl.isNullOrEmpty()) {
                                     rawUrl = Regex("""["']?(?:file|embed_url|link|url)["']?\s*:\s*["']([^"']+)["']""").find(data)?.groupValues?.get(1)
@@ -680,7 +680,7 @@ class Nepu : Source() {
                             (function() {
                                 var f = (typeof hlsFileName !== 'undefined') ? hlsFileName : '';
                                 var n = (typeof playerNonce !== 'undefined') ? playerNonce : '';
-                                var u = (typeof servedUrl !== 'undefined') ? servedUrl : ((typeof plainManifestUrl !== 'undefined') ? plainManifestUrl : '');
+                                var u = (typeof relayManifestUrl !== 'undefined') ? relayManifestUrl : ((typeof servedUrl !== 'undefined') ? servedUrl : ((typeof plainManifestUrl !== 'undefined') ? plainManifestUrl : ''));
                                 var src = '';
                                 var iframe = document.querySelector('iframe');
                                 if (iframe) src = iframe.src || '';
@@ -783,11 +783,20 @@ class Nepu : Source() {
                 }
                 val responseBody = embedResponse.body.string()
 
-                val servedUrlRegex = Regex("""var (?:servedUrl|plainManifestUrl|opaqueManifestUrl)\s*=\s*"([^"]+)"""")
+                val servedUrlRegex = Regex("""(?:var|let|const)\s+(?:relayManifestUrl|servedUrl|plainManifestUrl|opaqueManifestUrl|manifestUrl)\s*=\s*["']([^"']+)["']""")
                 var rawServedUrl = servedUrlRegex.find(responseBody)?.groupValues?.get(1)
 
                 if (rawServedUrl.isNullOrEmpty()) {
                     rawServedUrl = Regex("""["']?(?:file|embed_url|link|url)["']?\s*:\s*["']([^"']+)["']""").find(responseBody)?.groupValues?.get(1)
+                }
+
+                if (rawServedUrl.isNullOrEmpty()) {
+                    val fileVarMatch = Regex("""file\s*:\s*\[\s*\{\s*["']?file["']?\s*:\s*([a-zA-Z0-9_$]+)""").find(responseBody)
+                    if (fileVarMatch != null) {
+                        val varName = fileVarMatch.groupValues[1]
+                        val varValMatch = Regex("""(?:var|let|const)\s+$varName\s*=\s*["']([^"']+)["']""").find(responseBody)
+                        rawServedUrl = varValMatch?.groupValues?.get(1)
+                    }
                 }
 
                 if (rawServedUrl.isNullOrEmpty()) {
@@ -1409,7 +1418,12 @@ class LocalProxy(
                         }
                     } catch (_: Exception) {}
                 }
-                builder.append(getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders))
+                val needsProxy = resolvedUri.contains("nepu.io") || resolvedUri.contains("/_nepu_hls/") || resolvedUri.contains("/ajax/hls")
+                if (needsProxy) {
+                    builder.append(getProxyUrlWithEncodedHeaders(resolvedUri, encodedHeaders))
+                } else {
+                    builder.append(resolvedUri)
+                }
             }
             builder.append("\n")
         }
