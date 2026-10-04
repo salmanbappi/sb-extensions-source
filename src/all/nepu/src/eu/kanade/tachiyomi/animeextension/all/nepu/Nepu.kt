@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Application
 import android.util.Base64
 import android.webkit.CookieManager
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -102,9 +103,9 @@ class Nepu : Source() {
         return GET(url, headers)
     }
 
-    override fun popularAnimeSelector(): String = ".list-movie, .list-episode"
+    private fun popularAnimeSelector(): String = ".list-movie, .list-episode"
 
-    override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
+    private fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a") ?: element
         setUrlWithoutDomain(link.attr("href"))
         title = element.selectFirst(".list-title")?.text()?.trim()
@@ -117,7 +118,7 @@ class Nepu : Source() {
         fetch_type = FetchType.Episodes
     }
 
-    override fun popularAnimeNextPageSelector(): String? = "ul.pagination a.page-link:contains(Next)"
+    private fun popularAnimeNextPageSelector(): String? = "ul.pagination a.page-link:contains(Next)"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -139,11 +140,11 @@ class Nepu : Source() {
         return GET(url, headers)
     }
 
-    override fun latestUpdatesSelector(): String = popularAnimeSelector()
+    private fun latestUpdatesSelector(): String = popularAnimeSelector()
 
-    override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
+    private fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
+    private fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
@@ -151,11 +152,11 @@ class Nepu : Source() {
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = throw UnsupportedOperationException()
 
-    override fun searchAnimeSelector(): String = popularAnimeSelector()
+    private fun searchAnimeSelector(): String = popularAnimeSelector()
 
-    override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
+    private fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
+    private fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
@@ -282,9 +283,9 @@ class Nepu : Source() {
 
     override fun episodeListRequest(anime: SAnime): Request = GET(UrlUtils.fixUrl(anime.url, baseUrl), headers)
 
-    override fun episodeListSelector(): String = ".episodes.tab-content a, .tab-pane a, ul.episodios li, .list-episodes a, .ep-item, .episode-item, a[href*='/episode/'], a[href*='/movie/'], a[href*='/show/'], a[href*='/serie/']"
+    private fun episodeListSelector(): String = ".episodes.tab-content a, .tab-pane a, ul.episodios li, .list-episodes a, .ep-item, .episode-item, a[href*='/episode/'], a[href*='/movie/'], a[href*='/show/'], a[href*='/serie/']"
 
-    override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
+    private fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
         setUrlWithoutDomain(link.attr("abs:href"))
         val epTitle = element.selectFirst("span, .name, .ep-title, .episode")?.text() ?: element.text()
@@ -720,6 +721,8 @@ class Nepu : Source() {
         }
         return (2.0 * intersection) / (n1 + n2 - 2).coerceAtLeast(1)
     }
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {}
 
     private fun getProxyUrl(targetUrl: String, headers: okhttp3.Headers?): String = Companion.getProxyUrl(this, targetUrl, headers)
 
