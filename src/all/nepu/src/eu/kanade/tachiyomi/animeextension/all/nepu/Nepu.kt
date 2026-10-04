@@ -46,6 +46,9 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
+private const val DEFAULT_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36"
+
 class Nepu : Source() {
 
     override val name = "Nepu"
@@ -56,16 +59,8 @@ class Nepu : Source() {
 
     override val supportsLatest = true
 
-    private val defaultUserAgent by lazy {
-        try {
-            android.webkit.WebSettings.getDefaultUserAgent(Injekt.get<Application>())
-        } catch (_: Exception) {
-            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-        }
-    }
-
     override fun headersBuilder(): okhttp3.Headers.Builder = super.headersBuilder()
-        .set("User-Agent", defaultUserAgent)
+        .set("User-Agent", DEFAULT_USER_AGENT)
         .set("Referer", "$baseUrl/")
 
     private val cfCookie = listOf("cf", "clearance").joinToString("_")
@@ -100,7 +95,7 @@ class Nepu : Source() {
 
     private fun solveCloudflare(url: String) {
         try {
-            val cfInterceptor = CloudflareInterceptor(network.client, defaultUserAgent)
+            val cfInterceptor = CloudflareInterceptor(network.client, DEFAULT_USER_AGENT)
             cfInterceptor.resolveWithWebView(GET(url, headers), network.client)
         } catch (_: Exception) {
             try {
@@ -127,11 +122,11 @@ class Nepu : Source() {
                 if (cookie.isNotBlank()) {
                     builder.header("Cookie", cookie)
                 }
-                builder.header("User-Agent", defaultUserAgent)
+                builder.header("User-Agent", DEFAULT_USER_AGENT)
             }
             chain.proceed(builder.build())
         }
-        .addInterceptor(CloudflareInterceptor(network.client, defaultUserAgent))
+        .addInterceptor(CloudflareInterceptor(network.client, DEFAULT_USER_AGENT))
         .build()
 
     // ============================== Popular ===============================
@@ -448,7 +443,7 @@ class Nepu : Source() {
             .set("Referer", referer)
             .set("Origin", origin)
             .set("Accept", "*/*")
-            .set("User-Agent", defaultUserAgent)
+            .set("User-Agent", DEFAULT_USER_AGENT)
 
         val isVideoOnBaseUrl = try {
             val videoHost = videoUrl.toHttpUrl().host
@@ -592,7 +587,7 @@ class Nepu : Source() {
                 wv.settings.domStorageEnabled = true
                 wv.settings.databaseEnabled = true
                 wv.settings.mediaPlaybackRequiresUserGesture = false
-                wv.settings.userAgentString = defaultUserAgent
+                wv.settings.userAgentString = DEFAULT_USER_AGENT
 
                 val cookieManager = CookieManager.getInstance()
                 cookieManager.setAcceptCookie(true)
