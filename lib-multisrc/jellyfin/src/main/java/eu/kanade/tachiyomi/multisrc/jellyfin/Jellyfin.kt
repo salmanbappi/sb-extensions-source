@@ -564,6 +564,7 @@ abstract class Jellyfin(
                             val raw = if (sub.deliveryUrl.startsWith("http")) sub.deliveryUrl else "$baseUrl${sub.deliveryUrl}"
                             if (!raw.contains("api_key=")) "$raw${if (raw.contains("?")) "&" else "?"}api_key=$accessToken" else raw
                         }
+
                         else -> "$baseUrl/Videos/${item.id}/$msId/Subtitles/$subIndex/Stream.vtt?api_key=$accessToken"
                     }
                     val lang = sub.displayTitle?.takeIf { it.isNotBlank() }
