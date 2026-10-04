@@ -41,7 +41,6 @@ class TwoDHiveProxy(private val client: OkHttpClient) {
 
     fun processVideo(video: Video, referer: String): Video {
         val url = video.videoUrl
-        if (!url.contains(".m3u8", ignoreCase = true) && !url.contains("/stream.m3u8")) return video
         if (!start()) return video
         val encoded = encode(url)
         val encodedReferer = encode(referer)
