@@ -48,7 +48,7 @@ class Oneshows :
 
     override val name = "1Shows"
 
-    override val baseUrl = "https://www.1shows.org"
+    override val baseUrl = "https://www.1shows.bz"
 
     override val lang = "en"
 
@@ -61,6 +61,7 @@ class Oneshows :
     }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
         .add("Accept", "application/json, text/plain, */*")
 
@@ -599,7 +600,7 @@ class Oneshows :
     private suspend fun extractGenericVideos(hoster: Hoster): List<Video> {
         val embedUrl = hoster.hosterUrl
         val embedUri = Uri.parse(embedUrl)
-        val embedHost = embedUri.host ?: "1shows.org"
+        val embedHost = embedUri.host ?: "1shows.bz"
         val embedHeaders = Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .add("Referer", embedUrl)
