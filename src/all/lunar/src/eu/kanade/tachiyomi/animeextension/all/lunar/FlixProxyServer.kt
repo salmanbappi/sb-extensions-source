@@ -195,8 +195,11 @@ class FlixProxyServer(
         val source = body.source()
 
         val headerBytes = try {
-            source.peek().readByteArray(13)
-        } catch (_: java.io.EOFException) {
+            val peek = source.peek()
+            val buf = ByteArray(12)
+            val read = peek.read(buf)
+            if (read > 0) buf.copyOf(read) else ByteArray(0)
+        } catch (_: Exception) {
             ByteArray(0)
         }
 

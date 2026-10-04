@@ -452,7 +452,6 @@ class Lunar : Source() {
                         url = epData.toJsonString(json)
                         name = if (seasonsCount > 1) "Season $season Episode $ep" else "Episode $ep"
                         episode_number = globalEpisodeNum++
-                        scanlator = "ENG-DUB | ENG-SUB | GER-DUB | GER-SUB"
                     },
                 )
             }
@@ -962,10 +961,19 @@ class Lunar : Source() {
     override fun videoListParse(response: Response): List<Video> {
         val slug = response.request.url.queryParameter("slug") ?: extractSlug(response.request.url.encodedPath)
         val episode = response.request.url.queryParameter("episode")?.toIntOrNull() ?: 1
+        val cleanSlug = extractCleanSlug(slug)
 
-        val streamData = runCatching {
+        var streamData = runCatching {
             response.parseAs<StreamResponse>(json)
         }.getOrNull()
+
+        if ((streamData == null || streamData.episodes.isEmpty()) && cleanSlug != slug) {
+            val fallbackReq = GET("$API_BASE/api/stream?slug=$cleanSlug&episode=$episode", headers)
+            streamData = runCatching {
+                val fallbackResp = client.newCall(fallbackReq).execute()
+                fallbackResp.parseAs<StreamResponse>(json)
+            }.getOrNull()
+        }
 
         val hosters = streamData?.episodes?.flatMap { it.hosters }.orEmpty()
 
