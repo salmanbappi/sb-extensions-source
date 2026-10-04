@@ -261,11 +261,9 @@ class TwoDHiveProxy(private val client: OkHttpClient) {
         return url to referer
     }
 
-    private fun encode(value: String): String =
-        Base64.encodeToString(value.toByteArray(), Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+    private fun encode(value: String): String = Base64.encodeToString(value.toByteArray(), Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
 
-    private fun resolve(baseUrl: String, relative: String): String =
-        baseUrl.toHttpUrlOrNull()?.resolve(relative)?.toString() ?: relative
+    private fun resolve(baseUrl: String, relative: String): String = baseUrl.toHttpUrlOrNull()?.resolve(relative)?.toString() ?: relative
 
     private fun respond(sock: Socket, status: Int, contentType: String, body: ByteArray, sendBody: Boolean = true) {
         val reason = when (status) {
