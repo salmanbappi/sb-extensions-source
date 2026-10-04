@@ -2,7 +2,7 @@ ext {
     extName = 'Bijoy'
     extClass = '.JellyfinBijoy'
     themePkg = 'jellyfin'
-    overrideVersionCode = 1010
+    overrideVersionCode = 1011
     isNsfw = false
 }
 
