@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.en.twodhive
 
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -42,6 +41,7 @@ data class BabaConfigDto(
     val sub: String? = null,
     val sid: String? = null,
     val pk: String? = null,
+    val cap: String? = null,
 )
 
 @Serializable
@@ -54,12 +54,55 @@ data class BabaDecryptedPayloadDto(
     val t: String? = null,
     val u: String? = null,
     val m: String? = null,
+    val tracks: List<BabaTrackDto>? = null,
+)
+
+@Serializable
+data class BabaTrackDto(
+    val label: String? = null,
+    val u: String? = null,
+    val default: Boolean? = null,
+)
+
+@Serializable
+data class BabaVerifyResponseDto(
+    val t: String? = null,
+    val m: String? = null,
+)
+
+@Serializable
+data class CapChallengeResponseDto(
+    val challenge: CapChallengeDto? = null,
+    val token: String? = null,
+    val expires: Long? = null,
+)
+
+@Serializable
+data class CapChallengeDto(
+    val c: Int? = null,
+    val s: Int? = null,
+    val d: Int? = null,
+)
+
+@Serializable
+data class CapRedeemRequestDto(
+    val token: String? = null,
+    val solutions: List<Int>? = null,
+)
+
+@Serializable
+data class CapRedeemResponseDto(
+    val success: Boolean? = null,
+    val token: String? = null,
+    val expires: Long? = null,
+    val error: String? = null,
 )
 
 @Serializable
 data class MegaPlaySourcesDto(
     val sources: MegaPlayFileDto? = null,
     val tracks: List<MegaPlayTrackDto>? = null,
+    val enc: String? = null,
 )
 
 @Serializable

@@ -199,6 +199,7 @@ class TwoDHive : Source() {
         return listOf(
             Hoster(hosterName = "MegaPlay", hosterUrl = "megaplay|$malId|$epNum"),
             Hoster(hosterName = "BabaStream", hosterUrl = "babastream|$malId|$epNum"),
+            Hoster(hosterName = "Wavy", hosterUrl = "wavy|$malId|$epNum"),
         )
     }
 
@@ -211,7 +212,12 @@ class TwoDHive : Source() {
         val epNum = parts[2]
 
         val videos = mutableListOf<Video>()
-        val types = listOf("sub", "dub")
+        val prefAudio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
+        val types = if (prefAudio.equals("Dub", ignoreCase = true)) {
+            listOf("dub", "sub")
+        } else {
+            listOf("sub", "dub")
+        }
 
         when (provider) {
             "megaplay" -> {
@@ -226,6 +232,14 @@ class TwoDHive : Source() {
                 for (type in types) {
                     runCatching {
                         videos.addAll(extractors.extractBabaStream(malId, epNum, type))
+                    }
+                }
+            }
+
+            "wavy" -> {
+                for (type in types) {
+                    runCatching {
+                        videos.addAll(extractors.extractWavy(malId, epNum, type))
                     }
                 }
             }
@@ -281,8 +295,8 @@ class TwoDHive : Source() {
         ListPreference(screen.context).apply {
             key = PREF_SERVER_KEY
             title = "Preferred Server"
-            entries = arrayOf("MegaPlay", "BabaStream")
-            entryValues = arrayOf("MegaPlay", "BabaStream")
+            entries = arrayOf("MegaPlay", "BabaStream", "Wavy")
+            entryValues = arrayOf("MegaPlay", "BabaStream", "Wavy")
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
             setOnPreferenceChangeListener { _, newValue ->
