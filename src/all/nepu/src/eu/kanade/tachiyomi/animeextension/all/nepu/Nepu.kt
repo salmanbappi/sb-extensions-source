@@ -475,7 +475,11 @@ class Nepu : Source() {
             try {
                 when {
                     rawUrl.contains(".m3u8") || rawUrl.contains(".mp4") || rawUrl.contains("/ajax/hls") || rawUrl.contains("/hls") -> {
-                        val queryT = try { rawUrl.toHttpUrl().queryParameter("t") } catch (_: Exception) { null }
+                        val queryT = try {
+                            rawUrl.toHttpUrl().queryParameter("t")
+                        } catch (_: Exception) {
+                            null
+                        }
                         if (!queryT.isNullOrEmpty()) tToken = queryT
                         fallbackList.add(Video(videoUrl = rawUrl, videoTitle = "Nepu", headers = videoHeaders))
                     }
