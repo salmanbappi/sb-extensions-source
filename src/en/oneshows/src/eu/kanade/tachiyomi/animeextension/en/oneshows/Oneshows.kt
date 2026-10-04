@@ -263,6 +263,13 @@ class Oneshows :
         return episodeList.distinctBy { it.url }.reversed()
     }
 
+    override val migration: SharedPreferences.() -> Unit = {
+        val currentHoster = getString(PREF_HOSTER_KEY, null)
+        if (currentHoster == null || currentHoster == "Vidzee") {
+            edit().putString(PREF_HOSTER_KEY, PREF_HOSTER_DEFAULT).apply()
+        }
+    }
+
     // ============================ Video Links =============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val isMovie = episode.url.contains("movie")
@@ -278,30 +285,36 @@ class Oneshows :
 
         val defaultHosters = if (isMovie) {
             listOf(
-                Hoster(hosterName = "Vidzee (Direct HLS)", hosterUrl = "https://player.vidzee.wtf/embed/movie/$id"),
-                Hoster(hosterName = "Vidrock (Multi-Server)", hosterUrl = "https://vidrock.ru/movie/$id"),
-                Hoster(hosterName = "VidFast", hosterUrl = "https://vidfast.pro/movie/$id"),
-                Hoster(hosterName = "VidLink", hosterUrl = "https://vidlink.pro/movie/$id"),
+                Hoster(hosterName = "Main 5 (Vidrock)", hosterUrl = "https://vidrock.to/movie/$id"),
+                Hoster(hosterName = "Main 3 (VidFast)", hosterUrl = "https://vidfast.vc/movie/$id"),
+                Hoster(hosterName = "Main 4 (VidLink)", hosterUrl = "https://vidlink.pro/movie/$id"),
                 Hoster(hosterName = "Main 1 (Viduki)", hosterUrl = "https://www.viduki.net/1/movie/$id"),
-                Hoster(hosterName = "Main 2 (Vidy)", hosterUrl = "https://vidy.st/movie/$id"),
+                Hoster(hosterName = "Main 2 (Vidy)", hosterUrl = "https://www.vidy.st/movie/$id"),
                 Hoster(hosterName = "Multi-Language (Viduki)", hosterUrl = "https://www.viduki.net/2/movie/$id"),
                 Hoster(hosterName = "Premium Embeds (Viduki)", hosterUrl = "https://www.viduki.net/4/movie/$id"),
+                Hoster(hosterName = "Main 6 (Vidzee)", hosterUrl = "https://player.vidzee.wtf/embed/movie/$id"),
             )
         } else {
             listOf(
-                Hoster(hosterName = "Vidzee (Direct HLS)", hosterUrl = "https://player.vidzee.wtf/embed/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Vidrock (Multi-Server)", hosterUrl = "https://vidrock.ru/tv/$id/$season/$ep"),
-                Hoster(hosterName = "VidFast", hosterUrl = "https://vidfast.pro/tv/$id/$season/$ep"),
-                Hoster(hosterName = "VidLink", hosterUrl = "https://vidlink.pro/tv/$id/$season/$ep"),
+                Hoster(hosterName = "Main 5 (Vidrock)", hosterUrl = "https://vidrock.to/tv/$id/$season/$ep"),
+                Hoster(hosterName = "Main 3 (VidFast)", hosterUrl = "https://vidfast.vc/tv/$id/$season/$ep"),
+                Hoster(hosterName = "Main 4 (VidLink)", hosterUrl = "https://vidlink.pro/tv/$id/$season/$ep"),
                 Hoster(hosterName = "Main 1 (Viduki)", hosterUrl = "https://www.viduki.net/1/tv/$id/$season/$ep"),
-                Hoster(hosterName = "Main 2 (Vidy)", hosterUrl = "https://vidy.st/tv/$id/$season/$ep"),
+                Hoster(hosterName = "Main 2 (Vidy)", hosterUrl = "https://www.vidy.st/tv/$id/$season/$ep"),
                 Hoster(hosterName = "Multi-Language (Viduki)", hosterUrl = "https://www.viduki.net/2/tv/$id/$season/$ep"),
                 Hoster(hosterName = "Premium Embeds (Viduki)", hosterUrl = "https://www.viduki.net/4/tv/$id/$season/$ep"),
+                Hoster(hosterName = "Main 6 (Vidzee)", hosterUrl = "https://player.vidzee.wtf/embed/tv/$id/$season/$ep"),
             )
         }
 
         return try {
-            val req = GET("https://api.viduki.net/embed_providers?site=1shows", headers)
+            val providerHeaders = Headers.Builder()
+                .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .add("Referer", "https://www.1shows.bz/")
+                .add("Origin", "https://www.1shows.bz")
+                .add("Accept", "application/json, text/plain, */*")
+                .build()
+            val req = GET("https://api.viduki.net/embed_providers?site=1shows", providerHeaders)
             val res = client.newCall(req).execute()
             val dto = res.parseAs<EmbedProvidersResponseDto>(json)
             val dynamicList = dto.providers?.mapNotNull { p ->
@@ -311,7 +324,21 @@ class Oneshows :
                     ?.replace("{s}", season)
                     ?.replace("{e}", ep)
                     ?: return@mapNotNull null
-                val label = p.label ?: p.id ?: "Server"
+                val baseLabel = p.label ?: p.id ?: "Server"
+                val serviceTag = when {
+                    targetUrl.contains("vidrock", ignoreCase = true) -> "Vidrock"
+                    targetUrl.contains("vidfast", ignoreCase = true) -> "VidFast"
+                    targetUrl.contains("vidlink", ignoreCase = true) -> "VidLink"
+                    targetUrl.contains("vidy.st", ignoreCase = true) -> "Vidy"
+                    targetUrl.contains("viduki.net", ignoreCase = true) -> "Viduki"
+                    targetUrl.contains("vidzee", ignoreCase = true) -> "Vidzee"
+                    else -> ""
+                }
+                val label = if (serviceTag.isNotEmpty() && !baseLabel.contains(serviceTag, ignoreCase = true)) {
+                    "$baseLabel ($serviceTag)"
+                } else {
+                    baseLabel
+                }
                 Hoster(hosterName = label, hosterUrl = targetUrl)
             } ?: emptyList()
             if (dynamicList.isNotEmpty()) {
@@ -335,16 +362,19 @@ class Oneshows :
         val name = hoster.hosterName
 
         return when {
-            url.contains("vidzee", ignoreCase = true) || name.contains("Vidzee", ignoreCase = true) -> {
-                extractVidzeeVideos(hoster)
-            }
-
             url.contains("vidrock", ignoreCase = true) || name.contains("Vidrock", ignoreCase = true) -> {
-                extractVidrockVideos(hoster)
+                val videos = extractVidrockVideos(hoster)
+                if (videos.isEmpty()) extractGenericVideos(hoster) else videos
             }
 
             url.contains("vidfast", ignoreCase = true) || name.contains("VidFast", ignoreCase = true) -> {
-                extractVidfastVideos(hoster)
+                val videos = extractVidfastVideos(hoster)
+                if (videos.isEmpty()) extractGenericVideos(hoster) else videos
+            }
+
+            url.contains("vidzee", ignoreCase = true) || name.contains("Vidzee", ignoreCase = true) -> {
+                val videos = extractVidzeeVideos(hoster)
+                if (videos.isEmpty()) extractGenericVideos(hoster) else videos
             }
 
             else -> {
@@ -474,10 +504,11 @@ class Oneshows :
         }
 
         val path = if (isMovie) "movie/$id" else "tv/$id/$season/$ep"
+        val host = if (embedUrl.contains("vidrock.ru")) "vidrock.ru" else "vidrock.to"
         val vidrockHeaders = Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .add("Referer", "https://vidrock.ru/")
-            .add("Origin", "https://vidrock.ru")
+            .add("Referer", "https://$host/")
+            .add("Origin", "https://$host")
             .build()
 
         val subTracks = mutableListOf<Track>()
@@ -494,12 +525,27 @@ class Oneshows :
             }
         } catch (_: Exception) {}
 
-        val serverMap: Map<String, VidrockServerDto?> = try {
-            val apiReq = GET("https://vidrock.ru/api/$path", vidrockHeaders)
-            val apiRes = client.newCall(apiReq).execute()
-            apiRes.parseAs<Map<String, VidrockServerDto?>>(json)
-        } catch (_: Exception) {
-            emptyMap()
+        val hostsToTry = listOf(host, if (host == "vidrock.to") "vidrock.ru" else "vidrock.to")
+        var serverMap: Map<String, VidrockServerDto?> = emptyMap()
+        for (h in hostsToTry) {
+            try {
+                val apiReq = GET(
+                    "https://$h/api/$path",
+                    Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", "https://$h/")
+                        .add("Origin", "https://$h")
+                        .build(),
+                )
+                val apiRes = client.newCall(apiReq).execute()
+                if (apiRes.isSuccessful) {
+                    val parsed = apiRes.parseAs<Map<String, VidrockServerDto?>>(json)
+                    if (parsed.values.any { it?.url?.isNotBlank() == true }) {
+                        serverMap = parsed
+                        break
+                    }
+                }
+            } catch (_: Exception) {}
         }
 
         val videos: List<Video> = serverMap.entries.mapNotNull { (serverName, serverDto) ->
@@ -512,21 +558,38 @@ class Oneshows :
                     val langSuffix = if (lang.isNotBlank() && !lang.equals("English", true)) " [$lang]" else ""
                     val prefix = "Vidrock ($serverName$langSuffix) - "
 
+                    val streamHeaders = Headers.Builder()
+                        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .add("Referer", "https://$host/")
+                        .add("Origin", "https://$host")
+                        .build()
+
                     if (streamUrl.contains(".m3u8", ignoreCase = true)) {
-                        playlistUtils.extractFromHls(
-                            playlistUrl = streamUrl,
-                            referer = "https://vidrock.ru/",
-                            masterHeaders = vidrockHeaders,
-                            videoHeaders = vidrockHeaders,
-                            videoNameGen = { q -> "$prefix$q" },
-                            subtitleList = subTracks,
-                        )
+                        try {
+                            playlistUtils.extractFromHls(
+                                playlistUrl = streamUrl,
+                                referer = "https://$host/",
+                                masterHeaders = streamHeaders,
+                                videoHeaders = streamHeaders,
+                                videoNameGen = { q -> "$prefix$q" },
+                                subtitleList = subTracks,
+                            )
+                        } catch (_: Exception) {
+                            listOf(
+                                Video(
+                                    videoUrl = streamUrl,
+                                    videoTitle = "Vidrock ($serverName$langSuffix)",
+                                    headers = streamHeaders,
+                                    subtitleTracks = subTracks,
+                                ),
+                            )
+                        }
                     } else {
                         listOf(
                             Video(
                                 videoUrl = streamUrl,
                                 videoTitle = "Vidrock ($serverName$langSuffix)",
-                                headers = vidrockHeaders,
+                                headers = streamHeaders,
                                 subtitleTracks = subTracks,
                             ),
                         )
@@ -544,28 +607,38 @@ class Oneshows :
     private suspend fun extractVidfastVideos(hoster: Hoster): List<Video> {
         val embedUrl = hoster.hosterUrl
         val embedUri = Uri.parse(embedUrl)
-        val embedHost = embedUri.host ?: "vidfast.pro"
+        val embedHost = embedUri.host ?: "vidfast.vc"
         val isMovie = embedUrl.contains("movie")
         val id = if (isMovie) {
             embedUrl.substringAfter("/movie/").substringBefore("?").substringBefore("/")
         } else {
             embedUrl.substringAfter("/tv/").substringBefore("?").substringBefore("/")
         }
-        val season = embedUri.pathSegments.getOrNull(2) ?: "1"
-        val ep = embedUri.pathSegments.getOrNull(3) ?: "1"
+        val season = if (!isMovie) {
+            val parts = embedUrl.substringAfter("/tv/").substringBefore("?").split("/")
+            if (parts.size >= 2) parts[1] else "1"
+        } else {
+            "1"
+        }
+        val ep = if (!isMovie) {
+            val parts = embedUrl.substringAfter("/tv/").substringBefore("?").split("/")
+            if (parts.size >= 3) parts[2] else "1"
+        } else {
+            "1"
+        }
 
         val embedHeaders = Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .add("Referer", embedUrl)
-            .add("Origin", "https://$embedHost")
+            .add("Referer", "https://www.1shows.bz/")
+            .add("Origin", "https://www.1shows.bz")
             .build()
 
         val subTracks = mutableListOf<Track>()
         try {
             val wyzieUrl = if (isMovie) {
-                "https://vidfast.pro/wyzie?id=$id"
+                "https://vidfast.vc/wyzie?id=$id"
             } else {
-                "https://vidfast.pro/wyzie?id=$id&season=$season&episode=$ep"
+                "https://vidfast.vc/wyzie?id=$id&season=$season&episode=$ep"
             }
             val subReq = GET(wyzieUrl, embedHeaders)
             val subRes = client.newCall(subReq).execute()
@@ -579,13 +652,19 @@ class Oneshows :
             }
         } catch (_: Exception) {}
 
+        val videoHeaders = Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .add("Referer", "https://$embedHost/")
+            .add("Origin", "https://$embedHost")
+            .build()
+
         return try {
             val videos = universalExtractor.videosFromUrl(embedUrl, embedHeaders, prefix = hoster.hosterName)
             val mappedVideos = videos.map { v ->
                 Video(
                     videoUrl = v.videoUrl,
                     videoTitle = v.videoTitle,
-                    headers = embedHeaders,
+                    headers = videoHeaders,
                     audioTracks = v.audioTracks,
                     subtitleTracks = (v.subtitleTracks + subTracks).distinctBy { it.url },
                 )
@@ -603,8 +682,8 @@ class Oneshows :
         val embedHost = embedUri.host ?: "1shows.bz"
         val embedHeaders = Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .add("Referer", embedUrl)
-            .add("Origin", "https://$embedHost")
+            .add("Referer", "https://www.1shows.bz/")
+            .add("Origin", "https://www.1shows.bz")
             .build()
 
         val videoHeaders = Headers.Builder()
@@ -692,8 +771,8 @@ class Oneshows :
         screen.addListPreference(
             key = PREF_HOSTER_KEY,
             title = "Preferred Server",
-            entries = listOf("Vidzee", "Vidrock", "VidFast", "VidLink", "Vidy", "Viduki"),
-            entryValues = listOf("Vidzee", "Vidrock", "VidFast", "VidLink", "Vidy", "Viduki"),
+            entries = listOf("Vidrock", "VidFast", "VidLink", "Viduki", "Vidy", "Vidzee"),
+            entryValues = listOf("Vidrock", "VidFast", "VidLink", "Viduki", "Vidy", "Vidzee"),
             default = PREF_HOSTER_DEFAULT,
             summary = "%s",
         )
@@ -717,7 +796,7 @@ class Oneshows :
 
     companion object {
         private const val PREF_HOSTER_KEY = "preferred_hoster"
-        private const val PREF_HOSTER_DEFAULT = "Vidzee"
+        private const val PREF_HOSTER_DEFAULT = "Vidrock"
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
