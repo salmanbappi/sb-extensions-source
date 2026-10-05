@@ -227,10 +227,12 @@ class Onemindrama : Source() {
 
             val finalUrl = if (isDirectMp4) {
                 resolveVideoUrl(rawUrl)
-            } else when {
-                rawUrl.startsWith("http://") || rawUrl.startsWith("https://") -> rawUrl
-                rawUrl.startsWith("/") -> "$videoDomain$rawUrl"
-                else -> "$videoDomain/$rawUrl"
+            } else {
+                when {
+                    rawUrl.startsWith("http://") || rawUrl.startsWith("https://") -> rawUrl
+                    rawUrl.startsWith("/") -> "$videoDomain$rawUrl"
+                    else -> "$videoDomain/$rawUrl"
+                }
             }
 
             val displayName = when {
