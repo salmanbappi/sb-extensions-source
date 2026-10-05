@@ -140,19 +140,15 @@ class KwikExtractor(
             ?: throw KwikException.ExtractionException("Failed to decrypt stream Token.")
 
         // Extraction Loop
-        var cloudFlareBypassResult: CloudFlareBypassResult? = null
         var kwikLocation: String? = null
         var code = 419
         var tries = 0
-        val tryLimit = 2
+        val tryLimit = 5
 
-        while (code != 302 && tries < tryLimit) {
-            tries++
+        while (code != 302 && tries++ < tryLimit) {
             val headersBuilder = kwikHeaders.newBuilder()
                 .set("Referer", fContentUrl)
                 .set("Cookie", fContentCookies)
-
-            cloudFlareBypassResult?.let { headersBuilder.set("User-Agent", it.userAgent) }
 
             noRedirectClient.newCall(
                 POST(uri, headersBuilder.build(), FormBody.Builder().add("_token", tok).build()),
@@ -160,69 +156,30 @@ class KwikExtractor(
                 code = response.code
                 kwikLocation = response.header("location")
             }
-
-            // Cloudflare/Session Timeout Handling
-            if ((code == 403 || code == 419) && tries < tryLimit) {
-                // Pass the custom User-Agent to the bypass
-                cloudFlareBypassResult = CloudflareBypass().getCookies(kwikUrl, cfBypassUserAgent)
-                    ?: throw KwikException.CloudflareBlockedException("Failed to bypass Kwik Cloudflare. Try opening a Kwik video in WebView manually.")
-
-                // Prevent stacking multiple cf_clearance cookies
-                val cleanedCookies = fContentCookies.split("; ")
-                    .filter { !it.trimStart().startsWith("cf_clearance=") }
-                    .joinToString("; ")
-
-                fContentCookies = "$cleanedCookies; ${cloudFlareBypassResult.cookies}"
-            }
         }
 
-        return kwikLocation ?: throw KwikException.ExtractionException("Failed to extract Kwik stream URI after $tries attempts. Try bypassing Kwik Cloudflare in WebView.")
+        return kwikLocation ?: throw KwikException.ExtractionException("Failed to extract Kwik stream URI after $tries attempts.")
     }
 
     private suspend fun fetchKwikHtml(kwikUrl: String): KwikContent {
-        suspend fun attemptKwikFetch(cfResult: CloudFlareBypassResult?): KwikContent? {
-            // Use `Headers.Builder()` because we want to use the default User-Agent from the app,
-            // since that would be the one used when open webview manually
-            val headers = Headers.Builder()
-                .set("Origin", "https://kwik.cx")
-                .set("Referer", "https://kwik.cx/")
-                .apply {
-                    if (cfResult != null) {
-                        set("Cookie", cfResult.cookies)
-                        set("User-Agent", cfResult.userAgent)
-                    }
-                }
-                .build()
+        val headers = Headers.Builder()
+            .set("Origin", "https://kwik.cx")
+            .set("Referer", "https://kwik.cx/")
+            .build()
 
-            // Use the cookie-free client so interceptors are preserved without sharing Kwik sessions.
-            return try {
-                // try-catch the `Failed to bypass Cloudflare` exception
-                cookieFreeClient.newCall(GET(kwikUrl, headers)).awaitSuccess().use { resp ->
-                    val html = resp.bodyString()
-                    if (html.contains("eval(function(")) {
-                        val respCookies = resp.extractCookies()
-                        val finalCookies =
-                            listOfNotNull(respCookies.ifBlank { null }, cfResult?.cookies?.ifBlank { null }).joinToString("; ")
-                        KwikContent(finalCookies, html, resp.request.url.toString())
-                    } else {
-                        null
-                    }
+        try {
+            cookieFreeClient.newCall(GET(kwikUrl, headers)).awaitSuccess().use { resp ->
+                val html = resp.bodyString()
+                if (html.contains("eval(function(")) {
+                    val respCookies = resp.extractCookies()
+                    return KwikContent(respCookies, html, resp.request.url.toString())
                 }
-            } catch (_: Exception) {
-                null
             }
+        } catch (_: Exception) {
+            throw KwikException.CloudflareBlockedException("Failed to bypass Cloudflare protection.")
         }
 
-        // 1. Try standard fetch without bypass
-        attemptKwikFetch(null)?.let { return it }
-
-        // 2. Try Cloudflare Bypass (Always fresh) with the custom User-Agent
-        val cfResult = CloudflareBypass().getCookies(kwikUrl, cfBypassUserAgent)
-            ?: throw KwikException.CloudflareBlockedException("Failed to bypass Kwik Cloudflare. Try opening a Kwik video in WebView manually.")
-
-        attemptKwikFetch(cfResult)?.let { return it }
-
-        throw KwikException.CloudflareBlockedException("Failed to bypass Kwik Cloudflare. Try opening a Kwik video in WebView manually.")
+        throw KwikException.CloudflareBlockedException("Cloudflare challenge not solved.")
     }
 
     private fun Response.extractCookies(): String = headers("set-cookie").joinToString("; ") { it.substringBefore(";") }

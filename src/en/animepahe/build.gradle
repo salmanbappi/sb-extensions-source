@@ -6,14 +6,12 @@ ext {
     // Advertising 17 also requires the patched repo Inspector — see
     // scripts/patch_inspector.py and verify with `python3 scripts/cli.py v17-compat`.
     libVersion = 17
-    extVersionCode = 83
+    extVersionCode = 84
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
-    implementation(project(":lib:playlist-utils"))
-    implementation(project(":lib:vidhide-extractor"))
-    implementation(project(":lib:voe-extractor"))
+    implementation(project(":lib:cloudflare-interceptor"))
     implementation(project(":lib:unpacker"))
 }

@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.LatestAnimeDto
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.ResponseDto
 import eu.kanade.tachiyomi.animeextension.en.animepahe.dto.SearchResultDto
 import eu.kanade.tachiyomi.animeextension.en.animepahe.extractor.KwikExtractor
+import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -55,16 +56,12 @@ class AnimePahe :
     override fun headersBuilder() = super.headersBuilder()
         .set("Referer", "$baseUrl/")
 
-    private val interceptor = CloudflareInterceptor(network.client) { cfBypassUserAgent }
+    private val interceptor by lazy { CloudflareInterceptor(network.client) }
     override val client = network.client.newBuilder()
-        .addInterceptor(interceptor)
+        .addInterceptor(CloudflareInterceptor(network.client))
         .build()
 
-    private val extractorClient by lazy {
-        client.newBuilder().apply {
-            interceptors().removeAll { it is CloudflareInterceptor }
-        }.build()
-    }
+    private val extractorClient by lazy { client }
 
     override val name = "AnimePahe"
 
@@ -993,7 +990,7 @@ class AnimePahe :
         private const val PREF_SHOW_SITE_NUMBER_DEFAULT = false
         private const val PREF_SHOW_SITE_NUMBER_SUMMARY = "Show the actual episode number from the site in the episode title"
 
-        const val UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
+        const val UA = CloudflareInterceptor.DEFAULT_USER_AGENT
         private const val PREF_CF_UA_KEY = "cf_bypass_ua"
         private const val PREF_CF_UA_TITLE = "Custom User-Agent"
         private const val PREF_CF_UA_DEFAULT = UA
