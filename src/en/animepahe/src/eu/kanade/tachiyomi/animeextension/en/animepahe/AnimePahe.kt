@@ -15,7 +15,6 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
@@ -54,15 +53,18 @@ class AnimePahe :
     private val fetchMutex = Mutex()
 
     override fun headersBuilder() = super.headersBuilder()
-        .set("User-Agent", UA)
         .set("Referer", "$baseUrl/")
 
-    private val interceptor by lazy { CloudflareInterceptor(network.client) }
+    private val interceptor = CloudflareInterceptor(network.client) { cfBypassUserAgent }
     override val client = network.client.newBuilder()
-        .addInterceptor(CloudflareInterceptor(network.client))
+        .addInterceptor(interceptor)
         .build()
 
-    private val extractorClient by lazy { client }
+    private val extractorClient by lazy {
+        client.newBuilder().apply {
+            interceptors().removeAll { it is CloudflareInterceptor }
+        }.build()
+    }
 
     override val name = "AnimePahe"
 
@@ -195,7 +197,7 @@ class AnimePahe :
     }
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api?m=airing&page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api?m=airing&page=$page")
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
         if (page > 1) {
@@ -253,7 +255,7 @@ class AnimePahe :
                 addQueryParameter("q", "$query $timeSuffix")
                 addQueryParameter("page", page.toString())
             }
-            GET(urlBuilder.build(), headers)
+            GET(urlBuilder.build())
         } else {
             when {
                 genresFilter != null && !genresFilter.isDefault() -> {
@@ -262,7 +264,7 @@ class AnimePahe :
                         addPathSegment("genre")
                         addPathSegment(genresFilter.toUriPart())
                     }
-                    GET(urlBuilder.build(), headers)
+                    GET(urlBuilder.build())
                 }
 
                 demographicFilter != null && !demographicFilter.isDefault() -> {
@@ -271,7 +273,7 @@ class AnimePahe :
                         addPathSegment("demographic")
                         addPathSegment(demographicFilter.toUriPart())
                     }
-                    GET(urlBuilder.build(), headers)
+                    GET(urlBuilder.build())
                 }
 
                 themeFilter != null && !themeFilter.isDefault() -> {
@@ -280,7 +282,7 @@ class AnimePahe :
                         addPathSegment("theme")
                         addPathSegment(themeFilter.toUriPart())
                     }
-                    GET(urlBuilder.build(), headers)
+                    GET(urlBuilder.build())
                 }
 
                 yearFilter != null && !yearFilter.isDefault() && seasonFilter != null -> {
@@ -289,7 +291,7 @@ class AnimePahe :
                         addPathSegment("season")
                         addPathSegment("${seasonFilter.toUriPart()}-${yearFilter.toUriPart()}")
                     }
-                    GET(urlBuilder.build(), headers)
+                    GET(urlBuilder.build())
                 }
 
                 else -> popularAnimeRequest(page)
@@ -418,7 +420,7 @@ class AnimePahe :
             addQueryParameter("page", "1")
         }.build()
 
-        val response = safeApiCall(GET(url, headers))
+        val response = safeApiCall(GET(url))
 
         if (!response.isSuccessful) {
             response.close()
@@ -437,7 +439,7 @@ class AnimePahe :
             if (newSession != null && newSession != session) {
                 delay(3000.milliseconds)
                 val newUrl = url.newBuilder().setQueryParameter("id", newSession).build()
-                val newResponse = safeApiCall(GET(newUrl, headers))
+                val newResponse = safeApiCall(GET(newUrl))
                 if (newResponse.isSuccessful) {
                     return newResponse.use { fetchEpisodes(it, newSession) }
                 }
@@ -464,7 +466,7 @@ class AnimePahe :
             addQueryParameter("page", "1")
         }.build()
 
-        return GET(url, headers)
+        return GET(url)
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> = emptyList()
@@ -491,7 +493,7 @@ class AnimePahe :
                 .build()
 
             delay(3000.milliseconds)
-            val nextResponse = safeApiCall(GET(nextUrl, headers))
+            val nextResponse = safeApiCall(GET(nextUrl))
             if (!nextResponse.isSuccessful) {
                 val status = nextResponse.code
                 nextResponse.close()
@@ -866,7 +868,7 @@ class AnimePahe :
             }.build()
 
             val result = try {
-                val response = safeApiCall(GET(searchUrl, headers))
+                val response = safeApiCall(GET(searchUrl))
                 response.use { resp ->
                     if (!resp.isSuccessful) return@use null
                     val searchData = resp.parseAs<ResponseDto<SearchResultDto>>()
@@ -991,7 +993,7 @@ class AnimePahe :
         private const val PREF_SHOW_SITE_NUMBER_DEFAULT = false
         private const val PREF_SHOW_SITE_NUMBER_SUMMARY = "Show the actual episode number from the site in the episode title"
 
-        const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        const val UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
         private const val PREF_CF_UA_KEY = "cf_bypass_ua"
         private const val PREF_CF_UA_TITLE = "Custom User-Agent"
         private const val PREF_CF_UA_DEFAULT = UA
