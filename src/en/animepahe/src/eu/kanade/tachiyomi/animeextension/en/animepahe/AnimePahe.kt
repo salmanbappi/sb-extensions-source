@@ -54,6 +54,7 @@ class AnimePahe :
     private val fetchMutex = Mutex()
 
     override fun headersBuilder() = super.headersBuilder()
+        .set("User-Agent", UA)
         .set("Referer", "$baseUrl/")
 
     private val interceptor by lazy { CloudflareInterceptor(network.client) }
@@ -194,7 +195,7 @@ class AnimePahe :
     }
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api?m=airing&page=$page")
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/api?m=airing&page=$page", headers)
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
         if (page > 1) {
@@ -252,7 +253,7 @@ class AnimePahe :
                 addQueryParameter("q", "$query $timeSuffix")
                 addQueryParameter("page", page.toString())
             }
-            GET(urlBuilder.build())
+            GET(urlBuilder.build(), headers)
         } else {
             when {
                 genresFilter != null && !genresFilter.isDefault() -> {
@@ -261,7 +262,7 @@ class AnimePahe :
                         addPathSegment("genre")
                         addPathSegment(genresFilter.toUriPart())
                     }
-                    GET(urlBuilder.build())
+                    GET(urlBuilder.build(), headers)
                 }
 
                 demographicFilter != null && !demographicFilter.isDefault() -> {
@@ -270,7 +271,7 @@ class AnimePahe :
                         addPathSegment("demographic")
                         addPathSegment(demographicFilter.toUriPart())
                     }
-                    GET(urlBuilder.build())
+                    GET(urlBuilder.build(), headers)
                 }
 
                 themeFilter != null && !themeFilter.isDefault() -> {
@@ -279,7 +280,7 @@ class AnimePahe :
                         addPathSegment("theme")
                         addPathSegment(themeFilter.toUriPart())
                     }
-                    GET(urlBuilder.build())
+                    GET(urlBuilder.build(), headers)
                 }
 
                 yearFilter != null && !yearFilter.isDefault() && seasonFilter != null -> {
@@ -288,7 +289,7 @@ class AnimePahe :
                         addPathSegment("season")
                         addPathSegment("${seasonFilter.toUriPart()}-${yearFilter.toUriPart()}")
                     }
-                    GET(urlBuilder.build())
+                    GET(urlBuilder.build(), headers)
                 }
 
                 else -> popularAnimeRequest(page)
@@ -417,7 +418,7 @@ class AnimePahe :
             addQueryParameter("page", "1")
         }.build()
 
-        val response = safeApiCall(GET(url))
+        val response = safeApiCall(GET(url, headers))
 
         if (!response.isSuccessful) {
             response.close()
@@ -436,7 +437,7 @@ class AnimePahe :
             if (newSession != null && newSession != session) {
                 delay(3000.milliseconds)
                 val newUrl = url.newBuilder().setQueryParameter("id", newSession).build()
-                val newResponse = safeApiCall(GET(newUrl))
+                val newResponse = safeApiCall(GET(newUrl, headers))
                 if (newResponse.isSuccessful) {
                     return newResponse.use { fetchEpisodes(it, newSession) }
                 }
@@ -463,7 +464,7 @@ class AnimePahe :
             addQueryParameter("page", "1")
         }.build()
 
-        return GET(url)
+        return GET(url, headers)
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> = emptyList()
@@ -490,7 +491,7 @@ class AnimePahe :
                 .build()
 
             delay(3000.milliseconds)
-            val nextResponse = safeApiCall(GET(nextUrl))
+            val nextResponse = safeApiCall(GET(nextUrl, headers))
             if (!nextResponse.isSuccessful) {
                 val status = nextResponse.code
                 nextResponse.close()
@@ -865,7 +866,7 @@ class AnimePahe :
             }.build()
 
             val result = try {
-                val response = safeApiCall(GET(searchUrl))
+                val response = safeApiCall(GET(searchUrl, headers))
                 response.use { resp ->
                     if (!resp.isSuccessful) return@use null
                     val searchData = resp.parseAs<ResponseDto<SearchResultDto>>()
