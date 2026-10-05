@@ -106,30 +106,35 @@ class Onemindrama : Source() {
                         selectedSort = sort
                     }
                 }
+
                 is Filters.StatusFilter -> {
                     val status = filter.toUriPart()
                     if (status.isNotBlank() && status != "all") {
                         urlBuilder.addQueryParameter("status", status)
                     }
                 }
+
                 is Filters.TypeFilter -> {
                     val type = filter.toUriPart()
                     if (type.isNotBlank() && type != "all") {
                         urlBuilder.addQueryParameter("type", type)
                     }
                 }
+
                 is Filters.LanguageFilter -> {
                     val langVal = filter.toUriPart()
                     if (langVal.isNotBlank()) {
                         selectedLang = langVal
                     }
                 }
+
                 is Filters.GenreFilter -> {
                     val genreId = filter.toUriPart()
                     if (genreId.isNotBlank()) {
                         urlBuilder.addQueryParameter("tag_ids", genreId)
                     }
                 }
+
                 else -> {}
             }
         }
@@ -257,11 +262,12 @@ class Onemindrama : Source() {
         val hosterUrl = hoster.hosterUrl
         val videoList = when {
             hosterUrl.contains("abyssplayer.com", ignoreCase = true) ||
-            hosterUrl.contains("abyss.to", ignoreCase = true) ||
-            hosterUrl.contains("abysscdn.com", ignoreCase = true) ||
-            hosterUrl.contains("short.icu", ignoreCase = true) -> {
+                hosterUrl.contains("abyss.to", ignoreCase = true) ||
+                hosterUrl.contains("abysscdn.com", ignoreCase = true) ||
+                hosterUrl.contains("short.icu", ignoreCase = true) -> {
                 abyssExtractor.videosFromUrl(hosterUrl, referer = "$baseUrl/")
             }
+
             else -> {
                 val videoHeaders = headers.newBuilder()
                     .set("Referer", "$baseUrl/")
