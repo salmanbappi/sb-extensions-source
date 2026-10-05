@@ -46,7 +46,7 @@ class Onemindrama : Source() {
     private val abyssExtractor by lazy { AbyssExtractor(client, playlistUtils) }
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .add("User-Agent", DEFAULT_USER_AGENT)
         .add("Referer", "$baseUrl/")
         .add("Origin", baseUrl)
         .add("Accept", "application/json, text/plain, */*")
@@ -221,16 +221,22 @@ class Onemindrama : Source() {
             val rawUrl = server.fullUrl ?: server.full_url ?: server.streamUrl ?: server.stream_url ?: server.url ?: ""
             if (rawUrl.isBlank()) return@forEach
 
-            val finalUrl = when {
+            val isDirectMp4 = serverName.contains("CDN_1", ignoreCase = true) ||
+                server.type?.contains("Direct", ignoreCase = true) == true ||
+                rawUrl.contains("/uploads/", ignoreCase = true)
+
+            val finalUrl = if (isDirectMp4) {
+                resolveVideoUrl(rawUrl)
+            } else when {
                 rawUrl.startsWith("http://") || rawUrl.startsWith("https://") -> rawUrl
-                rawUrl.startsWith("/") -> "$IMAGE_CDN$rawUrl"
-                else -> "$IMAGE_CDN/$rawUrl"
+                rawUrl.startsWith("/") -> "$videoDomain$rawUrl"
+                else -> "$videoDomain/$rawUrl"
             }
 
             val displayName = when {
-                serverName.contains("CDN_1", ignoreCase = true) || server.type?.contains("Direct", ignoreCase = true) == true -> "CDN 1 (Direct MP4)"
+                isDirectMp4 -> "CDN 1 (Direct MP4)"
                 serverName.contains("CDN_3", ignoreCase = true) || finalUrl.contains("abyss", ignoreCase = true) -> "CDN 3 (Abyss)"
-                serverName.contains("CDN_2", ignoreCase = true) -> "CDN 2 (Embed)"
+                serverName.contains("CDN_2", ignoreCase = true) -> "CDN 2 (Direct MP4)"
                 else -> serverName
             }
 
@@ -247,7 +253,11 @@ class Onemindrama : Source() {
 
     // ============================== Video List =================================
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val hosterUrl = hoster.hosterUrl
+        val rawHosterUrl = hoster.hosterUrl
+        val isDirectMp4 = hoster.hosterName.contains("Direct MP4", ignoreCase = true) ||
+            rawHosterUrl.contains("/uploads/", ignoreCase = true)
+        val hosterUrl = if (isDirectMp4) resolveVideoUrl(rawHosterUrl) else rawHosterUrl
+
         val videoList = when {
             hosterUrl.contains("abyssplayer.com", ignoreCase = true) ||
                 hosterUrl.contains("abyss.to", ignoreCase = true) ||
@@ -257,8 +267,9 @@ class Onemindrama : Source() {
             }
 
             else -> {
-                val videoHeaders = headers.newBuilder()
-                    .set("Referer", "$baseUrl/")
+                val videoHeaders = Headers.Builder()
+                    .add("User-Agent", DEFAULT_USER_AGENT)
+                    .add("Referer", "$baseUrl/")
                     .build()
                 listOf(
                     Video(
@@ -312,24 +323,98 @@ class Onemindrama : Source() {
         author = director?.takeIf { it.isNotBlank() }
     }
 
+    @Volatile
+    private var coverDomain: String = DEFAULT_COVER_DOMAIN
+
+    @Volatile
+    private var videoDomain: String = DEFAULT_VIDEO_DOMAIN
+
+    @Volatile
+    private var domainsFetched = false
+
+    private fun fetchDomainSettings() {
+        if (domainsFetched) return
+        synchronized(this) {
+            if (domainsFetched) return
+            try {
+                val response = client.newCall(GET("$apiUrl/settings/domains", headers)).execute()
+                val dto = response.parseAs<DomainSettingsResponseDto>(json)
+                dto.data?.coverDomain?.takeIf { it.isNotBlank() }?.let {
+                    coverDomain = normalizeDomain(it)
+                }
+                dto.data?.videoDomain?.takeIf { it.isNotBlank() }?.let {
+                    videoDomain = normalizeDomain(it)
+                }
+                domainsFetched = true
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun normalizeDomain(domain: String): String {
+        val trimmed = domain.trim().trimEnd('/')
+        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            trimmed
+        } else {
+            "https://$trimmed"
+        }
+    }
+
+    private fun resolveVideoUrl(rawUrl: String): String {
+        fetchDomainSettings()
+        val trimmed = rawUrl.trim()
+        if (trimmed.isBlank()) return ""
+        if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            val cleanPath = if (trimmed.startsWith("/")) trimmed else "/$trimmed"
+            return "$videoDomain$cleanPath"
+        }
+        if (trimmed.contains("/uploads/")) {
+            try {
+                val httpUrl = trimmed.toHttpUrl()
+                return "$videoDomain${httpUrl.encodedPath}"
+            } catch (_: Exception) {}
+        }
+        return trimmed
+    }
+
     private fun resolveImage(path: String?): String? {
         if (path.isNullOrBlank()) return null
+        fetchDomainSettings()
         val trimmed = path.trim()
-        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            return trimmed
+        if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            val cleanPath = if (trimmed.startsWith("/")) trimmed else "/$trimmed"
+            return "$coverDomain$cleanPath"
         }
-        val cleanPath = if (trimmed.startsWith("/")) trimmed else "/$trimmed"
-        return "$IMAGE_CDN$cleanPath"
+        if (trimmed.contains("/uploads/") || trimmed.contains("/upload/")) {
+            try {
+                val httpUrl = trimmed.toHttpUrl()
+                return "$coverDomain${httpUrl.encodedPath}"
+            } catch (_: Exception) {}
+        }
+        return trimmed
     }
 
     companion object {
-        private const val IMAGE_CDN = "https://1min.poke-black-and-white.net"
+        private const val DEFAULT_COVER_DOMAIN = "https://1min.poke-black-and-white.net"
+        private const val DEFAULT_VIDEO_DOMAIN = "https://img.1mindrama.net"
+        private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
     }
 }
 
 // ============================== DTO Models ==============================
+@Serializable
+data class DomainSettingsResponseDto(
+    val success: Boolean? = null,
+    val data: DomainSettingsDto? = null,
+)
+
+@Serializable
+data class DomainSettingsDto(
+    val coverDomain: String? = null,
+    val videoDomain: String? = null,
+)
+
 @Serializable
 data class MovieListResponseDto(
     val success: Boolean? = null,
