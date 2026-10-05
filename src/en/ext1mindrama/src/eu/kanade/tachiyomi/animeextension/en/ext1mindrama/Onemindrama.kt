@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.en.ext1mindrama
 
-import android.app.Application
-import android.content.SharedPreferences
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animeextension.en.ext1mindrama.extractors.AbyssExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -14,16 +12,12 @@ import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
-import extensions.utils.injectLazy
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 
@@ -45,12 +39,6 @@ class Onemindrama : Source() {
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .build()
-    }
-
-    override val json: Json by injectLazy()
-
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
     }
 
     private val playlistUtils by lazy { PlaylistUtils(client) }
@@ -286,7 +274,7 @@ class Onemindrama : Source() {
         return videoList.sortVideos()
     }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefQuality, ignoreCase = true) }
