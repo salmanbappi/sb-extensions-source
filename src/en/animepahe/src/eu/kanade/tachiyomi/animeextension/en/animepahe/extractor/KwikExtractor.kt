@@ -28,11 +28,11 @@ SOFTWARE.
 package eu.kanade.tachiyomi.animeextension.en.animepahe.extractor
 
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.unpacker.jsunpacker.JsUnpacker
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.lib.unpacker.jsunpacker.JsUnpacker
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.useAsJsoup
 import okhttp3.CookieJar
