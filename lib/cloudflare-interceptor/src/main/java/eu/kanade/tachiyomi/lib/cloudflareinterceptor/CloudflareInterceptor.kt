@@ -334,7 +334,7 @@ class CloudflareInterceptor(
         /** Canonical User-Agent: Chrome 131 / Windows — matches the
          *  WebView Chromium engine (the TLS stack carrying cf_clearance
          *  solve) when a Windows-shaped UA override is in effect. */
-        internal const val DEFAULT_USER_AGENT =
+        const val DEFAULT_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
         /** Per-attempt WebView solve timeout. CF managed ~5s, Turnstile ~8-15s. */

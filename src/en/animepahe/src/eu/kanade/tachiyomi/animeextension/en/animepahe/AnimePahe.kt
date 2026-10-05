@@ -990,7 +990,7 @@ class AnimePahe :
         private const val PREF_SHOW_SITE_NUMBER_DEFAULT = false
         private const val PREF_SHOW_SITE_NUMBER_SUMMARY = "Show the actual episode number from the site in the episode title"
 
-        const val UA = CloudflareInterceptor.DEFAULT_USER_AGENT
+        const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         private const val PREF_CF_UA_KEY = "cf_bypass_ua"
         private const val PREF_CF_UA_TITLE = "Custom User-Agent"
         private const val PREF_CF_UA_DEFAULT = UA
