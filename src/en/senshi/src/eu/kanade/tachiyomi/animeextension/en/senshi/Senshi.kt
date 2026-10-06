@@ -17,11 +17,13 @@ import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSwitchPreference
+import keiyoushi.utils.applicationContext
 import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -62,6 +64,7 @@ class Senshi :
     }
 
     private val streamProxy by lazy { SenshiStreamProxy(client) }
+    private val resolver by lazy { SenshiResolver(applicationContext, baseUrl, USER_AGENT) }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("User-Agent", USER_AGENT)
@@ -222,6 +225,7 @@ class Senshi :
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
+        resolver.warmUp()
         val numericId = resolveAnimeId(anime.url) ?: return emptyList()
         // Persist the resolved numeric id so hoster lookups stay cheap.
         anime.setUrlWithoutDomain("/anime/$numericId")
@@ -309,14 +313,27 @@ class Senshi :
         val remoteId = parts.getOrNull(0)?.toIntOrNull() ?: return emptyList()
         val audioBadge = parts.getOrNull(1)?.ifBlank { "Sub" } ?: "Sub"
 
+        val sourcesJson = resolver.resolve(remoteId)
         val sources = runCatching {
-            val element = json.parseToJsonElement(fetchText("$VIDCLOUD_SOURCES?id=$remoteId", streamHeaders()))
+            val element = if (!sourcesJson.isNullOrBlank()) {
+                json.parseToJsonElement(sourcesJson)
+            } else {
+                json.parseToJsonElement(fetchText("$VIDCLOUD_SOURCES?id=$remoteId", streamHeaders()))
+            }
             if (element is JsonArray) element else JsonArray(emptyList())
         }.getOrNull() ?: return emptyList()
 
         return sources.mapNotNull { it.jsonObject }.parallelCatchingFlatMap { entry ->
-            val src = entry["source"]?.jsonObject ?: return@parallelCatchingFlatMap emptyList()
-            val masterUrl = src.string("src")
+            val srcList = (entry["source"] as? JsonArray)?.mapNotNull { it.jsonObject }
+            val singleSrc = entry["source"] as? JsonObject
+            val src = if (!srcList.isNullOrEmpty()) {
+                val preferred = if (audioBadge.equals("Dub", ignoreCase = true)) "dub" else "sub"
+                srcList.find { it.string("label").equals(preferred, ignoreCase = true) }
+                    ?: srcList.first()
+            } else {
+                singleSrc ?: return@parallelCatchingFlatMap emptyList()
+            }
+            val masterUrl = src.string("src").ifBlank { src.string("file") }
             if (!masterUrl.startsWith("http")) return@parallelCatchingFlatMap emptyList()
 
             val subtitles = entry.array("tracks").mapNotNull { item ->
@@ -328,17 +345,21 @@ class Senshi :
                 Track(fixImageUrl(file), label)
             }
 
-            val master = try {
-                Em3u8.decrypt(fetchText(masterUrl, streamHeaders()))
+            val rawPlaylist = try {
+                fetchText(masterUrl, streamHeaders())
             } catch (_: Exception) {
                 return@parallelCatchingFlatMap emptyList()
-            } ?: return@parallelCatchingFlatMap emptyList()
+            }
+
+            val master = Em3u8.decrypt(rawPlaylist)
+                ?: rawPlaylist.takeIf { it.trimStart().startsWith("#EXTM3U") }
+                ?: return@parallelCatchingFlatMap emptyList()
 
             val referer = "$baseUrl/"
             // Every playlist in the vidcloud chain — master, variant and audio
-            // renditions — is an EM3U8v1 envelope. Children are therefore routed
-            // back through the loopback relay, which decrypts them before handing
-            // a valid playlist (and clean TS chunks) to the player.
+            // renditions — is an EM3U8v1 envelope or direct HLS playlist. Children are
+            // routed back through the loopback relay, which decrypts envelopes if needed
+            // and forwards appropriate headers (Origin/Referer/User-Agent).
             val audioLines = master.lines()
                 .filter { it.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") }
                 .map { line ->
@@ -347,7 +368,23 @@ class Senshi :
                     }
                 }
             val streamInfos = Regex("""#EXT-X-STREAM-INF:([^\n]+)\n([^\n]+)""").findAll(master).toList()
-            if (streamInfos.isEmpty()) return@parallelCatchingFlatMap emptyList()
+            if (streamInfos.isEmpty()) {
+                val declared = src.string("quality")
+                val miniMaster = buildString {
+                    append("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
+                    audioLines.forEach { append(it).append('\n') }
+                    append("#EXT-X-STREAM-INF:BANDWIDTH=0\n")
+                    append(streamProxy.relay(masterUrl, referer)).append('\n')
+                }
+                return@parallelCatchingFlatMap listOf(
+                    Video(
+                        videoUrl = streamProxy.serveText(miniMaster, MIME_HLS),
+                        videoTitle = "Senshi ${if (declared.isNotBlank()) declared else "Auto"} [$audioBadge]",
+                        headers = streamHeaders(),
+                        subtitleTracks = subtitles,
+                    ),
+                )
+            }
 
             val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
             val videos = streamInfos.mapNotNull { match ->
@@ -377,26 +414,6 @@ class Senshi :
                 )
             }
 
-            // List the entry's own declared quality first when the master omits it.
-            if (videos.isEmpty()) {
-                val declared = src.string("quality")
-                if (declared.isNotBlank()) {
-                    val miniMaster = buildString {
-                        append("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
-                        audioLines.forEach { append(it).append('\n') }
-                        append("#EXT-X-STREAM-INF:BANDWIDTH=0\n")
-                        append(streamProxy.relay(masterUrl, referer)).append('\n')
-                    }
-                    return@parallelCatchingFlatMap listOf(
-                        Video(
-                            videoUrl = streamProxy.serveText(miniMaster, MIME_HLS),
-                            videoTitle = "Senshi $declared [$audioBadge]",
-                            headers = streamHeaders(),
-                            subtitleTracks = subtitles,
-                        ),
-                    )
-                }
-            }
             videos.filter {
                 preferredQuality == "auto" || it.videoTitle.contains(preferredQuality, ignoreCase = true) || videos.size == 1
             }.ifEmpty { videos }
