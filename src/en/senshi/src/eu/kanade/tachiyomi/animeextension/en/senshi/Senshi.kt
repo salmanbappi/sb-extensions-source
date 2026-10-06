@@ -90,25 +90,33 @@ class Senshi :
     // ============================== Popular ===============================
 
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val period = preferences.getString(PREF_TRENDING_KEY, PREF_TRENDING_DEFAULT) ?: PREF_TRENDING_DEFAULT
-        // `/anime/trending/{day,week,month}` returns a bare JSON array (not a
-        // paged envelope), always in one shot — page 1 carries everything.
-        val animes = runCatching {
-            val element = json.parseToJsonElement(fetchText("$baseUrl/anime/trending/$period", headers))
-            (if (element is JsonArray) element else JsonArray(emptyList())).mapNotNull { parseAnime(it.jsonObject) }
-        }.getOrNull() ?: return AnimesPage(emptyList(), false)
-        return AnimesPage(if (page == 1) animes else emptyList(), false)
+        val body = buildJsonObject {
+            put("page", page)
+            put("limit", PAGE_SIZE)
+            put("sortBy", "score_desc")
+        }
+        val root = runCatching { postJson("$baseUrl/anime/filter", body) }.getOrNull()
+            ?: return AnimesPage(emptyList(), false)
+        val animes = root.array("data").mapNotNull { parseAnime(it.jsonObject) }
+        val total = root.int("total") ?: (page * PAGE_SIZE)
+        val hasNextPage = (page * PAGE_SIZE) < total && animes.isNotEmpty()
+        return AnimesPage(animes, hasNextPage)
     }
 
     // ============================== Latest ================================
 
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val period = preferences.getString(PREF_TRENDING_KEY, PREF_TRENDING_DEFAULT) ?: PREF_TRENDING_DEFAULT
-        val animes = runCatching {
-            val element = json.parseToJsonElement(fetchText("$baseUrl/anime/trending/$period", headers))
-            (if (element is JsonArray) element else JsonArray(emptyList())).mapNotNull { parseAnime(it.jsonObject) }
-        }.getOrNull() ?: return AnimesPage(emptyList(), false)
-        return AnimesPage(if (page == 1) animes else emptyList(), false)
+        val body = buildJsonObject {
+            put("page", page)
+            put("limit", PAGE_SIZE)
+            put("sortBy", "recent")
+        }
+        val root = runCatching { postJson("$baseUrl/anime/filter", body) }.getOrNull()
+            ?: return AnimesPage(emptyList(), false)
+        val animes = root.array("data").mapNotNull { parseAnime(it.jsonObject) }
+        val total = root.int("total") ?: (page * PAGE_SIZE)
+        val hasNextPage = (page * PAGE_SIZE) < total && animes.isNotEmpty()
+        return AnimesPage(animes, hasNextPage)
     }
 
     // =============================== Search ===============================
@@ -117,31 +125,51 @@ class Senshi :
         val body = buildJsonObject {
             put("page", page)
             put("limit", PAGE_SIZE)
-            if (query.isNotBlank()) put("search", query)
-            filters.filterIsInstance<Filters.SortFilter>().firstOrNull()
-                ?.let { put("sort", it.toUriPart()) }
-            filters.filterIsInstance<Filters.TypeFilter>().firstOrNull()
-                ?.let { if (it.toUriPart().isNotBlank()) put("type", it.toUriPart()) }
-            filters.filterIsInstance<Filters.StatusFilter>().firstOrNull()
-                ?.let { if (it.toUriPart().isNotBlank()) put("status", it.toUriPart()) }
-            filters.filterIsInstance<Filters.SeasonFilter>().firstOrNull()
-                ?.let { if (it.toUriPart().isNotBlank()) put("season", it.toUriPart()) }
-            filters.filterIsInstance<Filters.LanguageFilter>().firstOrNull()
-                ?.let { if (it.toUriPart().isNotBlank()) put("language", it.toUriPart()) }
+            if (query.isNotBlank()) put("searchTerm", query)
+
+            var sortApplied = false
+            filters.filterIsInstance<Filters.SortFilter>().firstOrNull()?.let {
+                val sort = it.toUriPart()
+                if (sort.isNotBlank()) {
+                    put("sortBy", sort)
+                    sortApplied = true
+                }
+            }
+            if (!sortApplied && query.isBlank()) {
+                put("sortBy", "score_desc")
+            }
+
+            filters.filterIsInstance<Filters.TypeFilter>().firstOrNull()?.let {
+                val type = it.toUriPart()
+                if (type.isNotBlank()) putJsonArray("types") { add(type) }
+            }
+            filters.filterIsInstance<Filters.StatusFilter>().firstOrNull()?.let {
+                val status = it.toUriPart()
+                if (status.isNotBlank()) putJsonArray("status") { add(status) }
+            }
+            filters.filterIsInstance<Filters.SeasonFilter>().firstOrNull()?.let {
+                val season = it.toUriPart()
+                if (season.isNotBlank()) putJsonArray("seasons") { add(season) }
+            }
+            filters.filterIsInstance<Filters.LanguageFilter>().firstOrNull()?.let {
+                val lang = it.toUriPart()
+                if (lang.isNotBlank()) putJsonArray("languages") { add(lang) }
+            }
             val genres = filters.filterIsInstance<Filters.GenreFilter>().firstOrNull()?.getSelectedValues().orEmpty()
             if (genres.isNotEmpty()) {
                 putJsonArray("genres") { genres.forEach(::add) }
             }
-            filters.filterIsInstance<Filters.YearFilter>().firstOrNull()
-                ?.let { it.state.toIntOrNull()?.let { year -> put("year", year) } }
+            filters.filterIsInstance<Filters.YearFilter>().firstOrNull()?.let {
+                val year = it.state.trim()
+                if (year.isNotBlank()) put("year", year)
+            }
         }
 
-        val root = runCatching { postJson("$baseUrl/anime/filter", body).jsonObject }.getOrNull()
+        val root = runCatching { postJson("$baseUrl/anime/filter", body) }.getOrNull()
             ?: return AnimesPage(emptyList(), false)
         val animes = root.array("data").mapNotNull { parseAnime(it.jsonObject) }
-        val totalPages = root.int("totalPages")
-        val hasNextPage = totalPages?.let { page < it }
-            ?: (animes.size >= PAGE_SIZE)
+        val total = root.int("total") ?: (page * PAGE_SIZE)
+        val hasNextPage = (page * PAGE_SIZE) < total && animes.isNotEmpty()
         return AnimesPage(animes, hasNextPage)
     }
 
