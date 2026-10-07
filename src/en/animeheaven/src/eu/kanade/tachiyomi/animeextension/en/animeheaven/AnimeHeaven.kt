@@ -14,6 +14,7 @@ import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
+import okhttp3.CookieJar
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
@@ -29,6 +30,12 @@ class AnimeHeaven : Source() {
     override val lang = "en"
 
     override val supportsLatest = true
+
+    private val noCookieClient by lazy {
+        client.newBuilder()
+            .cookieJar(CookieJar.NO_COOKIES)
+            .build()
+    }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("User-Agent", DEFAULT_USER_AGENT)
@@ -241,7 +248,11 @@ class AnimeHeaven : Source() {
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val epUrl = hoster.hosterUrl
-        val gateKey = epUrl.substringAfter("key=").substringBefore("&")
+        val gateKey = if (epUrl.contains("key=")) {
+            epUrl.substringAfter("key=").substringBefore("&")
+        } else {
+            epUrl.substringAfterLast("/")
+        }
         val animeId = epUrl.substringAfter("anime=", "")
         val animeReferer = if (animeId.isNotBlank()) "$baseUrl/anime.php?$animeId" else "$baseUrl/anime.php"
 
@@ -249,13 +260,13 @@ class AnimeHeaven : Source() {
             .url("$baseUrl/gate.php")
             .headers(
                 headers.newBuilder()
-                    .add("Cookie", "key=$gateKey")
+                    .set("Cookie", "key=$gateKey")
                     .set("Referer", animeReferer)
                     .build(),
             )
             .build()
 
-        val html = client.newCall(gateRequest).execute().body.string()
+        val html = noCookieClient.newCall(gateRequest).execute().body.string()
 
         val sourceUrls = mutableListOf<String>()
 
