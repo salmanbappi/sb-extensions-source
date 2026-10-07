@@ -197,15 +197,41 @@ class AniLab : Source() {
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val data = response.parseAs<EpisodesResponseDto>()
-        return data.list?.mapNotNull { ep ->
+        val episodes = data.list ?: emptyList()
+
+        val minEpNumber = episodes.minOfOrNull { it.number?.toFloatOrNull() ?: 1f } ?: 1f
+        val offset = if (minEpNumber > 1f) minEpNumber - 1f else 0f
+
+        val numberingMode = preferences.getString(PREF_EP_RENUMBER_KEY, PREF_EP_RENUMBER_DEFAULT) ?: PREF_EP_RENUMBER_DEFAULT
+
+        return episodes.mapNotNull { ep ->
             val epId = ep.id ?: return@mapNotNull null
-            val epNum = ep.number?.toFloatOrNull() ?: 1f
+            val rawNum = ep.number?.toFloatOrNull() ?: 1f
+            val adjustedNum = if (offset > 0f) rawNum - offset else rawNum
+
+            val epNumber = when (numberingMode) {
+                "absolute" -> rawNum
+                else -> adjustedNum
+            }
+
+            val baseName = when (numberingMode) {
+                "season" -> "Episode ${adjustedNum.toInt()}"
+                "absolute" -> ep.name ?: "Episode ${rawNum.toInt()}"
+                else -> { // "both"
+                    if (offset > 0f) {
+                        "Episode ${adjustedNum.toInt()} (#${rawNum.toInt()})"
+                    } else {
+                        ep.name ?: "Episode ${rawNum.toInt()}"
+                    }
+                }
+            }
+
             SEpisode.create().apply {
-                name = if (ep.filler) "${ep.name ?: "Episode $epNum"} (Filler)" else ep.name ?: "Episode $epNum"
-                episode_number = epNum
+                name = if (ep.filler) "$baseName (Filler)" else baseName
+                episode_number = epNumber
                 url = epId
             }
-        }?.reversed() ?: emptyList()
+        }.reversed()
     }
 
     // ============================ Video Links =============================
@@ -240,15 +266,31 @@ class AniLab : Source() {
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
-        val lang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT)!!
+        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+        val prefLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT)!!
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT)!!
 
         return this.sortedWith(
-            compareBy(
-                { it.videoTitle.contains(quality) },
-                { it.videoTitle.contains(lang, ignoreCase = true) },
-            ),
-        ).reversed()
+            compareByDescending<Video> { it.videoTitle.contains(prefQuality) }
+                .thenByDescending { it.videoTitle.startsWith(prefLang, ignoreCase = true) }
+                .thenByDescending {
+                    if (prefServer.isNotBlank()) it.videoTitle.contains(prefServer, ignoreCase = true) else false
+                }
+                .thenBy { it.videoTitle.contains("DUB", ignoreCase = true) }
+                .thenBy {
+                    when {
+                        it.videoTitle.contains("Server #1") -> 1
+                        it.videoTitle.contains("Server #2") -> 2
+                        else -> 3
+                    }
+                }
+                .thenByDescending { getResolution(it.videoTitle) },
+        )
+    }
+
+    private fun getResolution(title: String): Int {
+        val match = Regex("""(\d+)p""").find(title)
+        return match?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 
     // ============================== Settings ==============================
@@ -268,6 +310,22 @@ class AniLab : Source() {
             entries = PREF_LANG_ENTRIES,
             entryValues = PREF_LANG_VALUES,
             default = PREF_LANG_DEFAULT,
+            summary = "%s",
+        )
+        screen.addListPreference(
+            key = PREF_SERVER_KEY,
+            title = PREF_SERVER_TITLE,
+            entries = PREF_SERVER_ENTRIES,
+            entryValues = PREF_SERVER_VALUES,
+            default = PREF_SERVER_DEFAULT,
+            summary = "%s",
+        )
+        screen.addListPreference(
+            key = PREF_EP_RENUMBER_KEY,
+            title = PREF_EP_RENUMBER_TITLE,
+            entries = PREF_EP_RENUMBER_ENTRIES,
+            entryValues = PREF_EP_RENUMBER_VALUES,
+            default = PREF_EP_RENUMBER_DEFAULT,
             summary = "%s",
         )
     }
@@ -303,9 +361,25 @@ class AniLab : Source() {
         private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "360p")
 
         private const val PREF_LANG_KEY = "preferred_lang"
-        private const val PREF_LANG_TITLE = "Preferred language"
+        private const val PREF_LANG_TITLE = "Preferred audio language"
         private const val PREF_LANG_DEFAULT = "sub"
         private val PREF_LANG_ENTRIES = listOf("SUB", "DUB")
         private val PREF_LANG_VALUES = listOf("sub", "dub")
+
+        private const val PREF_SERVER_KEY = "preferred_server"
+        private const val PREF_SERVER_TITLE = "Preferred server"
+        private const val PREF_SERVER_DEFAULT = "Server #1"
+        private val PREF_SERVER_ENTRIES = listOf("Server #1", "Server #2")
+        private val PREF_SERVER_VALUES = listOf("Server #1", "Server #2")
+
+        private const val PREF_EP_RENUMBER_KEY = "ep_renumber_mode"
+        private const val PREF_EP_RENUMBER_TITLE = "Episode numbering for sequels"
+        private const val PREF_EP_RENUMBER_DEFAULT = "both"
+        private val PREF_EP_RENUMBER_ENTRIES = listOf(
+            "Season numbering with absolute (Episode 1 (#73))",
+            "Season numbering only (Episode 1)",
+            "Absolute numbering (Episode 73)",
+        )
+        private val PREF_EP_RENUMBER_VALUES = listOf("both", "season", "absolute")
     }
 }
