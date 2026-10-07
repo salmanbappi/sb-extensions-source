@@ -109,12 +109,10 @@ class AniLab : Source() {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request {
-        return if (page == 1) {
-            GET("$baseUrl/home", headers)
-        } else {
-            GET("$baseUrl/category?id=1&page=$page", headers)
-        }
+    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
+        GET("$baseUrl/home", headers)
+    } else {
+        GET("$baseUrl/category?id=1&page=$page", headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -136,9 +134,7 @@ class AniLab : Source() {
 
     // ============================== Latest ================================
 
-    override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/latest?page=$page", headers)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/latest?page=$page", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val data = response.parseAs<PostsResponseDto>()
@@ -155,9 +151,11 @@ class AniLab : Source() {
                 val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
                 GET("$baseUrl/search?query=$encodedQuery&page=$page", headers)
             }
+
             categoryFilter != null && !categoryFilter.isDefault() -> {
                 GET("$baseUrl/category?id=${categoryFilter.toUriPart()}&page=$page", headers)
             }
+
             else -> {
                 GET("$baseUrl/latest?page=$page", headers)
             }
@@ -176,9 +174,7 @@ class AniLab : Source() {
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request {
-        return GET("$baseUrl/post?id=${anime.url}", headers)
-    }
+    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/post?id=${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val data = response.parseAs<PostDetailsDto>()
@@ -198,9 +194,7 @@ class AniLab : Source() {
 
     // ============================== Episodes ==============================
 
-    override fun episodeListRequest(anime: SAnime): Request {
-        return GET("https://play.anidb.app/api/anime/${anime.url}/episodes", headers)
-    }
+    override fun episodeListRequest(anime: SAnime): Request = GET("https://play.anidb.app/api/anime/${anime.url}/episodes", headers)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val data = response.parseAs<EpisodesResponseDto>()
@@ -293,9 +287,7 @@ class AniLab : Source() {
 
     // ============================ Fallback Video Links =============================
 
-    override fun videoListRequest(episode: SEpisode): Request {
-        return GET("https://play.anidb.app/api/episode/${episode.url}/servers", headers)
-    }
+    override fun videoListRequest(episode: SEpisode): Request = GET("https://play.anidb.app/api/episode/${episode.url}/servers", headers)
 
     override fun videoListParse(response: Response): List<Video> {
         val data = response.parseAs<ServersResponseDto>()
