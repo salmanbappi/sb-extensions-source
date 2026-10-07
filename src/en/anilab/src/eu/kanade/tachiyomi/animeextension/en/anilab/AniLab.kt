@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.en.anilab
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -108,10 +109,12 @@ class AniLab : Source() {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
-        GET("$baseUrl/home", headers)
-    } else {
-        GET("$baseUrl/category?id=1&page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        return if (page == 1) {
+            GET("$baseUrl/home", headers)
+        } else {
+            GET("$baseUrl/category?id=1&page=$page", headers)
+        }
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -133,7 +136,9 @@ class AniLab : Source() {
 
     // ============================== Latest ================================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/latest?page=$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request {
+        return GET("$baseUrl/latest?page=$page", headers)
+    }
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val data = response.parseAs<PostsResponseDto>()
@@ -150,11 +155,9 @@ class AniLab : Source() {
                 val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
                 GET("$baseUrl/search?query=$encodedQuery&page=$page", headers)
             }
-
             categoryFilter != null && !categoryFilter.isDefault() -> {
                 GET("$baseUrl/category?id=${categoryFilter.toUriPart()}&page=$page", headers)
             }
-
             else -> {
                 GET("$baseUrl/latest?page=$page", headers)
             }
@@ -173,7 +176,9 @@ class AniLab : Source() {
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/post?id=${anime.url}", headers)
+    override fun animeDetailsRequest(anime: SAnime): Request {
+        return GET("$baseUrl/post?id=${anime.url}", headers)
+    }
 
     override fun animeDetailsParse(response: Response): SAnime {
         val data = response.parseAs<PostDetailsDto>()
@@ -193,7 +198,9 @@ class AniLab : Source() {
 
     // ============================== Episodes ==============================
 
-    override fun episodeListRequest(anime: SAnime): Request = GET("https://play.anidb.app/api/anime/${anime.url}/episodes", headers)
+    override fun episodeListRequest(anime: SAnime): Request {
+        return GET("https://play.anidb.app/api/anime/${anime.url}/episodes", headers)
+    }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val data = response.parseAs<EpisodesResponseDto>()
@@ -236,9 +243,59 @@ class AniLab : Source() {
         }.reversed()
     }
 
-    // ============================ Video Links =============================
+    // ============================== Hosters (2-Tier Folders) ==============================
 
-    override fun videoListRequest(episode: SEpisode): Request = GET("https://play.anidb.app/api/episode/${episode.url}/servers", headers)
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val req = GET("https://play.anidb.app/api/episode/${episode.url}/servers", headers)
+        val res = client.newCall(req).execute()
+        val data = res.parseAs<ServersResponseDto>()
+        val servers = data.list ?: emptyList()
+
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val prefLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT) ?: PREF_LANG_DEFAULT
+
+        return servers.mapIndexed { index, s ->
+            val serverName = s.name ?: "Server #${index + 1}"
+            Hoster(
+                hosterName = serverName,
+                hosterUrl = s.id ?: "",
+            )
+        }.sortedWith(
+            compareByDescending<Hoster> { it.hosterName.contains(prefLang, ignoreCase = true) }
+                .thenByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
+                .thenBy { if (it.hosterName.contains("Server #1")) 1 else 2 },
+        )
+    }
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val serverId = hoster.hosterUrl
+        if (serverId.isBlank()) return emptyList()
+
+        val iframeReq = GET(
+            "https://play.anidb.app/api/episode/$serverId/iframe",
+            headers.newBuilder()
+                .set("Referer", "https://play.app/")
+                .set("X-Requested-With", "PLAY")
+                .build(),
+        )
+        val iframeResp = client.newCall(iframeReq).execute()
+        val linkJson = iframeResp.parseAs<IframeDto>()
+        val m3u8Url = linkJson.link ?: return emptyList()
+
+        return playlistUtils.extractFromHls(
+            playlistUrl = m3u8Url,
+            referer = "https://play.app/",
+            masterHeaders = headers,
+            videoHeaders = headers,
+            videoNameGen = { quality -> quality },
+        ).sortVideos()
+    }
+
+    // ============================ Fallback Video Links =============================
+
+    override fun videoListRequest(episode: SEpisode): Request {
+        return GET("https://play.anidb.app/api/episode/${episode.url}/servers", headers)
+    }
 
     override fun videoListParse(response: Response): List<Video> {
         val data = response.parseAs<ServersResponseDto>()
@@ -269,23 +326,8 @@ class AniLab : Source() {
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
-        val prefLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT)!!
-        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT)!!
-
         return this.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefQuality) }
-                .thenByDescending { it.videoTitle.startsWith(prefLang, ignoreCase = true) }
-                .thenByDescending {
-                    if (prefServer.isNotBlank()) it.videoTitle.contains(prefServer, ignoreCase = true) else false
-                }
-                .thenBy { it.videoTitle.contains("DUB", ignoreCase = true) }
-                .thenBy {
-                    when {
-                        it.videoTitle.contains("Server #1") -> 1
-                        it.videoTitle.contains("Server #2") -> 2
-                        else -> 3
-                    }
-                }
                 .thenByDescending { getResolution(it.videoTitle) },
         )
     }
