@@ -179,25 +179,54 @@ class AnimeHeaven : Source() {
 
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val path = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
+        val cleanUrl = anime.url.removePrefix(baseUrl)
+        val path = if (cleanUrl.startsWith("/")) cleanUrl else "/$cleanUrl"
         val response = client.newCall(GET("$baseUrl$path", headers)).execute()
-        val html = response.body.string()
+        val doc = response.asJsoup()
+        val animeId = path.substringAfter("anime.php?", "").ifBlank { path.substringAfterLast("/") }
 
-        // Match gatea("HASH") and capture episode number from watch2 div
-        val regex = Regex("""onclick='gatea\("([a-f0-9]+)"\)'[^>]*>(?:[\s\S]*?)<div[^>]*\bwatch2\b[^>]*>\s*(\d+)\s*</div>""")
-        val animeId = path.removePrefix("/").removePrefix("anime.php?")
+        val episodes = doc.select("a[href*=gate.php], a:has(div.watch2)").mapNotNull { element ->
+            val id = element.id().trim()
+            val gateKey = if (id.length == 32 && id.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) {
+                id
+            } else {
+                val onclick = element.attr("onclick")
+                val onmouseover = element.attr("onmouseover")
+                Regex("""gate[ah]\s*\(\s*["']([a-f0-9]{32})["']""", RegexOption.IGNORE_CASE)
+                    .find("$onclick $onmouseover")?.groupValues?.get(1)
+                    ?: return@mapNotNull null
+            }
 
-        val episodes = regex.findAll(html).mapNotNull { match ->
-            val gateKey = match.groupValues[1]
-            val epNum = match.groupValues[2].toFloatOrNull() ?: return@mapNotNull null
+            val epText = element.selectFirst("div.watch2")?.text()?.trim().orEmpty()
+            val epNum = epText.toFloatOrNull()
+                ?: Regex("""(\d+(?:\.\d+)?)""").find(epText)?.groupValues?.get(1)?.toFloatOrNull()
+                ?: Regex("""Episode\s*(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
+                    .find(element.text())?.groupValues?.get(1)?.toFloatOrNull()
+                ?: return@mapNotNull null
 
             SEpisode.create().apply {
-                name = "Episode ${epNum.toInt()}"
+                name = if (epNum % 1f == 0f) "Episode ${epNum.toInt()}" else "Episode $epNum"
                 episode_number = epNum
                 url = "/gate.php?key=$gateKey&anime=$animeId"
                 scanlator = "Sub"
             }
-        }.toList()
+        }.distinctBy { it.episode_number }
+
+        if (episodes.isEmpty()) {
+            val html = doc.html()
+            val fallbackRegex = Regex("""gate[ah]\s*\(\s*["']([a-f0-9]{32})["'][\s\S]*?\bwatch2\b[^>]*>\s*(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
+            return fallbackRegex.findAll(html).mapNotNull { match ->
+                val gateKey = match.groupValues[1]
+                val epNum = match.groupValues[2].toFloatOrNull() ?: return@mapNotNull null
+
+                SEpisode.create().apply {
+                    name = if (epNum % 1f == 0f) "Episode ${epNum.toInt()}" else "Episode $epNum"
+                    episode_number = epNum
+                    url = "/gate.php?key=$gateKey&anime=$animeId"
+                    scanlator = "Sub"
+                }
+            }.toList().distinctBy { it.episode_number }.sortedByDescending { it.episode_number }
+        }
 
         return episodes.sortedByDescending { it.episode_number }
     }
@@ -239,7 +268,7 @@ class AnimeHeaven : Source() {
 
         // 2. Fallback: grab from download anchor
         if (sourceUrls.isEmpty()) {
-            val dlMatch = Regex("""href=['"](https?://ax\.animeheaven\.me/video\.mp4\?[^'"]+)['"]""").find(html)
+            val dlMatch = Regex("""href=['"](https?://[a-z0-9.]*animeheaven\.me/video\.mp4\?[^'"]+)['"]""").find(html)
             if (dlMatch != null) {
                 sourceUrls.add(dlMatch.groupValues[1])
             }
@@ -247,11 +276,12 @@ class AnimeHeaven : Source() {
 
         // 3. Fallback: reconstruct from token match
         if (sourceUrls.isEmpty()) {
-            val tokenMatch = Regex("""video\.mp4\?([a-f0-9]+)&([a-f0-9]+)""").find(html)
+            val tokenMatch = Regex("""(?:https?://([a-z0-9.]+)/)?video\.mp4\?([a-f0-9]+)&([a-f0-9]+)""").find(html)
             if (tokenMatch != null) {
-                val t1 = tokenMatch.groupValues[1]
-                val t2 = tokenMatch.groupValues[2]
-                sourceUrls.add("https://ax.animeheaven.me/video.mp4?$t1&$t2")
+                val host = tokenMatch.groupValues[1].ifBlank { "ca.animeheaven.me" }
+                val t1 = tokenMatch.groupValues[2]
+                val t2 = tokenMatch.groupValues[3]
+                sourceUrls.add("https://$host/video.mp4?$t1&$t2")
             }
         }
 
