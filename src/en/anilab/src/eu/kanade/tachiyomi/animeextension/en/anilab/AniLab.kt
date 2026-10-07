@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parallelMapNotNullBlocking
 import kotlinx.serialization.Serializable
 import okhttp3.Request
@@ -55,14 +56,36 @@ data class PostDetailsDto(
     val age: String? = null,
     val score: Float? = null,
     val genres: String? = null,
-    val seasons: List<SeasonDto>? = null,
 )
 
 @Serializable
-data class SeasonDto(
-    val id: Long? = null,
-    val poster: String? = null,
-    val title: String? = null,
+data class EpisodesResponseDto(
+    val list: List<EpisodeItemDto>? = null,
+)
+
+@Serializable
+data class EpisodeItemDto(
+    val id: String? = null,
+    val name: String? = null,
+    val number: String? = null,
+    val filler: Boolean = false,
+)
+
+@Serializable
+data class ServersResponseDto(
+    val list: List<ServerItemDto>? = null,
+)
+
+@Serializable
+data class ServerItemDto(
+    val id: String? = null,
+    val name: String? = null,
+    val lang: String? = null,
+)
+
+@Serializable
+data class IframeDto(
+    val link: String? = null,
 )
 
 class AniLab : Source() {
@@ -83,14 +106,14 @@ class AniLab : Source() {
         PlaylistUtils(client, headers)
     }
 
-    private val m3u8Regex = Regex("""file:\s*['"](https?://[^'"]+master\.m3u8)['"]""")
-
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
-        GET("$baseUrl/home", headers)
-    } else {
-        GET("$baseUrl/category?id=1&page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        return if (page == 1) {
+            GET("$baseUrl/home", headers)
+        } else {
+            GET("$baseUrl/category?id=1&page=$page", headers)
+        }
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -112,7 +135,9 @@ class AniLab : Source() {
 
     // ============================== Latest ================================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/latest?page=$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request {
+        return GET("$baseUrl/latest?page=$page", headers)
+    }
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val data = response.parseAs<PostsResponseDto>()
@@ -129,11 +154,9 @@ class AniLab : Source() {
                 val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
                 GET("$baseUrl/search?query=$encodedQuery&page=$page", headers)
             }
-
             categoryFilter != null && !categoryFilter.isDefault() -> {
                 GET("$baseUrl/category?id=${categoryFilter.toUriPart()}&page=$page", headers)
             }
-
             else -> {
                 GET("$baseUrl/latest?page=$page", headers)
             }
@@ -152,7 +175,9 @@ class AniLab : Source() {
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/post?id=${anime.url}", headers)
+    override fun animeDetailsRequest(anime: SAnime): Request {
+        return GET("$baseUrl/post?id=${anime.url}", headers)
+    }
 
     override fun animeDetailsParse(response: Response): SAnime {
         val data = response.parseAs<PostDetailsDto>()
@@ -172,60 +197,65 @@ class AniLab : Source() {
 
     // ============================== Episodes ==============================
 
-    override fun episodeListRequest(anime: SAnime): Request = GET("$baseUrl/post?id=${anime.url}", headers)
+    override fun episodeListRequest(anime: SAnime): Request {
+        return GET("https://play.anidb.app/api/anime/${anime.url}/episodes", headers)
+    }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val data = response.parseAs<PostDetailsDto>()
-        val animeId = data.id ?: return emptyList()
-
-        val episodes = mutableListOf<SEpisode>()
-
-        // Add main anime entry
-        episodes.add(
+        val data = response.parseAs<EpisodesResponseDto>()
+        return data.list?.mapNotNull { ep ->
+            val epId = ep.id ?: return@mapNotNull null
+            val epNum = ep.number?.toFloatOrNull() ?: 1f
             SEpisode.create().apply {
-                name = data.title ?: "Episode 1"
-                episode_number = 1f
-                url = animeId.toString()
-            },
-        )
-
-        // Add seasons / related parts if available
-        data.seasons?.forEachIndexed { index, season ->
-            val sId = season.id ?: return@forEachIndexed
-            episodes.add(
-                SEpisode.create().apply {
-                    name = season.title?.takeIf { it.isNotBlank() } ?: "Season ${index + 2}"
-                    episode_number = (index + 2).toFloat()
-                    url = sId.toString()
-                },
-            )
-        }
-
-        return episodes
+                name = if (ep.filler) "${ep.name ?: "Episode $epNum"} (Filler)" else ep.name ?: "Episode $epNum"
+                episode_number = epNum
+                url = epId
+            }
+        }?.reversed() ?: emptyList()
     }
 
     // ============================ Video Links =============================
 
-    override fun videoListRequest(episode: SEpisode): Request = GET("https://app.kyotoplayer.com/api/v5/kai/post?id=${episode.url}", headers)
+    override fun videoListRequest(episode: SEpisode): Request {
+        return GET("https://play.anidb.app/api/episode/${episode.url}/servers", headers)
+    }
 
     override fun videoListParse(response: Response): List<Video> {
-        val body = response.body.string()
-        val m3u8Url = m3u8Regex.find(body)?.groupValues?.get(1)
-            ?: return emptyList()
+        val data = response.parseAs<ServersResponseDto>()
+        val servers = data.list ?: emptyList()
 
-        return playlistUtils.extractFromHls(
-            playlistUrl = m3u8Url,
-            referer = "https://app.kyotoplayer.com/",
-            masterHeaders = headers,
-            videoHeaders = headers,
-            videoNameGen = { quality -> "AniLab - $quality" },
-        )
+        return servers.parallelCatchingFlatMapBlocking { server ->
+            val serverId = server.id ?: return@parallelCatchingFlatMapBlocking emptyList()
+            val iframeReq = GET(
+                "https://play.anidb.app/api/episode/$serverId/iframe",
+                headers.newBuilder()
+                    .set("Referer", "https://play.app/")
+                    .set("X-Requested-With", "PLAY")
+                    .build(),
+            )
+            val iframeResp = client.newCall(iframeReq).execute()
+            val linkJson = iframeResp.parseAs<IframeDto>()
+            val m3u8Url = linkJson.link ?: return@parallelCatchingFlatMapBlocking emptyList()
+
+            playlistUtils.extractFromHls(
+                playlistUrl = m3u8Url,
+                referer = "https://play.app/",
+                masterHeaders = headers,
+                videoHeaders = headers,
+                videoNameGen = { quality -> "${server.name ?: "Server"} - $quality" },
+            )
+        }
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+        val lang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT)!!
+
         return this.sortedWith(
-            compareBy { it.videoTitle.contains(quality) },
+            compareBy(
+                { it.videoTitle.contains(quality) },
+                { it.videoTitle.contains(lang, ignoreCase = true) },
+            ),
         ).reversed()
     }
 
@@ -238,6 +268,14 @@ class AniLab : Source() {
             entries = PREF_QUALITY_ENTRIES,
             entryValues = PREF_QUALITY_ENTRIES,
             default = PREF_QUALITY_DEFAULT,
+            summary = "%s",
+        )
+        screen.addListPreference(
+            key = PREF_LANG_KEY,
+            title = PREF_LANG_TITLE,
+            entries = PREF_LANG_ENTRIES,
+            entryValues = PREF_LANG_VALUES,
+            default = PREF_LANG_DEFAULT,
             summary = "%s",
         )
     }
@@ -271,5 +309,11 @@ class AniLab : Source() {
         private const val PREF_QUALITY_TITLE = "Preferred quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
         private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "360p")
+
+        private const val PREF_LANG_KEY = "preferred_lang"
+        private const val PREF_LANG_TITLE = "Preferred language"
+        private const val PREF_LANG_DEFAULT = "sub"
+        private val PREF_LANG_ENTRIES = listOf("SUB", "DUB")
+        private val PREF_LANG_VALUES = listOf("sub", "dub")
     }
 }
