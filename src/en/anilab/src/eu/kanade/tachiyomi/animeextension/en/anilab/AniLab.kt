@@ -216,7 +216,9 @@ class AniLab : Source() {
 
             val baseName = when (numberingMode) {
                 "season" -> "Episode ${adjustedNum.toInt()}"
+
                 "absolute" -> ep.name ?: "Episode ${rawNum.toInt()}"
+
                 else -> { // "both"
                     if (offset > 0f) {
                         "Episode ${adjustedNum.toInt()} (#${rawNum.toInt()})"
