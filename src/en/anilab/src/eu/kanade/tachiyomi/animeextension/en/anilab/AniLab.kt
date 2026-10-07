@@ -217,9 +217,7 @@ class AniLab : Source() {
 
             val baseName = when (numberingMode) {
                 "season" -> "Episode ${adjustedNum.toInt()}"
-
                 "absolute" -> ep.name ?: "Episode ${rawNum.toInt()}"
-
                 else -> { // "both"
                     if (offset > 0f) {
                         "Episode ${adjustedNum.toInt()} (#${rawNum.toInt()})"
@@ -245,44 +243,61 @@ class AniLab : Source() {
         val data = res.parseAs<ServersResponseDto>()
         val servers = data.list ?: emptyList()
 
-        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
-        val prefLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT) ?: PREF_LANG_DEFAULT
+        // Group servers by Server # (e.g. Server #1, Server #2) to keep SUB and DUB in the same folder
+        val serverMap = linkedMapOf<String, MutableList<Pair<String, String>>>()
 
-        return servers.mapIndexed { index, s ->
-            val serverName = s.name ?: "Server #${index + 1}"
+        servers.forEach { server ->
+            val sId = server.id ?: return@forEach
+            val rawName = server.name ?: ""
+            val serverNumMatch = Regex("""Server\s*#?(\d+)""", RegexOption.IGNORE_CASE).find(rawName)
+            val serverNum = serverNumMatch?.groupValues?.get(1) ?: "1"
+            val langType = if (rawName.contains("dub", ignoreCase = true) || server.lang == "dub") "DUB" else "SUB"
+
+            serverMap.getOrPut(serverNum) { mutableListOf() }.add(langType to sId)
+        }
+
+        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+
+        return serverMap.map { (serverNum, entries) ->
+            val folderName = "Server #$serverNum"
+            val encodedTarget = entries.joinToString("|") { "${it.first}:${it.second}" }
             Hoster(
-                hosterName = serverName,
-                hosterUrl = s.id ?: "",
+                hosterName = folderName,
+                hosterUrl = encodedTarget,
             )
         }.sortedWith(
-            compareByDescending<Hoster> { it.hosterName.contains(prefLang, ignoreCase = true) }
-                .thenByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
+            compareByDescending<Hoster> { it.hosterName.contains(prefServer, ignoreCase = true) }
                 .thenBy { if (it.hosterName.contains("Server #1")) 1 else 2 },
         )
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val serverId = hoster.hosterUrl
-        if (serverId.isBlank()) return emptyList()
+        val targets = hoster.hosterUrl.split("|").mapNotNull { entry ->
+            val parts = entry.split(":", limit = 2)
+            if (parts.size == 2) parts[0] to parts[1] else null
+        }
+        if (targets.isEmpty()) return emptyList()
 
-        val iframeReq = GET(
-            "https://play.anidb.app/api/episode/$serverId/iframe",
-            headers.newBuilder()
-                .set("Referer", "https://play.app/")
-                .set("X-Requested-With", "PLAY")
-                .build(),
-        )
-        val iframeResp = client.newCall(iframeReq).execute()
-        val linkJson = iframeResp.parseAs<IframeDto>()
-        val m3u8Url = linkJson.link ?: return emptyList()
+        return targets.parallelCatchingFlatMapBlocking { (lang, serverId) ->
+            val iframeReq = GET(
+                "https://play.anidb.app/api/episode/$serverId/iframe",
+                headers.newBuilder()
+                    .set("Referer", "https://play.app/")
+                    .set("X-Requested-With", "PLAY")
+                    .build(),
+            )
+            val iframeResp = client.newCall(iframeReq).execute()
+            val linkJson = iframeResp.parseAs<IframeDto>()
+            val m3u8Url = linkJson.link ?: return@parallelCatchingFlatMapBlocking emptyList()
 
-        return playlistUtils.extractFromHls(
-            playlistUrl = m3u8Url,
-            referer = "https://play.app/",
-            masterHeaders = headers,
-            videoHeaders = headers,
-            videoNameGen = { quality -> quality },
-        ).sortVideos()
+            playlistUtils.extractFromHls(
+                playlistUrl = m3u8Url,
+                referer = "https://play.app/",
+                masterHeaders = headers,
+                videoHeaders = headers,
+                videoNameGen = { quality -> "$lang - $quality" },
+            )
+        }.sortVideos()
     }
 
     // ============================ Fallback Video Links =============================
@@ -306,20 +321,24 @@ class AniLab : Source() {
             val linkJson = iframeResp.parseAs<IframeDto>()
             val m3u8Url = linkJson.link ?: return@parallelCatchingFlatMapBlocking emptyList()
 
+            val langLabel = if (server.name?.contains("dub", ignoreCase = true) == true || server.lang == "dub") "DUB" else "SUB"
             playlistUtils.extractFromHls(
                 playlistUrl = m3u8Url,
                 referer = "https://play.app/",
                 masterHeaders = headers,
                 videoHeaders = headers,
-                videoNameGen = { quality -> "${server.name ?: "Server"} - $quality" },
+                videoNameGen = { quality -> "${server.name ?: "Server"} ($langLabel) - $quality" },
             )
-        }
+        }.sortVideos()
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+        val prefLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT)!!
+
         return this.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefQuality) }
+                .thenByDescending { it.videoTitle.startsWith(prefLang, ignoreCase = true) }
                 .thenByDescending { getResolution(it.videoTitle) },
         )
     }
@@ -398,9 +417,9 @@ class AniLab : Source() {
 
         private const val PREF_LANG_KEY = "preferred_lang"
         private const val PREF_LANG_TITLE = "Preferred audio language"
-        private const val PREF_LANG_DEFAULT = "sub"
+        private const val PREF_LANG_DEFAULT = "SUB"
         private val PREF_LANG_ENTRIES = listOf("SUB", "DUB")
-        private val PREF_LANG_VALUES = listOf("sub", "dub")
+        private val PREF_LANG_VALUES = listOf("SUB", "DUB")
 
         private const val PREF_SERVER_KEY = "preferred_server"
         private const val PREF_SERVER_TITLE = "Preferred server"
