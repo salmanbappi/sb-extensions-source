@@ -1,0 +1,283 @@
+package eu.kanade.tachiyomi.animeextension.en.anilab
+
+import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
+import eu.kanade.tachiyomi.network.GET
+import extensions.utils.Source
+import extensions.utils.parseAs
+import keiyoushi.utils.addListPreference
+import keiyoushi.utils.parallelMapNotNullBlocking
+import kotlinx.serialization.Serializable
+import okhttp3.Request
+import okhttp3.Response
+import java.net.URLEncoder
+
+@Serializable
+data class HomeResponseDto(
+    val featured: PostDetailsDto? = null,
+    val sections: List<SectionDto>? = null,
+)
+
+@Serializable
+data class SectionDto(
+    val name: String? = null,
+    val posts: List<PostDto>? = null,
+)
+
+@Serializable
+data class PostsResponseDto(
+    val posts: List<PostDto>? = null,
+)
+
+@Serializable
+data class PostDto(
+    val id: Long? = null,
+    val poster: String? = null,
+    val age: String? = null,
+)
+
+@Serializable
+data class PostDetailsDto(
+    val id: Long? = null,
+    val type: String? = null,
+    val title: String? = null,
+    val poster: String? = null,
+    val overview: String? = null,
+    val status: String? = null,
+    val runtime: String? = null,
+    val premiered: String? = null,
+    val rating: String? = null,
+    val age: String? = null,
+    val score: Float? = null,
+    val genres: String? = null,
+    val seasons: List<SeasonDto>? = null,
+)
+
+@Serializable
+data class SeasonDto(
+    val id: Long? = null,
+    val poster: String? = null,
+    val title: String? = null,
+)
+
+class AniLab : Source() {
+
+    override val name = "AniLab"
+
+    override val baseUrl = "https://anilab2.amdapi.click/api"
+
+    override val lang = "en"
+
+    override val supportsLatest = true
+
+    override fun headersBuilder() = super.headersBuilder()
+        .set("User-Agent", "okhttp/4.9.2")
+        .set("Accept", "application/json")
+
+    private val playlistUtils by lazy {
+        PlaylistUtils(client, headers)
+    }
+
+    private val m3u8Regex = Regex("""file:\s*['"](https?://[^'"]+master\.m3u8)['"]""")
+
+    // ============================== Popular ===============================
+
+    override fun popularAnimeRequest(page: Int): Request {
+        return if (page == 1) {
+            GET("$baseUrl/home", headers)
+        } else {
+            GET("$baseUrl/category?id=1&page=$page", headers)
+        }
+    }
+
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val requestUrl = response.request.url.toString()
+        val posts = if (requestUrl.endsWith("/home")) {
+            val homeData = response.parseAs<HomeResponseDto>()
+            val items = mutableListOf<PostDto>()
+            homeData.sections?.forEach { section ->
+                section.posts?.let { items.addAll(it) }
+            }
+            items.distinctBy { it.id }
+        } else {
+            val data = response.parseAs<PostsResponseDto>()
+            data.posts ?: emptyList()
+        }
+
+        return parsePosts(posts, hasNextPage = posts.isNotEmpty())
+    }
+
+    // ============================== Latest ================================
+
+    override fun latestUpdatesRequest(page: Int): Request {
+        return GET("$baseUrl/latest?page=$page", headers)
+    }
+
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        val data = response.parseAs<PostsResponseDto>()
+        val posts = data.posts ?: emptyList()
+        return parsePosts(posts, hasNextPage = posts.isNotEmpty())
+    }
+
+    // =============================== Search ===============================
+
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        val categoryFilter = filters.filterIsInstance<Filters.CategoryFilter>().firstOrNull()
+        return when {
+            query.isNotBlank() -> {
+                val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
+                GET("$baseUrl/search?query=$encodedQuery&page=$page", headers)
+            }
+            categoryFilter != null && !categoryFilter.isDefault() -> {
+                GET("$baseUrl/category?id=${categoryFilter.toUriPart()}&page=$page", headers)
+            }
+            else -> {
+                GET("$baseUrl/latest?page=$page", headers)
+            }
+        }
+    }
+
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val data = response.parseAs<PostsResponseDto>()
+        val posts = data.posts ?: emptyList()
+        return parsePosts(posts, hasNextPage = posts.isNotEmpty())
+    }
+
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        Filters.CategoryFilter(),
+    )
+
+    // =========================== Anime Details ============================
+
+    override fun animeDetailsRequest(anime: SAnime): Request {
+        return GET("$baseUrl/post?id=${anime.url}", headers)
+    }
+
+    override fun animeDetailsParse(response: Response): SAnime {
+        val data = response.parseAs<PostDetailsDto>()
+        return SAnime.create().apply {
+            title = data.title ?: ""
+            thumbnail_url = data.poster
+            description = data.overview
+            genre = data.genres
+            status = when {
+                data.status?.contains("airing", ignoreCase = true) == true -> SAnime.ONGOING
+                data.status?.contains("finished", ignoreCase = true) == true -> SAnime.COMPLETED
+                else -> SAnime.UNKNOWN
+            }
+            author = data.type
+        }
+    }
+
+    // ============================== Episodes ==============================
+
+    override fun episodeListRequest(anime: SAnime): Request {
+        return GET("$baseUrl/post?id=${anime.url}", headers)
+    }
+
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val data = response.parseAs<PostDetailsDto>()
+        val animeId = data.id ?: return emptyList()
+
+        val episodes = mutableListOf<SEpisode>()
+
+        // Add main anime entry
+        episodes.add(
+            SEpisode.create().apply {
+                name = data.title ?: "Episode 1"
+                episode_number = 1f
+                url = animeId.toString()
+            },
+        )
+
+        // Add seasons / related parts if available
+        data.seasons?.forEachIndexed { index, season ->
+            val sId = season.id ?: return@forEachIndexed
+            episodes.add(
+                SEpisode.create().apply {
+                    name = season.title?.takeIf { it.isNotBlank() } ?: "Season ${index + 2}"
+                    episode_number = (index + 2).toFloat()
+                    url = sId.toString()
+                },
+            )
+        }
+
+        return episodes
+    }
+
+    // ============================ Video Links =============================
+
+    override fun videoListRequest(episode: SEpisode): Request {
+        return GET("https://app.kyotoplayer.com/api/v5/kai/post?id=${episode.url}", headers)
+    }
+
+    override fun videoListParse(response: Response): List<Video> {
+        val body = response.body.string()
+        val m3u8Url = m3u8Regex.find(body)?.groupValues?.get(1)
+            ?: return emptyList()
+
+        return playlistUtils.extractFromHls(
+            playlistUrl = m3u8Url,
+            referer = "https://app.kyotoplayer.com/",
+            masterHeaders = headers,
+            videoHeaders = headers,
+            videoNameGen = { quality -> "AniLab - $quality" },
+        )
+    }
+
+    override fun List<Video>.sortVideos(): List<Video> {
+        val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+        return this.sortedWith(
+            compareBy { it.videoTitle.contains(quality) },
+        ).reversed()
+    }
+
+    // ============================== Settings ==============================
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        screen.addListPreference(
+            key = PREF_QUALITY_KEY,
+            title = PREF_QUALITY_TITLE,
+            entries = PREF_QUALITY_ENTRIES,
+            entryValues = PREF_QUALITY_ENTRIES,
+            default = PREF_QUALITY_DEFAULT,
+            summary = "%s",
+        )
+    }
+
+    // ============================= Utilities ==============================
+
+    private fun parsePosts(posts: List<PostDto>, hasNextPage: Boolean): AnimesPage {
+        val animeList = posts.parallelMapNotNullBlocking { post ->
+            val id = post.id ?: return@parallelMapNotNullBlocking null
+            runCatching {
+                val detailResponse = client.newCall(GET("$baseUrl/post?id=$id", headers)).execute()
+                val detail = detailResponse.parseAs<PostDetailsDto>()
+                SAnime.create().apply {
+                    title = detail.title ?: "Anime #$id"
+                    thumbnail_url = detail.poster ?: post.poster
+                    url = id.toString()
+                }
+            }.getOrElse {
+                SAnime.create().apply {
+                    title = "Anime #$id"
+                    thumbnail_url = post.poster
+                    url = id.toString()
+                }
+            }
+        }
+        return AnimesPage(animeList, hasNextPage)
+    }
+
+    companion object {
+        private const val PREF_QUALITY_KEY = "preferred_quality"
+        private const val PREF_QUALITY_TITLE = "Preferred quality"
+        private const val PREF_QUALITY_DEFAULT = "1080p"
+        private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "360p")
+    }
+}
