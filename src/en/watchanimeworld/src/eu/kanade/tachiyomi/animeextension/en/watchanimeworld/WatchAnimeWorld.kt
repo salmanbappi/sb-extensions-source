@@ -419,6 +419,8 @@ class WatchAnimeWorld : Source() {
         val hosters = mutableListOf<Hoster>()
         val episodeUrl = response.request.url.toString()
 
+        val seenUrls = mutableSetOf<String>()
+
         // 1. Extract Zephyrix / ZPP Player sources from select.mirror (Base64 encoded iframes)
         doc.select("select.mirror option, select#mirror option").forEach { option ->
             val optVal = option.attr("value").trim()
@@ -436,12 +438,14 @@ class WatchAnimeWorld : Source() {
                         } else {
                             iframeSrc
                         }
-                        hosters.add(
-                            Hoster(
-                                hosterName = optText.ifBlank { "Default Server" },
-                                hosterUrl = "zpp|Multi|$finalSrc|$episodeUrl",
-                            ),
-                        )
+                        if (seenUrls.add(finalSrc)) {
+                            hosters.add(
+                                Hoster(
+                                    hosterName = optText.ifBlank { "Default Server" },
+                                    hosterUrl = "zpp|Multi|$finalSrc|$episodeUrl",
+                                ),
+                            )
+                        }
                     }
                 } catch (_: Exception) {}
             }
@@ -460,14 +464,16 @@ class WatchAnimeWorld : Source() {
             } else {
                 iframeUrl
             }
-            val type = if ("zpp" in finalIframe.lowercase()) "zpp" else "zephyr"
-            val suffix = if (zephyrIframes.size > 1) " ${index + 1}" else ""
-            hosters.add(
-                Hoster(
-                    hosterName = "Zephyr$suffix",
-                    hosterUrl = "$type|Multi|$finalIframe|$episodeUrl",
-                ),
-            )
+            if (seenUrls.add(finalIframe)) {
+                val type = if ("zpp" in finalIframe.lowercase()) "zpp" else "zephyr"
+                val suffix = if (zephyrIframes.size > 1) " ${index + 1}" else ""
+                hosters.add(
+                    Hoster(
+                        hosterName = "Zephyr$suffix",
+                        hosterUrl = "$type|Multi|$finalIframe|$episodeUrl",
+                    ),
+                )
+            }
         }
 
         // 3. Extract /api/player1.php?data= encoded server list
@@ -699,6 +705,15 @@ class WatchAnimeWorld : Source() {
                 ?: Regex("""["'](https?://[^"']+/wp-json/zpp/v1/hls[^"']+)["']""").find(html)
 
             val hlsUrl = hlsMatch?.groupValues?.get(1)?.replace("\\", "") ?: return emptyList()
+
+            val hlsResponse = client.newCall(
+                GET(hlsUrl, headersBuilder().set("Referer", playerUrl).build()),
+            ).execute()
+            val hlsBody = hlsResponse.bodyString()
+            if (!hlsBody.contains("#EXTM3U") && !hlsBody.contains("#EXT-X-STREAM-INF")) {
+                return emptyList()
+            }
+
             playlistUtils.extractFromHls(
                 playlistUrl = hlsUrl,
                 referer = playerUrl,
@@ -808,7 +823,7 @@ class WatchAnimeWorld : Source() {
         private val EPISODE_NUM_REGEX by lazy { Regex("""(\d+)x(\d+)""") }
         private val PLAYER1_REGEX by lazy { Regex("""/api/player1\.php\?data=([A-Za-z0-9+/=]+)""") }
         private val M3U8_REGEX by lazy { Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""", RegexOption.IGNORE_CASE) }
-        private val ZEPHYR_HASH_REGEX by lazy { Regex("""/video/([a-f0-9]+)""") }
+        private val ZEPHYR_HASH_REGEX by lazy { Regex("""(?:/video/|[?&]id=)([a-f0-9]+)""") }
         private val SUBTITLE_REGEX by lazy { Regex("""var playerjsSubtitle = "([^"]+)"""") }
         private val SUBTITLE_LINE_REGEX by lazy { Regex("""\[([^\]]+)\](.+)""") }
         private val EPISODE_SLUG_REGEX by lazy { Regex("""^(.+?)-(\d+)(?:x|-)(\d+)$""", RegexOption.IGNORE_CASE) }
