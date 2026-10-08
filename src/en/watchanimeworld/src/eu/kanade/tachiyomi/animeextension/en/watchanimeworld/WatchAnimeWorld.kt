@@ -72,7 +72,7 @@ class WatchAnimeWorld : Source() {
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/anime/?order=popular&page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/?post_type=anime&order=popular&page=$page", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -80,10 +80,9 @@ class WatchAnimeWorld : Source() {
             parseAnimeFromElement(element)
         }.distinctBy { it.url }
 
-        val url = response.request.url.toString()
-        val page = url.substringAfter("page=").substringBefore("&").toIntOrNull()
-            ?: url.substringAfter("/page/").substringBefore("/").toIntOrNull()
-            ?: url.substringAfter("paged=").substringBefore("&").toIntOrNull()
+        val page = response.request.url.queryParameter("page")?.toIntOrNull()
+            ?: response.request.url.queryParameter("paged")?.toIntOrNull()
+            ?: response.request.url.encodedPath.substringAfter("/page/").substringBefore("/").toIntOrNull()
             ?: 1
 
         val hasNextPage = document.select(".pagination a, .nav-links a, a.next, .hpage a.r").any {
@@ -95,7 +94,7 @@ class WatchAnimeWorld : Source() {
 
     // ============================== Latest ================================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/anime/?order=update&page=$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/?post_type=anime&order=update&page=$page", headers)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
@@ -127,15 +126,35 @@ class WatchAnimeWorld : Source() {
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotBlank()) {
         GET("$baseUrl/page/$page/?s=$query", headers)
     } else {
-        val genre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.getSelectedValue() ?: ""
         val language = filters.filterIsInstance<LanguageFilter>().firstOrNull()?.getSelectedValue() ?: ""
-        val network = filters.filterIsInstance<NetworkFilter>().firstOrNull()?.getSelectedValue() ?: ""
+        if (language.isNotEmpty()) {
+            GET("$baseUrl/language/$language/page/$page/", headers)
+        } else {
+            val genre = filters.filterIsInstance<GenreFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val status = filters.filterIsInstance<StatusFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val type = filters.filterIsInstance<TypeFilter>().firstOrNull()?.getSelectedValue() ?: ""
+            val order = filters.filterIsInstance<OrderFilter>().firstOrNull()?.getSelectedValue() ?: ""
 
-        when {
-            genre.isNotEmpty() -> GET("$baseUrl/category/genre/$genre/page/$page/", headers)
-            language.isNotEmpty() -> GET("$baseUrl/category/language/$language/page/$page/", headers)
-            network.isNotEmpty() -> GET("$baseUrl/category/network/$network/page/$page/", headers)
-            else -> popularAnimeRequest(page)
+            val urlBuilder = "$baseUrl/".toHttpUrl().newBuilder()
+                .addQueryParameter("post_type", "anime")
+                .addQueryParameter("page", page.toString())
+
+            if (genre.isNotEmpty()) {
+                urlBuilder.addQueryParameter("genre[]", genre)
+            }
+            if (status.isNotEmpty()) {
+                urlBuilder.addQueryParameter("status", status)
+            }
+            if (type.isNotEmpty()) {
+                urlBuilder.addQueryParameter("type", type)
+            }
+            if (order.isNotEmpty()) {
+                urlBuilder.addQueryParameter("order", order)
+            } else {
+                urlBuilder.addQueryParameter("order", "popular")
+            }
+
+            GET(urlBuilder.build().toString(), headers)
         }
     }
 
@@ -144,8 +163,10 @@ class WatchAnimeWorld : Source() {
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
         AnimeFilter.Header("Filters are ignored on text search"),
         GenreFilter(),
+        StatusFilter(),
+        TypeFilter(),
+        OrderFilter(),
         LanguageFilter(),
-        NetworkFilter(),
     )
 
     private class GenreFilter :
@@ -156,20 +177,36 @@ class WatchAnimeWorld : Source() {
         fun getSelectedValue(): String = GENRES[state].second
     }
 
+    private class StatusFilter :
+        AnimeFilter.Select<String>(
+            "Status",
+            STATUSES.map { it.first }.toTypedArray(),
+        ) {
+        fun getSelectedValue(): String = STATUSES[state].second
+    }
+
+    private class TypeFilter :
+        AnimeFilter.Select<String>(
+            "Type",
+            TYPES.map { it.first }.toTypedArray(),
+        ) {
+        fun getSelectedValue(): String = TYPES[state].second
+    }
+
+    private class OrderFilter :
+        AnimeFilter.Select<String>(
+            "Order by",
+            ORDERS.map { it.first }.toTypedArray(),
+        ) {
+        fun getSelectedValue(): String = ORDERS[state].second
+    }
+
     private class LanguageFilter :
         AnimeFilter.Select<String>(
             "Audio Language",
             LANGUAGES.map { it.first }.toTypedArray(),
         ) {
         fun getSelectedValue(): String = LANGUAGES[state].second
-    }
-
-    private class NetworkFilter :
-        AnimeFilter.Select<String>(
-            "Network",
-            NETWORKS.map { it.first }.toTypedArray(),
-        ) {
-        fun getSelectedValue(): String = NETWORKS[state].second
     }
 
     // =========================== Anime Details ============================
@@ -778,22 +815,68 @@ class WatchAnimeWorld : Source() {
 
         private val GENRES = listOf(
             Pair("All", ""),
+            Pair("Action", "action"),
             Pair("Adventure", "adventure"),
+            Pair("Comedy", "comedy"),
             Pair("Drama", "drama"),
-            Pair("Historical", "historical"),
+            Pair("Ecchi", "ecchi"),
+            Pair("Fantasy", "fantasy"),
+            Pair("Hentai", "hentai"),
+            Pair("Horror", "horror"),
+            Pair("Mahou Shoujo", "mahou-shoujo"),
+            Pair("Mecha", "mecha"),
+            Pair("Music", "music"),
+            Pair("Mystery", "mystery"),
+            Pair("Psychological", "psychological"),
             Pair("Romance", "romance"),
+            Pair("Sci-Fi", "sci-fi"),
+            Pair("Shounen", "shounen"),
+            Pair("Slice of Life", "slice-of-life"),
+            Pair("Sports", "sports"),
+            Pair("Supernatural", "supernatural"),
+            Pair("Thriller", "thriller"),
+        )
+
+        private val STATUSES = listOf(
+            Pair("All", ""),
+            Pair("Ongoing", "ongoing"),
+            Pair("Completed", "completed"),
+            Pair("Upcoming", "upcoming"),
+            Pair("Hiatus", "hiatus"),
+        )
+
+        private val TYPES = listOf(
+            Pair("All", ""),
+            Pair("TV Series", "tv"),
+            Pair("OVA", "ova"),
+            Pair("Movie", "movie"),
+            Pair("Live Action", "live action"),
+            Pair("Special", "special"),
+            Pair("BD", "bd"),
+            Pair("ONA", "ona"),
+            Pair("Music", "music"),
+        )
+
+        private val ORDERS = listOf(
+            Pair("Popular", "popular"),
+            Pair("Latest Update", "update"),
+            Pair("Latest Added", "latest"),
+            Pair("Rating", "rating"),
+            Pair("A-Z", "title"),
+            Pair("Z-A", "titlereverse"),
         )
 
         private val LANGUAGES = listOf(
             Pair("All", ""),
+            Pair("Bengali", "bengali"),
+            Pair("Chinese", "chinese"),
             Pair("English", "english"),
             Pair("Hindi", "hindi"),
             Pair("Japanese", "japanese"),
-        )
-
-        private val NETWORKS = listOf(
-            Pair("All", ""),
-            Pair("Netflix", "netflix"),
+            Pair("Kannada", "kannada"),
+            Pair("Malayalam", "malayalam"),
+            Pair("Tamil", "tamil"),
+            Pair("Telugu", "telugu"),
         )
 
         private const val PREF_SERVER_KEY = "preferred_server"
