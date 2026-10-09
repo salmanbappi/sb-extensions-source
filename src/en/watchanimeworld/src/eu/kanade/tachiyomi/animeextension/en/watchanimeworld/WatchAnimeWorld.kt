@@ -439,9 +439,14 @@ class WatchAnimeWorld : Source() {
                             iframeSrc
                         }
                         if (seenUrls.add(finalSrc)) {
+                            val serverName = if (optText.isBlank() || optText.equals("Default Server", ignoreCase = true)) {
+                                "Zephyrix"
+                            } else {
+                                optText
+                            }
                             hosters.add(
                                 Hoster(
-                                    hosterName = optText.ifBlank { "Default Server" },
+                                    hosterName = serverName,
                                     hosterUrl = "zpp|Multi|$finalSrc|$episodeUrl",
                                 ),
                             )
@@ -469,7 +474,7 @@ class WatchAnimeWorld : Source() {
                 val suffix = if (zephyrIframes.size > 1) " ${index + 1}" else ""
                 hosters.add(
                     Hoster(
-                        hosterName = "Zephyr$suffix",
+                        hosterName = "Zephyrix$suffix",
                         hosterUrl = "$type|Multi|$finalIframe|$episodeUrl",
                     ),
                 )
@@ -768,8 +773,8 @@ class WatchAnimeWorld : Source() {
             key = PREF_EXCLUDE_SERVERS_KEY,
             title = "Exclude Servers",
             summary = "Select servers to exclude from the video list",
-            entries = listOf("Zephyr", "Abyss"),
-            entryValues = listOf("Zephyr", "Abyss"),
+            entries = listOf("Zephyrix", "Zephyr", "Abyss"),
+            entryValues = listOf("Zephyrix", "Zephyr", "Abyss"),
             default = emptySet(),
         )
         screen.addSetPreference(
@@ -896,9 +901,9 @@ class WatchAnimeWorld : Source() {
 
         private const val PREF_SERVER_KEY = "preferred_server"
         private const val PREF_SERVER_TITLE = "Preferred Server"
-        private const val PREF_SERVER_DEFAULT = "Zephyr"
-        private val PREF_SERVER_ENTRIES = listOf("Zephyr", "Abyss")
-        private val PREF_SERVER_VALUES = listOf("Zephyr", "Abyss")
+        private const val PREF_SERVER_DEFAULT = "Zephyrix"
+        private val PREF_SERVER_ENTRIES = listOf("Zephyrix", "Zephyr", "Abyss")
+        private val PREF_SERVER_VALUES = listOf("Zephyrix", "Zephyr", "Abyss")
 
         private const val PREF_TYPE_KEY = "preferred_type"
         private const val PREF_TYPE_TITLE = "Preferred Audio Language"
