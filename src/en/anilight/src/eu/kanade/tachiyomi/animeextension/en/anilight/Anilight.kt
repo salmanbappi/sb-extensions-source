@@ -12,7 +12,6 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
@@ -41,8 +40,6 @@ class Anilight : Source() {
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     private val m3u8Integration by lazy { M3u8Integration(client) }
-
-    private val doodExtractor by lazy { DoodExtractor(client) }
 
     private val megaPlayExtractor by lazy { MegaPlayExtractor(client, playlistUtils) }
 
@@ -258,38 +255,28 @@ class Anilight : Source() {
 
         val response = client.newCall(GET("$API_BASE/watch/$slug", headers)).execute()
         val dto = response.parseAs<WatchResponseDto>(json)
-        val servers = dto.servers
+        val serversNew = fetchServersNew(slug)
 
+        // Since 2026-10 the API ships the provider roster per episode and per
+        // audio type through `serversNew`; the old `servers` object is gone.
         val providerMap = linkedMapOf<String, MutableList<String>>()
-        val tipMap = mutableMapOf<String, String>()
+        (serversNew.episodeServers(epNum) ?: FALLBACK_SERVERS).fillProviders(providerMap)
 
-        servers?.subProviders?.forEach { p ->
-            p.id?.let { pid ->
-                val typeLabel = if (p.tip?.contains("Soft Sub", ignoreCase = true) == true) "soft-sub" else "sub"
-                providerMap.getOrPut(pid) { mutableListOf() }.add(typeLabel)
-                p.tip?.let { tip -> if (pid !in tipMap) tipMap[pid] = tip }
-            }
+        // The API occasionally ships an empty roster; fall back to the full
+        // provider list the site itself offers.
+        if (providerMap.isEmpty()) {
+            FALLBACK_SERVERS.fillProviders(providerMap)
         }
 
-        servers?.dubProviders?.forEach { p ->
-            p.id?.let { pid ->
-                providerMap.getOrPut(pid) { mutableListOf() }.add("dub")
-                p.tip?.let { tip -> if (pid !in tipMap) tipMap[pid] = tip }
-            }
-        }
-
-        // The API roster carries internal/experimental entries the website
+        // The API roster can carry internal/experimental entries the website
         // hides from its own server picker.
         providerMap.keys
             .filter { id -> HIDDEN_PROVIDER_IDS.any { id.contains(it, ignoreCase = true) } }
-            .forEach { hidden ->
-                providerMap.remove(hidden)
-                tipMap.remove(hidden)
-            }
+            .forEach { hidden -> providerMap.remove(hidden) }
 
         // The site's own default player: a MegaPlay embed that exists per
         // episode (not per provider), so it is bolted onto the roster here
-        // exactly like the web player does.
+        // exactly like the web player does — which unshifts it as the default.
         val episodeDto = (dto.episodes ?: emptyList()).firstOrNull { it.episodeKey() == epNum }
         val embedSub = episodeDto?.embed_url?.sub.orEmpty()
         val embedDub = episodeDto?.embed_url?.dub.orEmpty()
@@ -298,30 +285,21 @@ class Anilight : Source() {
             if (embedDub.isNotBlank()) add("dub")
         }
 
-        // The API occasionally ships an empty `servers` object; fall back to
-        // the full provider roster the site itself offers.
-        if (providerMap.isEmpty()) {
-            FALLBACK_PROVIDERS.forEach { (pid, tip) ->
-                providerMap[pid] = mutableListOf("sub", "dub")
-                tipMap[pid] = tip
-            }
-        }
-
         if (embedTypes.isNotEmpty()) {
             providerMap[MEG_PROVIDER] = embedTypes.toMutableList()
-            tipMap[MEG_PROVIDER] = "Embed"
         }
 
-        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val prefServer = (preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT)
+            .takeIf { it in PROVIDER_VALUES } ?: PREF_SERVER_DEFAULT
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_KEY, emptySet())?.toSet().orEmpty()
 
         return providerMap
             .filterKeys { it !in excludedServers }
             .map { (providerId, types) ->
                 val displayName = providerId.replaceFirstChar { it.uppercase() }
-                val tip = tipMap[providerId]
+                val tip = if (providerId == MEG_PROVIDER) "Embed" else typesLabel(types)
                 Hoster(
-                    hosterName = if (tip.isNullOrBlank()) displayName else "$displayName · $tip",
+                    hosterName = "$displayName · $tip",
                     // megaplay embeds are per-episode rather than per-provider, so
                     // they ride along in two extra fields.
                     hosterUrl = "$animeId|$epNum|$providerId|${types.distinct().joinToString(",")}|$embedSub|$embedDub",
@@ -333,6 +311,29 @@ class Anilight : Source() {
 
     private fun EpisodeDto.episodeKey(): String = (number ?: 1f).let {
         if (it % 1f == 0f) it.toInt().toString() else it.toString()
+    }
+
+    /** `serversNew` keys are episode numbers; match loosely ("1" == "1.0"). */
+    private fun Map<String, EpisodeServersNewDto>?.episodeServers(epNum: String): EpisodeServersNewDto? {
+        this ?: return null
+        get(epNum)?.let { return it }
+        val target = epNum.toFloatOrNull() ?: return null
+        return entries.firstOrNull { it.key.toFloatOrNull() == target }?.value
+    }
+
+    private fun EpisodeServersNewDto.fillProviders(into: MutableMap<String, MutableList<String>>) {
+        listOf(TYPE_SOFT_SUB to sub, TYPE_HARD_SUB to hardsub, "dub" to dub)
+            .forEach { (type, ids) ->
+                ids?.forEach { pid -> into.getOrPut(pid) { mutableListOf() }.add(type) }
+            }
+    }
+
+    private fun typesLabel(types: List<String>): String = types.distinct().joinToString(", ") {
+        when (it) {
+            TYPE_SOFT_SUB -> "Soft Sub"
+            TYPE_HARD_SUB -> "Hard Sub"
+            else -> "Dub"
+        }
     }
 
     // ============================ Video Links =============================
@@ -382,19 +383,6 @@ class Anilight : Source() {
                 else -> "[Sub]"
             }
 
-            // Provider "vid" is an iframe-only DoodStream player that the site
-            // never proxies; it has to be unwrapped with the dood extractor.
-            if (providerId == VID_PROVIDER) {
-                return@parallelCatchingFlatMap (sourcesDto.sources ?: emptyList()).mapNotNull { src ->
-                    val embedUrl = src.url ?: return@mapNotNull null
-                    doodExtractor.videoFromUrl(
-                        url = embedUrl,
-                        prefix = audioBadge,
-                        externalSubs = subtitleTracks,
-                    )
-                }
-            }
-
             (sourcesDto.sources ?: emptyList()).flatMap { src ->
                 val rawUrl = src.url ?: return@flatMap emptyList()
                 // Providers round-robin their CDN hosts, and the one baked
@@ -415,6 +403,26 @@ class Anilight : Source() {
         return m3u8Integration.processVideoList(videos.sortVideos())
     }
 
+    private suspend fun fetchServersNew(slug: String): Map<String, EpisodeServersNewDto>? {
+        return try {
+            val response = client.newCall(GET("$API_BASE/watch/$slug/serversNew", headers)).execute()
+            if (!response.isSuccessful) return null
+            response.parseAs<Map<String, EpisodeServersNewDto>>(json)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * NOTE (2026-10-10): `/sources` (and `/sourceSpecial` for near/mello) now
+     * demands a Cloudflare Turnstile session — the web player solves the
+     * challenge, POSTs the token to `/sources/verify`, and replays the returned
+     * `sessionToken` as the `x-source-session` header. An in-app client cannot
+     * solve Turnstile, so these calls currently answer
+     * `403 {"error":"Missing Turnstile session token"}` and only the MegaPlay
+     * "meg" embed (which never touches `/sources`) plays. The flow is kept in
+     * case the gate relaxes.
+     */
     private suspend fun fetchSources(animeId: String, epNum: String, apiType: String, providerId: String): SourcesResponseDto? {
         val url = "$API_BASE/sources?id=${enc(animeId)}&epNum=${enc(epNum)}&type=${enc(apiType)}&providerId=${enc(providerId)}"
         return try {
@@ -445,7 +453,7 @@ class Anilight : Source() {
         providerId == "ryu" -> listOf(apiProxy("proxy/ryu", rawUrl))
 
         // otakuhg embed pages; the endpoint resolves the embed into a stream.
-        providerId == "light" || providerId == "rem" ->
+        providerId == "light" ->
             listOf("$API_BASE/proxy/light-rem?url=${enc(rawUrl)}&serverId=${enc(providerId)}")
 
         // The misa CDN rotates between a primary and five mirrors, and the
@@ -680,10 +688,10 @@ class Anilight : Source() {
             key = PREF_SERVER_KEY
             title = "Preferred Server"
             // Meg is the site's own default embed and exists for nearly every
-            // episode; l, misa, mello, rem and vid are the other consistently
-            // playable providers (verified live 2026-09-19). near is currently
-            // rate-limited at its origin and light/rem/raye drop episodes per
-            // show.
+            // episode. The API's per-episode roster (verified live 2026-10-10)
+            // serves misa/l/mello/raye soft-subbed and light/near/ryu hard-
+            // subbed; everything but meg currently sits behind the site's
+            // Turnstile session gate (see fetchSources).
             entries = PROVIDER_ENTRIES
             entryValues = PROVIDER_VALUES
             setDefaultValue(PREF_SERVER_DEFAULT)
@@ -718,50 +726,48 @@ class Anilight : Source() {
     companion object {
         private const val API_BASE = "https://api.anilight.live/api"
 
-        private const val VID_PROVIDER = "vid"
-
         private const val MEG_PROVIDER = "meg"
+
+        private const val TYPE_SOFT_SUB = "soft-sub"
+        private const val TYPE_HARD_SUB = "hard-sub"
 
         /** Entries the website hides from its own server picker. */
         private val HIDDEN_PROVIDER_IDS = listOf("yuki", "vee")
 
         private const val PEEK_BYTES = 64L * 1024L
 
-        /** Providers the site ships in `servers` as of 2026-09-19. */
-        private val FALLBACK_PROVIDERS = listOf(
-            "l" to "Soft Sub, Fast",
-            "light" to "Hard Sub, Fast",
-            "mello" to "Hard Sub, Fast",
-            "misa" to "Soft Sub, Fast",
-            "misora" to "Hard Sub, Fast",
-            "near" to "Hard Sub, Fast",
-            "raye" to "Soft Sub, Fast",
-            "rem" to "Soft Sub, Fast",
-            "ryu" to "Hard Sub, Fast",
-            "vid" to "Hard Sub, Embed",
+        /**
+         * Provider roster `serversNew` ships as of 2026-10-10, used when the
+         * endpoint answers empty: soft sub `l/mello/misa/raye`, hard sub
+         * `light/near/ryu`, and `l/light/misa/near/ryu` for dubs. "kira" exists
+         * in the website's own settings but has not been observed serving an
+         * episode yet.
+         */
+        private val FALLBACK_SERVERS = EpisodeServersNewDto(
+            sub = listOf("l", "mello", "misa", "raye"),
+            hardsub = listOf("light", "near", "ryu"),
+            dub = listOf("l", "light", "misa", "near", "ryu"),
         )
 
         /**
-         * Every server the site can expose, with the same labels the episode's
-         * server list shows. Shared by the "Preferred Server" and
+         * Every server the site can expose since 2026-10-10, labelled with the
+         * audio types it serves. Shared by the "Preferred Server" and
          * "Exclude Servers" pickers so the two can never drift apart.
          */
         private val PROVIDER_ENTRIES = arrayOf(
             "Meg · Embed",
-            "L · Soft Sub, Fast",
-            "Mello · Hard Sub, Fast",
-            "Misa · Soft Sub, Fast",
-            "Misora · Hard Sub, Fast",
-            "Near · Hard Sub, Fast",
-            "Raye · Soft Sub, Fast",
-            "Rem · Soft Sub, Fast",
-            "Ryu · Hard sub, Fast",
-            "Vid · Hard Sub, Embed",
-            "Light · Hard Sub, Fast",
+            "Kira · Soft Sub, Dub",
+            "L · Soft Sub, Dub",
+            "Light · Hard Sub, Dub",
+            "Mello · Soft Sub",
+            "Misa · Soft Sub, Dub",
+            "Near · Hard Sub, Dub",
+            "Raye · Soft Sub",
+            "Ryu · Hard Sub, Dub",
         )
 
         private val PROVIDER_VALUES = arrayOf(
-            "meg", "l", "mello", "misa", "misora", "near", "raye", "rem", "ryu", "vid", "light",
+            "meg", "kira", "l", "light", "mello", "misa", "near", "raye", "ryu",
         )
 
         /** Alternate origins the misa CDN rotates through. */
@@ -908,23 +914,16 @@ data class EpisodeDto(
 )
 
 @Serializable
-data class ProviderDto(
-    val id: String? = null,
-    val tip: String? = null,
-    val default: Boolean? = null,
-)
-
-@Serializable
-data class ServersDto(
-    val subProviders: List<ProviderDto>? = null,
-    val dubProviders: List<ProviderDto>? = null,
+data class EpisodeServersNewDto(
+    val sub: List<String>? = null,
+    val hardsub: List<String>? = null,
+    val dub: List<String>? = null,
 )
 
 @Serializable
 data class WatchResponseDto(
     val id: Long? = null,
     val episodes: List<EpisodeDto>? = null,
-    val servers: ServersDto? = null,
 )
 
 @Serializable
