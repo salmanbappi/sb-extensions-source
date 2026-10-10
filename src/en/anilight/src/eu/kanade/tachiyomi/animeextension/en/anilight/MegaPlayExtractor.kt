@@ -25,9 +25,9 @@ import javax.crypto.spec.SecretKeySpec
  *     plaintext is `{"file":"<master.m3u8>"}`.
  *  3. The key is the literal `"i?LMTAx0Q6,:}50U"` right-padded with zeroes to
  *     32 bytes and the IV is the literal `"W0;27ToaUpl_P%'c"`; the ciphertext
- *     is base64url. MegaPlay rotates this pair occasionally — if playback
- *     starts failing with a decrypt error, re-read `newclient.min.js` for the
- *     two literals next to `crypto.subtle.decrypt`.
+ *     is base64url. MegaPlay rotates this pair occasionally, so a decrypt
+ *     failure re-reads the current literals from `newclient.min.js` (the
+ *     `trustAesKey`/`trustAesIv` fallbacks) and retries.
  *
  * The m3u8 CDN behind it 403s unless the request carries the megaplay referer,
  * so every request from here does; that referer is also what the returned
@@ -97,7 +97,16 @@ class MegaPlayExtractor(
         return decryptFileUrl(enc)
     }
 
-    private fun decryptFileUrl(enc: String): String? = runCatching {
+    private fun decryptFileUrl(enc: String): String? {
+        decryptOnce(enc, keyMaterial, ivMaterial)?.let { return it }
+        // MegaPlay rotates the pair occasionally; the player script carries the
+        // current literals as the `trustAesKey`/`trustAesIv` fallbacks, so
+        // re-read them and retry once before giving up.
+        refreshKeyMaterial()
+        return decryptOnce(enc, keyMaterial, ivMaterial)
+    }
+
+    private fun decryptOnce(enc: String, key: ByteArray, iv: ByteArray): String? = runCatching {
         val data = Base64.decode(
             enc.replace('-', '+').replace('_', '/'),
             Base64.DEFAULT or Base64.NO_WRAP or Base64.NO_PADDING,
@@ -105,12 +114,35 @@ class MegaPlayExtractor(
         val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
         cipher.init(
             Cipher.DECRYPT_MODE,
-            SecretKeySpec(KEY, "AES"),
-            IvParameterSpec(IV),
+            SecretKeySpec(key, "AES"),
+            IvParameterSpec(iv),
         )
         val plain = String(cipher.doFinal(data), Charsets.UTF_8)
         plain.parseAs<MegaPlayFileDto>().file?.takeIf { it.isNotBlank() }
     }.getOrNull()
+
+    /** Re-reads the literals from `lib/newclient.min.js`, keeping the current pair on failure. */
+    private fun refreshKeyMaterial() = runCatching {
+        val js = client.newCall(GET("$MEGAPLAY/lib/newclient.min.js", pageHeaders)).execute()
+            .use { it.body.string() }
+        KEY_REGEX.find(js)?.literal(1)?.takeIf { it.isNotBlank() }?.let {
+            keyMaterial = it.toByteArray(Charsets.UTF_8).copyOf(32)
+        }
+        IV_REGEX.find(js)?.literal(1)?.let { literal ->
+            val bytes = literal.toByteArray(Charsets.UTF_8)
+            if (bytes.size == 16) ivMaterial = bytes
+        }
+    }.let { }
+
+    /** The literal is in group 1 for double quotes, group 2 for single quotes. */
+    private fun MatchResult.literal(group: Int): String =
+        groupValues[group].ifEmpty { groupValues[group + 1] }
+
+    @Volatile
+    private var keyMaterial: ByteArray = DEFAULT_KEY
+
+    @Volatile
+    private var ivMaterial: ByteArray = DEFAULT_IV
 
     private val pageHeaders: Headers by lazy {
         Headers.Builder()
@@ -138,10 +170,16 @@ class MegaPlayExtractor(
         val STREAM_ID_REGEX = Regex("""data-id=["']([^"']+)["']""")
 
         /** `new TextEncoder().encode("i?LMTAx0Q6,:}50U")` zero-padded to 32 bytes. */
-        val KEY: ByteArray = "i?LMTAx0Q6,:}50U".toByteArray(Charsets.UTF_8).copyOf(32)
+        val DEFAULT_KEY: ByteArray = "i?LMTAx0Q6,:}50U".toByteArray(Charsets.UTF_8).copyOf(32)
 
         /** `new TextEncoder().encode("W0;27ToaUpl_P%'c")` */
-        val IV: ByteArray = "W0;27ToaUpl_P%'c".toByteArray(Charsets.UTF_8)
+        val DEFAULT_IV: ByteArray = "W0;27ToaUpl_P%'c".toByteArray(Charsets.UTF_8)
+
+        /** `e.pick(["trustAesKey","TRUST_AES_KEY"],"<literal>")` in newclient.min.js. */
+        val KEY_REGEX = Regex("""\[\s*["']trustAesKey["']\s*,\s*["']TRUST_AES_KEY["']\s*\]\s*,\s*(?:"([^"]*)"|'([^']*)')""")
+
+        /** `e.pick(["trustAesIv","TRUST_AES_IV"],"<literal>")` in newclient.min.js. */
+        val IV_REGEX = Regex("""\[\s*["']trustAesIv["']\s*,\s*["']TRUST_AES_IV["']\s*\]\s*,\s*(?:"([^"]*)"|'([^']*)')""")
     }
 }
 

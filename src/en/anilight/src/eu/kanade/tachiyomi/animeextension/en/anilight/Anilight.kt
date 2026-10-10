@@ -45,6 +45,11 @@ class Anilight : Source() {
 
     private val streamProxy by lazy { AniLightStreamProxy(client) }
 
+    private val sessionMinter by lazy { TurnstileSessionMinter() }
+
+    @Volatile
+    private var sourceSession: String? = null
+
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
             // The upstream API allows 100 req/min and answers 429 beyond that.
@@ -301,8 +306,10 @@ class Anilight : Source() {
                 Hoster(
                     hosterName = "$displayName · $tip",
                     // megaplay embeds are per-episode rather than per-provider, so
-                    // they ride along in two extra fields.
-                    hosterUrl = "$animeId|$epNum|$providerId|${types.distinct().joinToString(",")}|$embedSub|$embedDub",
+                    // they ride along in two extra fields; the slug rides along so
+                    // getVideoList can open the watch page when it has to mint a
+                    // Turnstile session.
+                    hosterUrl = "$animeId|$epNum|$providerId|${types.distinct().joinToString(",")}|$embedSub|$embedDub|$slug",
                 )
             }.sortedByDescending { it.providerId() == prefServer }
     }
@@ -348,6 +355,7 @@ class Anilight : Source() {
         val types = parts[3].split(",").filter { it.isNotBlank() }
         val embedSub = parts.getOrNull(4).orEmpty()
         val embedDub = parts.getOrNull(5).orEmpty()
+        val slug = parts.getOrNull(6).orEmpty()
 
         // MegaPlay is a per-episode embed, not an API provider: it never sees
         // `/sources`, and it brings its own subtitle tracks.
@@ -364,7 +372,7 @@ class Anilight : Source() {
         val videos = types.parallelCatchingFlatMap { rawType ->
             val apiType = if (rawType.equals("dub", ignoreCase = true)) "dub" else "sub"
 
-            val sourcesDto = fetchSources(animeId, epNum, apiType, providerId)
+            val sourcesDto = fetchSources(animeId, epNum, apiType, providerId, slug)
                 ?: return@parallelCatchingFlatMap emptyList<Video>()
 
             val subtitleTracks = (sourcesDto.tracks ?: emptyList())
@@ -414,24 +422,71 @@ class Anilight : Source() {
     }
 
     /**
-     * NOTE (2026-10-10): `/sources` (and `/sourceSpecial` for near/mello) now
-     * demands a Cloudflare Turnstile session — the web player solves the
-     * challenge, POSTs the token to `/sources/verify`, and replays the returned
-     * `sessionToken` as the `x-source-session` header. An in-app client cannot
-     * solve Turnstile, so these calls currently answer
-     * `403 {"error":"Missing Turnstile session token"}` and only the MegaPlay
-     * "meg" embed (which never touches `/sources`) plays. The flow is kept in
-     * case the gate relaxes.
+     * `/sources` (and `/sourceSpecial` for near/mello) demand a Cloudflare
+     * Turnstile session: the website solves its Turnstile widget, POSTs the
+     * token to `/sources/verify`, and replays the returned `sessionToken` as
+     * the `x-source-session` header. Without one the API answers
+     * `403 {"error":"Missing Turnstile session token"}`.
+     *
+     * [TurnstileSessionMinter] reproduces that flow in a WebView, so the
+     * session is minted on demand, cached (pref + memory), and re-minted once
+     * when the API reports it as invalid or expired.
      */
-    private suspend fun fetchSources(animeId: String, epNum: String, apiType: String, providerId: String): SourcesResponseDto? {
+    private suspend fun fetchSources(
+        animeId: String,
+        epNum: String,
+        apiType: String,
+        providerId: String,
+        slug: String,
+    ): SourcesResponseDto? {
         val url = "$API_BASE/sources?id=${enc(animeId)}&epNum=${enc(epNum)}&type=${enc(apiType)}&providerId=${enc(providerId)}"
-        return try {
-            val response = client.newCall(GET(url, headers)).execute()
-            if (!response.isSuccessful) return null
-            response.parseAs<SourcesResponseDto>(json)
-        } catch (_: Exception) {
-            null
+        // `sourceSpecial` (near/mello) sits behind the same session gate.
+        val endpoint = if (providerId in SOURCE_SPECIAL_PROVIDERS) {
+            url.replace("/sources?", "/sourceSpecial?")
+        } else {
+            url
         }
+
+        // First attempt uses the cached session; on a session-flavoured 403 it
+        // is dropped and re-minted once, mirroring the website's own recovery.
+        repeat(2) { attempt ->
+            val session = currentSession() ?: mintSession(slug, epNum, providerId)
+            val callHeaders = if (session.isNullOrBlank()) {
+                headers
+            } else {
+                headers.newBuilder().set("x-source-session", session).build()
+            }
+            try {
+                val response = client.newCall(GET(endpoint, callHeaders)).execute()
+                if (response.isSuccessful) return response.parseAs<SourcesResponseDto>(json)
+                if (response.code != 403 || attempt > 0) return null
+                // Invalid or expired session: forget it so the next attempt
+                // mints a fresh one.
+                sourceSession = null
+                preferences.edit().remove(PREF_SESSION_KEY).apply()
+            } catch (_: Exception) {
+                return null
+            }
+        }
+        return null
+    }
+
+    /** Cached session token (memory first, persisted across app launches). */
+    private fun currentSession(): String? {
+        sourceSession?.let { return it }
+        return preferences.getString(PREF_SESSION_KEY, null)?.also { sourceSession = it }
+    }
+
+    private fun mintSession(slug: String, epNum: String, providerId: String): String? = synchronized(this) {
+        currentSession()?.let { return it }
+        if (slug.isBlank()) return null
+        // Any watch page works — the session is site-wide — but the page only
+        // mounts its Turnstile widget for a non-meg server selection.
+        val watchUrl = "$baseUrl/watch/$slug?ep=${enc(epNum)}&server=${enc(providerId)}&lang=sub"
+        val token = sessionMinter.mint(watchUrl) ?: return null
+        preferences.edit().putString(PREF_SESSION_KEY, token).apply()
+        sourceSession = token
+        token
     }
 
     /**
@@ -690,8 +745,9 @@ class Anilight : Source() {
             // Meg is the site's own default embed and exists for nearly every
             // episode. The API's per-episode roster (verified live 2026-10-10)
             // serves misa/l/mello/raye soft-subbed and light/near/ryu hard-
-            // subbed; everything but meg currently sits behind the site's
-            // Turnstile session gate (see fetchSources).
+            // subbed. Everything but meg sits behind the site's Turnstile
+            // session gate, which fetchSources clears with a WebView-minted
+            // session (see TurnstileSessionMinter).
             entries = PROVIDER_ENTRIES
             entryValues = PROVIDER_VALUES
             setDefaultValue(PREF_SERVER_DEFAULT)
@@ -800,6 +856,12 @@ class Anilight : Source() {
         private const val PREF_SERVER_KEY = "pref_server"
 
         private const val PREF_EXCLUDE_KEY = "pref_exclude_servers"
+
+        /** Persisted Turnstile session token (see [TurnstileSessionMinter]). */
+        private const val PREF_SESSION_KEY = "pref_turnstile_session"
+
+        /** Providers served through `/sourceSpecial` instead of `/sources`. */
+        private val SOURCE_SPECIAL_PROVIDERS = setOf("near", "mello")
 
         // MegaPlay is what the website itself selects by default, and it is
         // the only source that exists for essentially every episode.
