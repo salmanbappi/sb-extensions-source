@@ -135,8 +135,7 @@ class MegaPlayExtractor(
     }.let { }
 
     /** The literal is in group 1 for double quotes, group 2 for single quotes. */
-    private fun MatchResult.literal(group: Int): String =
-        groupValues[group].ifEmpty { groupValues[group + 1] }
+    private fun MatchResult.literal(group: Int): String = groupValues[group].ifEmpty { groupValues[group + 1] }
 
     @Volatile
     private var keyMaterial: ByteArray = DEFAULT_KEY
