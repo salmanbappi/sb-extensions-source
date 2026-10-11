@@ -71,6 +71,7 @@ class WebViewStreamResolver {
                     if (url.startsWith("blob:") || url.startsWith("data:")) return null
                     when {
                         isSubtitle(url) -> if (!subtitles.contains(url)) subtitles.add(url)
+
                         isMedia(url) && !media.contains(url) -> {
                             media.add(url)
                             firstMedia.countDown()
