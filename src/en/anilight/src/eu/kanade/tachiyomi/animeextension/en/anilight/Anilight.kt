@@ -45,10 +45,7 @@ class Anilight : Source() {
 
     private val streamProxy by lazy { AniLightStreamProxy(client) }
 
-    private val sessionMinter by lazy { TurnstileSessionMinter() }
-
-    @Volatile
-    private var sourceSession: String? = null
+    private val streamResolver by lazy { WebViewStreamResolver() }
 
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
@@ -349,7 +346,6 @@ class Anilight : Source() {
         val parts = hoster.hosterUrl.split("|")
         if (parts.size < 4) return emptyList()
 
-        val animeId = parts[0]
         val epNum = parts[1]
         val providerId = parts[2]
         val types = parts[3].split(",").filter { it.isNotBlank() }
@@ -369,46 +365,75 @@ class Anilight : Source() {
             return m3u8Integration.processVideoList(megaVideos.sortVideos())
         }
 
-        val videos = types.parallelCatchingFlatMap { rawType ->
-            val apiType = if (rawType.equals("dub", ignoreCase = true)) "dub" else "sub"
+        if (slug.isBlank()) return emptyList()
 
-            val sourcesDto = fetchSources(animeId, epNum, apiType, providerId, slug)
-                ?: return@parallelCatchingFlatMap emptyList<Video>()
-
-            val subtitleTracks = (sourcesDto.tracks ?: emptyList())
-                .filterNot { it.kind.equals("thumbnails", ignoreCase = true) }
-                .mapNotNull { track ->
-                    val subUrl = track.url ?: return@mapNotNull null
-                    Track(
-                        url = proxyCaption(subUrl, providerId),
-                        lang = track.label ?: track.lang ?: "English",
-                    )
-                }
-
+        // Every non-embed provider sits behind the site's Turnstile session
+        // gate: `/sources` answers `403 {"error":"Missing Turnstile session
+        // token"}` unless the request replays a session only their widget can
+        // mint. Instead of replicating that handshake, the website's own player
+        // is used as the resolver — the watch page is opened with
+        // `?server=<provider>`, autoplays that server, and every media request
+        // it makes is captured (see [WebViewStreamResolver]).
+        val deadline = System.currentTimeMillis() + WEBVIEW_BUDGET_MS
+        val videos = types.flatMap { rawType ->
+            val isDub = rawType.equals("dub", ignoreCase = true)
             val audioBadge = when {
-                apiType == "dub" -> "[Dub]"
-                rawType.equals("soft-sub", ignoreCase = true) || subtitleTracks.isNotEmpty() -> "[Soft Sub]"
+                isDub -> "[Dub]"
+                rawType.equals(TYPE_SOFT_SUB, ignoreCase = true) -> "[Soft Sub]"
                 else -> "[Sub]"
             }
-
-            (sourcesDto.sources ?: emptyList()).flatMap { src ->
-                val rawUrl = src.url ?: return@flatMap emptyList()
-                // Providers round-robin their CDN hosts, and the one baked
-                // into the API response is not always the live one — walk the
-                // candidate list the website itself builds and keep the first
-                // that actually answers with media. A candidate blowing up
-                // must not take its siblings down with it.
-                try {
-                    proxyCandidates(rawUrl, providerId).firstNotNullOfOrNull { candidate ->
-                        videosFromCandidate(candidate, audioBadge, subtitleTracks, src.quality).ifEmpty { null }
-                    } ?: emptyList()
-                } catch (_: Exception) {
-                    emptyList()
-                }
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0) {
+                emptyList<Video>()
+            } else {
+                webPlayerVideos(
+                    slug = slug,
+                    epNum = epNum,
+                    providerId = providerId,
+                    lang = if (isDub) "dub" else "sub",
+                    audioBadge = audioBadge,
+                    timeoutMs = minOf(remaining, RESOLVE_TIMEOUT_MS),
+                )
             }
         }
 
         return m3u8Integration.processVideoList(videos.sortVideos())
+    }
+
+    /**
+     * Resolves [providerId] through the site's own player.
+     *
+     * Each captured candidate goes through the same probe the API path used to
+     * feed, so a rotated worker host or a single-use URL cannot lose the video.
+     * If every probe comes back empty the captured URL is still offered to the
+     * player, because that is literally what the website itself played.
+     */
+    private suspend fun webPlayerVideos(
+        slug: String,
+        epNum: String,
+        providerId: String,
+        lang: String,
+        audioBadge: String,
+        timeoutMs: Long,
+    ): List<Video> {
+        val watchUrl = "$baseUrl/watch/$slug?ep=${enc(epNum)}&server=${enc(providerId)}&lang=$lang"
+        val resolved = streamResolver.resolve(watchUrl, timeoutMs)
+        if (resolved.media.isEmpty()) return emptyList()
+
+        val subtitleTracks = resolved.subtitles.map { Track(url = it, lang = "English") }
+
+        resolved.media.firstNotNullOfOrNull { candidate ->
+            videosFromCandidate(candidate, audioBadge, subtitleTracks, null).ifEmpty { null }
+        }?.let { return it }
+
+        return resolved.media.take(1).map { url ->
+            Video(
+                videoUrl = url.withM3u8FragmentIfNeeded(),
+                videoTitle = "Auto $audioBadge",
+                headers = streamHeaders(),
+                subtitleTracks = subtitleTracks,
+            )
+        }
     }
 
     private suspend fun fetchServersNew(slug: String): Map<String, EpisodeServersNewDto>? {
@@ -419,143 +444,6 @@ class Anilight : Source() {
         } catch (_: Exception) {
             null
         }
-    }
-
-    /**
-     * `/sources` (and `/sourceSpecial` for near/mello) demand a Cloudflare
-     * Turnstile session: the website solves its Turnstile widget, POSTs the
-     * token to `/sources/verify`, and replays the returned `sessionToken` as
-     * the `x-source-session` header. Without one the API answers
-     * `403 {"error":"Missing Turnstile session token"}`.
-     *
-     * [TurnstileSessionMinter] reproduces that flow in a WebView, so the
-     * session is minted on demand, cached (pref + memory), and re-minted once
-     * when the API reports it as invalid or expired.
-     */
-    private suspend fun fetchSources(
-        animeId: String,
-        epNum: String,
-        apiType: String,
-        providerId: String,
-        slug: String,
-    ): SourcesResponseDto? {
-        val url = "$API_BASE/sources?id=${enc(animeId)}&epNum=${enc(epNum)}&type=${enc(apiType)}&providerId=${enc(providerId)}"
-        // `sourceSpecial` (near/mello) sits behind the same session gate.
-        val endpoint = if (providerId in SOURCE_SPECIAL_PROVIDERS) {
-            url.replace("/sources?", "/sourceSpecial?")
-        } else {
-            url
-        }
-
-        // First attempt uses the cached session; on a session-flavoured 403 it
-        // is dropped and re-minted once, mirroring the website's own recovery.
-        repeat(2) { attempt ->
-            val session = currentSession() ?: mintSession(slug, epNum, providerId)
-            val callHeaders = if (session.isNullOrBlank()) {
-                headers
-            } else {
-                headers.newBuilder().set("x-source-session", session).build()
-            }
-            try {
-                val response = client.newCall(GET(endpoint, callHeaders)).execute()
-                if (response.isSuccessful) return response.parseAs<SourcesResponseDto>(json)
-                if (response.code != 403 || attempt > 0) return null
-                // Invalid or expired session: forget it so the next attempt
-                // mints a fresh one.
-                sourceSession = null
-                preferences.edit().remove(PREF_SESSION_KEY).apply()
-            } catch (_: Exception) {
-                return null
-            }
-        }
-        return null
-    }
-
-    /** Cached session token (memory first, persisted across app launches). */
-    private fun currentSession(): String? {
-        sourceSession?.let { return it }
-        return preferences.getString(PREF_SESSION_KEY, null)?.also { sourceSession = it }
-    }
-
-    private fun mintSession(slug: String, epNum: String, providerId: String): String? = synchronized(this) {
-        currentSession()?.let { return it }
-        if (slug.isBlank()) return null
-        // Any watch page works — the session is site-wide — but the page only
-        // mounts its Turnstile widget for a non-meg server selection.
-        val watchUrl = "$baseUrl/watch/$slug?ep=${enc(epNum)}&server=${enc(providerId)}&lang=sub"
-        val token = sessionMinter.mint(watchUrl) ?: return null
-        preferences.edit().putString(PREF_SESSION_KEY, token).apply()
-        sourceSession = token
-        token
-    }
-
-    /**
-     * Turns a raw stream URL into the list of proxy URLs the AniLight web
-     * player itself would try, in order.
-     *
-     * The site removed its public `/proxy` + `/lb/<server>/proxy` shims from
-     * the page markup and now resolves them server-side through a rotating
-     * pool of Cloudflare Workers (`pro-lrvp-*`, `pro-mvp-*`, `pro-mevp-*`, …).
-     * Those worker hostnames change per request, so the only stable entry
-     * point is the API proxy — hardcoding a worker is guaranteed to rot.
-     */
-    private fun proxyCandidates(rawUrl: String, providerId: String): List<String> = when {
-        // krussdomi-hosted CDNs, including the per-provider krussdomi
-        // sub-account that serves soft subs.
-        providerId == "l" || providerId == "raye" -> listOf(apiProxy("lb/$providerId/proxy", rawUrl))
-
-        // animegg progressive MP4s; the worker rewrites them onto vidcache.
-        providerId == "ryu" -> listOf(apiProxy("proxy/ryu", rawUrl))
-
-        // otakuhg embed pages; the endpoint resolves the embed into a stream.
-        providerId == "light" ->
-            listOf("$API_BASE/proxy/light-rem?url=${enc(rawUrl)}&serverId=${enc(providerId)}")
-
-        // The misa CDN rotates between a primary and five mirrors, and the
-        // primary 404s more often than not, so every origin gets a turn.
-        providerId == "misa" -> misaCandidates(rawUrl).map { apiProxy("lb/misa/proxy", it) }
-
-        rawUrl.contains("hls.anidb.app") -> listOf(apiProxy("lb/near/proxy", rawUrl))
-
-        rawUrl.contains("?t.m3u8") -> listOf(apiProxy("lb/mello/proxy", rawUrl))
-
-        rawUrl.contains("bd.24stream.xyz") || rawUrl.contains("bd.aniwatchtv.site") ->
-            listOf(apiProxy("proxy", rawUrl.replace("bd.24stream.xyz", "bd.aniwatchtv.site")))
-
-        else -> listOf(rawUrl)
-    }
-
-    private fun misaCandidates(rawUrl: String): List<String> {
-        val origin = MISA_MIRRORS.firstOrNull { rawUrl.startsWith(it, ignoreCase = true) }
-        if (origin != null) return listOf(rawUrl)
-
-        val base = rawUrl.toHttpUrlOrNull() ?: return listOf(rawUrl)
-        return buildList {
-            add(rawUrl)
-            MISA_MIRRORS.forEach { mirror ->
-                add(base.newBuilder().scheme("https").host(mirror.substringAfter("//")).port(443).build().toString())
-            }
-        }
-    }
-
-    private fun apiProxy(path: String, target: String): String = "$API_BASE/$path?url=${enc(target)}"
-
-    /**
-     * Subtitles that 403 on direct fetches are served through a proxy.
-     *
-     * krussdomi's caption CDN (`subst.` / `subbl.krussdomi.com`) rejects
-     * everything but its own worker — including the site's `/proxy/captions`
-     * route, which answers `Proxy failed with status 403`. Provider "l" uses
-     * `subst.` for every track, which is why its subtitle list renders but
-     * every download failed.
-     */
-    private fun proxyCaption(subUrl: String, providerId: String): String = when {
-        subUrl.contains(KROSSDOMI_HOST) ->
-            apiProxy("lb/${if (providerId == "raye") "raye" else "l"}/proxy", subUrl)
-
-        CAPTION_PROXY_HOSTS.any { subUrl.contains(it) } -> apiProxy("proxy/captions", subUrl)
-
-        else -> subUrl
     }
 
     private suspend fun videosFromCandidate(
@@ -746,8 +634,8 @@ class Anilight : Source() {
             // episode. The API's per-episode roster (verified live 2026-10-10)
             // serves misa/l/mello/raye soft-subbed and light/near/ryu hard-
             // subbed. Everything but meg sits behind the site's Turnstile
-            // session gate, which fetchSources clears with a WebView-minted
-            // session (see TurnstileSessionMinter).
+            // session gate; those are resolved by letting the website's own
+            // player play them in a WebView (see WebViewStreamResolver).
             entries = PROVIDER_ENTRIES
             entryValues = PROVIDER_VALUES
             setDefaultValue(PREF_SERVER_DEFAULT)
@@ -826,26 +714,12 @@ class Anilight : Source() {
             "meg", "kira", "l", "light", "mello", "misa", "near", "raye", "ryu",
         )
 
-        /** Alternate origins the misa CDN rotates through. */
-        private val MISA_MIRRORS = listOf(
-            "https://ncdn.imgnex.top",
-            "https://f0ja7.zhaevor.top",
-            "https://bb.akirax.buzz",
-            "https://xdw5v.qeltrix.top",
-            "https://fetch.nexabloom.top",
-        )
-
-        /**
-         * Caption CDNs that answer 403 to anonymous fetches. krussdomi is
-         * handled separately because it needs its own worker rather than the
-         * `/proxy/captions` route.
-         */
-        private val CAPTION_PROXY_HOSTS = listOf("1oe.lostproject.club")
-
-        private const val KROSSDOMI_HOST = "krussdomi.com"
-
         /** Chunk responses that mean the CDN node is gone rather than flaky. */
         private val DEAD_CHUNK_CODES = setOf(404, 410)
+
+        /** Per-run WebView budget and the ceiling for one audio type. */
+        private const val WEBVIEW_BUDGET_MS = 70_000L
+        private const val RESOLVE_TIMEOUT_MS = 40_000L
 
         private const val PREF_TITLE_LANG_KEY = "pref_title_lang"
         private const val PREF_TITLE_LANG_DEFAULT = "english"
@@ -856,12 +730,6 @@ class Anilight : Source() {
         private const val PREF_SERVER_KEY = "pref_server"
 
         private const val PREF_EXCLUDE_KEY = "pref_exclude_servers"
-
-        /** Persisted Turnstile session token (see [TurnstileSessionMinter]). */
-        private const val PREF_SESSION_KEY = "pref_turnstile_session"
-
-        /** Providers served through `/sourceSpecial` instead of `/sources`. */
-        private val SOURCE_SPECIAL_PROVIDERS = setOf("near", "mello")
 
         // MegaPlay is what the website itself selects by default, and it is
         // the only source that exists for essentially every episode.
@@ -986,28 +854,6 @@ data class EpisodeServersNewDto(
 data class WatchResponseDto(
     val id: Long? = null,
     val episodes: List<EpisodeDto>? = null,
-)
-
-@Serializable
-data class SourceStreamDto(
-    val url: String? = null,
-    val quality: String? = null,
-)
-
-@Serializable
-data class TrackDto(
-    val id: String? = null,
-    val url: String? = null,
-    val kind: String? = null,
-    val lang: String? = null,
-    val label: String? = null,
-    val default: Boolean? = null,
-)
-
-@Serializable
-data class SourcesResponseDto(
-    val sources: List<SourceStreamDto>? = null,
-    val tracks: List<TrackDto>? = null,
 )
 
 @Serializable
