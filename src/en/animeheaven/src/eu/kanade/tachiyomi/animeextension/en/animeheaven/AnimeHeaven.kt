@@ -266,33 +266,39 @@ class AnimeHeaven : Source() {
             )
             .build()
 
-        val html = noCookieClient.newCall(gateRequest).execute().body.string()
+        val response = noCookieClient.newCall(gateRequest).execute()
+        val doc = response.asJsoup()
 
         val sourceUrls = mutableListOf<String>()
 
-        // 1. Grab full video URLs from <source> tags
-        val sourceRegex = Regex("""<source[^>]+src=['"]([^'"]+\.mp4[^'"]*)['"]""", RegexOption.IGNORE_CASE)
-        sourceRegex.findAll(html).forEach { m ->
-            val src = m.groupValues[1]
-            if (src.isNotBlank()) sourceUrls.add(src)
+        // 1. Grab full video URLs from <source> tags inside <video> (ignores HTML comments / honeypots)
+        doc.select("video source").forEach { element ->
+            val src = element.absUrl("src").ifBlank { element.attr("src") }
+            if (src.isNotBlank() && !src.contains("ax.animeheaven.me")) {
+                sourceUrls.add(src)
+            }
         }
 
         // 2. Fallback: grab from download anchor
         if (sourceUrls.isEmpty()) {
-            val dlMatch = Regex("""href=['"](https?://[a-z0-9.]*animeheaven\.me/video\.mp4\?[^'"]+)['"]""").find(html)
-            if (dlMatch != null) {
-                sourceUrls.add(dlMatch.groupValues[1])
+            val dlUrl = doc.selectFirst("a[href*=/video.mp4?]")?.absUrl("href")
+            if (!dlUrl.isNullOrBlank() && !dlUrl.contains("ax.animeheaven.me")) {
+                sourceUrls.add(dlUrl)
             }
         }
 
         // 3. Fallback: reconstruct from token match
         if (sourceUrls.isEmpty()) {
+            val html = doc.html()
             val tokenMatch = Regex("""(?:https?://([a-z0-9.]+)/)?video\.mp4\?([a-f0-9]+)&([a-f0-9]+)""").find(html)
             if (tokenMatch != null) {
                 val host = tokenMatch.groupValues[1].ifBlank { "ca.animeheaven.me" }
                 val t1 = tokenMatch.groupValues[2]
                 val t2 = tokenMatch.groupValues[3]
-                sourceUrls.add("https://$host/video.mp4?$t1&$t2")
+                val url = "https://$host/video.mp4?$t1&$t2"
+                if (!url.contains("ax.animeheaven.me")) {
+                    sourceUrls.add(url)
+                }
             }
         }
 
@@ -355,8 +361,8 @@ class AnimeHeaven : Source() {
             title = "Preferred Server",
             default = PREF_SERVER_DEFAULT,
             summary = "%s",
-            entries = listOf("Auto", "Server 1", "Server 2"),
-            entryValues = listOf("auto", "Server 1", "Server 2"),
+            entries = listOf("Auto", "Server 1", "Server 2", "Server 3"),
+            entryValues = listOf("auto", "Server 1", "Server 2", "Server 3"),
         )
         screen.addSetPreference(
             key = PREF_EXCLUDE_SERVERS_KEY,
