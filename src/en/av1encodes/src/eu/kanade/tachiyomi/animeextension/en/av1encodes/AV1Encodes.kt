@@ -63,10 +63,11 @@ class AV1Encodes : Source() {
         .set("Upgrade-Insecure-Requests", "1")
         .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
 
-    private fun getVideoHeaders(): Headers = Headers.Builder()
-        .set("User-Agent", DESKTOP_UA)
-        .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
-        .build()
+    private fun getVideoHeaders(): Headers =
+        Headers.Builder()
+            .set("User-Agent", DESKTOP_UA)
+            .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
+            .build()
 
     private val noRedirectClient: OkHttpClient by lazy {
         client.newBuilder()
@@ -659,6 +660,7 @@ class AV1Encodes : Source() {
         }
 
         val videos = mutableListOf<Video>()
+        val ext = if (filename.endsWith(".mp4", ignoreCase = true)) ".mp4" else ".mkv"
         val resLabel = Regex("""\[(\d+p)]""").find(filename)?.groupValues?.get(1) ?: prefQuality
         val audioTag = Regex("""\[(Dual|Sub|Dub)]""", RegexOption.IGNORE_CASE)
             .find(filename)?.groupValues?.get(1) ?: ""
@@ -698,8 +700,8 @@ class AV1Encodes : Source() {
                 val primaryCdnUrl = resolvedStream ?: resolvedWatch ?: resolvedDl
 
                 if (primaryCdnUrl != null) {
-                    val dlUrl = toDlUrl(resolvedDl ?: primaryCdnUrl)
-                    val streamUrl = toStreamUrl(resolvedStream ?: primaryCdnUrl)
+                    val dlUrl = toDlUrl(resolvedDl ?: primaryCdnUrl, ext)
+                    val streamUrl = toStreamUrl(resolvedStream ?: primaryCdnUrl, ext)
 
                     Log.d(TAG, "extractAllVideos: Direct DL → $dlUrl")
                     videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL", headers = vHeaders))
@@ -739,8 +741,8 @@ class AV1Encodes : Source() {
             if (!rawLink.isNullOrBlank()) {
                 val resolved = resolveRedirect(rawLink) ?: rawLink
                 if (resolved.contains("/stream/") || resolved.contains("/watch/") || resolved.contains("/dash/") || resolved.contains("/dl/")) {
-                    val dlUrl = toDlUrl(resolved)
-                    val streamUrl = toStreamUrl(resolved)
+                    val dlUrl = toDlUrl(resolved, ext)
+                    val streamUrl = toStreamUrl(resolved, ext)
                     videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL", headers = vHeaders))
                     videos.add(Video(videoUrl = streamUrl, videoTitle = "$qualLabel · Stream", headers = vHeaders))
                 }
@@ -768,11 +770,10 @@ class AV1Encodes : Source() {
                 when {
                     !loc.isNullOrBlank() -> {
                         val nextUrl = if (loc.startsWith("/")) "$baseUrl$loc" else loc
-                        if (nextUrl.contains("/r/")) resolveRedirect(nextUrl, depth + 1) else nextUrl
+                        val cleanNext = sanitizeCdnDomain(nextUrl)
+                        if (cleanNext.contains("/r/")) resolveRedirect(cleanNext, depth + 1) else cleanNext
                     }
-
-                    resp.isSuccessful -> resp.request.url.toString()
-
+                    resp.isSuccessful -> sanitizeCdnDomain(resp.request.url.toString())
                     else -> null
                 }
             }
@@ -782,13 +783,27 @@ class AV1Encodes : Source() {
         }
     }
 
-    private fun toStreamUrl(url: String): String = toDlUrl(url)
+    private fun sanitizeCdnDomain(url: String): String {
+        return url.replace("animealpha.cc", "av1encodes.com")
+    }
 
-    private fun toDlUrl(url: String): String = url
-        .replace("/watch/", "/dl/")
-        .replace("/stream/", "/dl/")
-        .replace("/dash/", "/dl/")
-        .substringBefore("/manifest.mpd")
+    private fun toStreamUrl(url: String, ext: String = ".mkv"): String {
+        val clean = sanitizeCdnDomain(url)
+            .replace("/watch/", "/stream/")
+            .replace("/dl/", "/stream/")
+            .replace("/dash/", "/stream/")
+            .substringBefore("/manifest.mpd")
+        return if (clean.contains("#")) clean else "$clean#$ext"
+    }
+
+    private fun toDlUrl(url: String, ext: String = ".mkv"): String {
+        val clean = sanitizeCdnDomain(url)
+            .replace("/watch/", "/dl/")
+            .replace("/stream/", "/dl/")
+            .replace("/dash/", "/dl/")
+            .substringBefore("/manifest.mpd")
+        return if (clean.contains("#")) clean else "$clean#$ext"
+    }
 
     // ══════════════════════════════════════════════════════════════════════════
     // EXTRACTION HELPERS
