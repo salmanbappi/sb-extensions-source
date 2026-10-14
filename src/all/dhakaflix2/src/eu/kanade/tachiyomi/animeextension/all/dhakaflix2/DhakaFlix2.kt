@@ -48,27 +48,41 @@ private const val PREF_USE_TMDB_COVERS = "use_tmdb_covers"
 private const val IMAGE_PROBE_MARKER = "a_AL_.jpg"
 
 private val COVER_MARKERS = listOf(
-    "a_AL_.jpg", "000.jpg", "a_VL_.jpg", "a11.jpg", "a_V1_.jpg", "a._V1_.jpg",
+    "a_AL_.jpg", "000.jpg", "a11.jpg", "a_VL_.jpg", "a_V1_.jpg", "a._V1_.jpg",
     "a0_AL_.jpg", "a06_.jpg", "a07_.jpg", "a607_.jpg", "aer.jpg", "url.jpg",
-    "000.png", "a22.jpg", "aAL_.jpg", "a20_.jpg", "ater.jpg", "a08_.jpg",
-    "images.jpeg", "age.jpg", "a00.jpg", "a720_.jpg", "a_AL_.jpeg", "a11.jpeg",
-    "alg.jpg", "ar2.jpg", "a606_.jpg", "aster.jpg", "a_A1_.jpg", "aer2.jpg",
-    "aV1_.jpg", "a18_.jpg", "url.jpeg", "aull.jpg", "a608_.jpg", "a01.jpg",
-    "a._AL_.jpg", "00.jpg", "aver.jpg", "a04.jpg", "aurl.jpg", "a19_.jpg",
-    "000.jpeg", "a5_AL_.jpg", "axlg.jpg", "MV5Bz.jpg", "a11.png", "a02.jpg",
-    "a14.jpg", "a15.jpg", "a-1.jpg", "aer3.jpg", "aad.jpg", "a10.jpg",
-    "a-2.jpg", "a_VL_.jpeg", "ane.jpg", "DVD Poster JPEG.jpg", "aon.jpg",
-    "a00_.jpg", "arl.jpg", "images.jpg", "aoster.jpg", "a13.jpg", "a20.jpg",
-    "a9_AL_.jpg", "MV5z.jpg", "arge.jpg", "aan.jpg", "a03.jpg", "a1.jpg",
-    "aer4.jpg", "ar3.jpg", "ae.jpg", "aes.jpg", "a09.jpg", "a014.jpg",
-    "aed.jpg", "aie.jpg", "a16.jpg", "a80.jpg", "a2.jpg", "a015.jpg",
-    "url1.jpg", "aay.jpg", "a50.jpg", "aer1.jpg", "anz.jpg", "a24.jpg",
-    "ad.jpg", "ar4.jpg", "a500.jpg", "a06.jpg", "a88.jpg", "ang.jpg",
-    "aal.jpg", "a_3.jpg", "a00_AL_.jpg", "a918_.jpg", "a68_.jpg", "iko.jpg",
+    "000.png", "aAL_.jpg", "a22.jpg", "a20_.jpg", "ater.jpg", "a08_.jpg",
+    "images.jpeg", "a(2017).jpg", "age.jpg", "a00.jpg", "a720_.jpg", "a(2018).jpg",
+    "a11.jpeg", "a_AL_.jpeg", "a(2016).jpg", "alg.jpg", "ar2.jpg", "a606_.jpg",
+    "aster.jpg", "aer2.jpg", "a_A1_.jpg", "a18_.jpg", "aV1_.jpg", "url.jpeg",
+    "aull.jpg", "a608_.jpg", "a01.jpg", "00.jpg", "aver.jpg", "a04.jpg",
+    "aurl.jpg", "a19_.jpg", "000.jpeg", "a5_AL_.jpg", "a._AL_.jpg", "axlg.jpg",
+    "MV5Bz.jpg", "a02.jpg", "a15.jpg", "a11.png", "a14.jpg", "a-1.jpg",
+    "aad.jpg", "a10.jpg", "a-2.jpg", "aer3.jpg", "ane.jpg", "DVD Poster JPEG.jpg",
+    "arl.jpg", "aon.jpg", "images.jpg", "aoster.jpg", "a13.jpg", "a(2014).jpg",
+    "a(2017).jpeg", "a20.jpg", "a00_.jpg", "a9_AL_.jpg", "MV5z.jpg", "arge.jpg",
+    "aan.jpg", "a03.jpg", "a1.jpg", "ar3.jpg", "ae.jpg", "aer4.jpg",
+    "aes.jpg", "a_VL_.jpeg", "a09.jpg", "a014.jpg", "aed.jpg", "aie.jpg",
+    "a16.jpg", "a80.jpg", "a2.jpg", "a015.jpg", "a(2019).jpg", "url1.jpg",
+    "aay.jpg", "a50.jpg", "aer1.jpg", "a(2015).jpg", "anz.jpg", "a24.jpg",
+    "ad.jpg", "ar4.jpg", "a(2018).jpeg", "a500.jpg", "a06.jpg", "a88.jpg",
+    "ang.jpg", "a_3.jpg", "a00_AL_.jpg", "a918_.jpg", "a68_.jpg", "iko.jpg",
     "aoad.jpg", "a40.jpg", "download.jpg", "a_hq.jpg", "a-3.jpg", "and.jpg",
-    "azz.jpg", "aaer.jpg", "a39.jpg", "a801.jpg", "url.png",
-    "a0_VL_.jpg", "a4e.jpg", "afull.jpg", "poster.jpg", "cover.jpg",
-    "Cover1.jpg", "Cover2.jpg",
+    "azz.jpg", "aal.jpg", "aaer.jpg", "a39.jpg", "a801.jpg", "url.png",
+    "a07.jpg", "a12.jpg", "a08.jpg", "ast.jpg", "avie.jpg", "ar1.jpg",
+    "alt.jpg", "a_xlg.jpg", "afull.jpg", "a592.jpg", "ana.jpg", "a92.jpg",
+    "a280.jpg", "a17.jpg", "a4.jpg", "aers.jpg", "a25.jpg", "a3.jpg",
+    "a011.jpg", "a_2.jpg", "a05.jpg", "a_1.jpg", "a(2013).jpg", "a37.jpg",
+    "a58.jpg", "aVD.jpg", "aaa.jpg", "a89.jpg", "a28.jpg", "1.jpg",
+    "a868_.jpg", "aer5.jpg", "aer.jpeg", "0000.jpg", "a31.jpg", "a1b.jpg",
+    "am.jpg", "ag.jpg", "ack.jpg", "07_.jpg", "a920_.jpg", "MV5Bx.jpg",
+    "607_.jpg", "a99.jpg", "a38.jpg", "a(1).jpg", "a000.jpg", "a._A1_.jpg",
+    "a44.jpg", "a84.jpg", "aia.jpg", "a66.jpg", "ant.jpg", "a35.jpg",
+    "a97.jpg", "a_AL_.png", "aer.png", "maxresdefault.jpg", "cover.jpg", "a0.jpg",
+    "aez.jpg", "a10).jpg", "ade.jpg", "aer6.jpg", "amb.jpg", "ar-2.jpg",
+    "a41.jpg", "ault.jpg", "a(2016).jpeg", "aY720_.jpg", "MV5BMTz.jpg", "Movie Poster.jpg",
+    "a024.jpg", "a27.jpg", "a800.jpg", "aage.jpg", "aa1.jpg", "aum.jpg",
+    "a96.jpg", "all.jpg", "a0_VL_.jpg", "a4e.jpg", "poster.jpg", "Cover1.jpg",
+    "Cover2.jpg",
 )
 
 private val COVER_NAME_REGEX = Regex(
@@ -137,6 +151,42 @@ class DhakaFlix2(
                         return response
                     }
                 }
+
+                // Tier 2: Universal Directory Inspection
+                // If no known markers matched, fetch the folder HTML to discover ANY custom image name (e.g. Accez.jpg, Air_d.jpg, akaz.jpg)
+                try {
+                    response.close()
+                    val folderResp = chain.proceed(
+                        request.newBuilder()
+                            .url(fixUrl(folder))
+                            .header("Referer", folder)
+                            .build(),
+                    )
+                    if (folderResp.isSuccessful) {
+                        val body = folderResp.body?.string().orEmpty()
+                        folderResp.close()
+                        val imgMatch = Regex("""href=["']([^"']+\.(?:jpg|jpeg|png|webp))["']""", RegexOption.IGNORE_CASE)
+                            .findAll(body)
+                            .map { it.groupValues[1] }
+                            .firstOrNull { candidate ->
+                                val cLower = candidate.lowercase()
+                                !cLower.contains("/_h5ai/") && !cLower.contains("favicon") && !cLower.contains("icon")
+                            }
+                        if (imgMatch != null) {
+                            val targetImgUrl = folder.toHttpUrlOrNull()?.resolve(imgMatch)?.toString() ?: (folder + imgMatch)
+                            response = chain.proceed(
+                                request.newBuilder()
+                                    .url(fixUrl(targetImgUrl))
+                                    .header("Referer", folder)
+                                    .headers(imageHeaders)
+                                    .build(),
+                            )
+                            if (response.isSuccessful && response.header("Content-Type")?.startsWith("image") == true) {
+                                return response
+                            }
+                        }
+                    }
+                } catch (e: Exception) {}
             }
             return response
         }
