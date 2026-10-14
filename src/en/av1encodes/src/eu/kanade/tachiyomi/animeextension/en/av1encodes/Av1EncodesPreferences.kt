@@ -18,8 +18,8 @@ internal val QUALITY_VALUES = arrayOf("1920 x 1080", "1280 x 720", "854 x 480", 
 internal val PREF_QUALITY_DEFAULT = QUALITY_VALUES.first()
 
 internal const val PREF_LINK_TYPE_KEY = "preferred_link_type"
-internal const val PREF_LINK_TYPE_DEFAULT = "Stream"
-internal val LINK_TYPE_ENTRIES = arrayOf("Stream", "Direct DL", "Dash")
+internal const val PREF_LINK_TYPE_DEFAULT = "Direct DL"
+internal val LINK_TYPE_ENTRIES = arrayOf("Direct DL", "Stream")
 
 internal const val PREF_SHOW_TORRENT_KEY = "show_torrent"
 internal const val PREF_SHOW_TORRENT_DEFAULT = false
