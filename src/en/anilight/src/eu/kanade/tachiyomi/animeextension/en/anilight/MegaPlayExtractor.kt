@@ -37,6 +37,7 @@ import javax.crypto.spec.SecretKeySpec
 class MegaPlayExtractor(
     private val client: OkHttpClient,
     private val playlistUtils: PlaylistUtils,
+    private val streamProxy: AniLightStreamProxy,
 ) {
 
     fun videosFromEmbed(embedUrl: String, isDub: Boolean): List<Video> {
@@ -56,9 +57,11 @@ class MegaPlayExtractor(
             else -> "[Sub]"
         }
 
+        val proxiedUrl = streamProxy.relay(fileUrl, "$MEGAPLAY/")
+
         return runCatching {
             playlistUtils.extractFromHls(
-                playlistUrl = fileUrl,
+                playlistUrl = proxiedUrl,
                 referer = "$MEGAPLAY/",
                 masterHeaders = embedHeaders,
                 videoHeaders = embedHeaders,
@@ -68,7 +71,7 @@ class MegaPlayExtractor(
         }.getOrElse {
             listOf(
                 Video(
-                    videoUrl = fileUrl,
+                    videoUrl = proxiedUrl,
                     videoTitle = "Auto $audioBadge",
                     headers = embedHeaders,
                     subtitleTracks = subtitleTracks,

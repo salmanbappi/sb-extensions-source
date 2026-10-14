@@ -41,9 +41,9 @@ class Anilight : Source() {
 
     private val m3u8Integration by lazy { M3u8Integration(client) }
 
-    private val megaPlayExtractor by lazy { MegaPlayExtractor(client, playlistUtils) }
+    private val streamProxy by lazy { AniLightStreamProxy(network.client) }
 
-    private val streamProxy by lazy { AniLightStreamProxy(client) }
+    private val megaPlayExtractor by lazy { MegaPlayExtractor(network.client, playlistUtils, streamProxy) }
 
     private val streamResolver by lazy { WebViewStreamResolver() }
 
@@ -363,7 +363,7 @@ class Anilight : Source() {
                 if (embedUrl.isBlank()) return@parallelCatchingFlatMap emptyList<Video>()
                 megaPlayExtractor.videosFromEmbed(embedUrl, isDub)
             }
-            return m3u8Integration.processVideoList(megaVideos.sortVideos())
+            return megaVideos.sortVideos()
         }
 
         if (slug.isBlank()) return emptyList()
@@ -412,7 +412,7 @@ class Anilight : Source() {
                 megaPlayExtractor.videosFromEmbed(embedUrl, isDub)
             }
             if (megaFallback.isNotEmpty()) {
-                return m3u8Integration.processVideoList(megaFallback.sortVideos())
+                return megaFallback.sortVideos()
             }
         }
 

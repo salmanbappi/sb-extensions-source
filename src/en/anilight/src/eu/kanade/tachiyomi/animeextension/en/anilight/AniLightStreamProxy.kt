@@ -42,7 +42,8 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
     /** Returns the loopback URL that serves [targetUrl] (and everything it references). */
     fun relay(targetUrl: String, referer: String): String {
         start()
-        return "$LOOPBACK:$port$PATH?u=${encode(targetUrl)}&r=${encode(referer)}"
+        val ext = if (targetUrl.contains(".m3u8", ignoreCase = true)) ".m3u8" else ".ts"
+        return "$LOOPBACK:$port$PATH/stream$ext?u=${encode(targetUrl)}&r=${encode(referer)}&ext=$ext"
     }
 
     private fun start() {
@@ -76,12 +77,17 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
 
             val reader = socket.getInputStream().bufferedReader()
             val requestLine = reader.readLine() ?: return
+            var rangeHeader: String? = null
             while (true) {
                 val header = reader.readLine() ?: break
                 if (header.isEmpty()) break
+                if (header.startsWith("Range:", ignoreCase = true)) {
+                    rangeHeader = header.substringAfter(":").trim()
+                }
             }
             val isHead = requestLine.startsWith("HEAD ")
             val path = requestLine.split(" ").getOrNull(1) ?: return
+            if (!path.startsWith(PATH)) return
             val params = path.substringAfter("?", "")
                 .split("&")
                 .mapNotNull { pair ->
@@ -96,7 +102,10 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
             val request = Request.Builder()
                 .url(target)
                 .header("User-Agent", USER_AGENT)
-                .apply { if (referer.isNotBlank()) header("Referer", referer) }
+                .apply {
+                    if (referer.isNotBlank()) header("Referer", referer)
+                    if (rangeHeader != null) header("Range", rangeHeader)
+                }
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -111,7 +120,7 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
                     val rewritten = rewritePlaylist(String(body, Charsets.UTF_8), effectiveUrl, referer)
                     respond(socket, 200, MIME_HLS, rewritten.toByteArray(Charsets.UTF_8), isHead)
                 } else {
-                    respond(socket, 200, MIME_TS, normalizeSegment(body), isHead)
+                    respond(socket, response.code, MIME_TS, normalizeSegment(body), isHead)
                 }
             }
         } catch (_: Exception) {
@@ -127,7 +136,7 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
             when {
                 trimmed.isEmpty() -> append('\n')
 
-                trimmed.startsWith(MEDIA_TAG) -> append(
+                trimmed.startsWith(MEDIA_TAG) || trimmed.startsWith(MAP_TAG) || trimmed.startsWith(KEY_TAG) -> append(
                     MEDIA_URI_REGEX.replace(line) { match ->
                         "URI=\"${relay(resolve(match.groupValues[1], baseUrl), referer)}\""
                     },
@@ -188,7 +197,7 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
 
     private fun respond(socket: Socket, status: Int, mime: String, body: ByteArray, headOnly: Boolean = false) {
         val out: OutputStream = socket.getOutputStream()
-        val reason = if (status == 200) "OK" else "Upstream Error"
+        val reason = if (status in 200..299) "OK" else "Upstream Error"
         out.write("HTTP/1.1 $status $reason\r\n".toByteArray())
         out.write("Content-Type: $mime\r\n".toByteArray())
         out.write("Content-Length: ${body.size}\r\n".toByteArray())
@@ -198,10 +207,16 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
         out.flush()
     }
 
-    private fun encode(value: String): String = Base64.encodeToString(value.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    private fun encode(value: String): String = Base64.encodeToString(
+        value.toByteArray(Charsets.UTF_8),
+        Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+    )
 
     private fun decode(value: String): String? = runCatching {
-        String(Base64.decode(value, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING), Charsets.UTF_8)
+        val clean = value.replace('-', '+').replace('_', '/')
+        val pad = (4 - (clean.length % 4)) % 4
+        val padded = clean + "=".repeat(pad)
+        String(Base64.decode(padded, Base64.DEFAULT or Base64.NO_WRAP), Charsets.UTF_8)
     }.getOrNull()
 
     private companion object {
@@ -213,6 +228,9 @@ class AniLightStreamProxy(private val client: OkHttpClient) {
         const val MIME_TEXT = "text/plain"
 
         const val MEDIA_TAG = "#EXT-X-MEDIA:"
+        const val MAP_TAG = "#EXT-X-MAP:"
+        const val KEY_TAG = "#EXT-X-KEY:"
+
         const val TS_SYNC = 0x47.toByte()
         const val TS_PACKET_SIZE = 188
 
