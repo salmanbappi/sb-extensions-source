@@ -11,6 +11,7 @@ internal data class DdlResponse(
     @SerialName("download_link") val downloadLink: String? = null,
     @SerialName("torrent_link") val torrentLink: String? = null,
     @SerialName("watch_link") val watchLink: String? = null,
+    @SerialName("ddl") val ddl: String? = null,
     @SerialName("file_name") val fileName: String? = null,
     @SerialName("file_size") val fileSize: String? = null,
     @SerialName("subtitles") val subtitles: List<SubtitleInfo>? = null,

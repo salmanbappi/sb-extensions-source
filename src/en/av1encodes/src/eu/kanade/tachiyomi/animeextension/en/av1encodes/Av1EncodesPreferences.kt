@@ -6,10 +6,11 @@ import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.model.Video
 
+internal const val PREF_BASE_URL_DEFAULT = "https://av1encodes.com"
 internal const val PREF_DOMAIN_KEY = "preferred_domain"
-internal const val PREF_DOMAIN_DEFAULT = "https://av1encodes.com"
-internal val DOMAIN_ENTRIES = arrayOf("av1encodes.com (default)", "av1please.com (mirror)")
-internal val DOMAIN_VALUES = arrayOf("https://av1encodes.com", "https://av1please.com")
+internal const val PREF_DOMAIN_DEFAULT = PREF_BASE_URL_DEFAULT
+internal val DOMAIN_ENTRIES = arrayOf("av1encodes.com (default)", "animealpha.cc", "av1please.com (mirror)")
+internal val DOMAIN_VALUES = arrayOf("https://av1encodes.com", "https://animealpha.cc", "https://av1please.com")
 
 internal const val PREF_QUALITY_KEY = "preferred_quality"
 internal val QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
@@ -18,10 +19,10 @@ internal val PREF_QUALITY_DEFAULT = QUALITY_VALUES.first()
 
 internal const val PREF_LINK_TYPE_KEY = "preferred_link_type"
 internal const val PREF_LINK_TYPE_DEFAULT = "Stream"
-internal val LINK_TYPE_ENTRIES = arrayOf("DASH", "Stream", "Direct DL", "Torrent")
+internal val LINK_TYPE_ENTRIES = arrayOf("Stream", "Direct DL", "Dash")
 
 internal const val PREF_SHOW_TORRENT_KEY = "show_torrent"
-internal const val PREF_SHOW_TORRENT_DEFAULT = true
+internal const val PREF_SHOW_TORRENT_DEFAULT = false
 
 internal fun buildPreferenceScreen(screen: PreferenceScreen) {
     // ── Domain ────────────────────────────────────────────────────────────────
@@ -44,32 +45,24 @@ internal fun buildPreferenceScreen(screen: PreferenceScreen) {
         setDefaultValue(PREF_QUALITY_DEFAULT)
     }.also(screen::addPreference)
 
-    // ── Preferred Link Type ───────────────────────────────────────────────────
+    // ── Preferred Server / Hoster ─────────────────────────────────────────────
     ListPreference(screen.context).apply {
         key = PREF_LINK_TYPE_KEY
-        title = "Preferred Link Type"
-        summary = "%s — this link type will appear first in the video list."
+        title = "Preferred Server / Hoster"
+        summary = "%s — this hoster will appear first in the server list."
         entries = LINK_TYPE_ENTRIES
         entryValues = LINK_TYPE_ENTRIES
         setDefaultValue(PREF_LINK_TYPE_DEFAULT)
     }.also(screen::addPreference)
-
-    // ── Show Torrent Link ─────────────────────────────────────────────────────
-    SwitchPreferenceCompat(screen.context).apply {
-        key = PREF_SHOW_TORRENT_KEY
-        title = "Show Torrent Link"
-        summary = "Include the torrent link as a video option."
-        setDefaultValue(PREF_SHOW_TORRENT_DEFAULT)
-    }
 }
 
-private val qualityRegex by lazy { Regex("""[xX]\s*(\d{3,4})""") }
+private val qualityRegex by lazy { Regex("""(?:[xX]\s*)?(\d{3,4})(?:p)?""") }
 private val resolutionRegex by lazy { Regex("""(\d{3,4})p""") }
 
 internal fun List<Video>.sortByPreferredQuality(preferences: SharedPreferences): List<Video> {
-    val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+    val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
     val preferredResolution = qualityRegex.find(preferredQuality)?.groupValues?.getOrNull(1) ?: preferredQuality
-    val linkType = preferences.getString(PREF_LINK_TYPE_KEY, PREF_LINK_TYPE_DEFAULT)!!
+    val linkType = preferences.getString(PREF_LINK_TYPE_KEY, PREF_LINK_TYPE_DEFAULT) ?: PREF_LINK_TYPE_DEFAULT
     return sortedWith(
         compareByDescending<Video> { it.videoTitle.contains(linkType, ignoreCase = true) }
             .thenByDescending { it.videoTitle.contains(preferredResolution, ignoreCase = true) }
