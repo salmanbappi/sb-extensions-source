@@ -63,11 +63,10 @@ class AV1Encodes : Source() {
         .set("Upgrade-Insecure-Requests", "1")
         .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
 
-    private fun getVideoHeaders(): Headers =
-        Headers.Builder()
-            .set("User-Agent", DESKTOP_UA)
-            .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
-            .build()
+    private fun getVideoHeaders(): Headers = Headers.Builder()
+        .set("User-Agent", DESKTOP_UA)
+        .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
+        .build()
 
     private val noRedirectClient: OkHttpClient by lazy {
         client.newBuilder()
@@ -773,7 +772,9 @@ class AV1Encodes : Source() {
                         val cleanNext = sanitizeCdnDomain(nextUrl)
                         if (cleanNext.contains("/r/")) resolveRedirect(cleanNext, depth + 1) else cleanNext
                     }
+
                     resp.isSuccessful -> sanitizeCdnDomain(resp.request.url.toString())
+
                     else -> null
                 }
             }
@@ -783,9 +784,7 @@ class AV1Encodes : Source() {
         }
     }
 
-    private fun sanitizeCdnDomain(url: String): String {
-        return url.replace("animealpha.cc", "av1encodes.com")
-    }
+    private fun sanitizeCdnDomain(url: String): String = url.replace("animealpha.cc", "av1encodes.com")
 
     private fun toStreamUrl(url: String, ext: String = ".mkv"): String {
         val clean = sanitizeCdnDomain(url)
