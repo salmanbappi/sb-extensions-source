@@ -12,8 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
-import eu.kanade.tachiyomi.lib.unpacker.jsunpacker.JsUnpacker
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
 import keiyoushi.utils.addListPreference
@@ -30,9 +29,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
-import uy.kohesive.injekt.injectLazy
 import java.io.ByteArrayInputStream
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -51,6 +51,17 @@ class AniSnatch :
 
     private var smcAlphabet: String? = null
     private var markerBytes: ByteArray? = null
+    private var snatchToken: String? = null
+
+    private fun ensureSnatchToken(): String? {
+        if (snatchToken != null) return snatchToken
+        synchronized(this) {
+            if (snatchToken != null) return snatchToken
+            val initData = apiPost("api/init", mapOf("token" to ""))
+            snatchToken = initData?.get("token")?.jsonPrimitive?.content
+            return snatchToken
+        }
+    }
 
     private fun ensureConfig() {
         if (smcAlphabet != null && markerBytes != null) return
@@ -59,7 +70,7 @@ class AniSnatch :
             try {
                 val request = okhttp3.Request.Builder()
                     .url(baseUrl)
-                    .headers(headers)
+                    .headers(headers.newBuilder().set("User-Agent", USER_AGENT).build())
                     .build()
                 val response = client.newCall(request).execute()
                 val html = response.body.string()
@@ -222,6 +233,31 @@ class AniSnatch :
             Pair("DUB", "2"),
         )
 
+        const val USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        private const val MEGAPLAY_AES_KEY = "i?LMTAx0Q6,:}50U"
+        private const val MEGAPLAY_AES_IV = "W0;27ToaUpl_P%'c"
+
+        val SERVERS = listOf(
+            "AniVibe",
+            "SnatchCDN",
+            "Vidplay",
+            "Vidwish",
+            "Megaplay",
+            "AniYT",
+            "Pika",
+            "OkCDN",
+            "Ani4",
+            "MyCloud",
+            "AniAra",
+            "StreamHG",
+            "OtakuVid",
+            "Swift",
+            "Onsen",
+            "FlixCloud",
+        )
+
         // Preference keys
         const val PREF_QUALITY_KEY = "pref_quality"
         const val PREF_QUALITY_DEFAULT = "1080"
@@ -232,6 +268,28 @@ class AniSnatch :
         const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
         const val PREF_EXCLUDE_TYPE_KEY = "pref_exclude_type"
         const val PREF_SHOW_THUMBNAILS_KEY = "pref_show_thumbnails"
+    }
+
+    private fun decryptEncPayload(enc: String): String {
+        if (enc.isBlank()) return ""
+        return try {
+            val raw = Base64.decode(enc, Base64.URL_SAFE or Base64.NO_WRAP)
+            val keyBytes = ByteArray(32)
+            val keySrc = MEGAPLAY_AES_KEY.toByteArray(Charsets.UTF_8)
+            System.arraycopy(keySrc, 0, keyBytes, 0, minOf(keySrc.size, 32))
+            val ivBytes = MEGAPLAY_AES_IV.toByteArray(Charsets.UTF_8).copyOf(16)
+            val cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(
+                javax.crypto.Cipher.DECRYPT_MODE,
+                javax.crypto.spec.SecretKeySpec(keyBytes, "AES"),
+                javax.crypto.spec.IvParameterSpec(ivBytes),
+            )
+            val plain = cipher.doFinal(raw).toString(Charsets.UTF_8)
+            val plainObj = Json.parseToJsonElement(plain).jsonObject
+            plainObj["file"]?.jsonPrimitive?.content ?: ""
+        } catch (_: Exception) {
+            ""
+        }
     }
 
     // ─── SMC Cipher ───────────────────────────────────────────────────────────
@@ -341,7 +399,12 @@ class AniSnatch :
         val timestamp = accurateTime()
         val url = "$baseUrl/$endpoint/$timestamp"
 
-        val requestHeaders = headers.newBuilder().set("Content-Type", "application/json").set("Accept", "*/*").build()
+        val requestHeaders = headers.newBuilder()
+            .set("Content-Type", "application/json")
+            .set("Accept", "*/*")
+            .set("User-Agent", USER_AGENT)
+            .set("Referer", "$baseUrl/")
+            .build()
         val requestBody = payloadJson.toRequestBody("application/json".toMediaType())
         val request = POST(url, requestHeaders, requestBody)
 
@@ -359,7 +422,21 @@ class AniSnatch :
                 }
                 return null
             }
-            Json.parseToJsonElement(String(decrypted, Charsets.UTF_8)).jsonObject
+            val jsonObj = Json.parseToJsonElement(String(decrypted, Charsets.UTF_8)).jsonObject
+            val success = jsonObj["success"]?.jsonPrimitive?.booleanOrNull ?: true
+            val msg = jsonObj["message"]?.jsonPrimitive?.content ?: ""
+            if (!success && msg.contains("Session expired", ignoreCase = true) && !isRetry) {
+                synchronized(this) {
+                    snatchToken = null
+                }
+                ensureSnatchToken()
+                val newBody = body.toMutableMap()
+                if (newBody.containsKey("token")) {
+                    newBody["token"] = snatchToken ?: ""
+                }
+                return apiPost(endpoint, newBody, isRetry = true)
+            }
+            jsonObj
         } catch (e: Exception) {
             if (!isRetry) {
                 synchronized(this) {
@@ -474,8 +551,8 @@ class AniSnatch :
             title = "Preferred Server",
             default = PREF_SERVER_DEFAULT,
             summary = "%s",
-            entries = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish", "Swift", "AniCdn"),
-            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish", "Swift", "AniCdn"),
+            entries = SERVERS,
+            entryValues = SERVERS,
         )
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
@@ -489,8 +566,8 @@ class AniSnatch :
             key = PREF_EXCLUDE_SERVERS_KEY,
             title = "Exclude Servers",
             summary = "Select servers to hide from the video list",
-            entries = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish", "Swift", "AniCdn"),
-            entryValues = listOf("AniVibe", "NekoVibe", "Kwik", "AniBD", "AniYT", "OkCdn", "AniAra", "MP4", "UNI", "Megaplay", "Vidwish", "Swift", "AniCdn"),
+            entries = SERVERS,
+            entryValues = SERVERS,
             default = emptySet(),
         )
         screen.addSetPreference(
@@ -616,23 +693,32 @@ class AniSnatch :
 
     // ─── Episodes ─────────────────────────────────────────────────────────────
 
-    private fun parseDate(dateStr: String): Long = runCatching {
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH).parse(dateStr)?.time
-            ?: SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).parse(dateStr)?.time
-            ?: 0L
-    }.getOrDefault(0L)
+    private fun parseDate(dateStr: String): Long {
+        for (pattern in listOf("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd", "MMM dd, yyyy", "MMM d, yyyy")) {
+            val date = runCatching {
+                SimpleDateFormat(pattern, Locale.ENGLISH).parse(dateStr)?.time
+            }.getOrNull()
+            if (date != null) return date
+        }
+        return 0L
+    }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val animeId = anime.url.toIntOrNull() ?: return emptyList()
-        val data = apiPost("api/anime", mapOf("id" to animeId)) ?: return emptyList()
-        val dataObj = data["data"] as? JsonObject ?: return emptyList()
-        val info = dataObj["anime"] as? JsonObject ?: return emptyList()
+        val data = apiPost("api/anime", mapOf("id" to animeId))
+        val dataObj = data?.get("data") as? JsonObject
+        val info = dataObj?.get("anime") as? JsonObject
 
-        val lastEp = info["lastep"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-        if (lastEp == 0) return emptyList()
+        val lastEp = info?.get("lastep")?.jsonPrimitive?.content?.toIntOrNull() ?: 0
 
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
-        val listArray = dataObj["list"] as? JsonArray
+        var listArray = dataObj?.get("list") as? JsonArray
+
+        if (listArray == null || listArray.isEmpty()) {
+            val token = ensureSnatchToken() ?: ""
+            val epsData = apiPost("api/loadEPs", mapOf("id" to animeId, "token" to token))
+            listArray = (epsData?.get("episodes") as? JsonArray) ?: (epsData?.get("list") as? JsonArray)
+        }
 
         val episodes = if (listArray != null && listArray.isNotEmpty()) {
             listArray.mapNotNull { element ->
@@ -678,19 +764,21 @@ class AniSnatch :
                     }
                 }
             }
-        } else {
+        } else if (lastEp > 0) {
             (1..lastEp).map { ep ->
                 SEpisode.create().apply {
                     url = "$animeId|$ep"
                     name = "Episode $ep"
                     episode_number = ep.toFloat()
                     scanlator = buildString {
-                        val dub = info["dub"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+                        val dub = info?.get("dub")?.jsonPrimitive?.content?.toIntOrNull() ?: 0
                         append("Sub")
                         if (dub == 1) append(" / Dub")
                     }
                 }
             }
+        } else {
+            emptyList()
         }
 
         return episodes.sortedByDescending { it.episode_number }
@@ -698,7 +786,7 @@ class AniSnatch :
 
     // ─── Video ────────────────────────────────────────────────────────────────
 
-    private val streamWishExtractor by lazy { StreamWishExtractor(client, headers) }
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val m3u8Integration by lazy { M3u8Integration(client) }
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
@@ -706,7 +794,8 @@ class AniSnatch :
         val animeId = parts.getOrNull(0)?.toIntOrNull() ?: return emptyList()
         val epNum = parts.getOrNull(1)?.toIntOrNull() ?: return emptyList()
 
-        val data = apiPost("api/loadSVs", mapOf("id" to animeId, "ep" to epNum)) ?: return emptyList()
+        val token = ensureSnatchToken() ?: ""
+        val data = apiPost("api/loadSVs", mapOf("id" to animeId, "ep" to epNum, "token" to token)) ?: return emptyList()
         val serverObj = data["server"] as? JsonObject ?: return emptyList()
 
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
@@ -787,112 +876,256 @@ class AniSnatch :
         val pageResp = client.newCall(
             okhttp3.Request.Builder()
                 .url(videoUrl)
-                .headers(headers.newBuilder().set("Referer", "$baseUrl/").build())
+                .headers(
+                    headers.newBuilder()
+                        .set("User-Agent", USER_AGENT)
+                        .set("Referer", "$baseUrl/")
+                        .build(),
+                )
                 .build(),
         ).execute()
         val html = pageResp.body.string()
+
+        var targetUrl = videoUrl
+        var targetHtml = html
+
+        // Check if iframe or streamURL is present
+        val iframeMatch = Regex("""<iframe[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(html)
+        val streamUrlMatch = Regex("""streamURL\s*=\s*['"]([^'"]+)['"]""").find(html)
+        val rawEmbedUrl = iframeMatch?.groupValues?.get(1) ?: streamUrlMatch?.groupValues?.get(1)
+
+        if (!rawEmbedUrl.isNullOrBlank()) {
+            val resolvedEmbedUrl = when {
+                rawEmbedUrl.startsWith("//") -> "https:$rawEmbedUrl"
+                rawEmbedUrl.startsWith("/") -> "$baseUrl$rawEmbedUrl"
+                rawEmbedUrl.startsWith("http") -> rawEmbedUrl
+                else -> "https://$rawEmbedUrl"
+            }
+            targetUrl = resolvedEmbedUrl
+            val embedResp = client.newCall(
+                okhttp3.Request.Builder()
+                    .url(targetUrl)
+                    .headers(
+                        headers.newBuilder()
+                            .set("User-Agent", USER_AGENT)
+                            .set("Referer", videoUrl)
+                            .build(),
+                    )
+                    .build(),
+            ).execute()
+            targetHtml = embedResp.body.string()
+        }
 
         val videos = mutableListOf<Video>()
         val subtitleTracks = mutableListOf<Track>()
 
         // Extract subtitles if present
         try {
-            if (html.contains("subtitles:")) {
-                val subsJson = html.substringAfter("subtitles:").substringBefore("]").trim() + "]"
-                val subsArr = json.parseToJsonElement(subsJson) as? JsonArray ?: return emptyList()
-                for (sub in subsArr) {
-                    val file = (sub as? JsonObject)?.get("file")?.jsonPrimitive?.content ?: continue
-                    val label = (sub as? JsonObject)?.get("label")?.jsonPrimitive?.content ?: "English"
-                    subtitleTracks.add(Track(file, label))
+            val subsMatch = Regex("""subtitles:\s*(\[[\s\S]*?\])""").find(targetHtml)
+            if (subsMatch != null) {
+                val subsArr = json.parseToJsonElement(subsMatch.groupValues[1]) as? JsonArray
+                if (subsArr != null) {
+                    for (sub in subsArr) {
+                        val subObj = sub as? JsonObject ?: continue
+                        val file = subObj["file"]?.jsonPrimitive?.content ?: continue
+                        val label = subObj["label"]?.jsonPrimitive?.content ?: "English"
+                        subtitleTracks.add(Track(file, label))
+                    }
                 }
             }
         } catch (_: Exception) {}
 
-        // Extract video sources
-        if (html.contains("srcs:")) {
-            val srcsJson = html.substringAfter("srcs:").substringBefore(", thumbnails").trim()
-            val jsonArr = json.parseToJsonElement(srcsJson) as? JsonArray ?: return emptyList()
-            for (item in jsonArr) {
-                val url = (item as? JsonObject)?.get("url")?.jsonPrimitive?.content ?: continue
-                val label = (item as? JsonObject)?.get("label")?.jsonPrimitive?.content ?: "HD"
-                val type = (item as? JsonObject)?.get("type")?.jsonPrimitive?.content ?: "hls"
+        val origin = targetUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: ""
+        val streamHeaders = headers.newBuilder()
+            .set("User-Agent", USER_AGENT)
+            .set("Referer", targetUrl)
+            .apply {
+                if (origin.isNotEmpty()) set("Origin", origin)
+            }
+            .build()
 
-                val refHeaders = headers.newBuilder()
-                    .set("Referer", videoUrl)
-                    .build()
+        // 1. Extract from srcs: [...]
+        val srcsMatch = Regex("""srcs:\s*(\[[\s\S]*?\])""").find(targetHtml)
+        if (srcsMatch != null) {
+            val jsonArr = json.parseToJsonElement(srcsMatch.groupValues[1]) as? JsonArray
+            if (jsonArr != null) {
+                for (item in jsonArr) {
+                    val itemObj = item as? JsonObject ?: continue
+                    val url = itemObj["url"]?.jsonPrimitive?.content ?: continue
+                    val label = itemObj["label"]?.jsonPrimitive?.content ?: "HD"
+                    val type = itemObj["type"]?.jsonPrimitive?.content ?: if (url.contains(".m3u8")) "hls" else "mp4"
 
-                if (type == "hls") {
-                    val hlsVideos = m3u8Integration.processVideoList(
-                        listOf(
-                            Video(
-                                videoUrl = url,
-                                videoTitle = "$audioPrefix - $serverName - $label",
-                                headers = refHeaders,
-                                subtitleTracks = subtitleTracks,
-                            ),
-                        ),
-                    )
-                    videos.addAll(hlsVideos)
-                } else {
-                    videos.add(
-                        Video(
-                            videoUrl = url,
-                            videoTitle = "$audioPrefix - $serverName - $label",
-                            headers = refHeaders,
-                            subtitleTracks = subtitleTracks,
-                        ),
-                    )
+                    when (type.lowercase()) {
+                        "hls" -> {
+                            val hlsVideos = try {
+                                playlistUtils.extractFromHls(
+                                    playlistUrl = url,
+                                    referer = targetUrl,
+                                    masterHeaders = streamHeaders,
+                                    videoHeaders = streamHeaders,
+                                    videoNameGen = { quality -> "$audioPrefix - $serverName - $quality" },
+                                    subtitleList = subtitleTracks,
+                                )
+                            } catch (_: Exception) {
+                                emptyList()
+                            }
+                            if (hlsVideos.isNotEmpty()) {
+                                videos.addAll(m3u8Integration.processVideoList(hlsVideos))
+                            } else {
+                                videos.addAll(
+                                    m3u8Integration.processVideoList(
+                                        listOf(
+                                            Video(
+                                                videoUrl = url,
+                                                videoTitle = "$audioPrefix - $serverName - $label",
+                                                headers = streamHeaders,
+                                                subtitleTracks = subtitleTracks,
+                                            ),
+                                        ),
+                                    ),
+                                )
+                            }
+                        }
+
+                        "dash" -> {
+                            val dashVideos = try {
+                                playlistUtils.extractFromDash(
+                                    mpdUrl = url,
+                                    videoNameGen = { quality -> "$audioPrefix - $serverName - $quality" },
+                                    mpdHeaders = streamHeaders,
+                                    videoHeaders = streamHeaders,
+                                    referer = targetUrl,
+                                    subtitleList = subtitleTracks,
+                                )
+                            } catch (_: Exception) {
+                                emptyList()
+                            }
+                            videos.addAll(dashVideos)
+                        }
+
+                        else -> {
+                            videos.add(
+                                Video(
+                                    videoUrl = url,
+                                    videoTitle = "$audioPrefix - $serverName - $label",
+                                    headers = streamHeaders,
+                                    subtitleTracks = subtitleTracks,
+                                ),
+                            )
+                        }
+                    }
                 }
             }
-        } else if (html.contains("src:")) {
-            val srcJson = html.substringAfter("src:").substringBefore(", thumbnails").trim()
-            val jsonObj = json.parseToJsonElement(srcJson) as? JsonObject ?: return emptyList()
-            val url = jsonObj["url"]?.jsonPrimitive?.content
-            val type = jsonObj["type"]?.jsonPrimitive?.content ?: "hls"
-            if (!url.isNullOrBlank()) {
-                val refHeaders = headers.newBuilder()
-                    .set("Referer", videoUrl)
-                    .build()
+        }
 
-                if (type == "hls") {
-                    val hlsVideos = m3u8Integration.processVideoList(
-                        listOf(
-                            Video(
-                                videoUrl = url,
-                                videoTitle = "$audioPrefix - $serverName",
-                                headers = refHeaders,
-                                subtitleTracks = subtitleTracks,
-                            ),
-                        ),
-                    )
-                    videos.addAll(hlsVideos)
-                } else {
-                    videos.add(
-                        Video(
-                            videoUrl = url,
-                            videoTitle = "$audioPrefix - $serverName",
-                            headers = refHeaders,
-                            subtitleTracks = subtitleTracks,
-                        ),
-                    )
+        // 2. Extract from src: {...}
+        if (videos.isEmpty()) {
+            val srcMatch = Regex("""src:\s*(\{[\s\S]*?\})""").find(targetHtml)
+            if (srcMatch != null) {
+                val jsonObj = json.parseToJsonElement(srcMatch.groupValues[1]) as? JsonObject
+                var url = jsonObj?.get("url")?.jsonPrimitive?.content
+                if (url.isNullOrBlank()) {
+                    val enc = jsonObj?.get("enc")?.jsonPrimitive?.content ?: ""
+                    url = decryptEncPayload(enc).takeIf { it.isNotBlank() }
+                }
+                val type = jsonObj?.get("type")?.jsonPrimitive?.content ?: if (url?.contains(".mpd") == true) "dash" else "hls"
+                if (!url.isNullOrBlank()) {
+                    when (type.lowercase()) {
+                        "dash" -> {
+                            val dashVideos = try {
+                                playlistUtils.extractFromDash(
+                                    mpdUrl = url,
+                                    videoNameGen = { quality -> "$audioPrefix - $serverName - $quality" },
+                                    mpdHeaders = streamHeaders,
+                                    videoHeaders = streamHeaders,
+                                    referer = targetUrl,
+                                    subtitleList = subtitleTracks,
+                                )
+                            } catch (_: Exception) {
+                                emptyList()
+                            }
+                            videos.addAll(dashVideos)
+                        }
+
+                        "mp4" -> {
+                            videos.add(
+                                Video(
+                                    videoUrl = url,
+                                    videoTitle = "$audioPrefix - $serverName",
+                                    headers = streamHeaders,
+                                    subtitleTracks = subtitleTracks,
+                                ),
+                            )
+                        }
+
+                        else -> {
+                            val hlsVideos = try {
+                                playlistUtils.extractFromHls(
+                                    playlistUrl = url,
+                                    referer = targetUrl,
+                                    masterHeaders = streamHeaders,
+                                    videoHeaders = streamHeaders,
+                                    videoNameGen = { quality -> "$audioPrefix - $serverName - $quality" },
+                                    subtitleList = subtitleTracks,
+                                )
+                            } catch (_: Exception) {
+                                emptyList()
+                            }
+                            if (hlsVideos.isNotEmpty()) {
+                                videos.addAll(m3u8Integration.processVideoList(hlsVideos))
+                            } else {
+                                videos.addAll(
+                                    m3u8Integration.processVideoList(
+                                        listOf(
+                                            Video(
+                                                videoUrl = url,
+                                                videoTitle = "$audioPrefix - $serverName",
+                                                headers = streamHeaders,
+                                                subtitleTracks = subtitleTracks,
+                                            ),
+                                        ),
+                                    ),
+                                )
+                            }
+                        }
+                    }
                 }
             }
-        } else {
-            // Fallback: search for m3u8 URL anywhere in page
-            val m3u8Regex = Regex("""["']?(https?://[^"'s]+.m3u8[^"'s]*)["']?"""")
-            val m3u8Url = m3u8Regex.find(html)?.groupValues?.get(1)
+        }
+
+        // 3. Fallback: search for m3u8 URL anywhere in page
+        if (videos.isEmpty()) {
+            val m3u8Regex = Regex("""["']?(https?://[^"'s\s]+\.m3u8[^"'s\s]*)["']?""")
+            val m3u8Url = m3u8Regex.find(targetHtml)?.groupValues?.get(1)
             if (!m3u8Url.isNullOrBlank()) {
-                val hlsVideos = m3u8Integration.processVideoList(
-                    listOf(
-                        Video(
-                            videoUrl = m3u8Url,
-                            videoTitle = "$audioPrefix - $serverName",
-                            headers = headers.newBuilder().set("Referer", videoUrl).build(),
-                            subtitleTracks = subtitleTracks,
+                val hlsVideos = try {
+                    playlistUtils.extractFromHls(
+                        playlistUrl = m3u8Url,
+                        referer = targetUrl,
+                        masterHeaders = streamHeaders,
+                        videoHeaders = streamHeaders,
+                        videoNameGen = { quality -> "$audioPrefix - $serverName - $quality" },
+                        subtitleList = subtitleTracks,
+                    )
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                if (hlsVideos.isNotEmpty()) {
+                    videos.addAll(m3u8Integration.processVideoList(hlsVideos))
+                } else {
+                    videos.addAll(
+                        m3u8Integration.processVideoList(
+                            listOf(
+                                Video(
+                                    videoUrl = m3u8Url,
+                                    videoTitle = "$audioPrefix - $serverName",
+                                    headers = streamHeaders,
+                                    subtitleTracks = subtitleTracks,
+                                ),
+                            ),
                         ),
-                    ),
-                )
-                videos.addAll(hlsVideos)
+                    )
+                }
             }
         }
 
@@ -906,32 +1139,54 @@ class AniSnatch :
             val pageResp = client.newCall(
                 okhttp3.Request.Builder()
                     .url(playerUrl)
-                    .headers(headers.newBuilder().set("Referer", "$baseUrl/").build())
+                    .headers(
+                        headers.newBuilder()
+                            .set("User-Agent", USER_AGENT)
+                            .set("Referer", "$baseUrl/")
+                            .build(),
+                    )
                     .build(),
             ).execute()
             val html = pageResp.body.string()
 
             // Look for m3u8 URL in page source
-            val m3u8Regex = Regex("""["']?(https?://[^"'s]+.m3u8[^"'s]*)["']?"""")
+            val m3u8Regex = Regex("""["']?(https?://[^"'s\s]+\.m3u8[^"'s\s]*)["']?""")
             val m3u8Url = m3u8Regex.find(html)?.groupValues?.get(1) ?: return emptyList()
 
-            val videos = listOf(
-                Video(
-                    videoUrl = m3u8Url,
-                    videoTitle = "$audioPrefix - $serverName",
-                    headers = headers.newBuilder()
-                        .set("Referer", playerUrl)
-                        .set(
-                            "Origin",
-                            playerUrl.substringBefore("/", playerUrl).let { proto ->
-                                val host = playerUrl.substringAfter("://").substringBefore("/")
-                                "$proto//$host"
-                            },
-                        )
-                        .build(),
-                ),
-            )
-            m3u8Integration.processVideoList(videos)
+            val origin = playerUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: ""
+            val streamHeaders = headers.newBuilder()
+                .set("User-Agent", USER_AGENT)
+                .set("Referer", playerUrl)
+                .apply {
+                    if (origin.isNotEmpty()) set("Origin", origin)
+                }
+                .build()
+
+            val hlsVideos = try {
+                playlistUtils.extractFromHls(
+                    playlistUrl = m3u8Url,
+                    referer = playerUrl,
+                    masterHeaders = streamHeaders,
+                    videoHeaders = streamHeaders,
+                    videoNameGen = { quality -> "$audioPrefix - $serverName - $quality" },
+                )
+            } catch (_: Exception) {
+                emptyList()
+            }
+
+            if (hlsVideos.isNotEmpty()) {
+                m3u8Integration.processVideoList(hlsVideos)
+            } else {
+                m3u8Integration.processVideoList(
+                    listOf(
+                        Video(
+                            videoUrl = m3u8Url,
+                            videoTitle = "$audioPrefix - $serverName",
+                            headers = streamHeaders,
+                        ),
+                    ),
+                )
+            }
         } catch (e: Exception) {
             emptyList()
         }
