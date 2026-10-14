@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import extensions.utils.Source
 import keiyoushi.utils.bodyString
@@ -50,22 +51,23 @@ class AV1Encodes : Source() {
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("User-Agent", DESKTOP_UA)
-        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-        .add("Accept-Language", "en-US,en;q=0.9")
-        .add("Sec-Ch-Ua", "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\"")
-        .add("Sec-Ch-Ua-Mobile", "?0")
-        .add("Sec-Ch-Ua-Platform", "\"Windows\"")
-        .add("Sec-Fetch-Dest", "document")
-        .add("Sec-Fetch-Mode", "navigate")
-        .add("Sec-Fetch-Site", "same-origin")
-        .add("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
+        .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+        .set("Accept-Language", "en-US,en;q=0.9")
+        .set("Sec-Ch-Ua", "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\"")
+        .set("Sec-Ch-Ua-Mobile", "?0")
+        .set("Sec-Ch-Ua-Platform", "\"Windows\"")
+        .set("Sec-Fetch-Dest", "document")
+        .set("Sec-Fetch-Mode", "navigate")
+        .set("Sec-Fetch-Site", "same-origin")
+        .set("Sec-Fetch-User", "?1")
+        .set("Upgrade-Insecure-Requests", "1")
+        .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
 
-    private val videoHeaders: Headers by lazy {
+    private fun getVideoHeaders(): Headers =
         Headers.Builder()
             .set("User-Agent", DESKTOP_UA)
             .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
             .build()
-    }
 
     private val noRedirectClient: OkHttpClient by lazy {
         client.newBuilder()
@@ -673,12 +675,10 @@ class AV1Encodes : Source() {
                         headers.newBuilder()
                             .set("Accept", "application/json")
                             .set("Referer", downloadPageUrl)
-                            .set("Origin", baseUrl)
                             .set("Sec-Fetch-Dest", "empty")
                             .set("Sec-Fetch-Mode", "cors")
                             .set("Sec-Fetch-Site", "same-origin")
                             .set("X-DDL-Token", ddlToken)
-                            .set("X-Requested-With", "XMLHttpRequest")
                             .build(),
                     ),
                 ).awaitSuccess().bodyString()
@@ -691,25 +691,26 @@ class AV1Encodes : Source() {
             if (ddl != null && ddl.success) {
                 val sizeLabel = ddl.fileSize?.let { " · $it" } ?: ""
                 val qualLabel = "AV1 · $resLabel$audioSuffix$sizeLabel"
+                val vHeaders = getVideoHeaders()
 
-                val watchUrl = resolveRedirect(ddl.watchLink)
-                if (watchUrl != null && watchUrl.contains("/watch/")) {
-                    val dashBase = watchUrl.replace("/watch/", "/dash/")
-                    val mpdUrl = "$dashBase/manifest.mpd"
-                    Log.d(TAG, "extractAllVideos: DASH MPD → $mpdUrl")
-                    videos.add(Video(videoUrl = mpdUrl, videoTitle = "$qualLabel · DASH", headers = headers))
-                }
+                val resolvedStream = resolveRedirect(ddl.streamLink)
+                val resolvedWatch = resolveRedirect(ddl.watchLink)
+                val resolvedDl = resolveRedirect(ddl.downloadLink ?: ddl.ddl)
+                val primaryCdnUrl = resolvedStream ?: resolvedWatch ?: resolvedDl
 
-                val streamUrl = resolveRedirect(ddl.streamLink)
-                if (streamUrl != null && streamUrl != watchUrl) {
-                    Log.d(TAG, "extractAllVideos: stream URL → $streamUrl")
-                    videos.add(Video(videoUrl = streamUrl, videoTitle = "$qualLabel · Stream", headers = headers))
-                }
+                if (primaryCdnUrl != null) {
+                    val streamUrl = toStreamUrl(resolvedStream ?: primaryCdnUrl)
+                    val dashUrl = toDashUrl(resolvedWatch ?: primaryCdnUrl)
+                    val dlUrl = toDlUrl(resolvedDl ?: primaryCdnUrl)
 
-                val dlUrl = resolveRedirect(ddl.downloadLink ?: ddl.ddl)
-                if (dlUrl != null) {
-                    Log.d(TAG, "extractAllVideos: download URL → $dlUrl")
-                    videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL", headers = headers))
+                    Log.d(TAG, "extractAllVideos: Stream → $streamUrl")
+                    videos.add(Video(videoUrl = streamUrl, videoTitle = "$qualLabel · Stream", headers = vHeaders))
+
+                    Log.d(TAG, "extractAllVideos: DASH MPD → $dashUrl")
+                    videos.add(Video(videoUrl = dashUrl, videoTitle = "$qualLabel · DASH", headers = vHeaders))
+
+                    Log.d(TAG, "extractAllVideos: Direct DL → $dlUrl")
+                    videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL", headers = vHeaders))
                 }
 
                 if (preferences.getBoolean(PREF_SHOW_TORRENT_KEY, PREF_SHOW_TORRENT_DEFAULT)) {
@@ -718,26 +719,38 @@ class AV1Encodes : Source() {
                         val torrentUrl = if (rawTorrent.startsWith("magnet:")) rawTorrent else resolveRedirect(rawTorrent)
                         if (torrentUrl != null) {
                             Log.d(TAG, "extractAllVideos: torrent URL → $torrentUrl")
-                            videos.add(Video(videoUrl = torrentUrl, videoTitle = "$qualLabel · Torrent", headers = headers))
+                            videos.add(Video(videoUrl = torrentUrl, videoTitle = "$qualLabel · Torrent", headers = vHeaders))
                         }
                     }
                 }
             }
         }
 
-        // If no videos yet, check if page has direct video player iframe
+        // If no videos yet, check if page has direct video player iframe or fallback links
         if (videos.isEmpty() && pageHtml.isNotBlank()) {
+            val qualLabel = "AV1 · $resLabel$audioSuffix"
+            val vHeaders = getVideoHeaders()
+
             val doc = Jsoup.parse(pageHtml)
-            val iframe = doc.selectFirst("iframe#anime-video-player, iframe[src*='/r/'], iframe[src*='/watch/'], iframe[src*='/dash/']")
+            val iframe = doc.selectFirst("iframe#anime-video-player, iframe[src*='/r/'], iframe[src*='/watch/'], iframe[src*='/dash/'], iframe[src*='/stream/']")
             val iframeSrc = iframe?.attr("abs:src")?.ifBlank { iframe.attr("src") }
-            if (!iframeSrc.isNullOrBlank()) {
-                val qualLabel = "AV1 · $resLabel$audioSuffix"
-                val resolvedIframe = resolveRedirect(iframeSrc) ?: iframeSrc
-                if (resolvedIframe.contains("/watch/")) {
-                    val mpdUrl = resolvedIframe.replace("/watch/", "/dash/") + "/manifest.mpd"
-                    videos.add(Video(videoUrl = mpdUrl, videoTitle = "$qualLabel · DASH", headers = headers))
+            val rawLink = if (!iframeSrc.isNullOrBlank()) {
+                iframeSrc
+            } else {
+                Regex("""['"](/r/[a-zA-Z0-9_\-]+)['"]""").find(pageHtml)?.groupValues?.get(1)
+                    ?: Regex("""['"](https?://[^'"]+/(?:stream|watch|dl|dash)/[^'"]+)['"]""").find(pageHtml)?.groupValues?.get(1)
+            }
+
+            if (!rawLink.isNullOrBlank()) {
+                val resolved = resolveRedirect(rawLink) ?: rawLink
+                if (resolved.contains("/stream/") || resolved.contains("/watch/") || resolved.contains("/dash/") || resolved.contains("/dl/")) {
+                    val streamUrl = toStreamUrl(resolved)
+                    val dashUrl = toDashUrl(resolved)
+                    val dlUrl = toDlUrl(resolved)
+                    videos.add(Video(videoUrl = streamUrl, videoTitle = "$qualLabel · Stream", headers = vHeaders))
+                    videos.add(Video(videoUrl = dashUrl, videoTitle = "$qualLabel · DASH", headers = vHeaders))
+                    videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL", headers = vHeaders))
                 }
-                videos.add(Video(videoUrl = resolvedIframe, videoTitle = "$qualLabel · Stream", headers = headers))
             }
         }
 
@@ -745,24 +758,58 @@ class AV1Encodes : Source() {
         return videos
     }
 
-    private suspend fun resolveRedirect(path: String?): String? {
-        if (path.isNullOrBlank()) return null
+    private suspend fun resolveRedirect(path: String?, depth: Int = 0): String? {
+        if (path.isNullOrBlank() || depth > 3) return null
         val target = if (path.startsWith("/")) "$baseUrl$path" else path
         return try {
             noRedirectClient.newCall(
-                GET(target, headers.newBuilder().set("Referer", "$baseUrl/").build()),
-            ).awaitSuccess().use { resp ->
+                GET(
+                    target,
+                    headers.newBuilder()
+                        .set("Referer", "$baseUrl/")
+                        .set("Sec-Fetch-Site", "same-origin")
+                        .build(),
+                ),
+            ).await().use { resp ->
                 val loc = resp.header("Location")
-                if (!loc.isNullOrBlank()) {
-                    if (loc.startsWith("/")) "$baseUrl$loc" else loc
-                } else {
-                    resp.request.url.toString()
+                when {
+                    !loc.isNullOrBlank() -> {
+                        val nextUrl = if (loc.startsWith("/")) "$baseUrl$loc" else loc
+                        if (nextUrl.contains("/r/")) resolveRedirect(nextUrl, depth + 1) else nextUrl
+                    }
+                    resp.isSuccessful -> resp.request.url.toString()
+                    else -> null
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "resolveRedirect failed for $path: ${e.message}")
             null
         }
+    }
+
+    private fun toStreamUrl(url: String): String {
+        return url
+            .replace("/watch/", "/stream/")
+            .replace("/dl/", "/stream/")
+            .replace("/dash/", "/stream/")
+            .substringBefore("/manifest.mpd")
+    }
+
+    private fun toDashUrl(url: String): String {
+        if (url.endsWith("/manifest.mpd")) return url
+        val clean = url
+            .replace("/watch/", "/dash/")
+            .replace("/stream/", "/dash/")
+            .replace("/dl/", "/dash/")
+        return "$clean/manifest.mpd"
+    }
+
+    private fun toDlUrl(url: String): String {
+        return url
+            .replace("/watch/", "/dl/")
+            .replace("/stream/", "/dl/")
+            .replace("/dash/", "/dl/")
+            .substringBefore("/manifest.mpd")
     }
 
     // ══════════════════════════════════════════════════════════════════════════
