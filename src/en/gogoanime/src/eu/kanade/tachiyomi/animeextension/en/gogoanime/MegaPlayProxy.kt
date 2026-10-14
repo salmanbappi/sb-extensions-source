@@ -64,8 +64,8 @@ class MegaPlayProxy(private val client: OkHttpClient) {
         val url = video.videoUrl
         if (!url.contains(".m3u8", ignoreCase = true)) return video
         if (!start()) return video
-        val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)
-        val encodedReferer = Base64.encodeToString(referer.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP)
+        val encoded = encode(url)
+        val encodedReferer = encode(referer)
         return video.copy(
             videoUrl = "http://127.0.0.1:$port/playlist/$encoded.m3u8?r=$encodedReferer",
         )

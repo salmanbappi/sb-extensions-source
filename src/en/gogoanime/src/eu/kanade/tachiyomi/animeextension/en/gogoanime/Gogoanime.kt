@@ -24,12 +24,16 @@ import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import java.text.SimpleDateFormat
 import java.util.Locale
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import kotlin.time.Duration.Companion.seconds
 
 class Gogoanime : Source() {
@@ -53,7 +57,12 @@ class Gogoanime : Source() {
 
     // Shared Video Extractors
     private val playlistUtils by lazy { PlaylistUtils(client) }
-    private val vidmolyExtractor by lazy { VidMolyExtractor(client) }
+    private val vidmolyExtractor by lazy {
+        val vidmolyHeaders = headers.newBuilder()
+            .set("User-Agent", DEFAULT_USER_AGENT)
+            .build()
+        VidMolyExtractor(client, vidmolyHeaders)
+    }
     private val byseExtractor by lazy { ByseExtractor(client, playlistUtils) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
     private val megaPlayProxy by lazy { MegaPlayProxy(client) }
@@ -255,13 +264,23 @@ class Gogoanime : Source() {
 
     /** Mirror options carry a base64-encoded `<iframe src="...">` snippet. */
     private fun decodeEmbedUrl(encoded: String): String? {
+        val cleanEncoded = encoded.trim()
         val html = runCatching {
-            String(Base64.decode(encoded, Base64.DEFAULT), Charsets.UTF_8)
+            val clean = cleanEncoded.replace('-', '+').replace('_', '/')
+            val padded = clean + "=".repeat((4 - clean.length % 4) % 4)
+            String(Base64.decode(padded, Base64.DEFAULT), Charsets.UTF_8)
         }.getOrNull() ?: return null
 
-        return Regex("""iframe[^>]+src=["']([^"']+)["']""")
-            .find(html)?.groupValues?.get(1)
-            ?.takeIf { it.startsWith("http") }
+        val rawUrl = Regex("""iframe[^>]+src=["']([^"']+)["']""")
+            .find(html)?.groupValues?.get(1)?.trim()?.replace("&amp;", "&")
+            ?: return null
+
+        return when {
+            rawUrl.startsWith("http://") || rawUrl.startsWith("https://") -> rawUrl
+            rawUrl.startsWith("//") -> "https:$rawUrl"
+            rawUrl.startsWith("/") -> "$baseUrl$rawUrl"
+            else -> null
+        }
     }
 
     /**
@@ -284,82 +303,162 @@ class Gogoanime : Source() {
 
         val videos = when {
             // "HD-1" / "HD-2": wrapper page that embeds a MegaPlay stream
-            url.host.endsWith("gogoanime.me.uk") || url.encodedPath.contains("newplayer.php") ->
+            url.encodedPath.contains("newplayer.php") || hoster.hosterName.startsWith("HD-", ignoreCase = true) || url.host.contains("megaplay") ->
                 megaPlayVideos(hoster, embedUrl)
 
+            // Direct HLS player wrapper
+            url.encodedPath.contains("player.php") && !url.queryParameter("m3u8").isNullOrBlank() ->
+                extractPlayerPhpVideos(hoster, url)
+
             // "Omega": VidMoly
-            url.host.contains("vidmoly") -> vidmolyExtractor.videosFromUrl(embedUrl)
+            url.host.contains("vidmoly") ->
+                vidmolyExtractor.videosFromUrl(embedUrl)
 
             // "Moon": Byse
-            url.encodedPath.startsWith("/e/") -> byseExtractor.videosFromUrl(embedUrl)
+            url.encodedPath.startsWith("/e/") || url.host.contains("byse") ->
+                byseExtractor.videosFromUrl(embedUrl)
 
-            else -> universalExtractor.videosFromUrl(embedUrl, headers)
+            else ->
+                universalExtractor.videosFromUrl(embedUrl, headers)
         }
 
         return videos.sortVideos()
+    }
+
+    private fun extractPlayerPhpVideos(hoster: Hoster, url: HttpUrl): List<Video> {
+        val m3u8Url = url.queryParameter("m3u8") ?: return emptyList()
+        val subtitleUrl = url.queryParameter("subtitle")
+        val subtitles = if (!subtitleUrl.isNullOrBlank()) {
+            listOf(Track(subtitleUrl, "English"))
+        } else {
+            emptyList()
+        }
+        val videoHeaders = headers.newBuilder()
+            .set("User-Agent", DEFAULT_USER_AGENT)
+            .set("Referer", "https://${url.host}/")
+            .build()
+        return runCatching {
+            playlistUtils.extractFromHls(
+                playlistUrl = m3u8Url,
+                referer = "https://${url.host}/",
+                masterHeaders = videoHeaders,
+                videoHeaders = videoHeaders,
+                videoNameGen = { quality -> quality },
+                subtitleList = subtitles,
+            )
+        }.getOrNull().orEmpty().ifEmpty {
+            listOf(
+                Video(
+                    videoUrl = m3u8Url,
+                    videoTitle = "Auto",
+                    headers = videoHeaders,
+                    subtitleTracks = subtitles,
+                ),
+            )
+        }
     }
 
     /**
      * Resolves the MegaPlay stream chain:
      * 1. wrapper page (newplayer.php) -> iframe src on megaplay.buzz/stream/...
      * 2. stream page -> data-id
-     * 3. getSources?id=... -> master HLS playlist + subtitle tracks
+     * 3. getSources?id=... -> master HLS playlist (decrypted from enc if needed) + subtitle tracks
      */
     private suspend fun megaPlayVideos(hoster: Hoster, wrapperUrl: String): List<Video> {
+        val pageHeaders = headers.newBuilder()
+            .set("User-Agent", DEFAULT_USER_AGENT)
+            .set("Referer", "$baseUrl/")
+            .build()
+
         val wrapperDoc = runCatching {
-            client.newCall(
-                GET(wrapperUrl, headers.newBuilder().set("Referer", "$baseUrl/").build()),
-            ).execute().asJsoup()
+            client.newCall(GET(wrapperUrl, pageHeaders)).execute().asJsoup()
         }.getOrNull() ?: return emptyList()
 
-        val streamUrl = wrapperDoc.selectFirst("iframe")?.attr("src")
-            ?.takeIf { it.contains("megaplay") }
+        val rawStreamUrl = wrapperDoc.selectFirst("iframe")?.attr("src")
+            ?.takeIf { it.isNotBlank() }
+            ?: wrapperUrl.takeIf { it.contains("stream") }
             ?: return emptyList()
 
-        val streamDoc = runCatching {
-            client.newCall(GET(streamUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())).execute().asJsoup()
-        }.getOrNull() ?: return emptyList()
+        val streamUrl = when {
+            rawStreamUrl.startsWith("//") -> "https:$rawStreamUrl"
+            rawStreamUrl.startsWith("/") -> "https://megaplay.buzz$rawStreamUrl"
+            else -> rawStreamUrl
+        }
+
+        var streamUri = streamUrl.toHttpUrlOrNull() ?: return emptyList()
+        var streamOrigin = "https://${streamUri.host}"
+
+        var streamDoc = runCatching {
+            val resp = client.newCall(GET(streamUrl, pageHeaders)).execute()
+            if (resp.isSuccessful) resp.asJsoup() else null
+        }.getOrNull()
+
+        // Fallback for dead or 404 mirrors (e.g. vidwish.live -> megaplay.buzz)
+        if ((streamDoc == null || streamDoc.selectFirst("[data-id]") == null) &&
+            streamUri.host.contains("vidwish", ignoreCase = true)
+        ) {
+            val fallbackUrl = streamUrl.replace(streamUri.host, "megaplay.buzz")
+            val fallbackDoc = runCatching {
+                val resp = client.newCall(GET(fallbackUrl, pageHeaders)).execute()
+                if (resp.isSuccessful) resp.asJsoup() else null
+            }.getOrNull()
+            if (fallbackDoc != null && (fallbackDoc.selectFirst("[data-id]") != null || fallbackDoc.outerHtml().contains("File "))) {
+                streamDoc = fallbackDoc
+                streamUri = fallbackUrl.toHttpUrlOrNull() ?: streamUri
+                streamOrigin = "https://${streamUri.host}"
+            }
+        }
+
+        if (streamDoc == null) return emptyList()
 
         val streamId = streamDoc.selectFirst("[data-id]")?.attr("data-id")
             ?: Regex("""<title>File (\d+)""").find(streamDoc.outerHtml())?.groupValues?.get(1)
+            ?: Regex("""data-id=["']([^"']+)["']""").find(streamDoc.outerHtml())?.groupValues?.get(1)
             ?: return emptyList()
 
         val sourcesHeaders = headers.newBuilder()
-            .set("Referer", streamUrl)
+            .set("User-Agent", DEFAULT_USER_AGENT)
+            .set("Referer", "https://${streamUri.host}/")
             .add("X-Requested-With", "XMLHttpRequest")
             .build()
 
         val sources = runCatching {
-            client.newCall(GET("https://megaplay.buzz/stream/getSources?id=$streamId&id=$streamId", sourcesHeaders))
+            client.newCall(GET("$streamOrigin/stream/getSources?id=$streamId&id=$streamId", sourcesHeaders))
                 .execute()
                 .parseAs<MegaPlaySources>()
         }.getOrNull() ?: return emptyList()
 
-        val masterUrl = sources.sources?.file ?: return emptyList()
+        val masterUrl = sources.sources?.file?.takeIf { it.isNotBlank() }
+            ?: sources.enc?.takeIf { it.isNotBlank() }?.let { decryptMegaPlayFileUrl(it, streamOrigin) }
+            ?: return emptyList()
+
         val subtitleTracks = sources.tracks
             ?.filter { it.kind == "captions" && !it.file.isNullOrBlank() && !it.label.isNullOrBlank() }
             ?.map { Track(it.file!!, it.label!!) }
             ?: emptyList()
 
         val videoHeaders = headers.newBuilder()
-            .set("Referer", "https://megaplay.buzz/")
+            .set("User-Agent", DEFAULT_USER_AGENT)
+            .set("Referer", "$streamOrigin/")
             .build()
 
-        val videos = playlistUtils.extractFromHls(
-            masterUrl,
-            referer = "https://megaplay.buzz/",
-            masterHeaders = videoHeaders,
-            videoHeaders = videoHeaders,
-            videoNameGen = { quality -> "$quality" },
-            subtitleList = subtitleTracks,
-        ).map { video ->
-            Video(
-                videoUrl = video.videoUrl,
-                videoTitle = video.videoTitle,
-                headers = videoHeaders,
-                resolution = video.resolution,
-                subtitleTracks = video.subtitleTracks,
-                audioTracks = video.audioTracks,
+        val videos = runCatching {
+            playlistUtils.extractFromHls(
+                masterUrl,
+                referer = "$streamOrigin/",
+                masterHeaders = videoHeaders,
+                videoHeaders = videoHeaders,
+                videoNameGen = { quality -> quality },
+                subtitleList = subtitleTracks,
+            )
+        }.getOrNull().orEmpty().ifEmpty {
+            listOf(
+                Video(
+                    videoUrl = masterUrl,
+                    videoTitle = "Auto",
+                    headers = videoHeaders,
+                    subtitleTracks = subtitleTracks,
+                ),
             )
         }
 
@@ -371,17 +470,66 @@ class Gogoanime : Source() {
         // CDN's required Referer; processVideo() falls back to the direct CDN
         // URL when the relay cannot start.
         val relay = megaPlayProxy
-        return videos.map { relay.processVideo(it, "https://megaplay.buzz/") }
+        return videos.map { relay.processVideo(it, "$streamOrigin/") }
     }
+
+    @Volatile
+    private var megaPlayKeyMaterial: ByteArray = MEGAPLAY_DEFAULT_KEY
+
+    @Volatile
+    private var megaPlayIvMaterial: ByteArray = MEGAPLAY_DEFAULT_IV
+
+    private fun decryptMegaPlayFileUrl(enc: String, origin: String = "https://megaplay.buzz"): String? {
+        decryptMegaPlayOnce(enc, megaPlayKeyMaterial, megaPlayIvMaterial)?.let { return it }
+        refreshMegaPlayKeyMaterial(origin)
+        return decryptMegaPlayOnce(enc, megaPlayKeyMaterial, megaPlayIvMaterial)
+    }
+
+    private fun decryptMegaPlayOnce(enc: String, key: ByteArray, iv: ByteArray): String? = runCatching {
+        val clean = enc.replace('-', '+').replace('_', '/')
+        val padded = clean + "=".repeat((4 - clean.length % 4) % 4)
+        val data = Base64.decode(padded, Base64.DEFAULT)
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(key, "AES"),
+            IvParameterSpec(iv),
+        )
+        val plain = String(cipher.doFinal(data), Charsets.UTF_8)
+        plain.parseAs<MegaPlayFileDto>().file?.takeIf { it.isNotBlank() }
+            ?: Regex("""["']file["']\s*:\s*["']([^"']+)["']""").find(plain)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    /** Re-reads the literals from `lib/newclient.min.js`, keeping the current pair on failure. */
+    private fun refreshMegaPlayKeyMaterial(origin: String = "https://megaplay.buzz") = runCatching {
+        val jsHeaders = headers.newBuilder()
+            .set("User-Agent", DEFAULT_USER_AGENT)
+            .set("Referer", "$origin/")
+            .build()
+        val js = client.newCall(GET("$origin/lib/newclient.min.js", jsHeaders)).execute()
+            .use { it.body.string() }
+        MEGAPLAY_KEY_REGEX.find(js)?.let { match ->
+            val literal = match.groupValues[1].ifEmpty { match.groupValues[2] }
+            if (literal.isNotBlank()) {
+                megaPlayKeyMaterial = literal.toByteArray(Charsets.UTF_8).copyOf(32)
+            }
+        }
+        MEGAPLAY_IV_REGEX.find(js)?.let { match ->
+            val literal = match.groupValues[1].ifEmpty { match.groupValues[2] }
+            val bytes = literal.toByteArray(Charsets.UTF_8)
+            if (bytes.size == 16) megaPlayIvMaterial = bytes
+        }
+    }.let { }
 
     @Serializable
     private data class MegaPlaySources(
-        val sources: MegaPlaySourceFile? = null,
+        val sources: MegaPlayFileDto? = null,
         val tracks: List<MegaPlayTrack>? = null,
+        val enc: String? = null,
     )
 
     @Serializable
-    private data class MegaPlaySourceFile(
+    private data class MegaPlayFileDto(
         val file: String? = null,
     )
 
@@ -441,5 +589,20 @@ class Gogoanime : Source() {
         private val SERVER_ENTRIES = listOf("HD-1", "HD-2", "Omega", "Moon")
 
         private val DATE_FORMAT = SimpleDateFormat("MMMM d, yyyy", Locale.US)
+
+        private const val DEFAULT_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+        private val MEGAPLAY_DEFAULT_KEY: ByteArray =
+            "i?LMTAx0Q6,:}50U".toByteArray(Charsets.UTF_8).copyOf(32)
+
+        private val MEGAPLAY_DEFAULT_IV: ByteArray =
+            "W0;27ToaUpl_P%'c".toByteArray(Charsets.UTF_8)
+
+        private val MEGAPLAY_KEY_REGEX =
+            Regex("""\[\s*["']trustAesKey["']\s*,\s*["']TRUST_AES_KEY["']\s*\]\s*,\s*(?:"([^"]*)"|'([^']*)')""")
+
+        private val MEGAPLAY_IV_REGEX =
+            Regex("""\[\s*["']trustAesIv["']\s*,\s*["']TRUST_AES_IV["']\s*\]\s*,\s*(?:"([^"]*)"|'([^']*)')""")
     }
 }
