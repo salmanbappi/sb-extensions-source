@@ -88,7 +88,7 @@ class MegaPlayExtractor(
     }.getOrNull()
 
     private fun fetchSources(streamId: String): MegaPlaySourcesDto? = runCatching {
-        val url = "$MEGAPLAY/getSources?id=$streamId&id=$streamId"
+        val url = "$MEGAPLAY/stream/getSources?id=$streamId&id=$streamId"
         client.newCall(GET(url, embedHeaders)).execute().use { response ->
             if (!response.isSuccessful) return@use null
             response.parseAs<MegaPlaySourcesDto>()

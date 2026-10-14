@@ -240,29 +240,31 @@ class Anilight : Source() {
     // ============================ Hoster List =============================
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val slug = episode.url.substringBefore("#")
+        val slug = episode.url.substringBefore("#").trim('/')
+        if (slug.isBlank()) return emptyList()
+
         val fragment = episode.url.substringAfter("#", "")
         val params = fragment.split("&").associate {
             val parts = it.split("=", limit = 2)
             parts[0] to (parts.getOrNull(1) ?: "")
         }
 
-        val animeId = params["id"]?.takeIf { it.isNotBlank() }
         val epNum = params["ep"]?.takeIf { it.isNotBlank() }
             ?: if (episode.episode_number % 1f == 0f) episode.episode_number.toInt().toString() else "${episode.episode_number}"
 
-        if (animeId == null) {
+        val response = try {
+            client.newCall(GET("$API_BASE/watch/$slug", headers)).execute()
+        } catch (_: Exception) {
             return emptyList()
         }
-
-        val response = client.newCall(GET("$API_BASE/watch/$slug", headers)).execute()
         val dto = response.parseAs<WatchResponseDto>(json)
+        val animeId = params["id"]?.takeIf { it.isNotBlank() } ?: dto.id?.toString().orEmpty()
         val serversNew = fetchServersNew(slug)
 
         // The site's own default player: a MegaPlay embed that exists per
         // episode (not per provider), so it is placed at the top of the roster
         // as the default entry.
-        val episodeDto = (dto.episodes ?: emptyList()).firstOrNull { it.episodeKey() == epNum }
+        val episodeDto = (dto.episodes ?: emptyList()).firstOrNull { it.matchesEp(epNum) }
         val embedSub = episodeDto?.embed_url?.sub.orEmpty()
         val embedDub = episodeDto?.embed_url?.dub.orEmpty()
         val embedTypes = buildList {
@@ -318,6 +320,14 @@ class Anilight : Source() {
         if (it % 1f == 0f) it.toInt().toString() else it.toString()
     }
 
+    private fun EpisodeDto.matchesEp(target: String): Boolean {
+        val key = episodeKey()
+        if (key.equals(target, ignoreCase = true)) return true
+        val keyF = key.toFloatOrNull() ?: return false
+        val targetF = target.toFloatOrNull() ?: return false
+        return keyF == targetF
+    }
+
     /** `serversNew` keys are episode numbers; match loosely ("1" == "1.0"). */
     private fun Map<String, EpisodeServersNewDto>?.episodeServers(epNum: String): EpisodeServersNewDto? {
         this ?: return null
@@ -342,6 +352,13 @@ class Anilight : Source() {
     }
 
     // ============================ Video Links =============================
+
+    override suspend fun getVideoList(episode: SEpisode): List<Video> {
+        val hosters = getHosterList(episode)
+        return hosters.firstNotNullOfOrNull { hoster ->
+            getVideoList(hoster).ifEmpty { null }
+        } ?: emptyList()
+    }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val parts = hoster.hosterUrl.split("|")
@@ -737,8 +754,8 @@ class Anilight : Source() {
         private val DEAD_CHUNK_CODES = setOf(404, 410)
 
         /** Per-run WebView budget and the ceiling for one audio type. */
-        private const val WEBVIEW_BUDGET_MS = 15_000L
-        private const val RESOLVE_TIMEOUT_MS = 10_000L
+        private const val WEBVIEW_BUDGET_MS = 3_000L
+        private const val RESOLVE_TIMEOUT_MS = 2_000L
 
         private const val PREF_TITLE_LANG_KEY = "pref_title_lang"
         private const val PREF_TITLE_LANG_DEFAULT = "english"
