@@ -63,11 +63,10 @@ class AV1Encodes : Source() {
         .set("Upgrade-Insecure-Requests", "1")
         .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
 
-    private fun getVideoHeaders(): Headers =
-        Headers.Builder()
-            .set("User-Agent", DESKTOP_UA)
-            .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
-            .build()
+    private fun getVideoHeaders(): Headers = Headers.Builder()
+        .set("User-Agent", DESKTOP_UA)
+        .set("Referer", "${runCatching { baseUrl }.getOrDefault(PREF_DOMAIN_DEFAULT)}/")
+        .build()
 
     private val noRedirectClient: OkHttpClient by lazy {
         client.newBuilder()
@@ -777,7 +776,9 @@ class AV1Encodes : Source() {
                         val nextUrl = if (loc.startsWith("/")) "$baseUrl$loc" else loc
                         if (nextUrl.contains("/r/")) resolveRedirect(nextUrl, depth + 1) else nextUrl
                     }
+
                     resp.isSuccessful -> resp.request.url.toString()
+
                     else -> null
                 }
             }
@@ -787,13 +788,11 @@ class AV1Encodes : Source() {
         }
     }
 
-    private fun toStreamUrl(url: String): String {
-        return url
-            .replace("/watch/", "/stream/")
-            .replace("/dl/", "/stream/")
-            .replace("/dash/", "/stream/")
-            .substringBefore("/manifest.mpd")
-    }
+    private fun toStreamUrl(url: String): String = url
+        .replace("/watch/", "/stream/")
+        .replace("/dl/", "/stream/")
+        .replace("/dash/", "/stream/")
+        .substringBefore("/manifest.mpd")
 
     private fun toDashUrl(url: String): String {
         if (url.endsWith("/manifest.mpd")) return url
@@ -804,13 +803,11 @@ class AV1Encodes : Source() {
         return "$clean/manifest.mpd"
     }
 
-    private fun toDlUrl(url: String): String {
-        return url
-            .replace("/watch/", "/dl/")
-            .replace("/stream/", "/dl/")
-            .replace("/dash/", "/dl/")
-            .substringBefore("/manifest.mpd")
-    }
+    private fun toDlUrl(url: String): String = url
+        .replace("/watch/", "/dl/")
+        .replace("/stream/", "/dl/")
+        .replace("/dash/", "/dl/")
+        .substringBefore("/manifest.mpd")
 
     // ══════════════════════════════════════════════════════════════════════════
     // EXTRACTION HELPERS
