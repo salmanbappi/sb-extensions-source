@@ -259,9 +259,25 @@ class Anilight : Source() {
         val dto = response.parseAs<WatchResponseDto>(json)
         val serversNew = fetchServersNew(slug)
 
+        // The site's own default player: a MegaPlay embed that exists per
+        // episode (not per provider), so it is placed at the top of the roster
+        // as the default entry.
+        val episodeDto = (dto.episodes ?: emptyList()).firstOrNull { it.episodeKey() == epNum }
+        val embedSub = episodeDto?.embed_url?.sub.orEmpty()
+        val embedDub = episodeDto?.embed_url?.dub.orEmpty()
+        val embedTypes = buildList {
+            if (embedSub.isNotBlank()) add("sub")
+            if (embedDub.isNotBlank()) add("dub")
+        }
+
         // Since 2026-10 the API ships the provider roster per episode and per
         // audio type through `serversNew`; the old `servers` object is gone.
         val providerMap = linkedMapOf<String, MutableList<String>>()
+
+        if (embedTypes.isNotEmpty()) {
+            providerMap[MEG_PROVIDER] = embedTypes.toMutableList()
+        }
+
         (serversNew.episodeServers(epNum) ?: FALLBACK_SERVERS).fillProviders(providerMap)
 
         // The API occasionally ships an empty roster; fall back to the full
@@ -276,21 +292,6 @@ class Anilight : Source() {
             .filter { id -> HIDDEN_PROVIDER_IDS.any { id.contains(it, ignoreCase = true) } }
             .forEach { hidden -> providerMap.remove(hidden) }
 
-        // The site's own default player: a MegaPlay embed that exists per
-        // episode (not per provider), so it is bolted onto the roster here
-        // exactly like the web player does — which unshifts it as the default.
-        val episodeDto = (dto.episodes ?: emptyList()).firstOrNull { it.episodeKey() == epNum }
-        val embedSub = episodeDto?.embed_url?.sub.orEmpty()
-        val embedDub = episodeDto?.embed_url?.dub.orEmpty()
-        val embedTypes = buildList {
-            if (embedSub.isNotBlank()) add("sub")
-            if (embedDub.isNotBlank()) add("dub")
-        }
-
-        if (embedTypes.isNotEmpty()) {
-            providerMap[MEG_PROVIDER] = embedTypes.toMutableList()
-        }
-
         val prefServer = (preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT)
             .takeIf { it in PROVIDER_VALUES } ?: PREF_SERVER_DEFAULT
         val excludedServers = preferences.getStringSet(PREF_EXCLUDE_KEY, emptySet())?.toSet().orEmpty()
@@ -298,8 +299,8 @@ class Anilight : Source() {
         return providerMap
             .filterKeys { it !in excludedServers }
             .map { (providerId, types) ->
-                val displayName = providerId.replaceFirstChar { it.uppercase() }
-                val tip = if (providerId == MEG_PROVIDER) "Embed" else typesLabel(types)
+                val displayName = if (providerId == MEG_PROVIDER) "AniLight" else providerId.replaceFirstChar { it.uppercase() }
+                val tip = if (providerId == MEG_PROVIDER) "Default · Sub, Dub" else typesLabel(types)
                 Hoster(
                     hosterName = "$displayName · $tip",
                     // megaplay embeds are per-episode rather than per-provider, so
@@ -394,6 +395,24 @@ class Anilight : Source() {
                     audioBadge = audioBadge,
                     timeoutMs = minOf(remaining, RESOLVE_TIMEOUT_MS),
                 )
+            }
+        }
+
+        // If the web player failed to resolve streams (e.g. Turnstile gate),
+        // seamlessly fall back to MegaPlay so playback never fails.
+        if (videos.isEmpty() && (embedSub.isNotBlank() || embedDub.isNotBlank())) {
+            val fallbackTypes = buildList {
+                if (embedSub.isNotBlank()) add("sub")
+                if (embedDub.isNotBlank()) add("dub")
+            }
+            val megaFallback = fallbackTypes.parallelCatchingFlatMap { rawType ->
+                val isDub = rawType.equals("dub", ignoreCase = true)
+                val embedUrl = if (isDub) embedDub else embedSub
+                if (embedUrl.isBlank()) return@parallelCatchingFlatMap emptyList<Video>()
+                megaPlayExtractor.videosFromEmbed(embedUrl, isDub)
+            }
+            if (megaFallback.isNotEmpty()) {
+                return m3u8Integration.processVideoList(megaFallback.sortVideos())
             }
         }
 
@@ -699,7 +718,7 @@ class Anilight : Source() {
          * "Exclude Servers" pickers so the two can never drift apart.
          */
         private val PROVIDER_ENTRIES = arrayOf(
-            "Meg · Embed",
+            "AniLight · Default",
             "Kira · Soft Sub, Dub",
             "L · Soft Sub, Dub",
             "Light · Hard Sub, Dub",
@@ -718,8 +737,8 @@ class Anilight : Source() {
         private val DEAD_CHUNK_CODES = setOf(404, 410)
 
         /** Per-run WebView budget and the ceiling for one audio type. */
-        private const val WEBVIEW_BUDGET_MS = 70_000L
-        private const val RESOLVE_TIMEOUT_MS = 40_000L
+        private const val WEBVIEW_BUDGET_MS = 15_000L
+        private const val RESOLVE_TIMEOUT_MS = 10_000L
 
         private const val PREF_TITLE_LANG_KEY = "pref_title_lang"
         private const val PREF_TITLE_LANG_DEFAULT = "english"

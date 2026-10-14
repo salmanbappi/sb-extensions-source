@@ -59,6 +59,7 @@ class MegaPlayExtractor(
         return runCatching {
             playlistUtils.extractFromHls(
                 playlistUrl = fileUrl,
+                referer = "$MEGAPLAY/",
                 masterHeaders = embedHeaders,
                 videoHeaders = embedHeaders,
                 videoNameGen = { quality -> "$quality $audioBadge" },
@@ -107,9 +108,12 @@ class MegaPlayExtractor(
     }
 
     private fun decryptOnce(enc: String, key: ByteArray, iv: ByteArray): String? = runCatching {
+        val clean = enc.replace('-', '+').replace('_', '/')
+        val pad = (4 - (clean.length % 4)) % 4
+        val padded = clean + "=".repeat(pad)
         val data = Base64.decode(
-            enc.replace('-', '+').replace('_', '/'),
-            Base64.DEFAULT or Base64.NO_WRAP or Base64.NO_PADDING,
+            padded,
+            Base64.DEFAULT or Base64.NO_WRAP,
         )
         val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
         cipher.init(

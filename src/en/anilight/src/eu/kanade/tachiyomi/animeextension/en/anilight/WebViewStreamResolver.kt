@@ -70,6 +70,12 @@ class WebViewStreamResolver {
                     val url = request?.url?.toString() ?: return null
                     if (url.startsWith("blob:") || url.startsWith("data:")) return null
                     when {
+                        url.contains("challenges.cloudflare.com") || url.contains("turnstile") -> {
+                            // Turnstile challenge detected: headless solve is blocked, abort fast
+                            firstMedia.countDown()
+                            settled.countDown()
+                        }
+
                         isSubtitle(url) -> if (!subtitles.contains(url)) subtitles.add(url)
 
                         isMedia(url) && !media.contains(url) -> {
@@ -148,10 +154,10 @@ class WebViewStreamResolver {
             })()
         """
 
-        const val DEFAULT_TIMEOUT_MS = 45_000L
-        const val GRACE_MS = 2_000L
-        const val SETTLE_SLACK_MS = 1_000L
-        const val NUDGE_INTERVAL_MS = 2_500L
-        const val MAX_NUDGES = 18
+        const val DEFAULT_TIMEOUT_MS = 8_000L
+        const val GRACE_MS = 1_500L
+        const val SETTLE_SLACK_MS = 500L
+        const val NUDGE_INTERVAL_MS = 1_500L
+        const val MAX_NUDGES = 5
     }
 }
