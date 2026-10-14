@@ -46,15 +46,34 @@ import java.util.concurrent.TimeUnit
 private const val PREF_TMDB_API_KEY = "tmdb_api_key"
 private const val PREF_USE_TMDB_COVERS = "use_tmdb_covers"
 private const val IMAGE_PROBE_MARKER = "a_AL_.jpg"
-private const val IMAGE_PROBE_MARKER_2 = "a_VL_.jpg"
-private const val IMAGE_PROBE_MARKER_3 = "a_V1_.jpg"
-private const val IMAGE_PROBE_MARKER_4 = "a0_AL_.jpg"
-private const val IMAGE_PROBE_MARKER_5 = "a0_VL_.jpg"
-private const val IMAGE_PROBE_MARKER_6 = "a11.jpg"
-private const val IMAGE_PROBE_MARKER_7 = "a22.jpg"
-private const val IMAGE_PROBE_MARKER_8 = "a4e.jpg"
-private const val IMAGE_PROBE_MARKER_9 = "afull.jpg"
-private const val FALLBACK_IMAGE = "poster.jpg"
+
+private val COVER_MARKERS = listOf(
+    "a_AL_.jpg", "000.jpg", "a_VL_.jpg", "a11.jpg", "a_V1_.jpg", "a._V1_.jpg",
+    "a0_AL_.jpg", "a06_.jpg", "a07_.jpg", "a607_.jpg", "aer.jpg", "url.jpg",
+    "000.png", "a22.jpg", "aAL_.jpg", "a20_.jpg", "ater.jpg", "a08_.jpg",
+    "images.jpeg", "age.jpg", "a00.jpg", "a720_.jpg", "a_AL_.jpeg", "a11.jpeg",
+    "alg.jpg", "ar2.jpg", "a606_.jpg", "aster.jpg", "a_A1_.jpg", "aer2.jpg",
+    "aV1_.jpg", "a18_.jpg", "url.jpeg", "aull.jpg", "a608_.jpg", "a01.jpg",
+    "a._AL_.jpg", "00.jpg", "aver.jpg", "a04.jpg", "aurl.jpg", "a19_.jpg",
+    "000.jpeg", "a5_AL_.jpg", "axlg.jpg", "MV5Bz.jpg", "a11.png", "a02.jpg",
+    "a14.jpg", "a15.jpg", "a-1.jpg", "aer3.jpg", "aad.jpg", "a10.jpg",
+    "a-2.jpg", "a_VL_.jpeg", "ane.jpg", "DVD Poster JPEG.jpg", "aon.jpg",
+    "a00_.jpg", "arl.jpg", "images.jpg", "aoster.jpg", "a13.jpg", "a20.jpg",
+    "a9_AL_.jpg", "MV5z.jpg", "arge.jpg", "aan.jpg", "a03.jpg", "a1.jpg",
+    "aer4.jpg", "ar3.jpg", "ae.jpg", "aes.jpg", "a09.jpg", "a014.jpg",
+    "aed.jpg", "aie.jpg", "a16.jpg", "a80.jpg", "a2.jpg", "a015.jpg",
+    "url1.jpg", "aay.jpg", "a50.jpg", "aer1.jpg", "anz.jpg", "a24.jpg",
+    "ad.jpg", "ar4.jpg", "a500.jpg", "a06.jpg", "a88.jpg", "ang.jpg",
+    "aal.jpg", "a_3.jpg", "a00_AL_.jpg", "a918_.jpg", "a68_.jpg", "iko.jpg",
+    "aoad.jpg", "a40.jpg", "download.jpg", "a_hq.jpg", "a-3.jpg", "and.jpg",
+    "azz.jpg", "aaer.jpg", "a39.jpg", "a801.jpg", "url.png",
+    "a0_VL_.jpg", "a4e.jpg", "afull.jpg", "poster.jpg", "cover.jpg",
+    "Cover1.jpg", "Cover2.jpg",
+)
+
+private val COVER_NAME_REGEX = Regex(
+    """(?i)(?:a_al|000|a_vl|a11|a_v1|a\._v1|a0_al|a06|a07|a607|aer|url|a22|aal|a20|ater|a08|images|age|a00|a720|alg|ar2|a606|aster|aer2|a_a1|a18|av1|aull|a608|a01|a\._al|00|aver|a04|aurl|a19|a5_al|axlg|mv5bz|a02|a14|a15|a-1|aer3|aad|a10|a-2|ane|aon|a00_|arl|aoster|a13|a9_al|mv5z|arge|aan|a03|a1|aer4|ar3|ae|aes|a09|a014|aed|aie|a16|a80|a2|a015|url1|aay|a50|aer1|anz|a24|ad|ar4|a500|a88|ang|a_3|a00_al|a918|a68|iko|aoad|a40|download|a_hq|a-3|and|azz|aaer|a39|a801|a0_vl|a4e|afull|poster|cover)""",
+)
 
 private val IP_HTTP_REGEX = Regex("""(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s*http""")
 private val DOUBLE_PROTOCOL_REGEX = Regex("""http(s)?://http(s)?://""")
@@ -100,22 +119,23 @@ class DhakaFlix2(
             var response = chain.proceed(request.newBuilder().headers(imageHeaders).build())
             if (response.isSuccessful && response.header("Content-Type")?.startsWith("image") == true) return response
 
-            val markers = listOf(IMAGE_PROBE_MARKER, IMAGE_PROBE_MARKER_2, IMAGE_PROBE_MARKER_3, IMAGE_PROBE_MARKER_4, IMAGE_PROBE_MARKER_5, IMAGE_PROBE_MARKER_6, IMAGE_PROBE_MARKER_7, IMAGE_PROBE_MARKER_8, IMAGE_PROBE_MARKER_9, FALLBACK_IMAGE)
-            var currentUrl = url
-
-            for (i in 0 until markers.size - 1) {
-                if (currentUrl.contains(markers[i])) {
+            val currentFileName = if (url.contains("/")) url.substringAfterLast("/").substringBefore("?") else ""
+            if (COVER_MARKERS.any { it.equals(currentFileName, ignoreCase = true) }) {
+                val folder = if (url.contains("/")) url.substringBeforeLast("/") + "/" else baseUrl
+                for (marker in COVER_MARKERS) {
+                    if (marker.equals(currentFileName, ignoreCase = true)) continue
                     response.close()
-                    currentUrl = currentUrl.replace(markers[i], markers[i + 1])
-                    val fallbackParent = if (currentUrl.contains("/")) currentUrl.substringBeforeLast("/") + "/" else baseUrl
+                    val probeUrl = fixUrl(folder + marker)
                     response = chain.proceed(
                         request.newBuilder()
-                            .url(fixUrl(currentUrl))
-                            .header("Referer", fallbackParent)
+                            .url(probeUrl)
+                            .header("Referer", folder)
                             .headers(imageHeaders)
                             .build(),
                     )
-                    if (response.isSuccessful && response.header("Content-Type")?.startsWith("image") == true) return response
+                    if (response.isSuccessful && response.header("Content-Type")?.startsWith("image") == true) {
+                        return response
+                    }
                 }
             }
             return response
@@ -218,7 +238,7 @@ class DhakaFlix2(
                                         if (source != null) {
                                             var foundThumbUrl: String? = null
                                             var firstAnyImageUrl: String? = null
-                                            val thumbRegex = Regex("href=\"([^\"]+(?:a11|a22|a4e|afull|a_al|a0_al|a_vl|a0_vl|a_v1)[^\"]*\\.(?:jpg|jpeg|png|webp))\"", RegexOption.IGNORE_CASE)
+                                            val thumbRegex = Regex("href=\"([^\"]+(?:a_al|000|a_vl|a11|a_v1|a\\._v1|a0_al|a06|a07|a607|aer|url|a22|aal|a20|ater|a08|images|age|a00|a720|alg|ar2|a606|aster|aer2|a_a1|a18|av1|aull|a608|a01|a\\._al|00|aver|a04|aurl|a19|a5_al|axlg|mv5bz|a02|a14|a15|a-1|aer3|aad|a10|a-2|ane|aon|a00_|arl|aoster|a13|a9_al|mv5z|arge|aan|a03|a1|aer4|ar3|ae|aes|a09|a014|aed|aie|a16|a80|a2|a015|url1|aay|a50|aer1|anz|a24|ad|ar4|a500|a88|ang|a_3|a00_al|a918|a68|iko|aoad|a40|download|a_hq|a-3|and|azz|aaer|a39|a801|a0_vl|a4e|afull|poster|cover)[^\"]*\\.(?:jpg|jpeg|png|webp))\"", RegexOption.IGNORE_CASE)
                                             val anyImageRegex = Regex("href=\"([^\"]+\\.(?:jpg|jpeg|png|webp))\"", RegexOption.IGNORE_CASE)
                                             val excludeRegex = Regex("parent|icon|menu|nav|/_h5ai/", RegexOption.IGNORE_CASE)
 
@@ -514,7 +534,7 @@ class DhakaFlix2(
                 SAnime.create().apply {
                     title = link.text().trim()
                     url = fixUrl(link.attr("abs:href"))
-                    val thumbElement = card.selectFirst("img[src~=(?i)a11|a22|a4e|afull|a_al|a0_al|a_vl|a0_vl|a_v1], img:not([src~=(?i)back|parent|icon|/icons/|menu|nav|folder|fallback|/_h5ai/])")
+                    val thumbElement = card.selectFirst("img[src~=(?i)a_al|000|a_vl|a11|a_v1|a\\._v1|a0_al|a06|a07|a607|aer|url|a22|aal|a20|ater|a08|images|age|a00|a720|alg|ar2|a606|aster|aer2|a_a1|a18|av1|aull|a608|a01|a\\._al|00|aver|a04|aurl|a19|a5_al|axlg|mv5bz|a02|a14|a15|a-1|aer3|aad|a10|a-2|ane|aon|a00_|arl|aoster|a13|a9_al|mv5z|arge|aan|a03|a1|aer4|ar3|ae|aes|a09|a014|aed|aie|a16|a80|a2|a015|url1|aay|a50|aer1|anz|a24|ad|ar4|a500|a88|ang|a_3|a00_al|a918|a68|iko|aoad|a40|download|a_hq|a-3|and|azz|aaer|a39|a801|a0_vl|a4e|afull|poster|cover], img:not([src~=(?i)back|parent|icon|/icons/|menu|nav|folder|fallback|/_h5ai/])")
                     val thumbUrl = thumbElement?.let {
                         it.attr("abs:data-src").ifEmpty { it.attr("abs:data-lazy-src").ifEmpty { it.attr("abs:src") } }
                     } ?: ""
@@ -535,7 +555,7 @@ class DhakaFlix2(
                         val foundThumb = pageImageLinks.find {
                             val imgHref = it.attr("abs:href")
                             imgHref.startsWith(currentDir) &&
-                                imgHref.lowercase().contains(Regex("a11|a22|a4e|afull|a_al|a0_al|a_vl|a0_vl|a_v1"))
+                                COVER_NAME_REGEX.containsMatchIn(imgHref)
                         } ?: pageImageLinks.find { it.attr("abs:href").startsWith(currentDir) }
 
                         thumbnail_url = if (foundThumb != null) formatThumbUrl(foundThumb.attr("abs:href")) else getFolderThumb(url)
@@ -592,7 +612,7 @@ class DhakaFlix2(
             description = document.selectFirst("p.storyline")?.text()?.trim() ?: ""
 
             // 1. Look for images already rendered as tags
-            val thumbElement = document.selectFirst("img[src~=(?i)a11|a22|a4e|afull|a_al|a0_al|a_vl|a0_vl|a_v1], img:not([src~=(?i)back|parent|icon|/icons/|menu|nav|folder|fallback|/_h5ai/])")
+            val thumbElement = document.selectFirst("img[src~=(?i)a_al|000|a_vl|a11|a_v1|a\\._v1|a0_al|a06|a07|a607|aer|url|a22|aal|a20|ater|a08|images|age|a00|a720|alg|ar2|a606|aster|aer2|a_a1|a18|av1|aull|a608|a01|a\\._al|00|aver|a04|aurl|a19|a5_al|axlg|mv5bz|a02|a14|a15|a-1|aer3|aad|a10|a-2|ane|aon|a00_|arl|aoster|a13|a9_al|mv5z|arge|aan|a03|a1|aer4|ar3|ae|aes|a09|a014|aed|aie|a16|a80|a2|a015|url1|aay|a50|aer1|anz|a24|ad|ar4|a500|a88|ang|a_3|a00_al|a918|a68|iko|aoad|a40|download|a_hq|a-3|and|azz|aaer|a39|a801|a0_vl|a4e|afull|poster|cover], img:not([src~=(?i)back|parent|icon|/icons/|menu|nav|folder|fallback|/_h5ai/])")
 
             var thumbUrl = thumbElement?.let {
                 it.attr("abs:data-src").ifEmpty { it.attr("abs:data-lazy-src").ifEmpty { it.attr("abs:src") } }
@@ -605,7 +625,7 @@ class DhakaFlix2(
                 // Try to find known good names first
                 val foundThumb = allLinks.find {
                     val href = it.attr("href").lowercase()
-                    href.contains(Regex("a11|a22|a4e|afull|a_al|a0_al|a_vl|a0_vl|a_v1")) &&
+                    COVER_NAME_REGEX.containsMatchIn(href) &&
                         (href.endsWith(".jpg") || href.endsWith(".jpeg") || href.endsWith(".png") || href.endsWith(".webp"))
                 }
 

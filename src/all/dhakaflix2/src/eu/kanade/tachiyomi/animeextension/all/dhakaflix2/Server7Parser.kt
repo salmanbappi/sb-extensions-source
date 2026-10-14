@@ -42,7 +42,7 @@ object Server7Parser {
                 val finalHref = if (href.endsWith("/") || isFolder) (if (href.endsWith("/")) href else "$href/") else href
                 this.url = "$hostUrl$finalHref"
                 // Only set thumbnail for folders, files will use TMDb enrichment if enabled
-                this.thumbnail_url = if (this.url.endsWith("/")) (this.url + "a11.jpg").replace(" ", "%20").replace("&", "%26") else ""
+                this.thumbnail_url = if (this.url.endsWith("/")) (this.url + "a_AL_.jpg").replace(" ", "%20").replace("&", "%26") else ""
             }
 
             synchronized(results) {
