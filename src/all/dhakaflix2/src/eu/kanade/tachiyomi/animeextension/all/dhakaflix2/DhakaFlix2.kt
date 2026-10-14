@@ -332,20 +332,18 @@ class DhakaFlix2(
 
         val results = withContext(Dispatchers.IO) {
             val paths = mutableListOf("/$serverPath/")
-            if (serverPath == "DHAKA-FLIX-9") {
+            if (serverPath == "DHAKA-FLIX-10" || serverPath == "DHAKA-FLIX-9") {
                 paths.add("/$serverPath/Anime & Cartoon TV Series/Anime-TV Series \u2665  A  \u2014  F/")
                 paths.add("/$serverPath/Anime & Cartoon TV Series/Anime-TV Series \u2665  G  \u2014  M/")
                 paths.add("/$serverPath/Anime & Cartoon TV Series/Anime-TV Series \u2666  N  \u2014  S/")
                 paths.add("/$serverPath/Anime & Cartoon TV Series/Anime-TV Series \u2666  T  \u2014  Z/")
                 paths.add("/$serverPath/Anime & Cartoon TV Series/Anime-TV Series \u2605  0  \u2014  9/")
-                paths.add("/$serverPath/Anime & Cartoon Movies/")
             }
             if (serverPath == "DHAKA-FLIX-12") {
                 paths.add("/$serverPath/TV-WEB-Series/TV Series \u2665  A  \u2014  L/")
                 paths.add("/$serverPath/TV-WEB-Series/TV Series \u2666  M  \u2014  R/")
                 paths.add("/$serverPath/TV-WEB-Series/TV Series \u2666  S  \u2014  Z/")
                 paths.add("/$serverPath/TV-WEB-Series/TV Series \u2605  0  \u2014  9/")
-                paths.add("/$serverPath/Hindi Movies/")
             }
 
             val deferredResults = paths.map { path ->
@@ -493,7 +491,7 @@ class DhakaFlix2(
         val path = when {
             baseUrl.contains("50.14") -> "$serverPath/Hindi%20Movies/(2026)/"
             baseUrl.contains("50.12") -> "$serverPath/TV-WEB-Series/TV%20Series%20%E2%99%A5%20%20A%20%20%E2%80%94%20%20L/"
-            baseUrl.contains("50.9") -> "$serverPath/Anime%20%26%20Cartoon%20TV%20Series/Anime-TV%20Series%20%E2%99%A5%20%20A%20%20%E2%80%94%20%20F/"
+            baseUrl.contains("50.10") || baseUrl.contains("50.9") -> "$serverPath/Anime%20%26%20Cartoon%20TV%20Series/Anime-TV%20Series%20%E2%99%A5%20%20A%20%20%E2%80%94%20%20F/"
             baseUrl.contains("50.7") -> "$serverPath/English%20Movies/(2026)/"
             else -> ""
         }

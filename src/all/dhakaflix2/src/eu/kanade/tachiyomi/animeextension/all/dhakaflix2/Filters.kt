@@ -74,6 +74,8 @@ object Filters {
 
             "Awards & TV Shows" -> path = "Awards & TV Shows"
 
+            "Tutorial" -> path = "Tutorial"
+
             "IMDb Top-250 Movies" -> path = "IMDb Top-250 Movies"
 
             "3D Movies" -> path = "3D Movies"
@@ -106,8 +108,12 @@ object Filters {
                     }
                 }
 
-                category == "South Indian Movies" || category == "South Hindi Dubbed" -> {
+                category == "South Indian Movies" -> {
                     if (year == "(2009) & Before") "2000 & Before" else year
+                }
+
+                category == "South Hindi Dubbed" -> {
+                    if (year == "(2009) & Before") "(2009) & Before" else "($year)"
                 }
 
                 else -> "($year)"

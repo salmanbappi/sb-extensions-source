@@ -17,14 +17,14 @@ class DhakaFlixFactory : AnimeSourceFactory {
             "http://172.16.50.12",
             5181466391484419942L,
             "DHAKA-FLIX-12",
-            arrayOf("TV Series", "Hindi Movies"),
+            arrayOf("TV Series"),
         ),
         DhakaFlix2(
             "DhakaFlix (Anime & Documentary)",
-            "http://172.16.50.9",
+            "http://172.16.50.10",
             5181466391484419943L,
-            "DHAKA-FLIX-9",
-            arrayOf("Anime-TV Series", "Documentary", "WWE & AEW Wrestling", "Awards & TV Shows"),
+            "DHAKA-FLIX-10",
+            arrayOf("Anime-TV Series", "Documentary", "WWE & AEW Wrestling", "Awards & TV Shows", "Tutorial"),
         ),
         DhakaFlix2(
             "DhakaFlix (English & International)",
