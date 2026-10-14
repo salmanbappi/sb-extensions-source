@@ -78,12 +78,11 @@ class AV1Encodes : Source() {
     // POPULAR
     // ══════════════════════════════════════════════════════════════════════════
 
-    override fun popularAnimeRequest(page: Int): Request =
-        if (page == 1) {
-            GET(baseUrl, headers)
-        } else {
-            GET("$baseUrl/anime?page=$page", headers)
-        }
+    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
+        GET(baseUrl, headers)
+    } else {
+        GET("$baseUrl/anime?page=$page", headers)
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val doc = response.useAsJsoup()
@@ -117,8 +116,12 @@ class AV1Encodes : Source() {
         val cards = doc.select(
             "article.anime-card, article[class*='card'], div.anime-item, .anime-item, .sidebar-list-panel li, .sidebar-list-panel article, section.content-layout article",
         ).mapNotNull { card ->
-            val a = if (card.tagName() == "a") card else card.selectFirst("h3 > a, h4 > a, .card-body a, a[href*='/anime/']")
-                ?: return@mapNotNull null
+            val a = if (card.tagName() == "a") {
+                card
+            } else {
+                card.selectFirst("h3 > a, h4 > a, .card-body a, a[href*='/anime/']")
+                    ?: return@mapNotNull null
+            }
             val href = a.attr("href").let {
                 if (it.startsWith("http")) it.removePrefix(baseUrl) else it
             }
@@ -316,8 +319,12 @@ class AV1Encodes : Source() {
         // Try article cards first (same structure as latestUpdatesParse)
         var animes = doc.select("article.anime-card, article[class*='card'], article[class*='anime'], div.anime-item, .anime-item")
             .mapNotNull { card ->
-                val a = if (card.tagName() == "a") card else card.selectFirst("h3 > a, h4 > a, .card-body a, a.anime-link, a[href*='/anime/']")
-                    ?: return@mapNotNull null
+                val a = if (card.tagName() == "a") {
+                    card
+                } else {
+                    card.selectFirst("h3 > a, h4 > a, .card-body a, a.anime-link, a[href*='/anime/']")
+                        ?: return@mapNotNull null
+                }
                 val href = a.attr("href").let {
                     if (it.startsWith("http")) it.removePrefix(baseUrl) else it
                 }
@@ -514,8 +521,11 @@ class AV1Encodes : Source() {
                                 setUrlWithoutDomain(item.href)
                                 name = if (item.label.isNotBlank()) {
                                     val audioTag = if (item.audio.isNotBlank()) " [${item.audio}]" else ""
-                                    if (season != "1" && season.isNotBlank()) "Season $season Ep ${item.num} - ${item.label}$audioTag"
-                                    else "Ep ${item.num} - ${item.label}$audioTag"
+                                    if (season != "1" && season.isNotBlank()) {
+                                        "Season $season Ep ${item.num} - ${item.label}$audioTag"
+                                    } else {
+                                        "Ep ${item.num} - ${item.label}$audioTag"
+                                    }
                                 } else {
                                     buildEpisodeLabel(fn, season)
                                 }
@@ -585,9 +595,7 @@ class AV1Encodes : Source() {
         return if (filtered.isNotEmpty()) filtered else allVideos
     }
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        return extractAllVideos(episode.url).sortVideos()
-    }
+    override suspend fun getVideoList(episode: SEpisode): List<Video> = extractAllVideos(episode.url).sortVideos()
 
     private suspend fun extractAllVideos(episodeUrl: String): List<Video> {
         Log.d(TAG, "extractAllVideos: episodeUrl=$episodeUrl")
