@@ -62,7 +62,7 @@ object FourAnimoHlsServer : NanoHTTPD(0) {
         val url = session.parameters["url"]?.firstOrNull()
             ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url")
 
-        val referer = session.parameters["referer"]?.firstOrNull() ?: "https://4animo.xyz/"
+        val referer = session.parameters["referer"]?.firstOrNull() ?: "https://zanix.tr/"
 
         return try {
             val headers = Headers.Builder()
@@ -82,7 +82,7 @@ object FourAnimoHlsServer : NanoHTTPD(0) {
         val url = session.parameters["url"]?.firstOrNull()
             ?: return newFixedLengthResponse(Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url")
 
-        val referer = session.parameters["referer"]?.firstOrNull() ?: "https://4animo.xyz/"
+        val referer = session.parameters["referer"]?.firstOrNull() ?: "https://zanix.tr/"
 
         return try {
             val headers = Headers.Builder()

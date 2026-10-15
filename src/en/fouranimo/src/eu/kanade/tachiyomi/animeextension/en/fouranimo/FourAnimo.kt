@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.addListPreference
 import extensions.utils.addSetPreference
+import extensions.utils.asJsoup
 import extensions.utils.delegate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -22,25 +23,26 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
 class FourAnimo : Source() {
 
-    override val name = "Animo"
+    override val name = "Zanix"
 
-    override val baseUrl = "https://4animo.xyz"
+    override val baseUrl = "https://zanix.tr"
 
     override val lang = "en"
 
     override val supportsLatest = true
 
-    private val imageBaseUrl = "https://cdnanimo.xyz"
     private val embedBaseUrl = "https://cdn.4animo.xyz"
 
     override fun headersBuilder() = super.headersBuilder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
     // Preferences
@@ -49,179 +51,78 @@ class FourAnimo : Source() {
     private val preferredServer by preferences.delegate(PREF_SERVER_KEY, PREF_SERVER_DEFAULT)
 
     // ============================== Helper Utils ==============================
-    private fun extractNextPayload(html: String): String {
-        val regex = """self\.__next_f\.push\(\[1,\s*"(.*)"\]\)""".toRegex()
-        val pushes = regex.findAll(html).map { it.groupValues[1] }.joinToString("")
-        return pushes.replace("\\\"", "\"").replace("\\\\", "\\")
-    }
-
-    private fun parseAnimeCardList(payload: String): List<SAnime> {
-        val animeList = mutableListOf<SAnime>()
-        val seen = mutableSetOf<String>()
-
-        val jsonMatchRegex = """\{"id":(\d+),"slug":"([^"]+)","titles":(\{[^{}]+\})""".toRegex()
-        jsonMatchRegex.findAll(payload).forEach { match ->
-            val id = match.groupValues[1]
-            val slug = match.groupValues[2]
-            val titlesJson = match.groupValues[3]
-            if (slug !in seen) {
-                seen.add(slug)
-                val title = extractTitleFromJson(titlesJson)
-                val posterUrl = "$imageBaseUrl/poster/$id.jpg"
-                animeList.add(
-                    SAnime.create().apply {
-                        this.title = title
-                        setUrlWithoutDomain("/watch/$slug")
-                        thumbnail_url = posterUrl
-                    },
-                )
+    private fun parseAnimeListFromDocument(document: Document): AnimesPage {
+        val animeList = document.select(".film_list-wrap .flw-item").mapNotNull { element ->
+            val titleElement = element.selectFirst(".film-name a")
+                ?: element.selectFirst(".film-poster-ahref")
+                ?: return@mapNotNull null
+            val title = titleElement.attr("title").ifEmpty { titleElement.text() }
+            val href = titleElement.attr("href")
+            if (href.isBlank()) return@mapNotNull null
+            val imgElement = element.selectFirst(".film-poster img")
+            val poster = imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") } ?: ""
+            SAnime.create().apply {
+                this.title = title
+                setUrlWithoutDomain(href)
+                thumbnail_url = poster
             }
         }
-
-        val cardRegex = """\{"href":"/([^"]+)","title":"([^"]+)".*?"src":"(https://cdnanimo\.xyz/poster/[^"]+)"""".toRegex()
-        cardRegex.findAll(payload).forEach { match ->
-            val slug = match.groupValues[1].removePrefix("watch/").removePrefix("/")
-            val title = match.groupValues[2]
-            val poster = match.groupValues[3]
-            if (slug !in seen) {
-                seen.add(slug)
-                animeList.add(
-                    SAnime.create().apply {
-                        this.title = title
-                        setUrlWithoutDomain("/watch/$slug")
-                        thumbnail_url = poster
-                    },
-                )
-            }
-        }
-
-        val altRegex = """"src":"https://cdnanimo\.xyz/poster/(\d+)\.jpg","alt":"([^"]+)"""".toRegex()
-        altRegex.findAll(payload).forEach { match ->
-            val id = match.groupValues[1]
-            val title = match.groupValues[2]
-            val poster = "$imageBaseUrl/poster/$id.jpg"
-            val startIdx = maxOf(0, match.range.first - 500)
-            val endIdx = minOf(payload.length, match.range.last + 500)
-            val snippet = payload.substring(startIdx, endIdx)
-            val slugMatch = """href["']?:\s*["']?/(?:watch/)?([^"'\s,\}\]]+)""".toRegex().find(snippet)
-            val slug = slugMatch?.groupValues?.get(1)?.removePrefix("watch/")?.trim('/')
-                ?: "${title.lowercase().replace(" ", "-")}-$id"
-            if (slug !in seen) {
-                seen.add(slug)
-                animeList.add(
-                    SAnime.create().apply {
-                        this.title = title
-                        setUrlWithoutDomain("/watch/$slug")
-                        thumbnail_url = poster
-                    },
-                )
-            }
-        }
-
-        return animeList
-    }
-
-    private fun extractTitleFromJson(titlesJson: String): String = try {
-        val element = json.parseToJsonElement(titlesJson).jsonObject
-        element["english"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            ?: element["romaji"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            ?: element["native"]?.jsonPrimitive?.content ?: "Anime"
-    } catch (_: Exception) {
-        "Anime"
-    }
-
-    private fun paginateAnimeList(allCards: List<SAnime>, page: Int, perPage: Int = 24): AnimesPage {
-        if (allCards.isEmpty()) return AnimesPage(emptyList(), false)
-        val fromIndex = (page - 1) * perPage
-        if (fromIndex >= allCards.size) return AnimesPage(emptyList(), false)
-        val toIndex = minOf(fromIndex + perPage, allCards.size)
-        val pageCards = allCards.subList(fromIndex, toIndex)
-        val hasNextPage = toIndex < allCards.size
-        return AnimesPage(pageCards, hasNextPage)
+        val hasNextPage = document.select("ul.pagination li.page-item.active + li.page-item:not(.disabled) a").isNotEmpty() ||
+            document.select("ul.pagination a[href*='page=']:contains(›)").isNotEmpty()
+        return AnimesPage(animeList, hasNextPage)
     }
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/home", headers)).execute()
-        val html = response.body.string()
-        val payload = extractNextPayload(html)
-
-        val mostPopularIndex = payload.indexOf("mostPopular")
-        val targetPayload = if (mostPopularIndex != -1) {
-            payload.substring(mostPopularIndex)
-        } else {
-            payload
-        }
-
-        val cards = parseAnimeCardList(targetPayload)
-        return paginateAnimeList(cards, page)
+        val response = client.newCall(GET("$baseUrl/most-popular?page=$page", headers)).execute()
+        return parseAnimeListFromDocument(response.asJsoup())
     }
 
     // ============================== Latest ================================
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/home", headers)).execute()
-        val html = response.body.string()
-        val payload = extractNextPayload(html)
-
-        val latestIndex = payload.indexOf("newAdded").takeIf { it != -1 }
-            ?: payload.indexOf("latestEpisode").takeIf { it != -1 }
-            ?: -1
-
-        val targetPayload = if (latestIndex != -1) {
-            payload.substring(latestIndex)
-        } else {
-            payload
-        }
-
-        val cards = parseAnimeCardList(targetPayload)
-        return paginateAnimeList(cards, page)
+        val response = client.newCall(GET("$baseUrl/recently-updated?page=$page", headers)).execute()
+        return parseAnimeListFromDocument(response.asJsoup())
     }
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         val targetUrl = if (query.isNotBlank()) {
             val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
-            "$baseUrl/search?keyword=$encodedQuery"
+            "$baseUrl/search?keyword=$encodedQuery&page=$page"
         } else {
-            var url = "$baseUrl/home"
+            val urlBuilder = "$baseUrl/filter".toHttpUrl().newBuilder()
+            urlBuilder.addQueryParameter("page", page.toString())
             filters.forEach { filter ->
                 when (filter) {
-                    is Filters.SortFilter -> {
-                        if (!filter.isDefault()) {
-                            url = "$baseUrl/catalog?sort=${filter.toUriPart()}"
-                        }
-                    }
-
                     is Filters.TypeFilter -> {
-                        if (!filter.isDefault()) {
-                            url = "$baseUrl/anime/type/${filter.toUriPart()}"
-                        }
+                        if (!filter.isDefault()) urlBuilder.addQueryParameter("type", filter.toUriPart())
                     }
-
                     is Filters.StatusFilter -> {
-                        if (!filter.isDefault()) {
-                            url = "$baseUrl/catalog?status=${filter.toUriPart()}"
-                        }
+                        if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
                     }
-
+                    is Filters.SortFilter -> {
+                        if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
+                    }
+                    is Filters.SeasonFilter -> {
+                        if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
+                    }
+                    is Filters.LanguageFilter -> {
+                        if (!filter.isDefault()) urlBuilder.addQueryParameter("language", filter.toUriPart())
+                    }
                     is Filters.GenreFilter -> {
-                        val selectedGenres = filter.selected()
-                        if (selectedGenres.isNotEmpty()) {
-                            url = "$baseUrl/anime/genre/${selectedGenres.first()}"
+                        val selected = filter.selected()
+                        if (selected.isNotEmpty()) {
+                            urlBuilder.addQueryParameter("genres", selected.joinToString(","))
                         }
                     }
-
                     else -> {}
                 }
             }
-            url
+            urlBuilder.build().toString()
         }
 
         val response = client.newCall(GET(targetUrl, headers)).execute()
-        val html = response.body.string()
-        val payload = extractNextPayload(html)
-        val cards = parseAnimeCardList(payload)
-        return paginateAnimeList(cards, page)
+        return parseAnimeListFromDocument(response.asJsoup())
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
@@ -230,6 +131,7 @@ class FourAnimo : Source() {
         Filters.StatusFilter(),
         Filters.SortFilter(),
         Filters.SeasonFilter(),
+        Filters.LanguageFilter(),
         Filters.GenreFilter(),
     )
 
@@ -242,176 +144,92 @@ class FourAnimo : Source() {
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val url = if (anime.url.startsWith("http")) anime.url else "$baseUrl${anime.url}"
         val response = client.newCall(GET(url, headers)).execute()
-        val html = response.body.string()
-        val payload = extractNextPayload(html)
+        val document = response.asJsoup()
 
-        val animeObjMatch = """"anime":(\{\s*"id":.*?\})\s*,\s*"episodes"""".toRegex().find(payload)
-            ?: """"anime":(\{\s*"id":.*?\}),""".toRegex().find(payload)
+        val title = document.selectFirst("h1.film-name")?.text() ?: anime.title
+        val poster = document.selectFirst(".anisc-poster img")?.attr("src")?.ifEmpty {
+            document.selectFirst(".anisc-poster img")?.attr("data-src")
+        } ?: anime.thumbnail_url
 
-        val updatedAnime = SAnime.create().apply {
-            title = anime.title
-            thumbnail_url = anime.thumbnail_url
-            setUrlWithoutDomain(anime.url)
+        val description = document.selectFirst(".anisc-info .item-title:has(.item-head:contains(Overview)) .text")?.text()
+            ?: document.selectFirst(".anisc-info .text")?.text()
+
+        val genres = document.select(".anisc-info .item-list:has(.item-head:contains(Genres)) a").map { it.text() }
+        val statusText = document.selectFirst(".anisc-info .item-title:has(.item-head:contains(Status)) .name")?.text().orEmpty()
+        val status = when {
+            statusText.contains("RELEASING", ignoreCase = true) || statusText.contains("AIRING", ignoreCase = true) -> SAnime.ONGOING
+            statusText.contains("COMPLETED", ignoreCase = true) || statusText.contains("FINISHED", ignoreCase = true) -> SAnime.COMPLETED
+            else -> SAnime.UNKNOWN
         }
+        val studios = document.select(".anisc-info .item-title:has(.item-head:contains(Studios)) a").joinToString(", ") { it.text() }
 
-        if (animeObjMatch != null) {
-            val jsonStr = animeObjMatch.groupValues[1]
-            try {
-                val element = json.parseToJsonElement(jsonStr).jsonObject
-                val idStr = element["id"]?.jsonPrimitive?.content ?: ""
-                if (idStr.isNotBlank()) {
-                    updatedAnime.thumbnail_url = "$imageBaseUrl/poster/$idStr.jpg"
-                }
-
-                val titlesObj = element["titles"]?.jsonObject
-                val engTitle = titlesObj?.get("english")?.jsonPrimitive?.content
-                val romajiTitle = titlesObj?.get("romaji")?.jsonPrimitive?.content
-                if (!engTitle.isNullOrBlank()) {
-                    updatedAnime.title = engTitle
-                } else if (!romajiTitle.isNullOrBlank()) {
-                    updatedAnime.title = romajiTitle
-                }
-
-                val statusStr = element["status"]?.jsonPrimitive?.content ?: ""
-                updatedAnime.status = when {
-                    statusStr.contains("RELEASING", ignoreCase = true) -> SAnime.ONGOING
-                    statusStr.contains("FINISHED", ignoreCase = true) -> SAnime.COMPLETED
-                    else -> SAnime.UNKNOWN
-                }
-
-                val genresList = element["genres"]?.jsonArray?.mapNotNull { it.jsonPrimitive.content } ?: emptyList()
-                val tagsList = element["tags"]?.jsonArray?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.content } ?: emptyList()
-                updatedAnime.genre = (genresList + tagsList).distinct().joinToString(", ")
-
-                val studioList = element["studios"]?.jsonArray?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.content } ?: emptyList()
-                val producerList = element["producers"]?.jsonArray?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.content } ?: emptyList()
-                val authorStr = (studioList + producerList).distinct().joinToString(", ")
-                if (authorStr.isNotBlank()) {
-                    updatedAnime.author = authorStr
-                }
-
-                val rawSynopsis = element["synopsis"]?.jsonPrimitive?.content
-                    ?: element["description"]?.jsonPrimitive?.content ?: ""
-
-                val rscSynopsis = if (rawSynopsis.startsWith("$")) {
-                    val refId = rawSynopsis.removePrefix("$")
-                    val rscMatch = """(?:^|[\n\r]|")${Regex.escape(refId)}:(?:T[0-9a-fA-F]+,)?(?:"|\\")?([^\n\r"\\]+)""".toRegex().find(payload)
-                    rscMatch?.groupValues?.get(1) ?: ""
-                } else {
-                    ""
-                }
-
-                val metaMatch = """"?(?:name|property)"?\s*:\s*"?(?:og:)?description"?,?\s*"content"\s*:\s*"([^"]+)"""".toRegex().find(payload)
-                val metaDesc = metaMatch?.groupValues?.get(1) ?: ""
-
-                val descriptionStr = when {
-                    rawSynopsis.isNotBlank() && !rawSynopsis.startsWith("$") -> rawSynopsis
-                    rscSynopsis.isNotBlank() -> rscSynopsis
-                    metaDesc.isNotBlank() -> metaDesc
-                    else -> ""
-                }
-
-                val cleanDescription = descriptionStr
-                    .replace("\\u003c", "<")
-                    .replace("\\u003e", ">")
-                    .replace("\\u0026", "&")
-                    .replace("\\u0027", "'")
-                    .replace("\\\"", "\"")
-                    .replace(Regex("(?i)<br\\s*/?>"), "\n")
-                    .replace(Regex("<[^>]*>"), "")
-                    .replace("&nbsp;", " ")
-                    .replace("&amp;", "&")
-                    .replace("&lt;", "<")
-                    .replace("&gt;", ">")
-                    .replace("&quot;", "\"")
-                    .replace("&#039;", "'")
-                    .replace(Regex("\n{3,}"), "\n\n")
-                    .trim()
-
-                val score = element["score"]?.jsonPrimitive?.content?.toDoubleOrNull()
-                    ?: element["score_mal"]?.jsonPrimitive?.content?.toDoubleOrNull()
-                val formatType = element["type"]?.jsonPrimitive?.content ?: ""
-                val duration = element["duration_min"]?.jsonPrimitive?.content
-                val rating = element["rating"]?.jsonPrimitive?.content
-
-                val seasonObj = element["season"]?.jsonObject
-                val seasonName = seasonObj?.get("name")?.jsonPrimitive?.content
-                val seasonYear = seasonObj?.get("year")?.jsonPrimitive?.content
-                val seasonStr = if (seasonName != null && seasonYear != null) "$seasonName $seasonYear" else seasonYear ?: seasonName
-
-                val epObj = element["episode"]?.jsonObject
-                val totalEp = epObj?.get("episodes")?.jsonPrimitive?.content
-                val subEp = epObj?.get("sub")?.jsonPrimitive?.content
-                val dubEp = epObj?.get("dub")?.jsonPrimitive?.content
-
-                updatedAnime.description = buildString {
-                    if (cleanDescription.isNotBlank()) {
-                        append(cleanDescription)
-                        append("\n\n")
-                    }
-                    if (score != null && score > 0.0) {
-                        append("Score: ★ $score\n")
-                    }
-                    if (formatType.isNotBlank()) {
-                        append("Format: $formatType\n")
-                    }
-                    if (!duration.isNullOrBlank()) {
-                        append("Duration: ${duration}m\n")
-                    }
-                    if (!rating.isNullOrBlank()) {
-                        append("Rating: $rating\n")
-                    }
-                    if (!seasonStr.isNullOrBlank()) {
-                        append("Season: $seasonStr\n")
-                    }
-                    if (!totalEp.isNullOrBlank()) {
-                        append("Episodes: $totalEp (Sub: ${subEp ?: totalEp}, Dub: ${dubEp ?: 0})\n")
-                    }
-                }.trim()
-            } catch (_: Exception) {}
+        return anime.apply {
+            this.title = title
+            this.thumbnail_url = poster
+            this.description = description
+            this.genre = genres.joinToString(", ")
+            this.status = status
+            this.author = studios
+            this.initialized = true
         }
-
-        updatedAnime.initialized = true
-        return updatedAnime
     }
 
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val url = if (anime.url.startsWith("http")) anime.url else "$baseUrl${anime.url}"
-        val response = client.newCall(GET(url, headers)).execute()
-        val html = response.body.string()
-        val payload = extractNextPayload(html)
+        val cleanUrl = anime.url.removePrefix("/")
+        val animeId = cleanUrl.substringAfterLast("-").takeWhile { it.isDigit() }
+        val watchUrl = "$baseUrl/watch/$cleanUrl?ep=1"
+        val watchResponse = client.newCall(GET(watchUrl, headers)).execute()
+        val cookieHeader = watchResponse.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
+        val watchHtml = watchResponse.body.string()
 
-        val animeIdMatch = """"id":(\d+),"slug":""".toRegex().find(payload)
-        val animeId = animeIdMatch?.groupValues?.get(1) ?: ""
+        val token = """window\.AJAX_TOKEN\s*=\s*"([^"]+)"""".toRegex().find(watchHtml)?.groupValues?.get(1).orEmpty()
+        val numericId = """let animeId\s*=\s*(\d+)""".toRegex().find(watchHtml)?.groupValues?.get(1) ?: animeId
 
-        val episodesMatch = """"episodes":(\[\{.*?\}\])""".toRegex().find(payload)
-            ?: return emptyList()
+        val epHeaders = headers.newBuilder()
+            .set("Referer", watchUrl)
+            .set("X-Requested-With", "XMLHttpRequest")
+            .set("X-Page-Token", token)
+            .apply {
+                if (cookieHeader.isNotBlank()) {
+                    set("Cookie", cookieHeader)
+                }
+            }
+            .build()
 
-        val episodesJsonStr = episodesMatch.groupValues[1]
+        val epResponse = client.newCall(GET("$baseUrl/ajax/episodes?animeId=$numericId", epHeaders)).execute()
+        val epJson = epResponse.body.string()
+
         val episodesList = mutableListOf<SEpisode>()
-
         try {
-            val epArray = json.parseToJsonElement(episodesJsonStr).jsonArray
+            val root = json.parseToJsonElement(epJson).jsonObject
+            val epArray = root["episodes"]?.jsonArray ?: return emptyList()
+
             for (epElem in epArray) {
                 val epObj = epElem.jsonObject
                 val epId = epObj["id"]?.jsonPrimitive?.content ?: continue
                 val epNum = epObj["number"]?.jsonPrimitive?.content?.stripTrailingZero()?.toFloatOrNull() ?: 1.0f
-                val embedId = epObj["embedId"]?.jsonPrimitive?.content ?: epId
-                val hasSub = epObj["hasSub"]?.jsonPrimitive?.content?.toBoolean() ?: true
-                val hasDub = epObj["hasDub"]?.jsonPrimitive?.content?.toBoolean() ?: false
+                val embedId = epObj["embed_id"]?.jsonPrimitive?.content ?: epId
+                val hasSub = epObj["sub"]?.jsonPrimitive?.content?.toBoolean() ?: true
+                val hasDub = epObj["dub"]?.jsonPrimitive?.content?.toBoolean() ?: false
 
                 val titlesObj = epObj["titles"]?.jsonObject
-                val epTitle = titlesObj?.get("english")?.jsonPrimitive?.content
-                    ?: titlesObj?.get("romaji")?.jsonPrimitive?.content ?: ""
+                val epTitle = titlesObj?.get("en")?.jsonPrimitive?.content
+                    ?: titlesObj?.get("romaji")?.jsonPrimitive?.content
+                    ?: titlesObj?.get("ja")?.jsonPrimitive?.content
+                    ?: epObj["title"]?.jsonPrimitive?.content
+                    ?: ""
 
-                val thumbnail = epObj["thumbnail"]?.jsonPrimitive?.content
-                    ?: "$imageBaseUrl/episode/$epId.jpg"
+                val thumbnail = "https://s4.zanix.tr/poster/$numericId.jpg"
 
                 val ep = SEpisode.create().apply {
-                    name = if (epTitle.isNotBlank()) "Episode ${epNum.toInt()}: $epTitle" else "Episode ${epNum.toInt()}"
+                    name = if (epTitle.isNotBlank() && !epTitle.startsWith("Episode", ignoreCase = true)) {
+                        "Episode ${epNum.toInt()}: $epTitle"
+                    } else {
+                        "Episode ${epNum.toInt()}"
+                    }
                     episode_number = epNum
-                    setUrlWithoutDomain("$epId|$embedId|$animeId|${epNum.toInt()}|$hasSub|$hasDub")
+                    setUrlWithoutDomain("$epId|$embedId|$numericId|${epNum.toInt()}|$hasSub|$hasDub")
                     scanlator = when {
                         hasSub && hasDub -> "Sub / Dub"
                         hasDub -> "Dub"
@@ -457,38 +275,38 @@ class FourAnimo : Source() {
 
         val hosters = mutableListOf<Hoster>()
 
-        // 1. ReCloud HD-2 (Server 1: s-1)
-        if ("ReCloud HD-2 (Server 1)" !in excludedServers && (canSub || canDub)) {
+        // 1. M-Cloud (HD-1)
+        if ("M-Cloud (HD-1)" !in excludedServers && (canSub || canDub)) {
+            val subUrl = if (canSub) "$embedBaseUrl/embed/hd-1/$epId/sub?k=1" else ""
+            val dubUrl = if (canDub) "$embedBaseUrl/embed/hd-1/$epId/dub?k=1" else ""
+            hosters.add(
+                Hoster(
+                    hosterName = "M-Cloud (HD-1)",
+                    hosterUrl = "M-Cloud (HD-1)|$subUrl|$dubUrl",
+                ),
+            )
+        }
+
+        // 2. R-Cloud (HD-2)
+        if ("R-Cloud (HD-2)" !in excludedServers && (canSub || canDub)) {
+            val subUrl = if (canSub) "$embedBaseUrl/embed/hd-2/$epId/sub?k=1" else ""
+            val dubUrl = if (canDub) "$embedBaseUrl/embed/hd-2/$epId/dub?k=1" else ""
+            hosters.add(
+                Hoster(
+                    hosterName = "R-Cloud (HD-2)",
+                    hosterUrl = "R-Cloud (HD-2)|$subUrl|$dubUrl",
+                ),
+            )
+        }
+
+        // 3. ReCloud (s-1)
+        if ("ReCloud (s-1)" !in excludedServers && (canSub || canDub)) {
             val subHd2Url = if (canSub) "$embedBaseUrl/embed/s-1/$embedId/sub?k=1" else ""
             val dubHd2Url = if (canDub) "$embedBaseUrl/embed/s-1/$embedId/dub?k=1" else ""
             hosters.add(
                 Hoster(
-                    hosterName = "ReCloud HD-2 (Server 1)",
-                    hosterUrl = "ReCloud HD-2 (Server 1)|$subHd2Url|$dubHd2Url",
-                ),
-            )
-        }
-
-        // 3. ReCloud (Server 1: a-1)
-        if ("ReCloud (Server 1)" !in excludedServers && (canSub || canDub)) {
-            val subEmbedUrl = if (canSub) "$embedBaseUrl/embed/a-1/$epId/sub?k=1&autoPlay=1" else ""
-            val dubEmbedUrl = if (canDub) "$embedBaseUrl/embed/a-1/$epId/dub?k=1&autoPlay=1" else ""
-            hosters.add(
-                Hoster(
-                    hosterName = "ReCloud (Server 1)",
-                    hosterUrl = "ReCloud (Server 1)|$subEmbedUrl|$dubEmbedUrl",
-                ),
-            )
-        }
-
-        // 4. ReCloud (Server 2: a-2)
-        if ("ReCloud (Server 2)" !in excludedServers && (canSub || canDub)) {
-            val subEmbedUrl = if (canSub) "$embedBaseUrl/embed/a-2/$epId/sub?k=1&autoPlay=1" else ""
-            val dubEmbedUrl = if (canDub) "$embedBaseUrl/embed/a-2/$epId/dub?k=1&autoPlay=1" else ""
-            hosters.add(
-                Hoster(
-                    hosterName = "ReCloud (Server 2)",
-                    hosterUrl = "ReCloud (Server 2)|$subEmbedUrl|$dubEmbedUrl",
+                    hosterName = "ReCloud (s-1)",
+                    hosterUrl = "ReCloud (s-1)|$subHd2Url|$dubHd2Url",
                 ),
             )
         }
@@ -633,9 +451,20 @@ class FourAnimo : Source() {
     }
 
     fun relatedAnimeListParse(response: Response): List<SAnime> {
-        val html = response.body.string()
-        val payload = extractNextPayload(html)
-        return parseAnimeCardList(payload)
+        val doc = response.asJsoup()
+        return doc.select(".block_area-realtime li, .film_list-wfeature .flw-item").mapNotNull { el ->
+            val titleEl = el.selectFirst(".film-name a") ?: return@mapNotNull null
+            val title = titleEl.attr("title").ifEmpty { titleEl.text() }
+            val href = titleEl.attr("href")
+            if (href.isBlank()) return@mapNotNull null
+            val img = el.selectFirst(".film-poster img")
+            val poster = img?.attr("data-src")?.ifEmpty { img.attr("src") } ?: ""
+            SAnime.create().apply {
+                this.title = title
+                setUrlWithoutDomain(href)
+                thumbnail_url = poster
+            }
+        }
     }
 
     // ============================== Settings ==============================
@@ -663,8 +492,8 @@ class FourAnimo : Source() {
             default = PREF_SERVER_DEFAULT,
             title = "Preferred server",
             summary = "Prioritizes this server in the host list. Currently: %s",
-            entries = listOf("Auto", "ReCloud HD-2", "ReCloud (Server 1)", "ReCloud (Server 2)"),
-            entryValues = listOf("auto", "ReCloud HD-2", "ReCloud (Server 1)", "ReCloud (Server 2)"),
+            entries = listOf("Auto", "M-Cloud (HD-1)", "R-Cloud (HD-2)", "ReCloud (s-1)"),
+            entryValues = listOf("auto", "M-Cloud (HD-1)", "R-Cloud (HD-2)", "ReCloud (s-1)"),
         )
 
         screen.addSetPreference(
@@ -672,8 +501,8 @@ class FourAnimo : Source() {
             default = emptySet(),
             title = "Exclude servers",
             summary = "Select servers to exclude from episode hosters",
-            entries = listOf("ReCloud HD-2", "ReCloud (Server 1)", "ReCloud (Server 2)"),
-            entryValues = listOf("ReCloud HD-2 (Server 1)", "ReCloud (Server 1)", "ReCloud (Server 2)"),
+            entries = listOf("M-Cloud (HD-1)", "R-Cloud (HD-2)", "ReCloud (s-1)"),
+            entryValues = listOf("M-Cloud (HD-1)", "R-Cloud (HD-2)", "ReCloud (s-1)"),
         )
 
         screen.addSetPreference(
@@ -694,7 +523,7 @@ class FourAnimo : Source() {
         private const val PREF_AUDIO_DEFAULT = "SUB"
 
         private const val PREF_SERVER_KEY = "pref_server"
-        private const val PREF_SERVER_DEFAULT = "ReCloud HD-2 (Server 1)"
+        private const val PREF_SERVER_DEFAULT = "M-Cloud (HD-1)"
 
         private const val PREF_EXCLUDE_SERVERS_KEY = "pref_exclude_servers"
         private const val PREF_EXCLUDE_AUDIO_KEY = "pref_exclude_audio"

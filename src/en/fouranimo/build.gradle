@@ -1,7 +1,7 @@
 ext {
-    extName = 'Animo'
+    extName = 'Zanix'
     extClass = '.FourAnimo'
-    extVersionCode = 22
+    extVersionCode = 23
     isNsfw = false
 }
 
