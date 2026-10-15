@@ -97,24 +97,30 @@ class FourAnimo : Source() {
                     is Filters.TypeFilter -> {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("type", filter.toUriPart())
                     }
+
                     is Filters.StatusFilter -> {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
                     }
+
                     is Filters.SortFilter -> {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
                     }
+
                     is Filters.SeasonFilter -> {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
                     }
+
                     is Filters.LanguageFilter -> {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("language", filter.toUriPart())
                     }
+
                     is Filters.GenreFilter -> {
                         val selected = filter.selected()
                         if (selected.isNotEmpty()) {
                             urlBuilder.addQueryParameter("genres", selected.joinToString(","))
                         }
                     }
+
                     else -> {}
                 }
             }
