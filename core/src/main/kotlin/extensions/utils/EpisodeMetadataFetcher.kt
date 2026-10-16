@@ -22,8 +22,9 @@ class EpisodeMetadataFetcher(
     private val json: Json,
     private val webViewFetchText: (suspend (String) -> String?)? = null,
     private val webViewPostJson: (suspend (String, String) -> String?)? = null,
-    private val tmdbApiKey: String = "",
+    tmdbApiKey: String = "",
 ) {
+    private val effectiveTmdbKey: String = tmdbApiKey.ifBlank { DEFAULT_TMDB_API_KEY }
     data class EpisodeMetadata(
         val title: String?,
         val description: String?,
@@ -137,17 +138,26 @@ class EpisodeMetadataFetcher(
                 val jikanEps = jikanDeferred.await()
                 val anilistId = anilistIdDeferred.await()
 
+                val anizipEps = if (resolvedMalId.isNotBlank() || anilistId != null) {
+                    fetchAniZipEpisodes(malId = resolvedMalId, anilistId = anilistId)
+                } else {
+                    emptyMap()
+                }
+
                 val anikageEps = if (anilistId != null) fetchAnikageEpisodes(anilistId) else emptyMap()
                 val anilistStreaming = if (resolvedMalId.isNotBlank()) anilistStreamingCache[resolvedMalId] ?: emptyList() else emptyList()
                 val bannerUrl = if (resolvedMalId.isNotBlank()) anilistBannerCache[resolvedMalId] else null
 
                 // Merge primary metadata
                 var merged = mergeEpisodes(anikageEps, kitsuEpsByTitle, anilistStreaming, jikanEps)
+                if (anizipEps.isNotEmpty()) {
+                    merged = mergeWithFallback(merged, anizipEps)
+                }
 
                 // 2. If primary metadata is incomplete (missing synopsis/thumbnail), query TMDB fallback
                 val needsMoreMetadata = merged.isEmpty() || merged.values.any { it.description.isNullOrBlank() || it.thumbnailUrl.isNullOrBlank() }
 
-                if (needsMoreMetadata && !animeTitle.isNullOrBlank() && tmdbApiKey.isNotBlank()) {
+                if (needsMoreMetadata && !animeTitle.isNullOrBlank() && effectiveTmdbKey.isNotBlank()) {
                     logd("Primary metadata incomplete/empty. Fetching from TMDB fallback...")
                     val tmdbEps = fetchTmdbEpisodes(animeTitle)
                     if (tmdbEps.isNotEmpty()) {
@@ -178,6 +188,159 @@ class EpisodeMetadataFetcher(
                 emptyMap()
             }
         }
+    }
+
+    /**
+     * Unified multi-provider media fetcher for Movies, TV Series, and Anime.
+     * Cascades: Cinemeta (IMDb) -> TMDB (Fuzzy) -> TVMaze -> Ani.zip.
+     * Guarantees field-level fallback and clean empty return on unknown titles.
+     */
+    suspend fun fetchMedia(
+        title: String,
+        season: Int = 1,
+        isTv: Boolean = true,
+        year: Int? = null,
+    ): Map<Int, EpisodeMetadata> {
+        if (title.isBlank()) return emptyMap()
+        val (cleanTitle, extractedYear) = sanitizeTitleWithYear(title)
+        val targetYear = year ?: extractedYear
+        val cacheKey = "media|$cleanTitle|s$season|$isTv|$targetYear"
+
+        synchronized(cache) {
+            cache[cacheKey]?.let { return it.episodes }
+        }
+
+        return withContext(Dispatchers.IO) {
+            val startTime = System.currentTimeMillis()
+            var merged = mutableMapOf<Int, EpisodeMetadata>()
+
+            // 1. Cinemeta (Stremio / IMDb)
+            val cinemetaDeferred = async {
+                try {
+                    fetchCinemetaEpisodes(cleanTitle, season, isTv, targetYear)
+                } catch (_: Exception) {
+                    emptyMap()
+                }
+            }
+
+            // 2. TMDB (with fuzzy candidate scoring)
+            val tmdbDeferred = async {
+                try {
+                    fetchTmdbEpisodes(cleanTitle, season, targetYear)
+                } catch (_: Exception) {
+                    emptyMap()
+                }
+            }
+
+            // 3. TVMaze (for TV shows, 100% free zero-key API)
+            val tvMazeDeferred = async {
+                if (isTv) {
+                    try {
+                        fetchTvMazeEpisodes(cleanTitle, season, targetYear)
+                    } catch (_: Exception) {
+                        emptyMap()
+                    }
+                } else {
+                    emptyMap()
+                }
+            }
+
+            val cinemetaEps = cinemetaDeferred.await()
+            val tmdbEps = tmdbDeferred.await()
+            val tvMazeEps = tvMazeDeferred.await()
+
+            merged = mergeWithFallback(merged, cinemetaEps).toMutableMap()
+            merged = mergeWithFallback(merged, tmdbEps).toMutableMap()
+            merged = mergeWithFallback(merged, tvMazeEps).toMutableMap()
+
+            // If still missing metadata, try Ani.zip mapping for anime
+            val isMissing = merged.isEmpty() || merged.values.any { it.description.isNullOrBlank() || it.thumbnailUrl.isNullOrBlank() }
+            if (isMissing) {
+                try {
+                    val malId = fetchMalIdByJikan(cleanTitle)
+                    if (!malId.isNullOrBlank()) {
+                        val anizipEps = fetchAniZipEpisodes(malId = malId)
+                        if (anizipEps.isNotEmpty()) {
+                            merged = mergeWithFallback(merged, anizipEps).toMutableMap()
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            synchronized(cache) {
+                cache[cacheKey] = CachedData(merged, null)
+            }
+            val elapsed = System.currentTimeMillis() - startTime
+            logi("fetchMedia resolved ${merged.size} episodes in ${elapsed}ms for '$cleanTitle' S$season")
+            merged
+        }
+    }
+
+    /**
+     * Resolves metadata for single movies ("Play Movie" cards).
+     */
+    fun fetchMovieMetadata(title: String, year: Int? = null): EpisodeMetadata? {
+        if (title.isBlank()) return null
+        val (cleanTitle, extractedYear) = sanitizeTitleWithYear(title)
+        val targetYear = year ?: extractedYear
+
+        // 1. Try TMDB Movie endpoint
+        try {
+            val q = URLEncoder.encode(cleanTitle, "UTF-8")
+            val yearParam = if (targetYear != null) "&year=$targetYear" else ""
+            val url = "$TMDB_BASE_URL/search/movie?api_key=$effectiveTmdbKey&query=$q$yearParam&language=en-US"
+            val body = fetchString(url)
+            if (body != null) {
+                val res = JSONObject(body).optJSONArray("results")
+                if (res != null && res.length() > 0) {
+                    val m = res.getJSONObject(0)
+                    val candName = m.optString("title").ifBlank { m.optString("original_title") }
+                    val relDate = m.optString("release_date")
+                    val candYear = relDate.take(4).toIntOrNull()
+                    val score = calculateSimilarityScore(cleanTitle, candName, targetYear, candYear)
+                    if (score >= 50) {
+                        val backdrop = m.optString("backdrop_path").takeIf { it.isNotBlank() }?.let { "https://image.tmdb.org/t/p/w500$it" }
+                        val poster = m.optString("poster_path").takeIf { it.isNotBlank() }?.let { "https://image.tmdb.org/t/p/w500$it" }
+                        val overview = m.optString("overview").takeIf { it.isNotBlank() }
+                        return EpisodeMetadata(
+                            title = candName,
+                            description = overview,
+                            thumbnailUrl = backdrop ?: poster,
+                            airdate = relDate,
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 2. Try Cinemeta Movie catalog
+        try {
+            val q = URLEncoder.encode(cleanTitle, "UTF-8")
+            val url = "$CINEMETA_BASE_URL/catalog/movie/top/search=$q.json"
+            val body = fetchString(url)
+            if (body != null) {
+                val metas = JSONObject(body).optJSONArray("metas")
+                if (metas != null && metas.length() > 0) {
+                    val m = metas.getJSONObject(0)
+                    val candName = m.optString("name")
+                    val candYear = m.optString("year").take(4).toIntOrNull()
+                    val score = calculateSimilarityScore(cleanTitle, candName, targetYear, candYear)
+                    if (score >= 50) {
+                        val desc = m.optString("description").takeIf { it.isNotBlank() }
+                        val poster = m.optString("poster").takeIf { it.isNotBlank() }
+                        val bg = m.optString("background").takeIf { it.isNotBlank() }
+                        return EpisodeMetadata(
+                            title = candName,
+                            description = desc,
+                            thumbnailUrl = bg ?: poster,
+                            airdate = m.optString("year"),
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        return null
     }
 
     private fun applyFallbackThumbnail(
@@ -459,18 +622,22 @@ class EpisodeMetadataFetcher(
 
     // ── TMDB Fallback ──────────────────────────────────────────────────────────
 
-    private fun fetchTmdbEpisodes(title: String, season: Int = 1): Map<Int, EpisodeMetadata> {
-        val cleanTitle = sanitizeTitle(title)
-        var result = performTmdbSearch(title, season)
+    // ── TMDB Fallback ──────────────────────────────────────────────────────────
+
+    private fun fetchTmdbEpisodes(title: String, season: Int = 1, year: Int? = null): Map<Int, EpisodeMetadata> {
+        val (cleanTitle, extractedYear) = sanitizeTitleWithYear(title)
+        val targetYear = year ?: extractedYear
+        var result = performTmdbSearch(title, season, targetYear)
         if (result.isEmpty() && cleanTitle != title && cleanTitle.isNotBlank()) {
-            result = performTmdbSearch(cleanTitle, season)
+            result = performTmdbSearch(cleanTitle, season, targetYear)
         }
         return result
     }
 
-    private fun performTmdbSearch(query: String, season: Int = 1): Map<Int, EpisodeMetadata> {
+    private fun performTmdbSearch(query: String, season: Int = 1, year: Int? = null): Map<Int, EpisodeMetadata> {
         return try {
-            val searchUrl = "$TMDB_BASE_URL/search/multi?api_key=$tmdbApiKey&query=${URLEncoder.encode(query, "UTF-8")}&language=en-US"
+            val yearParam = if (year != null) "&year=$year" else ""
+            val searchUrl = "$TMDB_BASE_URL/search/multi?api_key=$effectiveTmdbKey&query=${URLEncoder.encode(query, "UTF-8")}$yearParam&language=en-US"
             val response = fetchString(searchUrl) ?: return emptyMap()
             val results = JSONObject(response).getJSONArray("results")
             if (results.length() == 0) return emptyMap()
@@ -481,30 +648,34 @@ class EpisodeMetadataFetcher(
             var maxVotes = -1
             var bestIsAnimation = false
 
-            for (i in 0 until results.length()) {
+            for (i in 0 until minOf(results.length(), 10)) {
                 val res = results.getJSONObject(i)
                 val mType = res.optString("media_type")
                 if (mType != "movie" && mType != "tv") continue
 
                 val resultTitle = res.optString("name").ifBlank { res.optString("title") }
                 val resultOriginalTitle = res.optString("original_name").ifBlank { res.optString("original_title") }
+                val relDate = res.optString("release_date").ifBlank { res.optString("first_air_date") }
+                val candYear = relDate.take(4).toIntOrNull()
 
                 val score = maxOf(
-                    calculateSimilarityScore(query, resultTitle),
-                    calculateSimilarityScore(query, resultOriginalTitle)
+                    calculateSimilarityScore(query, resultTitle, year, candYear),
+                    calculateSimilarityScore(query, resultOriginalTitle, year, candYear)
                 )
 
                 if (score < 50) {
                     val resId = res.getInt("id")
-                    val altUrl = "$TMDB_BASE_URL/$mType/$resId/alternative_titles?api_key=$tmdbApiKey"
+                    val altUrl = "$TMDB_BASE_URL/$mType/$resId/alternative_titles?api_key=$effectiveTmdbKey"
                     var altScore = 0
                     try {
                         val altRes = fetchString(altUrl)
                         if (altRes != null) {
-                            val altArray = JSONObject(altRes).getJSONArray("results")
-                            for (j in 0 until altArray.length()) {
-                                val alt = altArray.getJSONObject(j).optString("title")
-                                altScore = maxOf(altScore, calculateSimilarityScore(query, alt))
+                            val altArray = JSONObject(altRes).optJSONArray("results") ?: JSONObject(altRes).optJSONArray("titles")
+                            if (altArray != null) {
+                                for (j in 0 until altArray.length()) {
+                                    val alt = altArray.getJSONObject(j).optString("title")
+                                    altScore = maxOf(altScore, calculateSimilarityScore(query, alt, year, candYear))
+                                }
                             }
                         }
                     } catch (_: Exception) {}
@@ -550,7 +721,7 @@ class EpisodeMetadataFetcher(
     }
 
     private fun constructTmdbMetadata(id: Int, mediaType: String, season: Int): Map<Int, EpisodeMetadata> {
-        val detailUrl = "$TMDB_BASE_URL/$mediaType/$id?api_key=$tmdbApiKey&language=en-US"
+        val detailUrl = "$TMDB_BASE_URL/$mediaType/$id?api_key=$effectiveTmdbKey&language=en-US"
         val detailResponse = fetchString(detailUrl) ?: return emptyMap()
         return try {
             val detailJson = JSONObject(detailResponse)
@@ -568,7 +739,7 @@ class EpisodeMetadataFetcher(
                 )
                 mapOf(1 to epMeta)
             } else {
-                val seasonUrl = "$TMDB_BASE_URL/tv/$id/season/$season?api_key=$tmdbApiKey&language=en-US"
+                val seasonUrl = "$TMDB_BASE_URL/tv/$id/season/$season?api_key=$effectiveTmdbKey&language=en-US"
                 val seasonBody = fetchString(seasonUrl) ?: return emptyMap()
                 val seasonJson = JSONObject(seasonBody)
                 val episodes = seasonJson.optJSONArray("episodes") ?: JSONArray()
@@ -606,7 +777,7 @@ class EpisodeMetadataFetcher(
                     }
                     if (offset > 0) {
                         try {
-                            val s1Url = "$TMDB_BASE_URL/tv/$id/season/1?api_key=$tmdbApiKey&language=en-US"
+                            val s1Url = "$TMDB_BASE_URL/tv/$id/season/1?api_key=$effectiveTmdbKey&language=en-US"
                             val s1Body = fetchString(s1Url)
                             if (s1Body != null) {
                                 val s1Episodes = JSONObject(s1Body).optJSONArray("episodes")
@@ -643,15 +814,206 @@ class EpisodeMetadataFetcher(
         }
     }
 
-    private fun sanitizeTitle(title: String): String = title
-        .replace(Regex("(?i)\\(TV\\)|\\(Films?s?\\)|\\(OAVs?\\)|\\(ONAs?\\)|\\(Specials?\\)|VF|VOSTFR"), "")
-        .replace(Regex("(?i)\\s*(?:Saison|Season|Part(?:ie)?)\\s*\\d+.*"), "")
-        .replace(Regex("\\s+-\\s+.*$"), "")
-        .replace(Regex("\\s+\\d+$"), "")
-        .trim()
-        .replace(Regex("\\s+"), " ")
+    // ── Cinemeta (Stremio / IMDb) Provider ─────────────────────────────────────
 
-    private fun calculateSimilarityScore(query: String, candidate: String): Int {
+    private fun fetchCinemetaEpisodes(
+        title: String,
+        season: Int = 1,
+        isTv: Boolean = true,
+        year: Int? = null,
+    ): Map<Int, EpisodeMetadata> {
+        val (cleanTitle, extractedYear) = sanitizeTitleWithYear(title)
+        val targetYear = year ?: extractedYear
+        val metaType = if (isTv) "series" else "movie"
+        val q = URLEncoder.encode(cleanTitle, "UTF-8")
+        val searchUrl = "$CINEMETA_BASE_URL/catalog/$metaType/top/search=$q.json"
+        val body = fetchString(searchUrl) ?: return emptyMap()
+
+        return try {
+            val jsonRes = JSONObject(body)
+            val metas = jsonRes.optJSONArray("metas") ?: return emptyMap()
+            var bestId: String? = null
+            var bestScore = -1
+
+            for (i in 0 until minOf(metas.length(), 10)) {
+                val meta = metas.getJSONObject(i)
+                val candName = meta.optString("name")
+                val candYear = meta.optString("year").take(4).toIntOrNull()
+                val score = calculateSimilarityScore(cleanTitle, candName, targetYear, candYear)
+                if (score > bestScore) {
+                    bestScore = score
+                    bestId = meta.optString("imdb_id").takeIf { it.isNotBlank() } ?: meta.optString("id")
+                }
+            }
+
+            if (bestId != null && bestScore >= 50) {
+                val detailUrl = "$CINEMETA_BASE_URL/meta/$metaType/$bestId.json"
+                val detailBody = fetchString(detailUrl) ?: return emptyMap()
+                val detailJson = JSONObject(detailBody)
+                val metaObj = detailJson.optJSONObject("meta") ?: return emptyMap()
+                val videos = metaObj.optJSONArray("videos") ?: return emptyMap()
+                val result = mutableMapOf<Int, EpisodeMetadata>()
+
+                for (i in 0 until videos.length()) {
+                    val v = videos.getJSONObject(i)
+                    val sNum = v.optInt("season", 1)
+                    if (sNum == season) {
+                        val epNum = if (v.has("number")) v.getInt("number") else if (v.has("episode")) v.getInt("episode") else 1
+                        val name = v.optString("name").trim().takeIf { it.isNotBlank() }
+                        val overview = v.optString("overview").trim().takeIf { it.isNotBlank() }
+                            ?: v.optString("description").trim().takeIf { it.isNotBlank() }
+                        val thumb = v.optString("thumbnail").trim().takeIf { it.isNotBlank() }
+                        val released = v.optString("released").trim().takeIf { it.isNotBlank() }
+                        result[epNum] = EpisodeMetadata(
+                            title = name,
+                            description = overview?.let { stripHtml(it) },
+                            thumbnailUrl = thumb,
+                            airdate = released
+                        )
+                    }
+                }
+                result
+            } else {
+                emptyMap()
+            }
+        } catch (e: Exception) {
+            logd("Cinemeta fetch failed — ${e.message}")
+            emptyMap()
+        }
+    }
+
+    // ── TVMaze Provider ────────────────────────────────────────────────────────
+
+    private fun fetchTvMazeEpisodes(
+        title: String,
+        season: Int = 1,
+        year: Int? = null,
+    ): Map<Int, EpisodeMetadata> {
+        val (cleanTitle, extractedYear) = sanitizeTitleWithYear(title)
+        val targetYear = year ?: extractedYear
+        val q = URLEncoder.encode(cleanTitle, "UTF-8")
+        val url = "$TVMAZE_BASE_URL/singlesearch/shows?q=$q&embed=episodes"
+        val body = fetchString(url) ?: return emptyMap()
+
+        return try {
+            val show = JSONObject(body)
+            val showName = show.optString("name")
+            val premiered = show.optString("premiered")
+            val candYear = premiered.take(4).toIntOrNull()
+            val score = calculateSimilarityScore(cleanTitle, showName, targetYear, candYear)
+            if (score < 50) return emptyMap()
+
+            val embedded = show.optJSONObject("_embedded") ?: return emptyMap()
+            val episodes = embedded.optJSONArray("episodes") ?: return emptyMap()
+            val result = mutableMapOf<Int, EpisodeMetadata>()
+
+            for (i in 0 until episodes.length()) {
+                val ep = episodes.getJSONObject(i)
+                val sNum = ep.optInt("season", 1)
+                if (sNum == season) {
+                    val epNum = ep.optInt("number", 1)
+                    val name = ep.optString("name").trim().takeIf { it.isNotBlank() }
+                    val summary = ep.optString("summary").trim().takeIf { it.isNotBlank() }
+                    val imgObj = ep.optJSONObject("image")
+                    val thumb = imgObj?.optString("original")?.takeIf { it.isNotBlank() }
+                        ?: imgObj?.optString("medium")?.takeIf { it.isNotBlank() }
+                    val airdate = ep.optString("airdate").trim().takeIf { it.isNotBlank() }
+                    result[epNum] = EpisodeMetadata(
+                        title = name,
+                        description = summary?.let { stripHtml(it) },
+                        thumbnailUrl = thumb,
+                        airdate = airdate
+                    )
+                }
+            }
+            result
+        } catch (e: Exception) {
+            logd("TVMaze fetch failed — ${e.message}")
+            emptyMap()
+        }
+    }
+
+    // ── Ani.zip Provider ───────────────────────────────────────────────────────
+
+    private fun fetchAniZipEpisodes(
+        malId: String? = null,
+        anilistId: String? = null,
+    ): Map<Int, EpisodeMetadata> {
+        val param = when {
+            !anilistId.isNullOrBlank() -> "anilist_id=$anilistId"
+            !malId.isNullOrBlank() -> "mal_id=$malId"
+            else -> return emptyMap()
+        }
+        val url = "$ANIZIP_BASE_URL?$param"
+        val body = fetchString(url) ?: return emptyMap()
+
+        return try {
+            val root = JSONObject(body)
+            val epsObj = root.optJSONObject("episodes") ?: return emptyMap()
+            val result = mutableMapOf<Int, EpisodeMetadata>()
+            val keys = epsObj.keys()
+
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val epNum = key.toIntOrNull() ?: continue
+                val ep = epsObj.getJSONObject(key)
+                val titleObj = ep.optJSONObject("title")
+                val epTitle = titleObj?.optString("en")?.takeIf { it.isNotBlank() }
+                    ?: titleObj?.optString("x-jat")?.takeIf { it.isNotBlank() }
+                    ?: titleObj?.optString("ja")?.takeIf { it.isNotBlank() }
+                    ?: ep.optString("name").takeIf { it.isNotBlank() }
+
+                val summary = ep.optString("overview").takeIf { it.isNotBlank() }
+                    ?: ep.optString("summary").takeIf { it.isNotBlank() }
+
+                val image = ep.optString("image").takeIf { it.isNotBlank() }
+                val airDate = ep.optString("airDate").takeIf { it.isNotBlank() }
+                    ?: ep.optString("airdate").takeIf { it.isNotBlank() }
+
+                result[epNum] = EpisodeMetadata(
+                    title = epTitle,
+                    description = summary?.let { stripHtml(it) },
+                    thumbnailUrl = image,
+                    airdate = airDate,
+                )
+            }
+            result
+        } catch (e: Exception) {
+            logd("Ani.zip fetch failed — ${e.message}")
+            emptyMap()
+        }
+    }
+
+    // ── Title Sanitizer & Fuzzy Matcher ────────────────────────────────────────
+
+    fun sanitizeTitleWithYear(title: String): Pair<String, Int?> {
+        val yearMatch = YEAR_REGEX.find(title)
+        val year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
+
+        var clean = title
+            .replace(SEASON_EP_REGEX, " ")
+            .replace(AUDIO_DUB_REGEX, " ")
+            .replace(QUALITY_CODEC_REGEX, " ")
+            .replace(TAGS_REGEX, " ")
+            .replace(BRACKETS_REGEX, " ")
+            .replace(SEPARATORS_REGEX, " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        if (clean.isBlank()) {
+            clean = title.trim()
+        }
+        return Pair(clean, year)
+    }
+
+    private fun sanitizeTitle(title: String): String = sanitizeTitleWithYear(title).first
+
+    fun calculateSimilarityScore(
+        query: String,
+        candidate: String,
+        queryYear: Int? = null,
+        candidateYear: Int? = null,
+    ): Int {
         fun normalize(s: String): String = Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD)
             .replace(Regex("[^\\p{L}\\p{N}\\s]"), "")
             .replace(Regex("\\p{M}"), "")
@@ -661,26 +1023,31 @@ class EpisodeMetadataFetcher(
         val s1 = normalize(query)
         val s2 = normalize(candidate)
         if (s1.isBlank() || s2.isBlank()) return 0
-        if (s1 == s2) return 100
-
-        val flat1 = s1.replace(" ", "")
-        val flat2 = s2.replace(" ", "")
-        if (flat1 == flat2) return 95
-
-        if (s1.contains(s2) || s2.contains(s1)) {
-            val longer = maxOf(s1.length, s2.length)
-            val shorter = minOf(s1.length, s2.length)
-            return Math.max(0, 85 - (longer - shorter) * 5)
+        var score = 0
+        if (s1 == s2) {
+            score = 100
+        } else {
+            val flat1 = s1.replace(" ", "")
+            val flat2 = s2.replace(" ", "")
+            if (flat1 == flat2) {
+                score = 95
+            } else if (s1.contains(s2) || s2.contains(s1)) {
+                val longer = maxOf(s1.length, s2.length)
+                val shorter = minOf(s1.length, s2.length)
+                score = Math.max(0, 85 - (longer - shorter) * 4)
+            } else {
+                val words1 = s1.split(" ").filter { it.length >= 2 }
+                val words2 = s2.split(" ").filter { it.length >= 2 }
+                if (words1.isNotEmpty() && words2.isNotEmpty()) {
+                    val matchingWords = words1.count { w1 -> words2.any { w2 -> w1 == w2 } }
+                    score = (matchingWords.toDouble() / maxOf(words1.size, words2.size) * 80).toInt()
+                }
+            }
         }
-
-        val words1 = s1.split(" ").filter { it.length >= 2 }
-        val words2 = s2.split(" ").filter { it.length >= 2 }
-        if (words1.isEmpty() || words2.isEmpty()) return 0
-
-        val matchingWords = words1.count { w1 -> words2.any { w2 -> w1 == w2 } }
-        val wordScore = (matchingWords.toDouble() / maxOf(words1.size, words2.size) * 70).toInt()
-
-        return wordScore
+        if (queryYear != null && candidateYear != null && queryYear == candidateYear) {
+            score = minOf(100, score + 15)
+        }
+        return score
     }
 
     // ── DTOs ──────────────────────────────────────────────────────────────────
@@ -827,5 +1194,17 @@ class EpisodeMetadataFetcher(
         private const val TAG = "EpisodeMetadataFetcher"
         private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         private const val TMDB_BASE_URL = "https://api.themoviedb.org/3"
+        private const val DEFAULT_TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
+        private const val CINEMETA_BASE_URL = "https://v3-cinemeta.strem.io"
+        private const val TVMAZE_BASE_URL = "https://api.tvmaze.com"
+        private const val ANIZIP_BASE_URL = "https://api.ani.zip/mappings"
+
+        private val YEAR_REGEX = Regex("""\b(19\d\d|20\d\d)\b""")
+        private val SEASON_EP_REGEX = Regex("""(?i)\b(season\s*\d+|s\d+|part\s*\d+|cour\s*\d+|episode\s*\d+|ep\s*\d+)\b""")
+        private val AUDIO_DUB_REGEX = Regex("""(?i)\b(hindi|tamil|telugu|bengali|malayalam|kannada|english|japanese|dual\s*audio|multi\s*audio|multi\s*sub|dubbed|dub|sub|subbed|esub)\b""")
+        private val QUALITY_CODEC_REGEX = Regex("""(?i)\b(1080p|720p|480p|2160p|4k|uhd|fhd|hd|web-?dl|web-?rip|hdrip|bluray|brrip|dvdrip|h\.?26[45]|hevc|x26[45]|aac|atmos)\b""")
+        private val TAGS_REGEX = Regex("""(?i)\b(complete|batch|remastered|extended|unrated|directors\s*cut)\b""")
+        private val BRACKETS_REGEX = Regex("""\[.*?\]|\(.*?\)|<.*?>|\{.*?\}""")
+        private val SEPARATORS_REGEX = Regex("""[\-_:|]+""")
     }
 }
