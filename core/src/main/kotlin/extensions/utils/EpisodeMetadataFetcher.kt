@@ -16,6 +16,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.text.Normalizer
+import java.util.concurrent.ConcurrentHashMap
 
 class EpisodeMetadataFetcher(
     private val client: OkHttpClient,
@@ -44,9 +45,9 @@ class EpisodeMetadataFetcher(
         explicitNulls = false
     }
 
-    private val cache = mutableMapOf<String, CachedData>()
-    private val anilistStreamingCache = mutableMapOf<String, List<AniListStreamingEpisode>>()
-    private val anilistBannerCache = mutableMapOf<String, String?>()
+    private val cache = ConcurrentHashMap<String, CachedData>()
+    private val anilistStreamingCache = ConcurrentHashMap<String, List<AniListStreamingEpisode>>()
+    private val anilistBannerCache = java.util.Collections.synchronizedMap(mutableMapOf<String, String?>())
     private val apiHeaders = Headers.Builder()
         .set("User-Agent", BROWSER_UA)
         .set("Accept", "application/json, application/vnd.api+json, text/html, */*")

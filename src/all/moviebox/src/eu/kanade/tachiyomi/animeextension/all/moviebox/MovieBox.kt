@@ -20,6 +20,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
+import extensions.utils.EpisodeMetadataFetcher
 import extensions.utils.Source
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -832,6 +833,7 @@ class MovieBox : Source() {
                     }
                 },
             )
+        }
     }
 
     private fun parseDate(dateStr: String?): Long {
