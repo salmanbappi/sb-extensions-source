@@ -103,7 +103,7 @@ class M3u8HttpServer(
 
         return try {
             Log.d(tag, "Starting M3U8 processing for: $url")
-            val processedContent = runBlocking { processM3u8Content(url, headers) }
+            val processedContent = processM3u8Content(url, headers)
             Log.d(tag, "M3U8 processing completed successfully, content length: ${processedContent.length}")
             newFixedLengthResponse(Status.OK, "application/vnd.apple.mpegurl", processedContent)
         } catch (e: UpstreamStatusException) {
@@ -135,9 +135,7 @@ class M3u8HttpServer(
         val hasAes = keyUrl != null && iv != null
         return try {
             Log.d(tag, "Starting segment processing for: $url (aes=$hasAes)")
-            val segmentData = runBlocking {
-                processSegmentUrl(url, headers, keyUrl, iv)
-            }
+            val segmentData = processSegmentUrl(url, headers, keyUrl, iv)
             Log.d(tag, "Segment processing completed successfully, data size: ${segmentData.size} bytes")
             val inputStream = ByteArrayInputStream(segmentData)
             // Vendored copy of :lib:m3u8server — keep the fixed-length response
@@ -217,7 +215,7 @@ class M3u8HttpServer(
         cause: Throwable? = null,
     ) : IOException("$code for $url: $message", cause)
 
-    private suspend fun processM3u8Content(url: String, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
+    private fun processM3u8Content(url: String, headers: Map<String, String> = emptyMap()): String {
         try {
             Log.d(tag, "Fetching M3U8 content from: $url with headers: $headers")
             val m3u8Content = fetchM3u8Content(url, headers)
@@ -230,7 +228,7 @@ class M3u8HttpServer(
             Log.d(tag, "Modified M3U8 content length: ${modifiedContent.length}")
             Log.d(tag, "M3U8 processing completed successfully")
 
-            modifiedContent
+            return modifiedContent
         } catch (e: UpstreamStatusException) {
             Log.w(tag, "Upstream ${e.code} propagating from processM3u8Content for $url")
             throw e
@@ -240,12 +238,12 @@ class M3u8HttpServer(
         }
     }
 
-    suspend fun processSegmentUrl(
+    fun processSegmentUrl(
         url: String,
         headers: Map<String, String> = emptyMap(),
         keyUrl: String? = null,
         iv: String? = null,
-    ): ByteArray = withContext(Dispatchers.IO) {
+    ): ByteArray {
         try {
             Log.d(tag, "Fetching segment from: $url with headers: $headers (aes=${keyUrl != null})")
             val rawSegment = fetchSegmentBytes(url, headers)
@@ -259,7 +257,7 @@ class M3u8HttpServer(
             }
             val stripped = stripInterleavedJunk(plaintext)
             Log.d(tag, "Segment processing completed, final size: ${stripped.size} bytes")
-            stripped
+            return stripped
         } catch (e: UpstreamStatusException) {
             Log.w(tag, "Segment fetch upstream ${e.code} for $url")
             throw e
@@ -269,7 +267,7 @@ class M3u8HttpServer(
         }
     }
 
-    private suspend fun fetchSegmentBytes(url: String, headers: Map<String, String>): ByteArray = withContext(Dispatchers.IO) {
+    private fun fetchSegmentBytes(url: String, headers: Map<String, String>): ByteArray {
         Log.d(tag, "Making HTTP request to fetch segment with headers: $headers")
 
         val requestBuilder = Request.Builder().url(url)
@@ -278,7 +276,7 @@ class M3u8HttpServer(
         }
         val request = requestBuilder.build()
 
-        client.newCall(request).execute().use { response ->
+        return client.newCall(request).execute().use { response ->
             Log.d(tag, "Segment HTTP response code: ${response.code}")
             if (!response.isSuccessful) {
                 Log.e(tag, "Failed to fetch segment, HTTP code: ${response.code}")
@@ -345,7 +343,7 @@ class M3u8HttpServer(
         "M3U8 HTTP Server is not running"
     }
 
-    private suspend fun fetchM3u8Content(url: String, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
+    private fun fetchM3u8Content(url: String, headers: Map<String, String> = emptyMap()): String {
         Log.d(tag, "Making HTTP request to fetch M3U8 content with headers: $headers")
 
         val requestBuilder = Request.Builder().url(url)
@@ -355,7 +353,7 @@ class M3u8HttpServer(
         val request = requestBuilder.build()
 
         try {
-            client.newCall(request).execute().use { response ->
+            return client.newCall(request).execute().use { response ->
                 Log.d(tag, "M3U8 HTTP response code: ${response.code}")
 
                 if (!response.isSuccessful) {
@@ -379,7 +377,7 @@ class M3u8HttpServer(
             val fb = fallbackClient ?: throw UpstreamStatusException(503, url, "Primary client failed: ${primary.message}", primary)
 
             try {
-                fb.newCall(request).execute().use { response ->
+                return fb.newCall(request).execute().use { response ->
                     Log.d(tag, "M3U8 fallback HTTP response code: ${response.code}")
                     if (!response.isSuccessful) {
                         Log.e(tag, "Fallback also failed for M3U8, HTTP code: ${response.code}")
