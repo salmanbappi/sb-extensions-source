@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Base64
 import androidx.preference.ListPreference
+import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animeextension.all.moviebox.extractors.M3u8Integration
@@ -20,10 +21,12 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -91,6 +94,8 @@ class MovieBox : Source() {
             .build()
     }
 
+    private val videoListCache = ConcurrentHashMap<String, Pair<Long, List<Video>>>()
+
     override suspend fun getVideoList(episode: SEpisode): List<Video> = withContext(Dispatchers.IO) {
         val episodeUrl = episode.url
         val parts = episodeUrl.split("|")
@@ -100,6 +105,13 @@ class MovieBox : Source() {
         val ep = parts[1]
         val idsString = parts[2]
         val mainDetailPath = parts[3]
+
+        val cacheKey = "$se|$ep|$mainDetailPath"
+        val cached = videoListCache[cacheKey]
+        if (cached != null && System.currentTimeMillis() - cached.first < 15 * 60 * 1000L && cached.second.isNotEmpty()) {
+            return@withContext cached.second
+        }
+
         val subjectIds = idsString.split("~~").mapNotNull {
             val p = it.split(":", limit = 2)
             if (p.size == 2) {
@@ -111,14 +123,54 @@ class MovieBox : Source() {
             } else null
         }
 
-        val videos = subjectIds.map { (sid, lang, dp) ->
+        val excluded = preferences.getStringSet(PREF_AUDIO_EXCLUDE_KEY, emptySet()) ?: emptySet()
+        val activeSubjects = subjectIds.filterNot { sub ->
+            val langTag = sub.second.replace("dub", "").replace("dubbed", "").trim()
+            excluded.contains(sub.second) || excluded.contains(langTag)
+        }.ifEmpty { subjectIds }
+
+        val videos = activeSubjects.map { (sid, lang, dp) ->
             async {
                 fetchVideosForSubject(sid, lang, se, ep, dp)
             }
         }.awaitAll().flatten()
 
         val sorted = videos.sortVideos()
-        m3u8Integration.processVideoList(sorted)
+        val processed = m3u8Integration.processVideoList(sorted)
+        if (processed.isNotEmpty()) {
+            videoListCache[cacheKey] = Pair(System.currentTimeMillis(), processed)
+            val nextEpNum = ep.toIntOrNull()?.plus(1)
+            if (nextEpNum != null && se.toIntOrNull() != null) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    prefetchEpisodeVideos(activeSubjects, se, nextEpNum.toString(), mainDetailPath)
+                }
+            }
+        }
+        processed
+    }
+
+    private suspend fun prefetchEpisodeVideos(
+        subjects: List<Triple<String, String, String>>,
+        se: String,
+        nextEp: String,
+        mainDetailPath: String,
+    ) {
+        val nextCacheKey = "$se|$nextEp|$mainDetailPath"
+        if (videoListCache.containsKey(nextCacheKey)) return
+        try {
+            val nextVideos = coroutineScope {
+                subjects.map { (sid, lang, dp) ->
+                    async { fetchVideosForSubject(sid, lang, se, nextEp, dp) }
+                }.awaitAll().flatten()
+            }
+            val sorted = nextVideos.sortVideos()
+            val processed = m3u8Integration.processVideoList(sorted)
+            if (processed.isNotEmpty()) {
+                videoListCache[nextCacheKey] = Pair(System.currentTimeMillis(), processed)
+            }
+        } catch (_: Exception) {
+            // Background prefetch failure ignored
+        }
     }
 
     private val apiHosts = listOf(
@@ -148,7 +200,7 @@ class MovieBox : Source() {
     // Cronet UA is served. Video and API requests must both carry this UA
     // (verified live 2026-09).
     private val MOVIEBOX_APP_UA =
-        "com.community.mbox.in/50020126 (Linux; U; Android 14; en_IN; SM-S918B; Build/UP1A.231005.007; Cronet/133.0.6876.3)"
+        "com.community.mbox.in/50020130 (Linux; U; Android 14; en_IN; SM-S918B; Build/UD1A.230803.041; Cronet/145.0.7582.0)"
 
     private fun saveToken(token: String?) {
         if (!token.isNullOrBlank() && isTokenValid(token)) {
@@ -227,20 +279,20 @@ class MovieBox : Source() {
     private fun getClientInfo(): String = JsonObject(
         mapOf(
             "package_name" to kotlinx.serialization.json.JsonPrimitive("com.community.mbox.in"),
-            "version_name" to kotlinx.serialization.json.JsonPrimitive("4.0.02.0831.03"),
-            "version_code" to kotlinx.serialization.json.JsonPrimitive(50020126),
+            "version_name" to kotlinx.serialization.json.JsonPrimitive("4.0.03.0920.03"),
+            "version_code" to kotlinx.serialization.json.JsonPrimitive(50020130),
             "os" to kotlinx.serialization.json.JsonPrimitive("android"),
             "os_version" to kotlinx.serialization.json.JsonPrimitive("14"),
             "device_id" to kotlinx.serialization.json.JsonPrimitive(deviceId),
-            "install_store" to kotlinx.serialization.json.JsonPrimitive("ps"),
-            "gaid" to kotlinx.serialization.json.JsonPrimitive("d7578036d13336cc"),
+            "install_store" to kotlinx.serialization.json.JsonPrimitive("official"),
+            "gaid" to kotlinx.serialization.json.JsonPrimitive("1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d"),
             "brand" to kotlinx.serialization.json.JsonPrimitive("samsung"),
             "model" to kotlinx.serialization.json.JsonPrimitive("SM-S918B"),
             "system_language" to kotlinx.serialization.json.JsonPrimitive("en"),
             "net" to kotlinx.serialization.json.JsonPrimitive("NETWORK_WIFI"),
             "region" to kotlinx.serialization.json.JsonPrimitive("IN"),
             "timezone" to kotlinx.serialization.json.JsonPrimitive("Asia/Calcutta"),
-            "sp_code" to kotlinx.serialization.json.JsonPrimitive("90101"),
+            "sp_code" to kotlinx.serialization.json.JsonPrimitive(""),
         ),
     ).toString()
 
@@ -1284,6 +1336,14 @@ class MovieBox : Source() {
             summary = "%s"
         }.also { screen.addPreference(it) }
 
+        MultiSelectListPreference(screen.context).apply {
+            key = PREF_AUDIO_EXCLUDE_KEY
+            title = PREF_AUDIO_EXCLUDE_TITLE
+            entries = PREF_AUDIO_ENTRIES
+            entryValues = PREF_AUDIO_VALUES
+            setDefaultValue(emptySet<String>())
+        }.also { screen.addPreference(it) }
+
         SwitchPreferenceCompat(screen.context).apply {
             key = PREF_ENABLE_DASH_KEY
             title = PREF_ENABLE_DASH_TITLE
@@ -1462,6 +1522,9 @@ class MovieBox : Source() {
         private const val PREF_AUDIO_DEFAULT = "English"
         private val PREF_AUDIO_ENTRIES = arrayOf("English", "Original", "Original Audio", "Japanese", "Hindi", "Telugu", "Tamil", "Portuguese (Brazil)", "Tagalog")
         private val PREF_AUDIO_VALUES = arrayOf("English", "Original", "Original Audio", "Japanese", "Hindi", "Telugu", "Tamil", "ptbr", "Tagalog")
+
+        private const val PREF_AUDIO_EXCLUDE_KEY = "pref_audio_exclude"
+        private const val PREF_AUDIO_EXCLUDE_TITLE = "Excluded Audio Languages"
 
         private const val PREF_ENABLE_DASH_KEY = "pref_enable_dash"
         private const val PREF_ENABLE_DASH_TITLE = "Enable DASH streams"
