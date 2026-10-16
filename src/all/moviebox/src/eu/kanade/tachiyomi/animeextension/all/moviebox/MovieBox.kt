@@ -85,13 +85,8 @@ class MovieBox : Source() {
         }
     }
 
-    private val cinemetaCache = ConcurrentHashMap<String, CinemetaResult>()
-
-    private val metaClient by lazy {
-        client.newBuilder()
-            .connectTimeout(5000, TimeUnit.MILLISECONDS)
-            .readTimeout(5000, TimeUnit.MILLISECONDS)
-            .build()
+    private val metadataFetcher by lazy {
+        EpisodeMetadataFetcher(client, json)
     }
 
     private val videoListCache = ConcurrentHashMap<String, Pair<Long, List<Video>>>()
@@ -657,6 +652,72 @@ class MovieBox : Source() {
 
     override fun episodeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
 
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
+        val episodes = super.getEpisodeList(anime)
+        val showThumbnails = preferences.getBoolean(PREF_THUMBNAILS_KEY, PREF_THUMBNAILS_DEFAULT)
+        val showTitle = anime.title
+
+        if (showTitle.isBlank() || episodes.isEmpty()) return episodes
+
+        // 1. Single movie enrichment
+        if (episodes.size == 1 && episodes[0].name.startsWith("Play Movie")) {
+            val movieMeta = try {
+                metadataFetcher.fetchMovieMetadata(showTitle)
+            } catch (_: Exception) {
+                null
+            }
+            if (movieMeta != null) {
+                val ep = episodes[0]
+                if (!movieMeta.description.isNullOrBlank()) {
+                    ep.summary = movieMeta.description
+                }
+                if (showThumbnails && !movieMeta.thumbnailUrl.isNullOrBlank()) {
+                    ep.preview_url = movieMeta.thumbnailUrl
+                }
+            }
+            return episodes
+        }
+
+        // 2. TV Series enrichment
+        val seasons = episodes.mapNotNull {
+            val se = it.url.substringBefore("|").toIntOrNull()
+            if (se != null && se > 0) se else null
+        }.distinct()
+
+        val metaMap = mutableMapOf<Pair<Int, Int>, EpisodeMetadataFetcher.EpisodeMetadata>()
+        for (seNum in seasons) {
+            try {
+                val sMeta = metadataFetcher.fetchMedia(showTitle, season = seNum, isTv = true)
+                sMeta.forEach { (epNum, meta) ->
+                    metaMap[Pair(seNum, epNum)] = meta
+                }
+            } catch (_: Exception) {}
+        }
+
+        episodes.forEach { ep ->
+            val parts = ep.url.split("|")
+            val seNum = parts.getOrNull(0)?.toIntOrNull() ?: 1
+            val epNum = parts.getOrNull(1)?.toIntOrNull() ?: ep.episode_number.toInt()
+            val metaEp = metaMap[Pair(seNum, epNum)] ?: return@forEach
+
+            if (!metaEp.title.isNullOrBlank()) {
+                ep.name = "Season $seNum - Episode $epNum - ${metaEp.title}"
+            }
+            if (!metaEp.description.isNullOrBlank()) {
+                ep.summary = metaEp.description
+            }
+            if (showThumbnails && !metaEp.thumbnailUrl.isNullOrBlank()) {
+                ep.preview_url = metaEp.thumbnailUrl
+            }
+            val date = parseDate(metaEp.airdate)
+            if (date > 0L) {
+                ep.date_upload = date
+            }
+        }
+
+        return episodes
+    }
+
     override fun episodeListParse(response: Response): List<SEpisode> {
         val xUser = response.header("x-user")
         val headerToken = xUser?.let { runCatching { json.parseToJsonElement(it).obj?.get("token")?.str }.getOrNull() }
@@ -740,38 +801,15 @@ class MovieBox : Source() {
             ?: data["subject"]?.obj?.get("stills")?.arr?.firstOrNull()?.obj?.get("url")?.str
 
         val showThumbnails = preferences.getBoolean(PREF_THUMBNAILS_KEY, PREF_THUMBNAILS_DEFAULT)
-        val showTitle = data["subject"]?.obj?.get("title")?.str ?: data["title"]?.str ?: ""
-        val isTv = seasonsMap.isNotEmpty()
-        val cinemetaResult = if (showTitle.isNotBlank()) {
-            fetchCinemetaMeta(showTitle, isTv)
-        } else {
-            CinemetaResult()
-        }
-        val metaEps = cinemetaResult.episodes
-        val movieThumbnail = cinemetaResult.background ?: cinemetaResult.poster ?: defaultThumbnail
-        val movieSummary = cinemetaResult.description ?: defaultSummary
-
         val idsString = allIds.joinToString("~~") { "${it.first}:${it.second}" }
         seasonsMap.forEach { (seNum, epSet) ->
             epSet.sorted().forEach { epNum ->
-                val metaEp = metaEps.firstOrNull { it.season == seNum && it.episode == epNum }
                 episodes.add(
                     SEpisode.create().apply {
-                        name = metaEp?.name?.let { "Season $seNum - Episode $epNum - $it" } ?: "Season $seNum - Episode $epNum"
+                        name = "Season $seNum - Episode $epNum"
                         episode_number = epNum.toFloat()
                         url = "$seNum|$epNum|$idsString|$detailPath"
-                        val date = parseDate(metaEp?.released)
-                        date_upload = if (date > 0L) date else System.currentTimeMillis()
-                        val epSummary = metaEp?.overview?.takeIf { it.isNotBlank() } ?: defaultSummary
-                        if (!epSummary.isNullOrBlank()) {
-                            summary = epSummary
-                        }
-                        if (showThumbnails) {
-                            val epThumb = metaEp?.thumbnail?.takeIf { it.isNotBlank() } ?: defaultThumbnail
-                            if (!epThumb.isNullOrBlank()) {
-                                preview_url = epThumb
-                            }
-                        }
+                        date_upload = System.currentTimeMillis()
                     },
                 )
             }
@@ -786,15 +824,14 @@ class MovieBox : Source() {
                     episode_number = 1f
                     url = "0|0|$idsString|$detailPath"
                     date_upload = System.currentTimeMillis()
-                    if (!movieSummary.isNullOrBlank()) {
-                        summary = movieSummary
+                    if (!defaultSummary.isNullOrBlank()) {
+                        summary = defaultSummary
                     }
-                    if (showThumbnails && !movieThumbnail.isNullOrBlank()) {
-                        preview_url = movieThumbnail
+                    if (showThumbnails && !defaultThumbnail.isNullOrBlank()) {
+                        preview_url = defaultThumbnail
                     }
                 },
             )
-        }
     }
 
     private fun parseDate(dateStr: String?): Long {
@@ -819,130 +856,6 @@ class MovieBox : Source() {
             }
         }
     }
-
-    private fun fetchCinemetaMeta(title: String, isTv: Boolean): CinemetaResult {
-        val cleanTitle = title.substringBefore("(").substringBefore("[").trim()
-        if (cleanTitle.isBlank()) return CinemetaResult()
-        val cacheKey = "$cleanTitle|$isTv"
-        cinemetaCache[cacheKey]?.let { return it }
-
-        val metaType = if (isTv) "series" else "movie"
-        val endpoints = listOf("imdb-search", "top")
-        var metas: List<JsonElement>? = null
-        for (ep in endpoints) {
-            val searchUrl = "https://v3-cinemeta.strem.io/catalog/$metaType/$ep/search=${Uri.encode(cleanTitle)}.json"
-            try {
-                metaClient.newCall(GET(searchUrl)).execute().use { response ->
-                    if (response.isSuccessful) {
-                        val body = response.body.string()
-                        val jsonRes = json.parseToJsonElement(body).obj
-                        val list = jsonRes?.get("metas")?.arr
-                        if (!list.isNullOrEmpty()) {
-                            metas = list
-                        }
-                    }
-                }
-            } catch (_: Exception) {
-                // ignore and try next endpoint
-            }
-            if (!metas.isNullOrEmpty()) break
-        }
-
-        if (metas.isNullOrEmpty() && (cleanTitle.contains(":") || cleanTitle.contains("-"))) {
-            val baseTitle = cleanTitle.substringBefore(":").substringBefore("-").trim()
-            if (baseTitle.isNotBlank() && !baseTitle.equals(cleanTitle, ignoreCase = true)) {
-                for (ep in endpoints) {
-                    val searchUrl = "https://v3-cinemeta.strem.io/catalog/$metaType/$ep/search=${Uri.encode(baseTitle)}.json"
-                    try {
-                        metaClient.newCall(GET(searchUrl)).execute().use { response ->
-                            if (response.isSuccessful) {
-                                val body = response.body.string()
-                                val jsonRes = json.parseToJsonElement(body).obj
-                                val list = jsonRes?.get("metas")?.arr
-                                if (!list.isNullOrEmpty()) {
-                                    metas = list
-                                }
-                            }
-                        }
-                    } catch (_: Exception) {
-                        // ignore
-                    }
-                    if (!metas.isNullOrEmpty()) break
-                }
-            }
-        }
-
-        if (!metas.isNullOrEmpty()) {
-            var bestImdbId: String? = null
-            for (metaEl in metas!!) {
-                val m = metaEl.obj ?: continue
-                val name = m["name"]?.str ?: continue
-                if (name.equals(cleanTitle, ignoreCase = true) || name.contains(cleanTitle, ignoreCase = true) || cleanTitle.contains(name, ignoreCase = true)) {
-                    bestImdbId = m["imdb_id"]?.str ?: m["id"]?.str
-                    if (bestImdbId != null) break
-                }
-            }
-            if (bestImdbId == null) {
-                bestImdbId = metas!!.firstOrNull()?.obj?.let { it["imdb_id"]?.str ?: it["id"]?.str }
-            }
-
-            if (bestImdbId != null) {
-                val detailsUrl = "https://v3-cinemeta.strem.io/meta/$metaType/$bestImdbId.json"
-                try {
-                    metaClient.newCall(GET(detailsUrl)).execute().use { detailsResponse ->
-                        if (detailsResponse.isSuccessful) {
-                            val detailsBody = detailsResponse.body.string()
-                            val detailsJson = json.parseToJsonElement(detailsBody).obj
-                            val metaObj = detailsJson?.get("meta")?.obj
-                            if (metaObj != null) {
-                                val description = metaObj["description"]?.str ?: metaObj["overview"]?.str
-                                val poster = metaObj["poster"]?.str
-                                val background = metaObj["background"]?.str
-
-                                val episodesList = mutableListOf<CinemetaEpisode>()
-                                val videos = metaObj["videos"]?.arr
-                                videos?.forEach { videoEl ->
-                                    val v = videoEl.obj ?: return@forEach
-                                    val name = v["name"]?.str
-                                    val season = v["season"]?.jsonPrimitive?.intOrNull ?: 1
-                                    val episode = v["number"]?.jsonPrimitive?.intOrNull ?: v["episode"]?.jsonPrimitive?.intOrNull ?: 1
-                                    val overview = v["overview"]?.str ?: v["description"]?.str
-                                    val thumbnail = v["thumbnail"]?.str
-                                    val released = v["released"]?.str ?: v["firstAired"]?.str
-                                    episodesList.add(CinemetaEpisode(season, episode, name, overview, thumbnail, released))
-                                }
-                                val result = CinemetaResult(description, poster, background, episodesList)
-                                cinemetaCache[cacheKey] = result
-                                return result
-                            }
-                        }
-                    }
-                } catch (_: Exception) {
-                    // ignore
-                }
-            }
-        }
-
-        val emptyResult = CinemetaResult()
-        cinemetaCache[cacheKey] = emptyResult
-        return emptyResult
-    }
-
-    private data class CinemetaResult(
-        val description: String? = null,
-        val poster: String? = null,
-        val background: String? = null,
-        val episodes: List<CinemetaEpisode> = emptyList(),
-    )
-
-    private data class CinemetaEpisode(
-        val season: Int,
-        val episode: Int,
-        val name: String?,
-        val overview: String?,
-        val thumbnail: String?,
-        val released: String?,
-    )
 
     override fun videoListRequest(episode: SEpisode): Request = throw UnsupportedOperationException("Not used")
 
