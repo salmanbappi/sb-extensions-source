@@ -897,6 +897,7 @@ class MovieBox : Source() {
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException("Not used")
 
     private suspend fun fetchVideosForSubject(sid: String, lang: String, se: String, ep: String, detailPath: String = ""): List<Video> {
+        val enableDash = preferences.getBoolean(PREF_ENABLE_DASH_KEY, PREF_ENABLE_DASH_DEFAULT)
         val videos = mutableListOf<Video>()
         var activeDetailPath = detailPath.trim()
 
@@ -974,47 +975,49 @@ class MovieBox : Source() {
                         }
 
                         // DASH streams
-                        dash?.forEach { dashEl ->
-                            val d = dashEl.obj ?: return@forEach
-                            val dashUrl = d["url"]?.str ?: return@forEach
-                            if (dashUrl.isBlank()) return@forEach
-                            val res = d["resolutions"]?.str ?: "Auto"
-                            val signCookie = d["signCookie"]?.str?.trim()?.trimEnd(';')
-                            val signHeaderKey = d["signHeaderKey"]?.str?.ifBlank { "X-MB-Token" } ?: "X-MB-Token"
-                            val streamId = d["id"]?.str ?: ""
+                        if (enableDash) {
+                            dash?.forEach { dashEl ->
+                                val d = dashEl.obj ?: return@forEach
+                                val dashUrl = d["url"]?.str ?: return@forEach
+                                if (dashUrl.isBlank()) return@forEach
+                                val res = d["resolutions"]?.str ?: "Auto"
+                                val signCookie = d["signCookie"]?.str?.trim()?.trimEnd(';')
+                                val signHeaderKey = d["signHeaderKey"]?.str?.ifBlank { "X-MB-Token" } ?: "X-MB-Token"
+                                val streamId = d["id"]?.str ?: ""
 
-                            val headers = Headers.Builder()
-                                .add("Origin", subDomain)
-                                .add("Referer", "$subDomain/movies/$activeDetailPath?id=$sid&type=/movie/detail&detailSe=&detailEp=&lang=en")
-                                .add("User-Agent", "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36")
-                                .apply {
-                                    if (!signCookie.isNullOrBlank()) {
-                                        add(signHeaderKey, signCookie)
-                                        add("Cookie", signCookie)
+                                val headers = Headers.Builder()
+                                    .add("Origin", subDomain)
+                                    .add("Referer", "$subDomain/movies/$activeDetailPath?id=$sid&type=/movie/detail&detailSe=&detailEp=&lang=en")
+                                    .add("User-Agent", "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36")
+                                    .apply {
+                                        if (!signCookie.isNullOrBlank()) {
+                                            add(signHeaderKey, signCookie)
+                                            add("Cookie", signCookie)
+                                        }
                                     }
+                                    .build()
+
+                                val subTracks = mutableListOf<Track>()
+                                if (streamId.isNotBlank()) {
+                                    subTracks.addAll(fetchExternalCaptions(sid, streamId, se, ep, d["resourceId"]?.str))
                                 }
-                                .build()
+                                val distinctSubs = subTracks.distinctBy { it.url }
 
-                            val subTracks = mutableListOf<Track>()
-                            if (streamId.isNotBlank()) {
-                                subTracks.addAll(fetchExternalCaptions(sid, streamId, se, ep, d["resourceId"]?.str))
-                            }
-                            val distinctSubs = subTracks.distinctBy { it.url }
-
-                            val langTag = lang.replace("dub", "").replace("dubbed", "").trim()
-                            val langSuffix = if (langTag.isNotBlank() && !langTag.equals("original", ignoreCase = true)) " - $langTag" else ""
-                            res.split(",").forEach { r ->
-                                val cleanRes = r.trim()
-                                val resInt = cleanRes.toIntOrNull()
-                                videos.add(
-                                    Video(
-                                        videoUrl = dashUrl,
-                                        videoTitle = "$cleanRes (DASH$langSuffix)",
-                                        headers = headers,
-                                        resolution = resInt,
-                                        subtitleTracks = distinctSubs,
-                                    ),
-                                )
+                                val langTag = lang.replace("dub", "").replace("dubbed", "").trim()
+                                val langSuffix = if (langTag.isNotBlank() && !langTag.equals("original", ignoreCase = true)) " - $langTag" else ""
+                                res.split(",").forEach { r ->
+                                    val cleanRes = r.trim()
+                                    val resInt = cleanRes.toIntOrNull()
+                                    videos.add(
+                                        Video(
+                                            videoUrl = dashUrl,
+                                            videoTitle = "$cleanRes (DASH$langSuffix)",
+                                            headers = headers,
+                                            resolution = resInt,
+                                            subtitleTracks = distinctSubs,
+                                        ),
+                                    )
+                                }
                             }
                         }
                     }
@@ -1062,6 +1065,7 @@ class MovieBox : Source() {
             val distinctSubs = subtitleTracks.distinctBy { it.url }
 
             val isDash = resolvedUrl.endsWith(".mpd") || resolvedUrl.contains("/dash/")
+            if (isDash && !enableDash) return@forEach
             val formatTag = if (isDash) "DASH" else "MP4"
             val langTag = lang.replace("dub", "").replace("dubbed", "").trim()
             val langSuffix = if (langTag.isNotBlank() && !langTag.equals("original", ignoreCase = true)) " - $langTag" else ""
@@ -1088,6 +1092,7 @@ class MovieBox : Source() {
     }
 
     private fun fetchDetectorFallbackVideos(sid: String, lang: String): List<Video> {
+        val enableDash = preferences.getBoolean(PREF_ENABLE_DASH_KEY, PREF_ENABLE_DASH_DEFAULT)
         val jsonRes = safeGetJsonWithHeaders("/wefeed-mobile-bff/subject-api/get?subjectId=$sid", isDetails = true)
             ?: return emptyList()
         val dataObj = jsonRes.first.obj?.get("data")?.obj
@@ -1111,9 +1116,11 @@ class MovieBox : Source() {
                 if (link.startsWith("magnet:")) return@forEach
                 if (link.contains("b164fbfb43477929") || link.contains("/other/2026/09/04/")) return@forEach
 
+                val isDash = link.contains("/dash/") || link.endsWith(".mpd")
+                if (isDash && !enableDash) return@forEach
                 val resLabel = obj["resolution"]?.str ?: "Auto"
                 val resInt = resLabel.filter { it.isDigit() }.toIntOrNull()
-                val formatTag = if (link.contains("/dash/") || link.endsWith(".mpd")) "DASH" else "MP4"
+                val formatTag = if (isDash) "DASH" else "MP4"
                 val subtitleTracks = (detectorSubs + parseCaptionTracks(obj)).distinctBy { it.url }
                 videos.add(
                     Video(
@@ -1243,7 +1250,8 @@ class MovieBox : Source() {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         val audio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
         return this.sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(audio, ignoreCase = true) }
+            compareByDescending<Video> { it.videoTitle.contains("MP4", ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(audio, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) },
         )
     }
@@ -1274,6 +1282,13 @@ class MovieBox : Source() {
             entryValues = PREF_AUDIO_VALUES
             setDefaultValue(PREF_AUDIO_DEFAULT)
             summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_ENABLE_DASH_KEY
+            title = PREF_ENABLE_DASH_TITLE
+            summary = PREF_ENABLE_DASH_SUMMARY
+            setDefaultValue(PREF_ENABLE_DASH_DEFAULT)
         }.also { screen.addPreference(it) }
 
         SwitchPreferenceCompat(screen.context).apply {
@@ -1447,6 +1462,11 @@ class MovieBox : Source() {
         private const val PREF_AUDIO_DEFAULT = "English"
         private val PREF_AUDIO_ENTRIES = arrayOf("English", "Original", "Original Audio", "Japanese", "Hindi", "Telugu", "Tamil", "Portuguese (Brazil)", "Tagalog")
         private val PREF_AUDIO_VALUES = arrayOf("English", "Original", "Original Audio", "Japanese", "Hindi", "Telugu", "Tamil", "ptbr", "Tagalog")
+
+        private const val PREF_ENABLE_DASH_KEY = "pref_enable_dash"
+        private const val PREF_ENABLE_DASH_TITLE = "Enable DASH streams"
+        private const val PREF_ENABLE_DASH_SUMMARY = "Include DASH (.mpd) streams alongside MP4. Disabled by default."
+        private const val PREF_ENABLE_DASH_DEFAULT = false
 
         private const val PREF_THUMBNAILS_KEY = "pref_show_thumbnails"
         private const val PREF_THUMBNAILS_TITLE = "Show episode thumbnails"
