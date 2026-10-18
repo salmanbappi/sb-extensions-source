@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.ar.witanime
 import android.util.Base64
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animeextension.ar.witanime.extractors.SharedExtractor
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -30,6 +31,7 @@ import keiyoushi.utils.parallelCatchingFlatMap
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
