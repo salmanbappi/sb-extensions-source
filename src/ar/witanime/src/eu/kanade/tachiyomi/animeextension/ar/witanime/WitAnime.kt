@@ -320,8 +320,13 @@ class WitAnime : Source() {
 
     // ============================ Video Links =============================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val watchUrl = "$baseUrl${episode.url}"
-        val doc = client.newCall(GET(watchUrl, headers)).execute().asJsoup()
+        val cleanBaseUrl = baseUrl.trimEnd('/')
+        val cleanEpUrl = "/" + episode.url.removePrefix(cleanBaseUrl).trimStart('/')
+        val watchUrl = "$cleanBaseUrl$cleanEpUrl"
+
+        val watchResp = client.newCall(GET(watchUrl, headers)).execute()
+        val rawCookies = watchResp.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
+        val doc = watchResp.asJsoup()
 
         // 1. Check for legacy WordPress servers list if present
         val legacyServers = doc.select("ul#episode-servers li a")
@@ -341,23 +346,38 @@ class WitAnime : Source() {
         // 2. Modern watchPlayer JSON manifest
         val csrfToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content") ?: ""
         val htmlContent = doc.html()
-        val sourcesUrl = SOURCES_REGEX.find(htmlContent)?.groupValues?.get(1)?.replace("\\/", "/")
-            ?: "${episode.url}/sources"
+        val rawSourcesUrl = SOURCES_REGEX.find(htmlContent)?.groupValues?.get(1)?.replace("\\/", "/")?.trim()
+        val sourcesPath = when {
+            rawSourcesUrl.isNullOrBlank() -> "$cleanBaseUrl/${cleanEpUrl.trimEnd('/')}/sources"
+            rawSourcesUrl.startsWith("http") -> rawSourcesUrl
+            else -> "$cleanBaseUrl/${rawSourcesUrl.trimStart('/')}"
+        }
 
-        val sourcesReq = Request.Builder()
-            .url("$baseUrl$sourcesUrl")
-            .post("".toRequestBody(JSON_MEDIA_TYPE))
+        val reqBuilder = Request.Builder()
+            .url(sourcesPath)
+            .post("".toRequestBody(null))
             .headers(headers)
-            .addHeader("Referer", watchUrl)
-            .addHeader("X-CSRF-TOKEN", csrfToken)
-            .addHeader("X-Requested-With", "XMLHttpRequest")
-            .addHeader("Accept", "application/json, text/plain, */*")
-            .addHeader("sec-fetch-dest", "empty")
-            .addHeader("sec-fetch-mode", "cors")
-            .addHeader("sec-fetch-site", "same-origin")
-            .build()
+            .header("Referer", watchUrl)
+            .header("Origin", cleanBaseUrl)
+            .header("X-CSRF-TOKEN", csrfToken)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Accept", "application/json, text/plain, */*")
+            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Site", "same-origin")
 
-        val sourcesResp = runCatching { client.newCall(sourcesReq).execute() }.getOrNull() ?: return emptyList()
+        if (rawCookies.isNotBlank()) {
+            reqBuilder.header("Cookie", rawCookies)
+        }
+
+        val sourcesResp = runCatching { client.newCall(reqBuilder.build()).execute() }.getOrNull() ?: return emptyList()
+        if (!sourcesResp.isSuccessful) {
+            sourcesResp.close()
+            return emptyList()
+        }
+
+        val postCookies = sourcesResp.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
+        val sessionCookies = if (postCookies.isNotBlank()) "$rawCookies; $postCookies" else rawCookies
         val sourcesJson = runCatching { sourcesResp.parseAs<JsonObject>() }.getOrNull() ?: return emptyList()
 
         val hosterMap = mutableMapOf<String, MutableList<ServerItem>>()
@@ -377,6 +397,7 @@ class WitAnime : Source() {
                         isDownload = false,
                         watchUrl = watchUrl,
                         csrfToken = csrfToken,
+                        cookies = sessionCookies,
                     ),
                 )
             }
@@ -397,6 +418,7 @@ class WitAnime : Source() {
                         isDownload = true,
                         watchUrl = watchUrl,
                         csrfToken = csrfToken,
+                        cookies = sessionCookies,
                     ),
                 )
             }
@@ -419,37 +441,51 @@ class WitAnime : Source() {
         val items = runCatching { hoster.hosterUrl.parseAs<List<ServerItem>>() }.getOrNull()
             ?: return emptyList()
 
+        val cleanBaseUrl = baseUrl.trimEnd('/')
+
         return items.parallelCatchingFlatMap { item ->
             val endpoint = if (item.isDownload) "/watch/download-source/" else "/watch/stream-source/"
             val gateEndpoint = if (item.isDownload) "/watch/download-gate/" else "/watch/stream-gate/"
 
             // 1. Authorize token in session
-            val authReq = Request.Builder()
-                .url("$baseUrl$endpoint${item.token}")
-                .post("".toRequestBody(JSON_MEDIA_TYPE))
+            val authBuilder = Request.Builder()
+                .url("$cleanBaseUrl$endpoint${item.token}")
+                .post("".toRequestBody(null))
                 .headers(headers)
-                .addHeader("Referer", item.watchUrl)
-                .addHeader("X-CSRF-TOKEN", item.csrfToken)
-                .addHeader("X-Requested-With", "XMLHttpRequest")
-                .addHeader("Accept", "application/json, text/plain, */*")
-                .addHeader("sec-fetch-dest", "empty")
-                .addHeader("sec-fetch-mode", "cors")
-                .addHeader("sec-fetch-site", "same-origin")
-                .build()
+                .header("Referer", item.watchUrl)
+                .header("Origin", cleanBaseUrl)
+                .header("X-CSRF-TOKEN", item.csrfToken)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("Accept", "application/json, text/plain, */*")
+                .header("Sec-Fetch-Dest", "empty")
+                .header("Sec-Fetch-Mode", "cors")
+                .header("Sec-Fetch-Site", "same-origin")
 
-            runCatching { client.newCall(authReq).execute().close() }
+            if (item.cookies.isNotBlank()) {
+                authBuilder.header("Cookie", item.cookies)
+            }
 
-            // 2. Gate endpoint to follow redirect
-            val gateReq = Request.Builder()
-                .url("$baseUrl$gateEndpoint${item.token}")
+            val authResp = runCatching { client.newCall(authBuilder.build()).execute() }.getOrNull()
+            val authCookies = authResp?.headers("Set-Cookie")?.joinToString("; ") { it.substringBefore(";") } ?: ""
+            val gateCookies = if (authCookies.isNotBlank()) "${item.cookies}; $authCookies" else item.cookies
+            authResp?.close()
+
+            // 2. Gate endpoint to follow redirect.
+            // DO NOT pass the watch page as Referer: WitAnime gate returns 404 when Referer is sent!
+            val gateBuilder = Request.Builder()
+                .url("$cleanBaseUrl$gateEndpoint${item.token}")
                 .headers(headers)
-                .addHeader("Referer", item.watchUrl)
-                .addHeader("Sec-Fetch-Dest", if (item.isDownload) "document" else "iframe")
-                .addHeader("Sec-Fetch-Mode", "navigate")
-                .addHeader("Sec-Fetch-Site", "same-origin")
-                .build()
+                .removeHeader("Referer")
+                .header("Sec-Fetch-Dest", if (item.isDownload) "document" else "iframe")
+                .header("Sec-Fetch-Mode", "navigate")
+                .header("Sec-Fetch-Site", "same-origin")
 
-            val gateResp = runCatching { client.newCall(gateReq).execute() }.getOrNull()
+            if (gateCookies.isNotBlank()) {
+                gateBuilder.header("Cookie", gateCookies)
+            }
+
+            val gateClient = client.newBuilder().followRedirects(true).build()
+            val gateResp = runCatching { gateClient.newCall(gateBuilder.build()).execute() }.getOrNull()
                 ?: return@parallelCatchingFlatMap emptyList()
 
             val finalUrl = gateResp.request.url.toString()
@@ -458,7 +494,7 @@ class WitAnime : Source() {
             val resolvedUrl = if (!finalUrl.contains("/watch/")) {
                 finalUrl
             } else {
-                val gateDoc = org.jsoup.Jsoup.parse(gateHtml, baseUrl)
+                val gateDoc = org.jsoup.Jsoup.parse(gateHtml, cleanBaseUrl)
                 gateDoc.selectFirst("iframe")?.let { it.attr("abs:src").ifBlank { it.attr("src") }.ifBlank { it.attr("data-src") } }
                     ?: gateDoc.selectFirst("source, video")?.let { it.attr("abs:src").ifBlank { it.attr("src") } }
                     ?: finalUrl
@@ -586,6 +622,7 @@ class WitAnime : Source() {
         val isDownload: Boolean = false,
         val watchUrl: String = "",
         val csrfToken: String = "",
+        val cookies: String = "",
     )
 
     companion object {
