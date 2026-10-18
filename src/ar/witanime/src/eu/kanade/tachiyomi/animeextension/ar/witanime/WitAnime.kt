@@ -380,6 +380,7 @@ class WitAnime : Source() {
             !rawSourcesUrl.isNullOrBlank() -> {
                 if (rawSourcesUrl.startsWith("http")) rawSourcesUrl else "$cleanBaseUrl/${rawSourcesUrl.trimStart('/')}"
             }
+
             else -> "$cleanBaseUrl/${cleanEpUrl.trim('/')}/sources"
         }
 
