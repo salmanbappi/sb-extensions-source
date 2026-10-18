@@ -35,6 +35,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Cookie
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -56,17 +57,18 @@ class WitAnime : Source() {
 
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
-            .addNetworkInterceptor(CloudflareInterceptor(network.client))
+            .addInterceptor(CloudflareInterceptor(network.client))
             .rateLimit(permits = 2, period = 2.seconds)
             .build()
     }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-        .add("sec-ch-ua", "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\", \"Not-A.Brand\";v=\"99\"")
+        .add("User-Agent", CloudflareInterceptor.DEFAULT_USER_AGENT)
+        .add("sec-ch-ua", "\"Chromium\";v=\"131\", \"Google Chrome\";v=\"131\", \"Not_A Brand\";v=\"24\"")
         .add("sec-ch-ua-mobile", "?0")
-        .add("sec-ch-ua-platform", "\"Linux\"")
+        .add("sec-ch-ua-platform", "\"Windows\"")
+        .add("Accept-Language", "ar,en-US;q=0.9,en;q=0.8")
 
     // Extractors
     private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
@@ -323,9 +325,33 @@ class WitAnime : Source() {
         val cleanBaseUrl = baseUrl.trimEnd('/')
         val cleanEpUrl = "/" + episode.url.removePrefix(cleanBaseUrl).trimStart('/')
         val watchUrl = "$cleanBaseUrl$cleanEpUrl"
+        val httpUrl = watchUrl.toHttpUrl()
 
         val watchResp = client.newCall(GET(watchUrl, headers)).execute()
-        val rawCookies = watchResp.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
+        if (!watchResp.isSuccessful) {
+            val code = watchResp.code
+            watchResp.close()
+            throw Exception("فشل تحميل صفحة الحلقة (HTTP $code)")
+        }
+
+        val respCookieHeaders = watchResp.headers("Set-Cookie")
+        val parsedCookies = respCookieHeaders.mapNotNull { Cookie.parse(httpUrl, it) }
+        if (parsedCookies.isNotEmpty()) {
+            runCatching { client.cookieJar.saveFromResponse(httpUrl, parsedCookies) }
+        }
+
+        val jarCookies = runCatching {
+            client.cookieJar.loadForRequest(httpUrl).joinToString("; ") { "${it.name}=${it.value}" }
+        }.getOrNull().orEmpty()
+        val rawRespCookies = respCookieHeaders.joinToString("; ") { it.substringBefore(";") }
+        val combinedCookies = buildString {
+            if (jarCookies.isNotBlank()) append(jarCookies)
+            if (rawRespCookies.isNotBlank()) {
+                if (isNotEmpty()) append("; ")
+                append(rawRespCookies)
+            }
+        }
+
         val doc = watchResp.asJsoup()
 
         // 1. Check for legacy WordPress servers list if present
@@ -346,11 +372,15 @@ class WitAnime : Source() {
         // 2. Modern watchPlayer JSON manifest
         val csrfToken = doc.selectFirst("meta[name=csrf-token]")?.attr("content") ?: ""
         val htmlContent = doc.html()
-        val rawSourcesUrl = SOURCES_REGEX.find(htmlContent)?.groupValues?.get(1)?.replace("\\/", "/")?.trim()
+        val rawSourcesUrl = SOURCES_REGEX.find(htmlContent)?.let { match ->
+            (1..4).firstNotNullOfOrNull { idx -> match.groups[idx]?.value }
+        }?.replace("\\/", "/")?.trim()
+
         val sourcesPath = when {
-            rawSourcesUrl.isNullOrBlank() -> "$cleanBaseUrl/${cleanEpUrl.trimEnd('/')}/sources"
-            rawSourcesUrl.startsWith("http") -> rawSourcesUrl
-            else -> "$cleanBaseUrl/${rawSourcesUrl.trimStart('/')}"
+            !rawSourcesUrl.isNullOrBlank() -> {
+                if (rawSourcesUrl.startsWith("http")) rawSourcesUrl else "$cleanBaseUrl/${rawSourcesUrl.trimStart('/')}"
+            }
+            else -> "$cleanBaseUrl/${cleanEpUrl.trim('/')}/sources"
         }
 
         val reqBuilder = Request.Builder()
@@ -366,20 +396,32 @@ class WitAnime : Source() {
             .header("Sec-Fetch-Mode", "cors")
             .header("Sec-Fetch-Site", "same-origin")
 
-        if (rawCookies.isNotBlank()) {
-            reqBuilder.header("Cookie", rawCookies)
+        if (combinedCookies.isNotBlank()) {
+            reqBuilder.header("Cookie", combinedCookies)
         }
 
-        val sourcesResp = runCatching { client.newCall(reqBuilder.build()).execute() }.getOrNull() ?: return emptyList()
+        val sourcesResp = client.newCall(reqBuilder.build()).execute()
         if (!sourcesResp.isSuccessful) {
+            val code = sourcesResp.code
             sourcesResp.close()
-            return emptyList()
+            throw Exception("فشل جلب خوادم الحلقة (HTTP $code)")
         }
 
-        val postCookies = sourcesResp.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
-        val sessionCookies = if (postCookies.isNotBlank()) "$rawCookies; $postCookies" else rawCookies
-        val sourcesJson = runCatching { sourcesResp.parseAs<JsonObject>() }.getOrNull() ?: return emptyList()
+        val postCookieHeaders = sourcesResp.headers("Set-Cookie")
+        val parsedPostCookies = postCookieHeaders.mapNotNull { Cookie.parse(sourcesPath.toHttpUrl(), it) }
+        if (parsedPostCookies.isNotEmpty()) {
+            runCatching { client.cookieJar.saveFromResponse(sourcesPath.toHttpUrl(), parsedPostCookies) }
+        }
+        val rawPostCookies = postCookieHeaders.joinToString("; ") { it.substringBefore(";") }
+        val sessionCookies = buildString {
+            if (combinedCookies.isNotBlank()) append(combinedCookies)
+            if (rawPostCookies.isNotBlank()) {
+                if (isNotEmpty()) append("; ")
+                append(rawPostCookies)
+            }
+        }
 
+        val sourcesJson = sourcesResp.parseAs<JsonObject>()
         val hosterMap = mutableMapOf<String, MutableList<ServerItem>>()
 
         // Streaming players
@@ -422,6 +464,10 @@ class WitAnime : Source() {
                     ),
                 )
             }
+        }
+
+        if (hosterMap.isEmpty()) {
+            throw Exception("لم يتم العثور على خوادم تشغيل لهذه الحلقة")
         }
 
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
@@ -467,7 +513,13 @@ class WitAnime : Source() {
 
             val authResp = runCatching { client.newCall(authBuilder.build()).execute() }.getOrNull()
             val authCookies = authResp?.headers("Set-Cookie")?.joinToString("; ") { it.substringBefore(";") } ?: ""
-            val gateCookies = if (authCookies.isNotBlank()) "${item.cookies}; $authCookies" else item.cookies
+            val gateCookies = buildString {
+                if (item.cookies.isNotBlank()) append(item.cookies)
+                if (authCookies.isNotBlank()) {
+                    if (isNotEmpty()) append("; ")
+                    append(authCookies)
+                }
+            }
             authResp?.close()
 
             // 2. Gate endpoint to follow redirect.
@@ -633,7 +685,9 @@ class WitAnime : Source() {
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "FHD"
 
-        private val SOURCES_REGEX by lazy { Regex("""sourcesUrl:\s*['"]([^'"]+)['"]""") }
+        private val SOURCES_REGEX by lazy {
+            Regex("""sourcesUrl\s*:\s*(?:'([^']+)'|"([^"]+)"|&quot;([^&]+)&quot;|&#0*39;([^&]+)&#0*39;)""")
+        }
         private val JSON_MEDIA_TYPE by lazy { "application/json".toMediaType() }
     }
 }
