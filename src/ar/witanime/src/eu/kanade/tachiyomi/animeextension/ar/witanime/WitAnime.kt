@@ -27,7 +27,6 @@ import extensions.utils.toJsonString
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.parallelCatchingFlatMap
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -40,6 +39,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import kotlin.time.Duration.Companion.seconds
 
 class WitAnime : Source() {
 
@@ -162,23 +162,29 @@ class WitAnime : Source() {
                         is StatusFilter -> if (filter.toUriPart().isNotBlank()) {
                             addQueryParameter("status", filter.toUriPart())
                         }
+
                         is TypeFilter -> if (filter.toUriPart().isNotBlank()) {
                             addQueryParameter("type", filter.toUriPart())
                         }
+
                         is SortFilter -> if (filter.toUriPart().isNotBlank()) {
                             addQueryParameter("sort", filter.toUriPart())
                         }
+
                         is SeasonFilter -> if (filter.toUriPart().isNotBlank()) {
                             addQueryParameter("season", filter.toUriPart())
                         }
+
                         is YearFilter -> if (filter.toUriPart().isNotBlank()) {
                             addQueryParameter("year", filter.toUriPart())
                         }
+
                         is GenreFilter -> {
                             filter.getSelectedValues().forEach { genre ->
                                 addQueryParameter("genres[]", genre)
                             }
                         }
+
                         else -> {}
                     }
                 }
@@ -460,65 +466,72 @@ class WitAnime : Source() {
         }.sortVideos()
     }
 
-    private suspend fun extractVideosFromUrl(url: String, qualityLabel: String): List<Video> {
-        return runCatching {
-            when {
-                url.contains("mp4upload.com") -> {
-                    mp4uploadExtractor.videosFromUrl(url, headers)
-                }
-                url.contains("4shared.com") -> {
-                    sharedExtractor.videosFromUrl(url, qualityLabel)?.let { listOf(it) } ?: emptyList()
-                }
-                url.contains("mediafire.com") -> {
-                    val doc = client.newCall(GET(url, headers)).execute().asJsoup()
-                    val directUrl = doc.selectFirst("a#downloadButton")?.attr("abs:href")
-                        ?: doc.selectFirst("a[href*='download']")?.attr("abs:href")
-                    if (!directUrl.isNullOrBlank()) {
-                        listOf(
-                            Video(
-                                videoUrl = directUrl,
-                                videoTitle = qualityLabel,
-                                headers = headers,
-                            ),
-                        )
-                    } else {
-                        emptyList()
-                    }
-                }
-                url.contains("dood") || url.contains("ds2play") || url.contains("d000d") -> {
-                    doodExtractor.videosFromUrl(url)
-                }
-                url.contains("ok.ru") || url.contains("odnoklassniki") -> {
-                    okruExtractor.videosFromUrl(url)
-                }
-                url.contains("dailymotion.com") || url.contains("dai.ly") -> {
-                    dailymotionExtractor.videosFromUrl(url)
-                }
-                url.contains("streamtape.com") || url.contains("streamtape.net") -> {
-                    streamtapeExtractor.videoFromUrl(url)?.let { listOf(it) } ?: emptyList()
-                }
-                url.endsWith(".m3u8") || url.contains(".m3u8?") -> {
-                    playlistUtils.extractFromHls(
-                        playlistUrl = url,
-                        referer = "$baseUrl/",
-                        videoNameGen = { q -> "$qualityLabel - $q" },
-                    )
-                }
-                url.endsWith(".mp4") || url.endsWith(".mkv") || url.contains(".mp4?") -> {
+    private suspend fun extractVideosFromUrl(url: String, qualityLabel: String): List<Video> = runCatching {
+        when {
+            url.contains("mp4upload.com") -> {
+                mp4uploadExtractor.videosFromUrl(url, headers)
+            }
+
+            url.contains("4shared.com") -> {
+                sharedExtractor.videosFromUrl(url, qualityLabel)?.let { listOf(it) } ?: emptyList()
+            }
+
+            url.contains("mediafire.com") -> {
+                val doc = client.newCall(GET(url, headers)).execute().asJsoup()
+                val directUrl = doc.selectFirst("a#downloadButton")?.attr("abs:href")
+                    ?: doc.selectFirst("a[href*='download']")?.attr("abs:href")
+                if (!directUrl.isNullOrBlank()) {
                     listOf(
                         Video(
-                            videoUrl = url,
+                            videoUrl = directUrl,
                             videoTitle = qualityLabel,
                             headers = headers,
                         ),
                     )
-                }
-                else -> {
-                    universalExtractor.videosFromUrl(url, headers, prefix = "$qualityLabel - ")
+                } else {
+                    emptyList()
                 }
             }
-        }.getOrElse { emptyList() }
-    }
+
+            url.contains("dood") || url.contains("ds2play") || url.contains("d000d") -> {
+                doodExtractor.videosFromUrl(url)
+            }
+
+            url.contains("ok.ru") || url.contains("odnoklassniki") -> {
+                okruExtractor.videosFromUrl(url)
+            }
+
+            url.contains("dailymotion.com") || url.contains("dai.ly") -> {
+                dailymotionExtractor.videosFromUrl(url)
+            }
+
+            url.contains("streamtape.com") || url.contains("streamtape.net") -> {
+                streamtapeExtractor.videoFromUrl(url)?.let { listOf(it) } ?: emptyList()
+            }
+
+            url.endsWith(".m3u8") || url.contains(".m3u8?") -> {
+                playlistUtils.extractFromHls(
+                    playlistUrl = url,
+                    referer = "$baseUrl/",
+                    videoNameGen = { q -> "$qualityLabel - $q" },
+                )
+            }
+
+            url.endsWith(".mp4") || url.endsWith(".mkv") || url.contains(".mp4?") -> {
+                listOf(
+                    Video(
+                        videoUrl = url,
+                        videoTitle = qualityLabel,
+                        headers = headers,
+                    ),
+                )
+            }
+
+            else -> {
+                universalExtractor.videosFromUrl(url, headers, prefix = "$qualityLabel - ")
+            }
+        }
+    }.getOrElse { emptyList() }
 
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
