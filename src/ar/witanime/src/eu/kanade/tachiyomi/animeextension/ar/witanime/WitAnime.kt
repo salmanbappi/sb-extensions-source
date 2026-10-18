@@ -28,6 +28,7 @@ import extensions.utils.toJsonString
 import keiyoushi.utils.addBaseUrlPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.parallelCatchingFlatMap
+import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -58,7 +59,7 @@ class WitAnime : Source() {
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
             .addInterceptor(CloudflareInterceptor(network.client))
-            .rateLimit(permits = 2, period = 2.seconds)
+            .rateLimit(permits = 1, period = 2.seconds)
             .build()
     }
 
@@ -327,10 +328,19 @@ class WitAnime : Source() {
         val watchUrl = "$cleanBaseUrl$cleanEpUrl"
         val httpUrl = watchUrl.toHttpUrl()
 
-        val watchResp = client.newCall(GET(watchUrl, headers)).execute()
+        var watchResp = client.newCall(GET(watchUrl, headers)).execute()
+        if (watchResp.code == 429) {
+            watchResp.close()
+            delay(2500)
+            watchResp = client.newCall(GET(watchUrl, headers)).execute()
+        }
+
         if (!watchResp.isSuccessful) {
             val code = watchResp.code
             watchResp.close()
+            if (code == 429) {
+                throw Exception("تم حظر الطلب مؤقتاً (HTTP 429) بسبب قيود الموقع - يُرجى تبديل وضع الطيران أو تفعيل VPN لتغيير الـ IP والانتظار لحظة")
+            }
             throw Exception("فشل تحميل صفحة الحلقة (HTTP $code)")
         }
 
@@ -401,10 +411,19 @@ class WitAnime : Source() {
             reqBuilder.header("Cookie", combinedCookies)
         }
 
-        val sourcesResp = client.newCall(reqBuilder.build()).execute()
+        var sourcesResp = client.newCall(reqBuilder.build()).execute()
+        if (sourcesResp.code == 429) {
+            sourcesResp.close()
+            delay(2500)
+            sourcesResp = client.newCall(reqBuilder.build()).execute()
+        }
+
         if (!sourcesResp.isSuccessful) {
             val code = sourcesResp.code
             sourcesResp.close()
+            if (code == 429) {
+                throw Exception("تم حظر الطلب مؤقتاً (HTTP 429) بسبب قيود الموقع - يُرجى تبديل وضع الطيران أو تفعيل VPN لتغيير الـ IP والانتظار لحظة")
+            }
             throw Exception("فشل جلب خوادم الحلقة (HTTP $code)")
         }
 
