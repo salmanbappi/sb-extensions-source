@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.en.anikage
 
-import android.util.Base64
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.m3u8server.M3u8ServerManager
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -12,6 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
+import eu.kanade.tachiyomi.lib.universalextractor.UniversalExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
@@ -50,6 +50,21 @@ class Anikage : Source() {
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     private val m3u8Server by lazy { M3u8ServerManager(client) }
+
+    private val universalExtractor by lazy { UniversalExtractor(client) }
+
+    private var cachedProxyUrl: String? = null
+
+    private fun getProxyUrl(): String {
+        cachedProxyUrl?.let { return it }
+        val found = runCatching {
+            val html = client.newCall(GET(baseUrl, headers)).execute().body.string()
+            PROXY_URL_REGEX.find(html)?.groupValues?.get(1)?.trimEnd('/')
+        }.getOrNull()
+        val url = found?.takeIf { it.isNotBlank() } ?: DEFAULT_PROXY_URL
+        cachedProxyUrl = url
+        return url
+    }
 
     // ============================== Popular ===============================
 
@@ -120,9 +135,10 @@ class Anikage : Source() {
     // =========================== Anime Details ============================
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val response = client.newCall(GET("$apiUrl/anime/${anime.url}", headers)).execute()
+        val slug = extractSlug(anime.url)
+        val response = client.newCall(GET("$apiUrl/anime/$slug", headers)).execute()
         val dto = response.parseAs<DetailsResponseDto>()
-        return (dto.anime ?: AnimeItemDto(slug = anime.url)).toSAnime().apply {
+        return (dto.anime ?: AnimeItemDto(slug = slug)).toSAnime().apply {
             initialized = true
         }
     }
@@ -130,10 +146,11 @@ class Anikage : Source() {
     // ============================== Episodes ==============================
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val response = client.newCall(GET("$apiUrl/anime/${anime.url}/episodes", headers)).execute()
+        val slug = extractSlug(anime.url)
+        val response = client.newCall(GET("$apiUrl/anime/$slug/episodes", headers)).execute()
         val episodes = response.parseAs<List<EpisodeDto>>()
         return episodes
-            .map { it.toSEpisode(anime.url) }
+            .map { it.toSEpisode(slug) }
             .sortedByDescending { it.episode_number }
     }
 
@@ -146,54 +163,55 @@ class Anikage : Source() {
             GET("$apiUrl/anime/$slug/episodes/$epNum/servers", headers),
         ).execute().parseAs<ServersResponseDto>()
 
-        // Every provider/audio pair is fetched up front: each source carries an obfuscated
-        // `url` token that decodes to a directly playable stream plus the referer it needs,
-        // so no embed page has to be scraped for any provider.
-        val fetched = serverData.servers.mapNotNull { server ->
+        return serverData.servers.mapNotNull { server ->
             val serverId = server.id ?: return@mapNotNull null
-            val byLang = server.subTypes.mapNotNull { lang ->
-                val dto = runCatching {
-                    client.newCall(
-                        GET("$apiUrl/anime/$slug/episodes/$epNum/sources?provider=$serverId&lang=$lang&server=$serverId", headers),
-                    ).execute().use { it.parseAs<SourcesResponseDto>() }
-                }.getOrNull() ?: return@mapNotNull null
-                lang to dto
-            }
-            if (byLang.isEmpty()) null else serverId to byLang
-        }
-
-        // `uwu` mirrors the other providers' streams but reports an empty referer for them,
-        // so reuse whatever referer another provider gave for the same host.
-        val refererByHost = mutableMapOf<String, String>()
-        fetched.forEach { (_, byLang) ->
-            byLang.forEach { (_, dto) ->
-                dto.sources.forEach { src ->
-                    val decoded = decodeStreamToken(src.url) ?: return@forEach
-                    if (decoded.referer.isEmpty()) return@forEach
-                    val host = decoded.url.hostOrEmpty()
-                    if (host.isNotEmpty() && host !in refererByHost) {
-                        refererByHost[host] = decoded.referer
-                    }
-                }
-            }
-        }
-
-        return fetched.mapNotNull { (serverId, byLang) ->
-            val entries = byLang.flatMap { (lang, dto) -> dto.toStreamEntries(lang, refererByHost) }
-            if (entries.isEmpty()) return@mapNotNull null
             Hoster(
                 hosterName = serverId.replaceFirstChar { it.uppercase() },
-                hosterUrl = json.encodeToString(entries),
+                hosterUrl = json.encodeToString(
+                    HosterData(
+                        slug = slug,
+                        epNum = epNum,
+                        serverId = serverId,
+                        subTypes = server.subTypes,
+                    ),
+                ),
             )
         }
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val entries = runCatching { hoster.hosterUrl.parseAs<List<StreamEntry>>(json) }
-            .getOrNull() ?: return emptyList()
+        val hosterData = runCatching { hoster.hosterUrl.parseAs<HosterData>(json) }.getOrNull()
+        if (hosterData != null) {
+            return resolveHosterVideos(hoster.hosterName, hosterData)
+        }
+        val entries = runCatching { hoster.hosterUrl.parseAs<List<StreamEntry>>(json) }.getOrNull()
+        if (entries != null) {
+            return entries
+                .flatMap { entry -> runCatching { resolveEntry(hoster.hosterName, entry) }.getOrDefault(emptyList()) }
+                .distinctBy { it.videoUrl }
+        }
+        return emptyList()
+    }
+
+    private suspend fun resolveHosterVideos(providerLabel: String, hosterData: HosterData): List<Video> {
+        val proxyBase = getProxyUrl()
+        val subTypes = hosterData.subTypes.ifEmpty { listOf("sub", "dub") }
+
+        val entries = subTypes.flatMap { lang ->
+            val dto = runCatching {
+                client.newCall(
+                    GET(
+                        "$apiUrl/anime/${hosterData.slug}/episodes/${hosterData.epNum}/sources?provider=${hosterData.serverId}&lang=$lang&server=${hosterData.serverId}",
+                        headers,
+                    ),
+                ).execute().use { it.parseAs<SourcesResponseDto>() }
+            }.getOrNull() ?: return@flatMap emptyList()
+
+            dto.toStreamEntries(lang, proxyBase)
+        }
 
         return entries
-            .flatMap { entry -> runCatching { resolveEntry(hoster.hosterName, entry) }.getOrDefault(emptyList()) }
+            .flatMap { entry -> runCatching { resolveEntry(providerLabel, entry) }.getOrDefault(emptyList()) }
             .distinctBy { it.videoUrl }
     }
 
@@ -202,47 +220,49 @@ class Anikage : Source() {
             .filter { it.isNotBlank() }
             .joinToString(" - ")
         val tracks = entry.subtitles.map { Track(it.url, it.label) }
-        val candidates = entry.refererCandidates()
+        val referer = entry.referer.ifBlank { "$baseUrl/" }
 
         if (entry.url.isNotBlank()) {
+            val streamHeaders = refererHeaders(referer)
+
             // `megg` hands out a progressive MP4 instead of a playlist.
             if (!entry.isM3U8) {
                 return listOf(
                     Video(
                         videoUrl = entry.url,
                         videoTitle = prefix,
-                        headers = refererHeaders(candidates.first()),
+                        headers = streamHeaders,
                         subtitleTracks = tracks,
                     ),
                 )
             }
 
-            // Most CDNs here reject a wrong Referer, and a handful of sources ship none at
-            // all, so walk the candidates until one actually returns a playlist.
-            candidates.forEach { referer ->
-                val streamHeaders = refererHeaders(referer)
-                val videos = runCatching {
-                    playlistUtils.extractFromHls(
-                        playlistUrl = entry.url,
-                        referer = referer,
-                        masterHeaders = streamHeaders,
-                        videoHeaders = streamHeaders,
-                        subtitleList = tracks,
-                        videoNameGen = { quality -> "$prefix - $quality" },
-                    )
-                }.getOrDefault(emptyList())
-                if (videos.isNotEmpty()) {
-                    return if (entry.url.needsLocalProxy()) videos.viaLocalProxy(referer) else videos
-                }
+            // HLS stream (direct from proxy or origin)
+            val videos = runCatching {
+                playlistUtils.extractFromHls(
+                    playlistUrl = entry.url,
+                    referer = referer,
+                    masterHeaders = streamHeaders,
+                    videoHeaders = streamHeaders,
+                    subtitleList = tracks,
+                    videoNameGen = { quality -> "$prefix - $quality" },
+                )
+            }.getOrDefault(emptyList())
+
+            if (videos.isNotEmpty()) {
+                return if (entry.url.needsLocalProxy()) videos.viaLocalProxy(referer) else videos
             }
         }
 
-        // Safety net in case the token key is rotated: scrape the embed page like before.
+        // Safety net for embed pages
         return when {
             entry.embedUrl.isEmpty() -> emptyList()
 
             "megaplay.buzz" in entry.embedUrl || "vidtube.site" in entry.embedUrl ->
                 megaPlayVideos(prefix, entry.embedUrl)
+
+            "flixcloud" in entry.embedUrl || "rabbit" in entry.embedUrl || "megacloud" in entry.embedUrl ->
+                runCatching { universalExtractor.videosFromUrl(entry.embedUrl, headers, prefix = "$prefix - ") }.getOrDefault(emptyList())
 
             else -> vibePlayerVideos(prefix, entry.embedUrl)
         }
@@ -370,9 +390,20 @@ class Anikage : Source() {
         )
     }
 
+    private fun extractSlug(url: String): String {
+        return url.substringBefore("#")
+            .substringBefore("?")
+            .trimEnd('/')
+            .substringAfterLast('/')
+    }
+
     private fun parseEpisodeUrl(url: String): Pair<String, String> {
-        val slug = url.substringBefore("#")
-        val epNum = url.substringAfter("#ep=", "1")
+        val slug = extractSlug(url)
+        val epNum = when {
+            "#ep=" in url -> url.substringAfter("#ep=").substringBefore("&").substringBefore("#")
+            "?ep=" in url -> url.substringAfter("?ep=").substringBefore("&").substringBefore("#")
+            else -> "1"
+        }
         return slug to epNum
     }
 
@@ -417,59 +448,33 @@ class Anikage : Source() {
         private const val PREF_QUALITY_DEFAULT = "1080p"
 
         private const val PREF_ADULT_KEY = "show_adult"
+
+        private const val DEFAULT_PROXY_URL = "https://og.bakayaro.live"
+        private val PROXY_URL_REGEX by lazy { Regex(""""PUBLIC_PROXY_URL"\s*:\s*"([^"]+)"""") }
     }
 }
 
 // ==============================================================================
-// Stream Token Decoding
+// Stream Proxy URL Resolution & Local Proxy Checks
 // ==============================================================================
 
-/**
- * Repeating XOR key the site's stream proxy uses for the `url`/`file` tokens. Recovered
- * from a known-plaintext pair: an encoded subtitle token against the very same subtitle
- * url that a `?sub=` embed parameter exposes in the clear.
- */
-private val TOKEN_KEY = "dj5D455Lzl2LKJXEtFwb5gy2oGFSYPnBKp7PTgFPm6Gn2MGb".toByteArray()
+const val DEFAULT_PROXY_URL = "https://og.bakayaro.live"
 
-/** The decoded plaintext is `url<NUL>referer<NUL>providerTag`. */
-private const val TOKEN_SEPARATOR = '\u0000'
-
-data class DecodedStream(
-    val url: String,
-    val referer: String,
-)
-
-/**
- * Decodes the obfuscated `url`/`file` tokens the sources endpoint returns. A token is
- * base64url over a repeating-key XOR, and the plaintext holds the playable stream url
- * together with the referer that host expects — which is why none of the providers need
- * their embed page scraped.
- */
-fun decodeStreamToken(token: String?): DecodedStream? {
-    if (token.isNullOrBlank()) return null
-    val raw = runCatching {
-        Base64.decode(token.replace('-', '+').replace('_', '/'), Base64.DEFAULT)
-    }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return null
-
-    val plain = String(
-        ByteArray(raw.size) { i -> (raw[i].toInt() xor TOKEN_KEY[i % TOKEN_KEY.size].toInt()).toByte() },
-    )
-    val parts = plain.split(TOKEN_SEPARATOR)
-    val url = parts.firstOrNull()?.trim().orEmpty()
-    if (!url.startsWith("http")) return null
-
-    return DecodedStream(url = url, referer = parts.getOrNull(1)?.trim().orEmpty())
+fun resolveProxyUrl(tokenOrUrl: String?, isM3U8: Boolean = false, proxyBase: String = DEFAULT_PROXY_URL): String {
+    if (tokenOrUrl.isNullOrBlank()) return ""
+    val trimmed = tokenOrUrl.trim()
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
+    val base = proxyBase.trimEnd('/')
+    val defaultPath = if (isM3U8) "m3u8" else "stream"
+    return when {
+        trimmed.startsWith("/stream/") || trimmed.startsWith("/m3u8/") || trimmed.startsWith("/hls/") -> "$base$trimmed"
+        trimmed.startsWith("stream/") || trimmed.startsWith("m3u8/") || trimmed.startsWith("hls/") -> "$base/$trimmed"
+        else -> "$base/$defaultPath/$trimmed"
+    }
 }
 
 fun String.hostOrEmpty(): String = toHttpUrlOrNull()?.host.orEmpty()
 
-/**
- * Stream hosts that have to go through the local HLS proxy rather than straight to the
- * player. Measured per host, not guessed: `vivibebe.site` serves its segments from an image
- * CDN that 403s unless the Referer is re-sent on each segment, `echovideo.to` labels every
- * playlist `image/jpeg` on an extension-less URL, and `krussdomi.com` spreads its segments
- * across rotating hosts behind a Referer check.
- */
 private val PROXY_HOSTS = setOf("vivibebe.site", "echovideo.to", "krussdomi.com")
 
 fun String.needsLocalProxy(): Boolean {
@@ -477,40 +482,29 @@ fun String.needsLocalProxy(): Boolean {
     return PROXY_HOSTS.any { host == it || host.endsWith(".$it") }
 }
 
-/**
- * A single playable stream, resolved while the hoster list is built and carried to
- * [Anikage.getVideoList] as JSON inside `Hoster.hosterUrl`.
- */
+@Serializable
+data class HosterData(
+    val slug: String = "",
+    val epNum: String = "",
+    val serverId: String = "",
+    val subTypes: List<String> = emptyList(),
+)
+
 @Serializable
 data class StreamEntry(
-    val lang: String,
-    val url: String,
-    val referer: String,
-    val isM3U8: Boolean,
-    val label: String,
-    val embedUrl: String,
+    val lang: String = "",
+    val url: String = "",
+    val referer: String = "",
+    val isM3U8: Boolean = true,
+    val label: String = "",
+    val embedUrl: String = "",
     val subtitles: List<SubtitleEntry> = emptyList(),
-) {
-    /**
-     * Referers to try, in order. Most sources name their own, but the aggregator servers
-     * ship an empty one, and those CDNs answer 403/404 without a matching Referer: some
-     * accept the stream host itself, others only the registrable domain above it.
-     */
-    fun refererCandidates(): List<String> = buildList {
-        if (referer.isNotBlank()) add(referer)
-        url.toHttpUrlOrNull()?.let { httpUrl ->
-            add("${httpUrl.scheme}://${httpUrl.host}/")
-            val apex = httpUrl.host.split('.').takeLast(2).joinToString(".")
-            add("${httpUrl.scheme}://$apex/")
-        }
-        add("")
-    }.distinct()
-}
+)
 
 @Serializable
 data class SubtitleEntry(
-    val url: String,
-    val label: String,
+    val url: String = "",
+    val label: String = "",
 )
 
 // ==============================================================================
@@ -663,24 +657,29 @@ data class SourcesResponseDto(
         kind == null || kind == "captions" || kind == "subtitles"
     }
 
-    fun toStreamEntries(lang: String, refererByHost: Map<String, String>): List<StreamEntry> {
+    fun toStreamEntries(lang: String, proxyBase: String): List<StreamEntry> {
         val labels = labelsByUrl()
         val tracks = captionTracks().mapNotNull { sub ->
-            val url = decodeStreamToken(sub.file ?: sub.url)?.url ?: return@mapNotNull null
-            SubtitleEntry(url = url, label = sub.label ?: "English")
+            val raw = sub.file ?: sub.url ?: return@mapNotNull null
+            val resolved = resolveProxyUrl(raw, isM3U8 = false, proxyBase = proxyBase)
+            if (resolved.isEmpty()) return@mapNotNull null
+            val finalUrl = if (resolved.contains(".vtt") || resolved.contains("?")) {
+                resolved
+            } else {
+                "$resolved?ext=.vtt"
+            }
+            SubtitleEntry(url = finalUrl, label = sub.label ?: "English")
         }
 
         return sources.mapNotNull { src ->
-            val decoded = decodeStreamToken(src.url)
-            val streamUrl = decoded?.url.orEmpty()
+            val streamUrl = resolveProxyUrl(src.url, isM3U8 = src.isM3U8 ?: true, proxyBase = proxyBase)
             val embedUrl = src.embedUrl?.takeIf { it.startsWith("http") }.orEmpty()
             if (streamUrl.isEmpty() && embedUrl.isEmpty()) return@mapNotNull null
 
             StreamEntry(
                 lang = lang.uppercase(),
                 url = streamUrl,
-                referer = decoded?.referer?.takeIf { it.isNotEmpty() }
-                    ?: refererByHost[streamUrl.hostOrEmpty()].orEmpty(),
+                referer = "https://anikage.cc/",
                 isM3U8 = src.isM3U8 ?: true,
                 label = src.embedUrl?.let { labels[it] } ?: src.server ?: src.quality.orEmpty(),
                 embedUrl = embedUrl,
