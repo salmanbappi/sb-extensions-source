@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.addListPreference
+import extensions.utils.addSetPreference
 import extensions.utils.addSwitchPreference
 import extensions.utils.parseAs
 import kotlinx.serialization.Serializable
@@ -163,7 +164,17 @@ class Anikage : Source() {
             GET("$apiUrl/anime/$slug/episodes/$epNum/servers", headers),
         ).execute().parseAs<ServersResponseDto>()
 
-        return serverData.servers.mapNotNull { server ->
+        val preferredServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+        val excludedLower = excludedServers.map { it.lowercase() }.toSet()
+
+        val filteredServers = serverData.servers.filter { server ->
+            val id = server.id ?: return@filter false
+            val name = id.replaceFirstChar { it.uppercase() }
+            id.lowercase() !in excludedLower && name.lowercase() !in excludedLower
+        }.ifEmpty { serverData.servers }
+
+        return filteredServers.mapNotNull { server ->
             val serverId = server.id ?: return@mapNotNull null
             Hoster(
                 hosterName = serverId.replaceFirstChar { it.uppercase() },
@@ -176,19 +187,27 @@ class Anikage : Source() {
                     ),
                 ),
             )
-        }
+        }.sortedWith(
+            compareByDescending { it.hosterName.equals(preferredServer, ignoreCase = true) },
+        )
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val excludedServers = preferences.getStringSet(PREF_EXCLUDE_SERVERS_KEY, emptySet()) ?: emptySet()
+        if (hoster.hosterName.lowercase() in excludedServers.map { it.lowercase() }) {
+            return emptyList()
+        }
+
         val hosterData = runCatching { hoster.hosterUrl.parseAs<HosterData>(json) }.getOrNull()
         if (hosterData != null) {
-            return resolveHosterVideos(hoster.hosterName, hosterData)
+            return resolveHosterVideos(hoster.hosterName, hosterData).sortVideos()
         }
         val entries = runCatching { hoster.hosterUrl.parseAs<List<StreamEntry>>(json) }.getOrNull()
         if (entries != null) {
             return entries
                 .flatMap { entry -> runCatching { resolveEntry(hoster.hosterName, entry) }.getOrDefault(emptyList()) }
                 .distinctBy { it.videoUrl }
+                .sortVideos()
         }
         return emptyList()
     }
@@ -383,8 +402,10 @@ class Anikage : Source() {
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         val type = preferences.getString(PREF_TYPE_KEY, PREF_TYPE_DEFAULT) ?: PREF_TYPE_DEFAULT
+        val server = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(type, ignoreCase = true) }
+            compareByDescending<Video> { it.videoTitle.contains(server, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(type, ignoreCase = true) }
                 .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) }
                 .thenByDescending { it.resolution ?: 0 },
         )
@@ -408,6 +429,22 @@ class Anikage : Source() {
     // ============================= Preferences ============================
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        screen.addListPreference(
+            key = PREF_SERVER_KEY,
+            title = "Preferred server",
+            summary = "%s",
+            entries = SERVER_LIST,
+            entryValues = SERVER_LIST,
+            default = PREF_SERVER_DEFAULT,
+        )
+        screen.addSetPreference(
+            key = PREF_EXCLUDE_SERVERS_KEY,
+            title = "Exclude servers",
+            summary = "Select servers to exclude from episode streams",
+            entries = SERVER_LIST,
+            entryValues = SERVER_LIST,
+            default = emptySet(),
+        )
         screen.addListPreference(
             key = PREF_TYPE_KEY,
             title = "Preferred audio type",
@@ -438,6 +475,13 @@ class Anikage : Source() {
         // VibePlayer-style pages embed the master playlist in plain source.
         private val VIBE_SRC_REGEX by lazy { Regex("""const\s+src\s*=\s*"([^"]+\.m3u8[^"]*)"""") }
         private val M3U8_REGEX by lazy { Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""") }
+
+        private const val PREF_SERVER_KEY = "preferred_server"
+        private const val PREF_SERVER_DEFAULT = "Koto"
+
+        private const val PREF_EXCLUDE_SERVERS_KEY = "exclude_servers"
+
+        private val SERVER_LIST = listOf("Koto", "Ken", "Wave", "Kite", "Nero", "Megg", "Pam", "Zen")
 
         private const val PREF_TYPE_KEY = "preferred_type"
         private const val PREF_TYPE_DEFAULT = "SUB"
