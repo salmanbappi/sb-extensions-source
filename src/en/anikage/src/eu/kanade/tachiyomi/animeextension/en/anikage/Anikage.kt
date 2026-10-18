@@ -390,12 +390,10 @@ class Anikage : Source() {
         )
     }
 
-    private fun extractSlug(url: String): String {
-        return url.substringBefore("#")
-            .substringBefore("?")
-            .trimEnd('/')
-            .substringAfterLast('/')
-    }
+    private fun extractSlug(url: String): String = url.substringBefore("#")
+        .substringBefore("?")
+        .trimEnd('/')
+        .substringAfterLast('/')
 
     private fun parseEpisodeUrl(url: String): Pair<String, String> {
         val slug = extractSlug(url)
