@@ -322,7 +322,7 @@ class Animesalt : Source() {
             tiles.forEachIndexed { idx, tile ->
                 val onclick = tile.attr("onclick")
                 val text = tile.text().trim()
-                val match = Regex("""triggerEpisode\s*\(\s*(\[.*?])\s*,\s*["']([^"']*)['"]\s*,\s*["']([^"']*)['"]""").find(onclick)
+                val match = Regex("""triggerEpisode\s*\(\s*(\[.*?\])\s*,\s*["']([^"']*)['"]\s*,\s*["']([^"']*)['"]""").find(onclick)
 
                 // Skip tiles that don't have a triggerEpisode call (e.g. deferred/loading tiles)
                 if (match == null && tile.attr("data-slug").isBlank()) return@forEachIndexed
@@ -416,7 +416,7 @@ class Animesalt : Source() {
         }
 
         return title
-            .replace(Regex("""\[[A-Fa-f0-9]{8}]"""), "")
+            .replace(Regex("""\[[A-Fa-f0-9]{8}\]"""), "")
             .replace(Regex("""\[?(?:1080p|720p|480p|360p|240p|4k|hd|fhd|uhd)\]?""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""\[?(?:x264|x265|h264|h265|hevc|avc|10bit|8bit|aac|ac3|dts|web-?dl|bluray|bdrip|dvdrip)\]?""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""\[?(?:dual audio|multi audio|multi-sub|sub|dub|softsub)\]?""", RegexOption.IGNORE_CASE), "")
@@ -424,7 +424,7 @@ class Animesalt : Source() {
             .replace(Regex("""\b\d+x\d+\b""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""Season\s*\d+\s*Episode\s*\d+""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""Episode\s*\d+""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""\[\s*]|\(\s*)"""), "")
+            .replace(Regex("""\[\s*\]|\(\s*\)"""), "")
             .trim(' ', '-', ':', '_', '|')
     }
 
