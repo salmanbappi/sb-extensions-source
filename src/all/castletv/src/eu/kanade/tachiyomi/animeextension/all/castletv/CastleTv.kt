@@ -17,9 +17,18 @@ import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingMapNotNull
 import okhttp3.Headers
 import okhttp3.Request
+import java.io.InputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
+import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.regex.Pattern
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -37,6 +46,12 @@ class CastleTv : Source() {
 
     private val clientPackage: String
         get() = preferences.getString(PREF_PACKAGE_NAME, PACKAGE_TV) ?: PACKAGE_TV
+
+    private val proxyServer by lazy {
+        CastleProxyServer().apply { start() }
+    }
+
+    private val expansionCache = ConcurrentHashMap<String, String>()
 
     private fun getOrGenerateDeviceGuid(): String {
         var guid = preferences.getString(PREF_DEVICE_GUID, null)
@@ -120,7 +135,7 @@ class CastleTv : Source() {
         val decryptedJson = decryptData(encryptedData, securityKey) ?: return emptyList()
         val decryptedResponse = decryptedJson.parseAs<DecryptedResponse>()
         val filteredItems = mutableListOf<ContentItem>()
-        val sdf = java.text.SimpleDateFormat("yyyy", java.util.Locale.US)
+        val sdf = java.text.SimpleDateFormat("yyyy", Locale.US)
 
         decryptedResponse.data?.rows?.forEach { row ->
             // 1. Filter rows by category filter if specified
@@ -308,7 +323,7 @@ class CastleTv : Source() {
         val searchResponse = decryptedJson.parseAs<SearchApiResponse>()
         val searchData = searchResponse.data
 
-        val sdf = java.text.SimpleDateFormat("yyyy", java.util.Locale.US)
+        val sdf = java.text.SimpleDateFormat("yyyy", Locale.US)
         var searchRows = searchData?.rows ?: emptyList()
 
         if (language != "All") {
@@ -527,6 +542,113 @@ class CastleTv : Source() {
         return videoData
     }
 
+    /**
+     * Reconstructs the complete HLS playlist by discovering and appending unlisted CDN segments
+     * past the preview limit (inspired by Morphe's PreviewPlaylist bypass).
+     */
+    private fun expandPreviewPlaylist(previewUrl: String): String? = try {
+        expansionCache[previewUrl]?.let { return it }
+
+        val req = Request.Builder().url(previewUrl).build()
+        val m3u8Text = client.newCall(req).execute().use { it.body.string() }
+        val lines = m3u8Text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val segmentPattern = Pattern.compile("^(.*/)(\\d+)(\\.[^/?]+(?:\\?.*)?)$")
+
+        var lastNum = -1
+        var prefix = ""
+        var suffix = ""
+        val durations = mutableListOf<Double>()
+
+        lines.forEachIndexed { i, line ->
+            if (!line.startsWith("#")) {
+                val matcher = segmentPattern.matcher(line)
+                if (matcher.matches()) {
+                    prefix = matcher.group(1) ?: ""
+                    lastNum = matcher.group(2)?.toIntOrNull() ?: -1
+                    suffix = matcher.group(3) ?: ""
+                    if (i > 0 && lines[i - 1].startsWith("#EXTINF:")) {
+                        val durStr = lines[i - 1].substringAfter("#EXTINF:").substringBefore(",")
+                        durStr.toDoubleOrNull()?.let { durations.add(it) }
+                    }
+                }
+            }
+        }
+
+        if (lastNum < 0 || prefix.isBlank()) {
+            null
+        } else {
+            val avgDuration = if (durations.isNotEmpty()) durations.average() else 3.0
+
+            fun checkExists(n: Int): Boolean = try {
+                val checkUrl = "$prefix$n$suffix"
+                val headReq = Request.Builder()
+                    .url(checkUrl)
+                    .header("Range", "bytes=0-0")
+                    .head()
+                    .build()
+                client.newCall(headReq).execute().use { it.code in 200..299 }
+            } catch (_: Exception) {
+                false
+            }
+
+            var low = lastNum
+            var high = lastNum + 500
+            while (checkExists(high)) {
+                low = high
+                high *= 2
+            }
+
+            while (low < high - 1) {
+                val mid = (low + high) ushr 1
+                if (checkExists(mid)) {
+                    low = mid
+                } else {
+                    high = mid
+                }
+            }
+
+            val lastAvailable = low
+            if (lastAvailable <= lastNum) {
+                null
+            } else {
+                val sb = java.lang.StringBuilder()
+                for (line in lines) {
+                    if (line != "#EXT-X-ENDLIST") {
+                        sb.append(line).append("\n")
+                    }
+                }
+                val durationFormatted = String.format(Locale.US, "%.6f", avgDuration)
+                for (n in (lastNum + 1)..lastAvailable) {
+                    sb.append("#EXTINF:").append(durationFormatted).append(",\n")
+                    sb.append(prefix).append(n).append(suffix).append("\n")
+                }
+                sb.append("#EXT-X-ENDLIST\n")
+                val result = sb.toString()
+                expansionCache[previewUrl] = result
+                result
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun resolveStreamUrl(videoData: VideoData): Pair<String, String> {
+        val rawUrl = videoData.videoUrl ?: return "" to ""
+        val isPreview = videoData.isPreview == true || rawUrl.contains("preview", ignoreCase = true)
+
+        if (isPreview) {
+            val expandedM3u8 = expandPreviewPlaylist(rawUrl)
+            if (expandedM3u8 != null && proxyServer.port > 0) {
+                val streamId = UUID.randomUUID().toString()
+                val localUrl = proxyServer.registerPlaylist(streamId, expandedM3u8)
+                return localUrl to " [Unlocked Full]"
+            }
+            return rawUrl to " [Preview/VIP]"
+        }
+
+        return rawUrl to ""
+    }
+
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val parts = episode.url.split("_")
         if (parts.size != 2) return emptyList()
@@ -559,7 +681,8 @@ class CastleTv : Source() {
                         1 -> "480p"
                         else -> "${resolution}p"
                     }
-                    val previewTag = if (videoData.isPreview == true || videoData.videoUrl.contains("preview", ignoreCase = true)) " [Preview/VIP]" else ""
+                    val (streamUrl, tag) = resolveStreamUrl(videoData)
+                    if (streamUrl.isBlank()) return@parallelCatchingMapNotNull null
 
                     val subtitleTracks = videoData.subtitles?.mapNotNull { subtitle ->
                         val subUrl = subtitle.url
@@ -571,8 +694,8 @@ class CastleTv : Source() {
                     } ?: emptyList()
 
                     Video(
-                        videoUrl = videoData.videoUrl,
-                        videoTitle = "$allLanguageNames - $qualityName$previewTag",
+                        videoUrl = streamUrl,
+                        videoTitle = "$allLanguageNames - $qualityName$tag",
                         headers = Headers.Builder().add("Referer", baseUrl).build(),
                         subtitleTracks = subtitleTracks,
                     )
@@ -596,7 +719,8 @@ class CastleTv : Source() {
                             1 -> "480p"
                             else -> "${resolution}p"
                         }
-                        val previewTag = if (videoData.isPreview == true || videoData.videoUrl.contains("preview", ignoreCase = true)) " [Preview/VIP]" else ""
+                        val (streamUrl, tag) = resolveStreamUrl(videoData)
+                        if (streamUrl.isBlank()) return@parallelCatchingMapNotNull null
 
                         val subtitleTracks = videoData.subtitles?.mapNotNull { subtitle ->
                             val subUrl = subtitle.url
@@ -608,8 +732,8 @@ class CastleTv : Source() {
                         } ?: emptyList()
 
                         Video(
-                            videoUrl = videoData.videoUrl,
-                            videoTitle = "$languageName - $qualityName$previewTag",
+                            videoUrl = streamUrl,
+                            videoTitle = "$languageName - $qualityName$tag",
                             headers = Headers.Builder().add("Referer", baseUrl).build(),
                             subtitleTracks = subtitleTracks,
                         )
@@ -660,5 +784,65 @@ class CastleTv : Source() {
 
         private const val SIGN_KEY_TV = "17c6e44afc6b4c627fecdd30c27db7ad97cda41f728b74160ad55377dc4c7078"
         private const val SIGN_KEY_MOBILE = "ED0955EB04E67A1D9F3305B95454FED485261475"
+    }
+}
+
+private class CastleProxyServer {
+    private var serverSocket: ServerSocket? = null
+    private val executor = Executors.newCachedThreadPool()
+    private val playlists = ConcurrentHashMap<String, String>()
+
+    val port: Int
+        get() = serverSocket?.let { if (it.isClosed) 0 else it.localPort } ?: 0
+
+    fun start() {
+        if (serverSocket?.isClosed == false) return
+        try {
+            serverSocket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
+            executor.execute {
+                while (serverSocket?.isClosed == false) {
+                    try {
+                        val socket = serverSocket?.accept() ?: break
+                        executor.execute { handleSocket(socket) }
+                    } catch (_: Exception) {
+                        break
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun registerPlaylist(id: String, content: String): String {
+        playlists[id] = content
+        return "http://127.0.0.1:$port/playlist/$id.m3u8"
+    }
+
+    private fun handleSocket(socket: Socket) {
+        socket.use { s ->
+            val input: InputStream = s.getInputStream()
+            val reader = input.bufferedReader()
+            val firstLine = reader.readLine() ?: return
+            val parts = firstLine.split(" ")
+            if (parts.size < 2 || parts[0] != "GET") return
+            val path = parts[1]
+            if (path.startsWith("/playlist/")) {
+                val id = path.substringAfter("/playlist/").substringBefore(".m3u8")
+                val content = playlists[id]
+                if (content != null) {
+                    val bytes = content.toByteArray(StandardCharsets.UTF_8)
+                    val response = "HTTP/1.1 200 OK\r\n" +
+                        "Content-Type: application/vnd.apple.mpegurl\r\n" +
+                        "Content-Length: ${bytes.size}\r\n" +
+                        "Connection: close\r\n\r\n"
+                    val out = s.getOutputStream()
+                    out.write(response.toByteArray(StandardCharsets.UTF_8))
+                    out.write(bytes)
+                    out.flush()
+                } else {
+                    val notFound = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    s.getOutputStream().write(notFound.toByteArray(StandardCharsets.UTF_8))
+                }
+            }
+        }
     }
 }
