@@ -1,7 +1,7 @@
 ext {
     extName = 'Miruro.tv'
     extClass = '.Miruro'
-    extVersionCode = 16
+    extVersionCode = 17
     isNsfw = true
 }
 

@@ -1,7 +1,7 @@
 ext {
     extName = 'FboxTV'
     extClass = '.Fboxtv'
-    extVersionCode = 2
+    extVersionCode = 3
     isNsfw = false
 }
 

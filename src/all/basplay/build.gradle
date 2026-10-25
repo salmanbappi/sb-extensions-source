@@ -1,7 +1,7 @@
 ext {
     extName = 'Bas play'
     extClass = '.BasPlay'
-    extVersionCode = 1436
+    extVersionCode = 1437
     isNsfw = false
 }
 

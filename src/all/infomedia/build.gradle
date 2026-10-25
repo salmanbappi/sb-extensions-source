@@ -1,7 +1,7 @@
 ext {
     extName = 'InfoMedia'
     extClass = '.InfoMedia'
-    extVersionCode = 1009
+    extVersionCode = 1010
     isNsfw = false
 }
 

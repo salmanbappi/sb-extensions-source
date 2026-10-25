@@ -1,7 +1,7 @@
 ext {
     extName = 'Anivix'
     extClass = '.Anivix'
-    extVersionCode = 1010
+    extVersionCode = 1011
     isNsfw = false
 }
 

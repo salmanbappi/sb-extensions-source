@@ -1,7 +1,7 @@
 ext {
     extName = 'Live Sports'
     extClass = '.LiveSports'
-    extVersionCode = 2
+    extVersionCode = 3
     isNsfw = false
 }
 

@@ -1,7 +1,7 @@
 ext {
     extName = 'Nowhdtime'
     extClass = '.Nowhdtime'
-    extVersionCode = 8
+    extVersionCode = 9
     isNsfw = false
 }
 

@@ -1,7 +1,7 @@
 ext {
     extName = 'WIT ANIME'
     extClass = '.WitAnime'
-    extVersionCode = 68
+    extVersionCode = 69
     isNsfw = false
 }
 
