@@ -23,12 +23,9 @@ import androidx.preference.SwitchPreferenceCompat
 import androidx.preference.newPlainPreference
 import androidx.preference.unselectable
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
-import eu.kanade.tachiyomi.animesource.model.AnimeRelation
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
-import eu.kanade.tachiyomi.animesource.model.SAnimeEpisodeUpdate
-import eu.kanade.tachiyomi.animesource.model.SAnimeSeasonUpdate
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
@@ -472,55 +469,6 @@ abstract class AnikotoTheme : Source() {
         val malId = elements.firstNotNullOfOrNull { it.attr("data-mal").takeIf { mal -> mal.isNotEmpty() } } ?: ""
         if (malId.isNotBlank()) malIdBySlug[slug] = malId
         return enrichEpisodesWithMetadata(episodes, detailDoc, malId)
-    }
-
-    // ========================== extensions-lib v17 hooks ==========================
-
-    /** This source can surface related entries; see [getRelatedAnimeList]. */
-    override val supportsRelatedAnime: Boolean = true
-
-    /**
-     * Related anime for [anime], taken from Jikan's MAL relations and resolved back to a slug on
-     * this site so the app can open each entry through the normal detail path.
-     */
-    override suspend fun getRelatedAnimeList(anime: SAnime): List<AnimeRelation> {
-        val malId = resolveMalId(anime) ?: return emptyList()
-        val groups = metadataFetcher.fetchRelations(malId)
-        if (groups.isEmpty()) return emptyList()
-        return groups.mapNotNull { (relation, entries) ->
-            val resolved = entries.mapNotNull { entry -> resolveRelatedAnime(entry.title) }
-            if (resolved.isEmpty()) null else AnimeRelation(relation, resolved)
-        }
-    }
-
-    /**
-     * Combined episode/details update (extensions-lib v17). Unlike the legacy full
-     * [getEpisodeList] path this honours the caller's flags and skips work it says it does not need.
-     */
-    override suspend fun getAnimeEpisodeUpdate(
-        anime: SAnime,
-        episodes: List<SEpisode>,
-        fetchDetails: Boolean,
-        fetchEpisodes: Boolean,
-    ): SAnimeEpisodeUpdate {
-        val updatedAnime = if (fetchDetails) runCatching { getAnimeDetails(anime) }.getOrDefault(anime) else anime
-        val updatedEpisodes = if (fetchEpisodes || episodes.isEmpty()) getEpisodeList(anime) else episodes
-        return SAnimeEpisodeUpdate(updatedAnime, updatedEpisodes)
-    }
-
-    /**
-     * Combined season/details update (extensions-lib v17). This theme does not model seasons, so
-     * only the details are refreshed when requested and the caller's list is passed through.
-     */
-    override suspend fun getAnimeSeasonUpdate(
-        anime: SAnime,
-        seasons: List<SAnime>,
-        fetchDetails: Boolean,
-        fetchSeasons: Boolean,
-    ): SAnimeSeasonUpdate {
-        val updatedAnime = if (fetchDetails) runCatching { getAnimeDetails(anime) }.getOrDefault(anime) else anime
-        val updatedSeasons = if (fetchSeasons) runCatching { getSeasonList(anime) }.getOrDefault(seasons) else seasons
-        return SAnimeSeasonUpdate(updatedAnime, updatedSeasons)
     }
 
     /** MAL id for [anime], from the cache when its episode list was already loaded. */

@@ -2,8 +2,6 @@ ext {
     extName = 'Anikoto'
     extClass = '.Anikoto'
     themePkg = 'anikototheme'
-    // Uses extensions-lib v17 APIs via the theme (memo/related/combined-update).
-    libVersion = 17
     overrideVersionCode = 60
 }
 
