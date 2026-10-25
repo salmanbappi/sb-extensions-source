@@ -94,21 +94,27 @@ class Watchanimez : Source() {
                     is Filters.SortFilter -> {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
                     }
+
                     is Filters.GenreFilter -> {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("genre", filter.toUriPart())
                     }
+
                     is Filters.FormatFilter -> {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("format", filter.toUriPart())
                     }
+
                     is Filters.StatusFilter -> {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("status", filter.toUriPart())
                     }
+
                     is Filters.SeasonFilter -> {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("season", filter.toUriPart())
                     }
+
                     is Filters.YearFilter -> {
                         if (filter.state.isNotBlank()) urlBuilder.addQueryParameter("year", filter.state.trim())
                     }
+
                     else -> {}
                 }
             }
@@ -287,7 +293,9 @@ class Watchanimez : Source() {
                                 val fullSubUrl = UrlUtils.fixUrl(file, masterUrl)
                                 Track(fullSubUrl, sub.label ?: "Subtitles")
                             }
-                        } else null
+                        } else {
+                            null
+                        }
                     }.getOrNull() ?: emptyList()
 
                     val subVideos = playlistUtils.extractFromHls(
@@ -308,7 +316,9 @@ class Watchanimez : Source() {
                         val dubResp = client.newCall(GET(dubAvailUrl, streamHeaders)).execute()
                         if (dubResp.isSuccessful) {
                             dubResp.parseAs<DubAvailableDto>(json).dub_available == true
-                        } else false
+                        } else {
+                            false
+                        }
                     }.getOrDefault(false)
 
                     if (isDubAvailable) {
