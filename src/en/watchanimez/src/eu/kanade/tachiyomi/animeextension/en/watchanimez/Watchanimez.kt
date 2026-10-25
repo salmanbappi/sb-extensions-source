@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.en.watchanimez
 
-import android.app.Application
-import android.content.SharedPreferences
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -16,15 +14,11 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.UrlUtils
-import extensions.utils.injectLazy
 import extensions.utils.parseAs
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 import kotlin.time.Duration.Companion.seconds
 
@@ -42,12 +36,6 @@ class Watchanimez : Source() {
         network.client.newBuilder()
             .rateLimit(permits = 4, period = 1.seconds)
             .build()
-    }
-
-    private val json: Json by injectLazy()
-
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", Application.MODE_PRIVATE)
     }
 
     private val playlistUtils by lazy {
@@ -558,7 +546,7 @@ class Watchanimez : Source() {
         )
     }
 
-    private fun List<Video>.sortVideos(): List<Video> {
+    override fun List<Video>.sortVideos(): List<Video> {
         val qualityPref = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         val audioPref = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
         val langPref = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT) ?: PREF_LANG_DEFAULT
@@ -667,14 +655,19 @@ data class AnimeItemDto(
     val studios: List<StudioItemDto>? = null,
     val streamingEpisodes: List<StreamingEpisodeDto>? = null,
 ) {
-    fun toSAnime(): SAnime = SAnime.create().apply {
+    fun toSAnime(): SAnime {
         val animeTitle = title?.userPreferred
             ?: title?.english
             ?: title?.romaji
             ?: "Anime"
-        this.title = animeTitle
-        thumbnail_url = coverImage?.extraLarge ?: coverImage?.large ?: coverImage?.medium ?: ""
-        url = (id ?: 0).toString()
+        val cover = coverImage?.extraLarge ?: coverImage?.large ?: coverImage?.medium ?: ""
+        val animeId = (id ?: 0).toString()
+
+        return SAnime.create().apply {
+            this.title = animeTitle
+            thumbnail_url = cover
+            url = animeId
+        }
     }
 }
 
