@@ -43,20 +43,24 @@ class AnimeHeaven : Source() {
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/popular.php?page=$page", headers)).execute()
+        if (page > 1) return AnimesPage(emptyList(), false)
+        val response = client.newCall(GET("$baseUrl/popular.php", headers)).execute()
         return parseAnimeListPage(response)
     }
 
     // ============================== Latest ================================
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
-        val response = client.newCall(GET("$baseUrl/new.php?page=$page", headers)).execute()
+        if (page > 1) return AnimesPage(emptyList(), false)
+        val response = client.newCall(GET("$baseUrl/new.php", headers)).execute()
         return parseAnimeListPage(response)
     }
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        if (query.isNotBlank()) {
-            val response = client.newCall(GET("$baseUrl/search.php?s=${query.encodeForQuery()}&page=$page", headers)).execute()
+        val trimmedQuery = query.trim()
+        if (trimmedQuery.isNotBlank()) {
+            if (page > 1) return AnimesPage(emptyList(), false)
+            val response = client.newCall(GET("$baseUrl/search.php?s=${trimmedQuery.encodeForQuery()}", headers)).execute()
             return parseSearchAnimeListPage(response)
         }
 
@@ -64,7 +68,8 @@ class AnimeHeaven : Source() {
         val selectedGenre = genreFilter?.getSelectedValue() ?: ""
 
         if (selectedGenre.isNotBlank()) {
-            val response = client.newCall(GET("$baseUrl/tags.php?tag=${selectedGenre.encodeForQuery()}&page=$page", headers)).execute()
+            if (page > 1) return AnimesPage(emptyList(), false)
+            val response = client.newCall(GET("$baseUrl/tags.php?tag=${selectedGenre.encodeForQuery()}", headers)).execute()
             return parseSearchAnimeListPage(response)
         }
 
@@ -81,8 +86,7 @@ class AnimeHeaven : Source() {
         val animeList = doc.select("div.chart.bc1").mapNotNull { element ->
             parseChartElement(element)
         }
-        val hasNext = animeList.isNotEmpty()
-        return AnimesPage(animeList, hasNext)
+        return AnimesPage(animeList, false)
     }
 
     private fun parseSearchAnimeListPage(response: Response): AnimesPage {
@@ -90,8 +94,7 @@ class AnimeHeaven : Source() {
         val animeList = doc.select("div.similarimg").mapNotNull { element ->
             parseSimilarElement(element)
         }
-        val hasNext = animeList.isNotEmpty()
-        return AnimesPage(animeList, hasNext)
+        return AnimesPage(animeList, false)
     }
 
     private fun parseChartElement(element: Element): SAnime? {
