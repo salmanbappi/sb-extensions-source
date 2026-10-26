@@ -80,7 +80,7 @@ class Anidap :
         }
         val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val encodedHeaders = encodeHeaders(sourceHeaders)
-        val path = fileName ?: if (url.contains(".m3u8") || url.contains(".txt")) "playlist.m3u8" else "segment.ts"
+        val path = fileName ?: if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
         val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
         return "http://127.0.0.1:${proxy!!.port}/$path?$query"
     }
@@ -496,13 +496,6 @@ class Anidap :
                 builder.set("Referer", "https://megaplay.buzz/")
             }
 
-            "sora" -> {
-                builder.set("Origin", "https://krussdomi.com")
-                if (builder.get("Referer") == null) {
-                    builder.set("Referer", "https://kaa.lt/")
-                }
-            }
-
             "zuna" -> {
                 builder.set("Origin", "https://zokoanime.video")
                 builder.set("Referer", "https://zokoanime.video/")
@@ -729,7 +722,6 @@ class Anidap :
             "yuki" to "Yuki",
             "zuna" to "Zuna",
             "loli" to "Loli",
-            "sora" to "Sora",
         )
     }
 }
@@ -833,7 +825,7 @@ private class LocalProxyServer(
         val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val path = when {
             isKey || url.contains(".key") || url.contains("key.bin") -> "key.bin"
-            isPlaylist || url.contains(".m3u8") || url.endsWith(".txt") -> "playlist.m3u8"
+            isPlaylist || url.contains(".m3u8") -> "playlist.m3u8"
             url.contains(".vtt") || url.contains(".srt") || url.contains("subtitle") -> "subtitle.vtt"
             else -> "segment.ts"
         }
@@ -842,23 +834,14 @@ private class LocalProxyServer(
     }
 
     private fun fetchWithRetry(targetUrl: String, hdrs: okhttp3.Headers): okhttp3.Response {
-        val isKrussdomi = targetUrl.contains("krussdomi.com") || targetUrl.contains("subst")
-        val clientToUse = if (isKrussdomi) http1Client else client
         var response = runCatching {
-            clientToUse.newCall(GET(targetUrl, hdrs)).execute()
+            client.newCall(GET(targetUrl, hdrs)).execute()
         }.getOrElse {
             http1Client.newCall(GET(targetUrl, hdrs)).execute()
         }
         if (response.code == 403) {
             response.close()
-            val fallback = if (isKrussdomi) {
-                hdrs.newBuilder()
-                    .set("Origin", "https://krussdomi.com")
-                    .set("Referer", "https://kaa.lt/")
-                    .build()
-            } else {
-                hdrs.newBuilder().set("Referer", "https://anidap.lol/").build()
-            }
+            val fallback = hdrs.newBuilder().set("Referer", "https://anidap.lol/").build()
             response = http1Client.newCall(GET(targetUrl, fallback)).execute()
         }
         return response
@@ -884,7 +867,7 @@ private class LocalProxyServer(
                 continue
             }
             if (trimmed.startsWith("#")) {
-                if (trimmed.startsWith("#EXT-X-STREAM-INF")) {
+                if (trimmed.startsWith("#EXT-X-STREAM-INF") || trimmed.startsWith("#EXT-X-I-FRAME-STREAM-INF")) {
                     nextIsVariant = true
                 }
                 val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
@@ -908,7 +891,7 @@ private class LocalProxyServer(
                     trimmed.startsWith("//") -> "https:$trimmed"
                     else -> targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
                 }
-                val isPlaylist = nextIsVariant || resolved.contains(".m3u8") || resolved.endsWith(".txt")
+                val isPlaylist = nextIsVariant || resolved.contains(".m3u8")
                 builder.append(getProxyUrl(resolved, encodedHeaders, isKey = resolved.contains(".key"), isPlaylist = isPlaylist))
                 nextIsVariant = false
             }
