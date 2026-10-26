@@ -15,8 +15,6 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.mp4uploadextractor.Mp4uploadExtractor
-import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
@@ -58,8 +56,6 @@ class Anidap :
 
     override val supportsLatest = true
 
-    private val okruExtractor by lazy { OkruExtractor(client) }
-    private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private var proxy: LocalProxyServer? = null
 
@@ -84,7 +80,7 @@ class Anidap :
         }
         val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val encodedHeaders = encodeHeaders(sourceHeaders)
-        val path = fileName ?: if (url.contains(".m3u8")) "playlist.m3u8" else "segment.ts"
+        val path = fileName ?: if (url.contains(".m3u8") || url.contains(".txt")) "playlist.m3u8" else "segment.ts"
         val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
         return "http://127.0.0.1:${proxy!!.port}/$path?$query"
     }
@@ -287,8 +283,12 @@ class Anidap :
                 episode_number = num
                 // Integer display: Episode 1 not Episode 1.0
                 val epStr = if (num == num.toLong().toFloat()) num.toLong().toString() else num.toString()
-                name = if (loadTitles && !ep.title.isNullOrBlank()) {
-                    "Episode $epStr: ${ep.title}"
+                val epTitle = ep.titles?.get("en")
+                    ?: ep.titles?.get("x-jat")
+                    ?: ep.titles?.values?.firstOrNull { it.isNotBlank() }
+                    ?: ep.title
+                name = if (loadTitles && !epTitle.isNullOrBlank()) {
+                    "Episode $epStr: $epTitle"
                 } else {
                     "Episode $epStr"
                 }
@@ -410,7 +410,7 @@ class Anidap :
                 // entry while the player keeps talking to loopback.
                 videos.addAll(
                     playlistUtils.extractFromHls(
-                        playlistUrl = getProxyUrl(finalUrl, sourceHeaders),
+                        playlistUrl = getProxyUrl(finalUrl, sourceHeaders, fileName = "playlist.m3u8"),
                         masterHeaders = headers,
                         videoHeaders = headers,
                         videoNameGen = { quality -> "$titleLabel - $quality" },
@@ -446,36 +446,24 @@ class Anidap :
             val finalUrl = applySourceRewrites(rawUrl, providerId)
             val titleLabel = "${type.uppercase()} - ${providerId.uppercase()} - ${src.quality ?: "Auto"}"
 
-            when {
-                providerId.equals("mp4upload", ignoreCase = true) -> {
-                    videos.addAll(mp4uploadExtractor.videosFromUrl(finalUrl, sourceHeaders))
-                }
-
-                providerId.equals("okru", ignoreCase = true) -> {
-                    videos.addAll(okruExtractor.videosFromUrl(finalUrl))
-                }
-
-                isHls(src, finalUrl) -> {
-                    val playlistVideos = playlistUtils.extractFromHls(
-                        playlistUrl = finalUrl,
-                        masterHeaders = sourceHeaders,
-                        videoHeaders = sourceHeaders,
-                        videoNameGen = { quality -> "$titleLabel - $quality" },
-                        subtitleList = subtitles,
-                    )
-                    videos.addAll(playlistVideos)
-                }
-
-                else -> {
-                    videos.add(
-                        Video(
-                            videoUrl = finalUrl,
-                            videoTitle = titleLabel,
-                            headers = sourceHeaders,
-                            subtitleTracks = subtitles,
-                        ),
-                    )
-                }
+            if (isHls(src, finalUrl)) {
+                val playlistVideos = playlistUtils.extractFromHls(
+                    playlistUrl = finalUrl,
+                    masterHeaders = sourceHeaders,
+                    videoHeaders = sourceHeaders,
+                    videoNameGen = { quality -> "$titleLabel - $quality" },
+                    subtitleList = subtitles,
+                )
+                videos.addAll(playlistVideos)
+            } else {
+                videos.add(
+                    Video(
+                        videoUrl = finalUrl,
+                        videoTitle = titleLabel,
+                        headers = sourceHeaders,
+                        subtitleTracks = subtitles,
+                    ),
+                )
             }
         }
         return videos
@@ -503,28 +491,29 @@ class Anidap :
         }
 
         when (providerId.lowercase()) {
-            "yuki", "momo" -> {
+            "yuki" -> {
                 builder.set("Origin", "https://megaplay.buzz")
                 builder.set("Referer", "https://megaplay.buzz/")
             }
 
-            // st1.*.xyz only answers when Origin is the krussdomi player.
             "sora" -> {
                 builder.set("Origin", "https://krussdomi.com")
-                builder.set("Referer", "https://krussdomi.com/")
+                if (builder.get("Referer") == null) {
+                    builder.set("Referer", "https://kaa.lt/")
+                }
             }
 
-            "uwu" -> builder.set("Referer", "https://kwik.cx/")
+            "zuna" -> {
+                builder.set("Origin", "https://zokoanime.video")
+                builder.set("Referer", "https://zokoanime.video/")
+            }
 
-            "kiwi" -> builder.set("Referer", "https://anidb.app/")
-
-            "miku" -> builder.set("Referer", "https://allanime.uns.bio")
-
-            "zuna" -> builder.set("Referer", "https://zokoanime.video/")
-
-            "mimi" -> builder.set("Referer", "https://hawk.aniwatchtv.site/")
-
-            "shiro" -> builder.set("Referer", "https://kem.clvd.xyz/")
+            "nero" -> {
+                builder.set("Origin", "https://animex.one")
+                if (builder.get("Referer") == null) {
+                    builder.set("Referer", "https://animex.one/")
+                }
+            }
 
             else -> {}
         }
@@ -540,16 +529,17 @@ class Anidap :
 
     private fun proxySubtitles(tracks: List<SubtitleItem>, sourceHeaders: Headers): List<Track> = tracks.mapNotNull { track ->
         val trackUrl = track.url ?: return@mapNotNull null
-        // The subtitle CDNs sit behind the same hotlink checks as the segments.
+        val label = track.label ?: track.lang ?: ""
+        if (label.isBlank() || label.contains("thumbnail", ignoreCase = true)) return@mapNotNull null
         Track(
             url = getProxyUrl(trackUrl, sourceHeaders, fileName = "subtitle.vtt"),
-            lang = track.label ?: track.lang ?: "Sub",
+            lang = label,
         )
     }
 
     private fun isHls(src: SourceItem, url: String): Boolean = src.type?.contains("mpegurl", ignoreCase = true) == true ||
         url.contains(".m3u8") ||
-        url.contains("index.txt")
+        url.contains(".txt")
 
     private fun SourcesResponse.sourceList(): List<SourceItem> = data?.sources ?: sources ?: emptyList()
 
@@ -557,49 +547,7 @@ class Anidap :
 
     private fun SourcesResponse.headerMap(): Map<String, String> = data?.apiHeaders ?: apiHeaders ?: emptyMap()
 
-    /**
-     * Rewrites a provider source URL onto the host/path that currently serves it,
-     * mirroring the web player's `HOST_HANDLERS` map. Providers that only need
-     * request headers are covered by [buildSourceHeaders] instead.
-     */
-    private fun applySourceRewrites(url: String, providerId: String): String {
-        var result = url
-            .replace("https://vivibebe.site/public/stream/", "https://hawk.aniwatchtv.site/media/")
-
-        val playEngPrefix = "https://playeng.animeapps.top"
-        if (result.startsWith("$playEngPrefix/r2/")) {
-            result = "https://bd.aniwatchtv.site/media" +
-                result.removePrefix(playEngPrefix).replaceFirst("/r2", "")
-        }
-
-        return when (providerId.lowercase()) {
-            "shiro" -> "${hexEncodedMediaUrl(result)}&origin=https://kem.clvd.xyz/"
-
-            "beep" -> when {
-                result.startsWith("https://bd.24stream.xyz/media") -> result
-
-                result.startsWith("https://bd.aniwatchtv.site/media") -> result
-
-                result.startsWith("/") -> "https://bd.aniwatchtv.site/media${result.replace("/r2", "")}"
-
-                else ->
-                    "https://bd.aniwatchtv.site/media" +
-                        result.replace(Regex("""https?://[^/]+"""), "").replace("/r2", "")
-            }
-
-            "mochi" -> result.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
-
-            else -> result
-        }
-    }
-
-    /** shiro hides the real URL behind a byte-XORed hex blob served by its own media host. */
-    private fun hexEncodedMediaUrl(url: String): String {
-        val hex = url.toByteArray().joinToString("") { byte ->
-            "%02x".format((byte.toInt() and 0xFF) xor 137)
-        }
-        return "$SHIRO_MEDIA_BASE/media/$hex"
-    }
+    private fun applySourceRewrites(url: String, providerId: String): String = url
 
     private fun String.toHttpUrlOrNull(): okhttp3.HttpUrl? = runCatching { toHttpUrl() }.getOrNull()
 
@@ -632,7 +580,7 @@ class Anidap :
             summary = "Preferred video server hoster"
             entries = KNOWN_SERVERS.map { it.second }.toTypedArray()
             entryValues = KNOWN_SERVERS.map { it.first }.toTypedArray()
-            setDefaultValue("yuki")
+            setDefaultValue("nero")
         }.also { screen.addPreference(it) }
 
         ListPreference(screen.context).apply {
@@ -705,6 +653,7 @@ class Anidap :
         val number: Float? = null,
         val episodeNumber: Float? = null,
         val title: String? = null,
+        val titles: Map<String, String>? = null,
         val img: String? = null,
         val description: String? = null,
         val isFiller: Boolean? = false,
@@ -768,31 +717,19 @@ class Anidap :
         private const val USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0"
 
-        /** shiro's media host, which serves the XOR-hex encoded stream URL. */
-        private const val SHIRO_MEDIA_BASE = "https://hls.dramavideo.se"
-
         /**
          * Providers that play straight from the API URL. Everything else goes through
-         * the local proxy, so a provider the API adds later still gets its headers.
+         * the local proxy, so headers and segment filtering work properly.
          */
-        private val PLAIN_PROVIDERS = setOf("zuna")
+        private val PLAIN_PROVIDERS = emptySet<String>()
 
-        /** Provider ids currently returned by the API, plus legacy ids, for the settings screen. */
+        /** Provider ids currently active on Anidap for settings screen. */
         private val KNOWN_SERVERS = listOf(
+            "nero" to "Nero",
             "yuki" to "Yuki",
-            "momo" to "Momo",
             "zuna" to "Zuna",
-            "sora" to "Sora",
-            "uwu" to "Uwu",
             "loli" to "Loli",
-            "mimi" to "Mimi",
-            "beep" to "Beep",
-            "vee" to "Vee",
-            "kiwi" to "Kiwi",
-            "miku" to "Miku",
-            "mochi" to "Mochi",
-            "shiro" to "Shiro",
-            "neko" to "Neko",
+            "sora" to "Sora",
         )
     }
 }
@@ -892,11 +829,11 @@ private class LocalProxyServer(
         }
     }
 
-    private fun getProxyUrl(url: String, headersStr: String?, isKey: Boolean = false): String {
+    private fun getProxyUrl(url: String, headersStr: String?, isKey: Boolean = false, isPlaylist: Boolean = false): String {
         val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val path = when {
             isKey || url.contains(".key") || url.contains("key.bin") -> "key.bin"
-            url.contains(".m3u8") -> "playlist.m3u8"
+            isPlaylist || url.contains(".m3u8") || url.endsWith(".txt") -> "playlist.m3u8"
             url.contains(".vtt") || url.contains(".srt") || url.contains("subtitle") -> "subtitle.vtt"
             else -> "segment.ts"
         }
@@ -917,7 +854,7 @@ private class LocalProxyServer(
             val fallback = if (isKrussdomi) {
                 hdrs.newBuilder()
                     .set("Origin", "https://krussdomi.com")
-                    .set("Referer", "https://krussdomi.com/")
+                    .set("Referer", "https://kaa.lt/")
                     .build()
             } else {
                 hdrs.newBuilder().set("Referer", "https://anidap.lol/").build()
@@ -938,6 +875,7 @@ private class LocalProxyServer(
         response.close()
         val lines = content.split(Regex("""\r?\n"""))
         val builder = StringBuilder(content.length * 2)
+        var nextIsVariant = false
 
         for (line in lines) {
             val trimmed = line.trim()
@@ -946,6 +884,9 @@ private class LocalProxyServer(
                 continue
             }
             if (trimmed.startsWith("#")) {
+                if (trimmed.startsWith("#EXT-X-STREAM-INF")) {
+                    nextIsVariant = true
+                }
                 val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
                 uriRegex.find(trimmed)?.let { match ->
                     val uriValue = match.groupValues[1]
@@ -954,14 +895,22 @@ private class LocalProxyServer(
                         else -> targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
                     }
                     val isKeyLine = trimmed.contains("#EXT-X-KEY") || resolved.contains(".key")
-                    builder.append(trimmed.replace(uriValue, getProxyUrl(resolved, encodedHeaders, isKey = isKeyLine)))
+                    val isSubLine = trimmed.contains("TYPE=SUBTITLES") || resolved.contains(".vtt")
+                    val replacement = when {
+                        isKeyLine -> getProxyUrl(resolved, encodedHeaders, isKey = true)
+                        isSubLine -> getProxyUrl(resolved, encodedHeaders, isKey = false, isPlaylist = false)
+                        else -> getProxyUrl(resolved, encodedHeaders, isKey = false, isPlaylist = true)
+                    }
+                    builder.append(trimmed.replace(uriValue, replacement))
                 } ?: builder.append(trimmed)
             } else {
                 val resolved = when {
                     trimmed.startsWith("//") -> "https:$trimmed"
                     else -> targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
                 }
-                builder.append(getProxyUrl(resolved, encodedHeaders, isKey = resolved.contains(".key")))
+                val isPlaylist = nextIsVariant || resolved.contains(".m3u8") || resolved.endsWith(".txt")
+                builder.append(getProxyUrl(resolved, encodedHeaders, isKey = resolved.contains(".key"), isPlaylist = isPlaylist))
+                nextIsVariant = false
             }
             builder.append("\n")
         }
@@ -976,14 +925,7 @@ private class LocalProxyServer(
     }
 
     private fun serveText(targetUrl: String, hdrs: okhttp3.Headers, output: OutputStream, contentType: String) {
-        var response = runCatching { fetchWithRetry(targetUrl, hdrs) }.getOrNull()
-        if (response == null || !response.isSuccessful) {
-            response?.close()
-            if (targetUrl.contains("krussdomi.com") || targetUrl.contains("subst")) {
-                val uwuUrl = "https://cdnx.aniwatchtv.site/uwu/" + encodeUwu(targetUrl, "https://krussdomi.com")
-                response = runCatching { fetchWithRetry(uwuUrl, hdrs) }.getOrNull()
-            }
-        }
+        val response = runCatching { fetchWithRetry(targetUrl, hdrs) }.getOrNull()
         if (response == null || !response.isSuccessful) {
             val code = response?.code ?: 500
             output.write("HTTP/1.1 $code Error\r\nConnection: close\r\n\r\n".toByteArray())
@@ -998,20 +940,6 @@ private class LocalProxyServer(
         output.write("Connection: close\r\n\r\n".toByteArray())
         output.write(bytes)
         output.flush()
-    }
-
-    private fun encodeUwu(url: String, origin: String): String {
-        val r = url.toByteArray(Charsets.UTF_8)
-        val s = origin.toByteArray(Charsets.UTF_8)
-        val n = ByteArray(r.size + 1 + s.size)
-        System.arraycopy(r, 0, n, 0, r.size)
-        n[r.size] = 0
-        System.arraycopy(s, 0, n, r.size + 1, s.size)
-        val c = "10b06cdc1ca48c9fb0b94af97cc040cf".toByteArray(Charsets.UTF_8)
-        for (i in n.indices) {
-            n[i] = (n[i].toInt() xor c[i % c.size].toInt()).toByte()
-        }
-        return Base64.encodeToString(n, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     }
 
     private fun serveKey(targetUrl: String, hdrs: okhttp3.Headers, output: OutputStream) {
