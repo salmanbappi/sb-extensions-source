@@ -6,7 +6,8 @@ object Filters {
     open class UriPartFilter(
         displayName: String,
         private val vals: Array<Pair<String, String>>,
-    ) : AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
+        defaultIndex: Int = 0,
+    ) : AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray(), defaultIndex) {
         fun toUriPart() = vals[state].second
         fun isDefault() = state == 0
     }
@@ -23,31 +24,26 @@ object Filters {
             ),
         )
 
-    class GenreFilter :
+    class GenreModeFilter(defaultIndex: Int = 0) :
         UriPartFilter(
-            "Genre",
+            "Genre Search Mode",
             arrayOf(
-                Pair("All", ""),
-                Pair("Action", "Action"),
-                Pair("Adventure", "Adventure"),
-                Pair("Comedy", "Comedy"),
-                Pair("Drama", "Drama"),
-                Pair("Ecchi", "Ecchi"),
-                Pair("Fantasy", "Fantasy"),
-                Pair("Horror", "Horror"),
-                Pair("Mahou Shoujo", "Mahou Shoujo"),
-                Pair("Mecha", "Mecha"),
-                Pair("Music", "Music"),
-                Pair("Mystery", "Mystery"),
-                Pair("Psychological", "Psychological"),
-                Pair("Romance", "Romance"),
-                Pair("Sci-Fi", "Sci-Fi"),
-                Pair("Slice of Life", "Slice of Life"),
-                Pair("Sports", "Sports"),
-                Pair("Supernatural", "Supernatural"),
-                Pair("Thriller", "Thriller"),
+                Pair("AND", "and"),
+                Pair("OR", "or"),
             ),
+            defaultIndex,
         )
+
+    class Genre(name: String, val id: String = name) : AnimeFilter.CheckBox(name, false)
+
+    class GenreFilter :
+        AnimeFilter.Group<Genre>(
+            "Genres",
+            GENRES.map { Genre(it) },
+        ) {
+        fun getSelectedGenres(): List<String> =
+            state.filter { it.state }.map { it.id }
+    }
 
     class FormatFilter :
         UriPartFilter(
@@ -90,4 +86,25 @@ object Filters {
         )
 
     class YearFilter : AnimeFilter.Text("Year (e.g. 2024)", "")
+
+    val GENRES = listOf(
+        "Action",
+        "Adventure",
+        "Comedy",
+        "Drama",
+        "Ecchi",
+        "Fantasy",
+        "Horror",
+        "Mahou Shoujo",
+        "Mecha",
+        "Music",
+        "Mystery",
+        "Psychological",
+        "Romance",
+        "Sci-Fi",
+        "Slice of Life",
+        "Sports",
+        "Supernatural",
+        "Thriller",
+    )
 }

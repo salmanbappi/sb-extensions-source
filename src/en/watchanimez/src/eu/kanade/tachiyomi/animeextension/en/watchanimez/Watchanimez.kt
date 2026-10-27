@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
 import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
+import extensions.utils.EpisodeMetadataFetcher
 import extensions.utils.Source
 import extensions.utils.UrlUtils
 import extensions.utils.parseAs
@@ -62,6 +63,10 @@ class Watchanimez : Source() {
         VidMolyExtractor(client)
     }
 
+    private val metadataFetcher by lazy {
+        EpisodeMetadataFetcher(client, json)
+    }
+
     private val episodeCache = mutableMapOf<String, EpisodeEmbedDto>()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -105,6 +110,9 @@ class Watchanimez : Source() {
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
+        var genreMode = preferences.getString(PREF_GENRE_MODE_KEY, PREF_GENRE_MODE_DEFAULT) ?: PREF_GENRE_MODE_DEFAULT
+        var selectedGenres = emptyList<String>()
+
         val url = if (query.isNotBlank()) {
             val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
             "${getCatalogBase()}/search?query=$encodedQuery&page=$page&per_page=24"
@@ -116,8 +124,17 @@ class Watchanimez : Source() {
                         if (!filter.isDefault()) urlBuilder.addQueryParameter("sort", filter.toUriPart())
                     }
 
+                    is Filters.GenreModeFilter -> {
+                        genreMode = filter.toUriPart()
+                    }
+
                     is Filters.GenreFilter -> {
-                        if (!filter.isDefault()) urlBuilder.addQueryParameter("genre", filter.toUriPart())
+                        selectedGenres = filter.getSelectedGenres()
+                        if (selectedGenres.size == 1) {
+                            urlBuilder.addQueryParameter("genre", selectedGenres.first())
+                        } else if (selectedGenres.size > 1 && genreMode == "and") {
+                            urlBuilder.addQueryParameter("genre", selectedGenres.first())
+                        }
                     }
 
                     is Filters.FormatFilter -> {
@@ -142,21 +159,55 @@ class Watchanimez : Source() {
             urlBuilder.build().toString()
         }
 
+        if (query.isNotBlank()) {
+            for (filter in filters) {
+                when (filter) {
+                    is Filters.GenreModeFilter -> genreMode = filter.toUriPart()
+                    is Filters.GenreFilter -> selectedGenres = filter.getSelectedGenres()
+                    else -> {}
+                }
+            }
+        }
+
         val response = client.newCall(GET(url, headers)).execute()
         val dto = response.parseAs<ApiResponseDto>(json)
         val container = dto.results ?: return AnimesPage(emptyList(), false)
-        val animes = (container.results ?: emptyList()).map { it.toSAnime() }
+        var items = container.results ?: emptyList()
+
+        if (selectedGenres.isNotEmpty()) {
+            items = if (genreMode == "or") {
+                items.filter { item ->
+                    selectedGenres.any { sel ->
+                        item.genres?.any { it.equals(sel, ignoreCase = true) } == true
+                    }
+                }
+            } else {
+                items.filter { item ->
+                    selectedGenres.all { sel ->
+                        item.genres?.any { it.equals(sel, ignoreCase = true) } == true
+                    }
+                }
+            }
+        }
+
+        val animes = items.map { it.toSAnime() }
         return AnimesPage(animes, container.hasNextPage ?: false)
     }
 
-    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        Filters.SortFilter(),
-        Filters.GenreFilter(),
-        Filters.FormatFilter(),
-        Filters.StatusFilter(),
-        Filters.SeasonFilter(),
-        Filters.YearFilter(),
-    )
+    override fun getFilterList(): AnimeFilterList {
+        val defaultMode = preferences.getString(PREF_GENRE_MODE_KEY, PREF_GENRE_MODE_DEFAULT) ?: PREF_GENRE_MODE_DEFAULT
+        val defaultIndex = if (defaultMode == "or") 1 else 0
+
+        return AnimeFilterList(
+            Filters.SortFilter(),
+            Filters.GenreModeFilter(defaultIndex),
+            Filters.GenreFilter(),
+            Filters.FormatFilter(),
+            Filters.StatusFilter(),
+            Filters.SeasonFilter(),
+            Filters.YearFilter(),
+        )
+    }
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
@@ -196,6 +247,20 @@ class Watchanimez : Source() {
         val dto = response.parseAs<AnimeDetailsResponseDto>(json)
         val item = dto.results ?: return emptyList()
 
+        val malIdStr = item.idMal?.toString() ?: ""
+        val animeTitle = item.title?.userPreferred
+            ?: item.title?.english
+            ?: item.title?.romaji
+            ?: anime.title
+
+        val metadataMap = runCatching {
+            metadataFetcher.fetch(
+                malId = malIdStr,
+                animeTitle = animeTitle,
+                fallbackThumbnailUrl = anime.thumbnail_url,
+            )
+        }.getOrNull() ?: emptyMap()
+
         val streamingMap = item.streamingEpisodes?.associateBy { ep ->
             Regex("""Episode\s+(\d+)""", RegexOption.IGNORE_CASE).find(ep.title ?: "")?.groupValues?.get(1)?.toIntOrNull()
         } ?: emptyMap()
@@ -203,17 +268,35 @@ class Watchanimez : Source() {
         val totalEpisodes = maxOf(
             item.episodes ?: 0,
             item.streamingEpisodes?.size ?: 0,
+            metadataMap.size,
             1,
         )
 
-        val malIdStr = item.idMal?.toString() ?: ""
-
         val episodes = (1..totalEpisodes).map { epNum ->
             val streamingEp = streamingMap[epNum]
+            val meta = metadataMap[epNum]
+
             SEpisode.create().apply {
-                name = streamingEp?.title ?: "Episode $epNum"
+                val titleCandidate = meta?.title
+                name = if (!titleCandidate.isNullOrBlank()) {
+                    "Episode $epNum - $titleCandidate"
+                } else {
+                    streamingEp?.title ?: "Episode $epNum"
+                }
+
                 episode_number = epNum.toFloat()
                 url = "$anilistId#ep=$epNum&mal=$malIdStr"
+
+                val thumb = streamingEp?.thumbnail?.takeIf { it.isNotBlank() }
+                    ?: meta?.thumbnailUrl?.takeIf { it.isNotBlank() }
+                if (!thumb.isNullOrBlank()) {
+                    preview_url = thumb
+                }
+
+                val synopsis = meta?.description
+                if (!synopsis.isNullOrBlank()) {
+                    summary = synopsis
+                }
             }
         }
 
@@ -818,6 +901,21 @@ class Watchanimez : Source() {
                 }
             },
         )
+
+        // 6. Default Genre Search Mode
+        screen.addPreference(
+            ListPreference(context).apply {
+                key = PREF_GENRE_MODE_KEY
+                title = "Default Genre Search Mode"
+                entries = arrayOf("AND", "OR")
+                entryValues = arrayOf("and", "or")
+                setDefaultValue(PREF_GENRE_MODE_DEFAULT)
+                summary = "%s"
+                setOnPreferenceChangeListener { _, newValue ->
+                    preferences.edit().putString(PREF_GENRE_MODE_KEY, newValue as String).commit()
+                }
+            },
+        )
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
@@ -859,6 +957,9 @@ class Watchanimez : Source() {
 
         private const val PREF_CATALOG_KEY = "pref_catalog_key"
         private const val PREF_CATALOG_DEFAULT = "anilist"
+
+        private const val PREF_GENRE_MODE_KEY = "pref_genre_mode_key"
+        private const val PREF_GENRE_MODE_DEFAULT = "and"
     }
 }
 
