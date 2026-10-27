@@ -25,6 +25,8 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -447,6 +449,14 @@ class Animex : Source() {
 
     override fun videoListParse(response: Response): List<Video> = throw Exception("Not used")
 
+    private class ServerHolder(
+        val id: String,
+        val name: String,
+        var subStyle: String = "",
+        var hasSub: Boolean = false,
+        var hasDub: Boolean = false,
+    )
+
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
         val url = episode.url
         val slug = extractSlug(url)
@@ -462,7 +472,7 @@ class Animex : Source() {
         val preferredServer = getPreferredServer()
         val preferredType = getPreferredType()
 
-        val hosterList = mutableListOf<Hoster>()
+        val serverMap = linkedMapOf<String, ServerHolder>()
 
         try {
             val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
@@ -479,24 +489,17 @@ class Animex : Source() {
                             else -> ""
                         }
                         val name = (provider.id ?: pid).uppercase()
-                        hosterList.add(
-                            Hoster(
-                                hosterName = "$name [SUB]$subStyle",
-                                hosterUrl = "$url&type=sub&providerId=$pid",
-                            ),
-                        )
+                        val holder = serverMap.getOrPut(pid) { ServerHolder(pid, name) }
+                        holder.hasSub = true
+                        if (subStyle.isNotEmpty()) holder.subStyle = subStyle
                     }
 
                     for (provider in serversData.dubProviders) {
                         val pid = provider.id?.lowercase() ?: continue
                         if (pid in disabledServers) continue
                         val name = (provider.id ?: pid).uppercase()
-                        hosterList.add(
-                            Hoster(
-                                hosterName = "$name [DUB]",
-                                hosterUrl = "$url&type=dub&providerId=$pid",
-                            ),
-                        )
+                        val holder = serverMap.getOrPut(pid) { ServerHolder(pid, name) }
+                        holder.hasDub = true
                     }
                 }
             }
@@ -504,45 +507,51 @@ class Animex : Source() {
 
         // Add external web hosters if not disabled
         if ("vidcloud" !in disabledServers) {
-            hosterList.add(
-                Hoster(
-                    hosterName = "ZORO (VIDCLOUD) [SUB]",
-                    hosterUrl = "$url&type=sub&providerId=vidcloud",
-                ),
-            )
-            hosterList.add(
-                Hoster(
-                    hosterName = "ZORO (VIDCLOUD) [DUB]",
-                    hosterUrl = "$url&type=dub&providerId=vidcloud",
-                ),
-            )
+            val holder = serverMap.getOrPut("vidcloud") { ServerHolder("vidcloud", "ZORO (VIDCLOUD)") }
+            holder.hasSub = true
+            holder.hasDub = true
         }
         if ("koto" !in disabledServers) {
-            hosterList.add(
-                Hoster(
-                    hosterName = "KOTO [SUB]",
-                    hosterUrl = "$url&type=sub&providerId=koto",
-                ),
-            )
+            val holder = serverMap.getOrPut("koto") { ServerHolder("koto", "KOTO") }
+            holder.hasSub = true
         }
 
         // Fallback default hosters if upstream servers API failed completely
-        if (hosterList.isEmpty()) {
-            hosterList.add(Hoster(hosterName = "NERO [SUB]", hosterUrl = "$url&type=sub&providerId=nero"))
-            hosterList.add(Hoster(hosterName = "YUKI [SUB]", hosterUrl = "$url&type=sub&providerId=yuki"))
-            hosterList.add(Hoster(hosterName = "ZUNA [SUB]", hosterUrl = "$url&type=sub&providerId=zuna"))
-            hosterList.add(Hoster(hosterName = "LOLI [SUB]", hosterUrl = "$url&type=sub&providerId=loli"))
-            hosterList.add(Hoster(hosterName = "NERO [DUB]", hosterUrl = "$url&type=dub&providerId=nero"))
-            hosterList.add(Hoster(hosterName = "YUKI [DUB]", hosterUrl = "$url&type=dub&providerId=yuki"))
+        if (serverMap.isEmpty()) {
+            listOf("nero", "yuki", "zuna", "loli").forEach { pid ->
+                val holder = serverMap.getOrPut(pid) { ServerHolder(pid, pid.uppercase()) }
+                holder.hasSub = true
+                if (pid in listOf("nero", "yuki")) holder.hasDub = true
+            }
         }
 
-        // 2-Tier Hoster priority sorting: preferred server first, then preferred audio type
+        // Create exactly 1 Hoster per unique server with combined Sub & Dub capabilities
+        val hosterList = serverMap.values.map { server ->
+            val typesList = mutableListOf<String>()
+            if (server.hasSub) typesList.add("sub")
+            if (server.hasDub) typesList.add("dub")
+            val typesParam = typesList.joinToString(",")
+
+            val audioBadge = when {
+                server.hasSub && server.hasDub -> " [Sub, Dub]"
+                server.hasDub -> " [Dub]"
+                else -> " [Sub]"
+            }
+            val displayName = "${server.name}$audioBadge${server.subStyle}"
+
+            Hoster(
+                hosterName = displayName,
+                hosterUrl = "$url&providerId=${server.id}&types=$typesParam&subStyle=${Uri.encode(server.subStyle)}",
+            )
+        }
+
+        // 2-Tier Hoster priority sorting: preferred server first, then server offering preferred audio type
         return hosterList.sortedWith(
             compareByDescending<Hoster> { it.hosterName.contains(preferredServer, ignoreCase = true) }
                 .thenByDescending {
                     when (preferredType) {
-                        "dub" -> it.hosterName.contains("[DUB]", ignoreCase = true)
-                        else -> it.hosterName.contains("[SUB]", ignoreCase = true)
+                        "dub" -> it.hosterName.contains("Dub", ignoreCase = true)
+                        else -> it.hosterName.contains("Sub", ignoreCase = true)
                     }
                 },
         )
@@ -550,7 +559,7 @@ class Animex : Source() {
 
     // ============================== VIDEO LIST (DISPATCH TO RESOLVERS) ==============================
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+    override suspend fun getVideoList(hoster: Hoster): List<Video> = withContext(Dispatchers.IO) {
         val url = hoster.hosterUrl
         val uri = Uri.parse("https://animex.one$url")
 
@@ -565,29 +574,55 @@ class Animex : Source() {
             url.substringBefore("?").split("/").getOrNull(3) ?: "1"
         }
 
-        val type = uri.getQueryParameter("type") ?: "sub"
         val providerId = uri.getQueryParameter("providerId")?.lowercase() ?: "nero"
+        val typesParam = uri.getQueryParameter("types") ?: uri.getQueryParameter("type") ?: "sub"
+        val types = typesParam.split(",").filter { it.isNotBlank() }
 
-        val subStyle = when {
-            hoster.hosterName.contains("[Soft Subs]", ignoreCase = true) -> " [Soft Subs]"
-            hoster.hosterName.contains("[Hard Subs]", ignoreCase = true) -> " [Hard Subs]"
-            else -> ""
-        }
+        val subStyle = uri.getQueryParameter("subStyle")
+            ?: when {
+                hoster.hosterName.contains("[Soft Subs]", ignoreCase = true) -> " [Soft Subs]"
+                hoster.hosterName.contains("[Hard Subs]", ignoreCase = true) -> " [Hard Subs]"
+                else -> ""
+            }
 
         val resolver = resolvers[providerId] ?: NeroResolver
-        val videos = resolver.getVideos(
-            slug = slug,
-            epNum = epNum,
-            type = type,
-            subStyle = subStyle,
-            client = client,
-            baseHeaders = headers,
-            proxy = proxy,
-            json = json,
-        )
 
+        // Concurrently fetch Sub and Dub streams together
+        val videoDeferreds = types.map { type ->
+            async {
+                try {
+                    resolver.getVideos(
+                        slug = slug,
+                        epNum = epNum,
+                        type = type,
+                        subStyle = subStyle,
+                        client = client,
+                        baseHeaders = headers,
+                        proxy = proxy,
+                        json = json,
+                    )
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }
+        }
+
+        val allVideos = videoDeferreds.awaitAll().flatten()
+
+        val preferredType = getPreferredType()
         val preferredQuality = getPreferredQuality()
-        return videos.sortedByDescending { it.videoTitle.contains(preferredQuality, ignoreCase = true) }
+
+        // Sort videos: preferred audio type first, then preferred resolution
+        allVideos.sortedWith(
+            compareByDescending<Video> {
+                when (preferredType) {
+                    "dub" -> it.videoTitle.contains("(DUB)", ignoreCase = true) || it.videoTitle.contains("dub", ignoreCase = true)
+                    else -> it.videoTitle.contains("(SUB)", ignoreCase = true) || it.videoTitle.contains("sub", ignoreCase = true)
+                }
+            }.thenByDescending {
+                it.videoTitle.contains(preferredQuality, ignoreCase = true)
+            },
+        )
     }
 
     // ============================== FILTERS & PREFERENCES ==============================
