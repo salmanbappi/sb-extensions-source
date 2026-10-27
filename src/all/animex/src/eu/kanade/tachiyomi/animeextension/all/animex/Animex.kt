@@ -77,11 +77,9 @@ class Animex : Source() {
         return if (server == "auto") "nero" else server.lowercase()
     }
 
-    private fun getPreferredQuality(): String =
-        preferences.getString("pref_preferred_quality", "1080") ?: "1080"
+    private fun getPreferredQuality(): String = preferences.getString("pref_preferred_quality", "1080") ?: "1080"
 
-    private fun getPreferredType(): String =
-        preferences.getString("pref_preferred_type", "sub") ?: "sub"
+    private fun getPreferredType(): String = preferences.getString("pref_preferred_type", "sub") ?: "sub"
 
     // ============================== POPULAR / LATEST ==============================
 
@@ -386,7 +384,9 @@ class Animex : Source() {
                 if (response.isSuccessful) {
                     val result = json.decodeFromString<GetAnimeResponse>(response.body.string())
                     result.data?.anime?.id
-                } else null
+                } else {
+                    null
+                }
             }
         } catch (_: Exception) {
             null

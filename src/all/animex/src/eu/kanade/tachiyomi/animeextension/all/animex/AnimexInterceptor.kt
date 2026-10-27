@@ -17,11 +17,9 @@ class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
     companion object {
         private const val API_HOST = "pp.animex.one"
 
-        private fun hasSession(cookies: List<Cookie>): Boolean =
-            cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
+        private fun hasSession(cookies: List<Cookie>): Boolean = cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
 
-        private fun parseSessionCookie(header: String, url: okhttp3.HttpUrl): Cookie? =
-            Cookie.parse(url, header)
+        private fun parseSessionCookie(header: String, url: okhttp3.HttpUrl): Cookie? = Cookie.parse(url, header)
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {

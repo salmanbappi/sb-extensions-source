@@ -198,7 +198,9 @@ abstract class BaseAnmxResolver : HostResolver {
 
     protected fun absoluteUrl(url: String, base: String = "https://animex.one"): String = when {
         url.startsWith("http://") || url.startsWith("https://") -> url
+
         url.startsWith("//") -> "https:$url"
+
         else -> try {
             val baseUri = java.net.URI(base)
             baseUri.resolve(url).toString()
