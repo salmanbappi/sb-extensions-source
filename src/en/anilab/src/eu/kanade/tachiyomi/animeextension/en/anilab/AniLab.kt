@@ -206,7 +206,9 @@ class AniLab : Source() {
 
                     val altTitlesBlock = if (meta.altTitles.isNotEmpty()) {
                         EpisodeMetadataFetcher.formatAlternativeTitles(details.title, *meta.altTitles.toTypedArray())
-                    } else null
+                    } else {
+                        null
+                    }
 
                     val linksBlock = EpisodeMetadataFetcher.formatDatabaseLinks(
                         malId = meta.malId,
