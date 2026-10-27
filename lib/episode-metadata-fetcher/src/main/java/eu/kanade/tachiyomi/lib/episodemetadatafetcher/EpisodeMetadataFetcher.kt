@@ -70,9 +70,7 @@ class EpisodeMetadataFetcher(
         if (e != null) Log.e(TAG, msg, e) else Log.e(TAG, msg)
     }
 
-    suspend fun fetch(malId: String, fallbackThumbnailUrl: String?): Map<Int, EpisodeMetadata> {
-        return fetch(malId, null, fallbackThumbnailUrl)
-    }
+    suspend fun fetch(malId: String, fallbackThumbnailUrl: String?): Map<Int, EpisodeMetadata> = fetch(malId, null, fallbackThumbnailUrl)
 
     suspend fun fetchAnimeSynopsis(title: String): String? {
         if (title.isBlank()) return null
@@ -186,18 +184,36 @@ class EpisodeMetadataFetcher(
                 if (needsMoreMetadata) {
                     val cinemetaDeferred = async {
                         if (!animeTitle.isNullOrBlank()) {
-                            try { fetchCinemetaEpisodes(animeTitle, season = 1, isTv = true) } catch (_: Exception) { emptyMap() }
-                        } else emptyMap()
+                            try {
+                                fetchCinemetaEpisodes(animeTitle, season = 1, isTv = true)
+                            } catch (_: Exception) {
+                                emptyMap()
+                            }
+                        } else {
+                            emptyMap()
+                        }
                     }
                     val kitsuDeferred = async {
                         if (resolvedMalId.isNotBlank()) {
-                            try { fetchKitsuEpisodes(resolvedMalId) } catch (_: Exception) { emptyMap() }
-                        } else emptyMap()
+                            try {
+                                fetchKitsuEpisodes(resolvedMalId)
+                            } catch (_: Exception) {
+                                emptyMap()
+                            }
+                        } else {
+                            emptyMap()
+                        }
                     }
                     val tmdbDeferred = async {
                         if (!animeTitle.isNullOrBlank() && effectiveTmdbKey.isNotBlank()) {
-                            try { fetchTmdbEpisodes(animeTitle) } catch (_: Exception) { emptyMap() }
-                        } else emptyMap()
+                            try {
+                                fetchTmdbEpisodes(animeTitle)
+                            } catch (_: Exception) {
+                                emptyMap()
+                            }
+                        } else {
+                            emptyMap()
+                        }
                     }
 
                     val cinemetaEps = cinemetaDeferred.await()
@@ -410,13 +426,11 @@ class EpisodeMetadataFetcher(
         episodes: Map<Int, EpisodeMetadata>,
         bannerUrl: String?,
         animeCoverUrl: String?,
-    ): Map<Int, EpisodeMetadata> {
-        return episodes
-    }
+    ): Map<Int, EpisodeMetadata> = episodes
 
     private fun mergeWithFallback(
         primary: Map<Int, EpisodeMetadata>,
-        fallback: Map<Int, EpisodeMetadata>
+        fallback: Map<Int, EpisodeMetadata>,
     ): Map<Int, EpisodeMetadata> {
         if (primary.isEmpty()) return fallback
         val allKeys = primary.keys + fallback.keys
@@ -427,7 +441,7 @@ class EpisodeMetadataFetcher(
                 title = p?.title ?: f?.title,
                 description = p?.description ?: f?.description,
                 thumbnailUrl = p?.thumbnailUrl ?: f?.thumbnailUrl,
-                airdate = p?.airdate ?: f?.airdate
+                airdate = p?.airdate ?: f?.airdate,
             )
         }
     }
@@ -748,7 +762,7 @@ class EpisodeMetadataFetcher(
 
                 val score = maxOf(
                     calculateSimilarityScore(query, resultTitle, year, candYear),
-                    calculateSimilarityScore(query, resultOriginalTitle, year, candYear)
+                    calculateSimilarityScore(query, resultOriginalTitle, year, candYear),
                 )
 
                 if (score < 50) {
@@ -823,7 +837,7 @@ class EpisodeMetadataFetcher(
                     title = movieTitle,
                     description = mainSummary,
                     thumbnailUrl = backdrop ?: mainPoster,
-                    airdate = releaseDate
+                    airdate = releaseDate,
                 )
                 mapOf(1 to epMeta)
             } else {
@@ -847,7 +861,7 @@ class EpisodeMetadataFetcher(
                         title = name,
                         description = summary,
                         thumbnailUrl = thumb,
-                        airdate = airdate
+                        airdate = airdate,
                     )
                 }
 
@@ -884,7 +898,7 @@ class EpisodeMetadataFetcher(
                                                     title = name,
                                                     description = summary,
                                                     thumbnailUrl = thumb,
-                                                    airdate = airdate
+                                                    airdate = airdate,
                                                 )
                                             }
                                         }
@@ -946,7 +960,13 @@ class EpisodeMetadataFetcher(
                     val v = videos.getJSONObject(i)
                     val sNum = v.optInt("season", 1)
                     if (sNum == season) {
-                        val epNum = if (v.has("number")) v.getInt("number") else if (v.has("episode")) v.getInt("episode") else 1
+                        val epNum = if (v.has("number")) {
+                            v.getInt("number")
+                        } else if (v.has("episode")) {
+                            v.getInt("episode")
+                        } else {
+                            1
+                        }
                         val name = v.optString("name").trim().takeIf { it.isNotBlank() }
                         val overview = v.optString("overview").trim().takeIf { it.isNotBlank() }
                             ?: v.optString("description").trim().takeIf { it.isNotBlank() }
@@ -956,7 +976,7 @@ class EpisodeMetadataFetcher(
                             title = name,
                             description = overview?.let { stripHtml(it) },
                             thumbnailUrl = thumb,
-                            airdate = released
+                            airdate = released,
                         )
                     }
                 }
@@ -1010,7 +1030,7 @@ class EpisodeMetadataFetcher(
                         title = name,
                         description = summary?.let { stripHtml(it) },
                         thumbnailUrl = thumb,
-                        airdate = airdate
+                        airdate = airdate,
                     )
                 }
             }

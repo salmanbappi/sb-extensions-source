@@ -10,9 +10,9 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.cloudflareinterceptor.CloudflareInterceptor
+import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import extensions.utils.parseAs
