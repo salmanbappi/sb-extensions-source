@@ -10,7 +10,6 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
@@ -18,11 +17,8 @@ import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parallelMapNotNullBlocking
 import kotlinx.serialization.Serializable
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import org.json.JSONObject
 import java.net.URLEncoder
 
 @Serializable
@@ -100,41 +96,6 @@ data class ServerItemDto(
 @Serializable
 data class IframeDto(
     val link: String? = null,
-)
-
-@Serializable
-data class AniZipMappings(
-    val mal_id: Long? = null,
-    val anilist_id: Long? = null,
-    val anidb_id: Long? = null,
-    val imdb_id: String? = null,
-    val themoviedb_id: String? = null,
-    val thetvdb_id: Long? = null,
-)
-
-@Serializable
-data class AniZipResponse(
-    val titles: Map<String, String>? = null,
-    val mappings: AniZipMappings? = null,
-    val images: List<AniZipImage>? = null,
-)
-
-@Serializable
-data class AniZipImage(
-    val coverType: String? = null,
-    val url: String? = null,
-)
-
-data class AnimeMetadata(
-    val synopsis: String? = null,
-    val bannerUrl: String? = null,
-    val altTitles: List<String> = emptyList(),
-    val malId: String? = null,
-    val anilistId: String? = null,
-    val imdbId: String? = null,
-    val tmdbId: String? = null,
-    val tvdbId: String? = null,
-    val anidbId: String? = null,
 )
 
 class AniLab : Source() {
@@ -233,7 +194,7 @@ class AniLab : Source() {
         val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, PREF_LOAD_DESCRIPTIONS_DEFAULT)
         if (loadDescriptions) {
             runCatching {
-                val meta = fetchAnimeMetadata(details.title)
+                val meta = metadataFetcher.fetchAnimeMetadata(details.title)
                 if (meta != null) {
                     val existingDesc = details.description ?: ""
                     val separator = "\n\n---\n\n"
@@ -245,9 +206,7 @@ class AniLab : Source() {
 
                     val altTitlesBlock = if (meta.altTitles.isNotEmpty()) {
                         EpisodeMetadataFetcher.formatAlternativeTitles(details.title, *meta.altTitles.toTypedArray())
-                    } else {
-                        null
-                    }
+                    } else null
 
                     val linksBlock = EpisodeMetadataFetcher.formatDatabaseLinks(
                         malId = meta.malId,
@@ -596,156 +555,6 @@ class AniLab : Source() {
         }
         return AnimesPage(animeList, hasNextPage)
     }
-
-    private fun fetchAnimeMetadata(title: String): AnimeMetadata? {
-        if (title.isBlank()) return null
-        return runCatching {
-            val cleanTitle = sanitizeTitle(title)
-
-            var meta = fetchAniListMetadata(cleanTitle)
-
-            if (meta == null || meta.synopsis.isNullOrBlank()) {
-                val kitsuMeta = fetchKitsuMetadata(cleanTitle)
-                if (kitsuMeta != null) {
-                    meta = if (meta == null) {
-                        kitsuMeta
-                    } else {
-                        meta.copy(
-                            synopsis = meta.synopsis ?: kitsuMeta.synopsis,
-                            bannerUrl = meta.bannerUrl ?: kitsuMeta.bannerUrl,
-                            altTitles = (meta.altTitles + kitsuMeta.altTitles).distinct(),
-                            malId = meta.malId ?: kitsuMeta.malId,
-                        )
-                    }
-                }
-            }
-
-            if (meta == null) return null
-
-            val malId = meta.malId
-            val anilistId = meta.anilistId
-            if (!malId.isNullOrBlank() || !anilistId.isNullOrBlank()) {
-                val param = when {
-                    !anilistId.isNullOrBlank() -> "anilist_id=$anilistId"
-                    else -> "mal_id=$malId"
-                }
-                val aniZipReq = GET("https://api.ani.zip/mappings?$param", headers)
-                val aniZipResp = runCatching { client.newCall(aniZipReq).execute() }.getOrNull()
-                if (aniZipResp != null && aniZipResp.isSuccessful) {
-                    val aniZip = runCatching { aniZipResp.parseAs<AniZipResponse>() }.getOrNull()
-                    if (aniZip != null) {
-                        val banner = aniZip.images?.firstOrNull { it.coverType == "Banner" }?.url
-                        val titles = aniZip.titles?.values?.filter { it.isNotBlank() } ?: emptyList()
-                        val m = aniZip.mappings
-                        meta = meta.copy(
-                            bannerUrl = meta.bannerUrl ?: banner,
-                            altTitles = (meta.altTitles + titles).distinct(),
-                            malId = meta.malId ?: m?.mal_id?.takeIf { it > 0 }?.toString(),
-                            anilistId = meta.anilistId ?: m?.anilist_id?.takeIf { it > 0 }?.toString(),
-                            anidbId = meta.anidbId ?: m?.anidb_id?.takeIf { it > 0 }?.toString(),
-                            imdbId = meta.imdbId ?: m?.imdb_id?.takeIf { it.isNotBlank() },
-                            tmdbId = meta.tmdbId ?: m?.themoviedb_id?.takeIf { it.isNotBlank() },
-                            tvdbId = meta.tvdbId ?: m?.thetvdb_id?.takeIf { it > 0 }?.toString(),
-                        )
-                    }
-                }
-            }
-
-            meta
-        }.getOrNull()
-    }
-
-    private fun fetchAniListMetadata(title: String): AnimeMetadata? {
-        val query = """query (${'$'}search: String) { Media(search: ${'$'}search, type: ANIME) { id idMal bannerImage description(asHtml: false) title { english romaji native } synonyms } }"""
-        val jsonBody = JSONObject().apply {
-            put("query", query)
-            put("variables", JSONObject().put("search", title))
-        }.toString()
-        val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
-        val req = POST("https://graphql.anilist.co", headers, jsonBody.toRequestBody(mediaType))
-        val resp = runCatching { client.newCall(req).execute() }.getOrNull() ?: return null
-        if (!resp.isSuccessful) return null
-        return runCatching {
-            val body = resp.body.string()
-            val json = JSONObject(body)
-            val media = json.optJSONObject("data")?.optJSONObject("Media") ?: return null
-            val id = media.optInt("id").takeIf { it > 0 }?.toString()
-            val malId = media.optInt("idMal").takeIf { it > 0 }?.toString()
-            val banner = media.optString("bannerImage").takeIf { it.isNotBlank() }
-            val desc = media.optString("description")?.takeIf { it.isNotBlank() }?.let { stripHtml(it) }
-
-            val titleObj = media.optJSONObject("title")
-            val altTitles = mutableListOf<String>()
-            titleObj?.optString("english")?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-            titleObj?.optString("romaji")?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-            titleObj?.optString("native")?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-
-            val synArray = media.optJSONArray("synonyms")
-            if (synArray != null) {
-                for (i in 0 until synArray.length()) {
-                    val syn = synArray.optString(i)
-                    if (syn.isNotBlank()) altTitles.add(syn)
-                }
-            }
-
-            AnimeMetadata(
-                synopsis = desc,
-                bannerUrl = banner,
-                altTitles = altTitles.distinct(),
-                malId = malId,
-                anilistId = id,
-            )
-        }.getOrNull()
-    }
-
-    private fun fetchKitsuMetadata(title: String): AnimeMetadata? {
-        val encoded = URLEncoder.encode(title, "UTF-8")
-        val req = GET("https://kitsu.app/api/edge/anime?filter[text]=$encoded&page[limit]=1", headers)
-        val resp = runCatching { client.newCall(req).execute() }.getOrNull() ?: return null
-        if (!resp.isSuccessful) return null
-        return runCatching {
-            val body = resp.body.string()
-            val obj = JSONObject(body)
-            val dataArr = obj.optJSONArray("data") ?: return null
-            val first = dataArr.optJSONObject(0) ?: return null
-            val attr = first.optJSONObject("attributes") ?: return null
-
-            val syn = attr.optString("synopsis").takeIf { it.isNotBlank() }
-                ?: attr.optString("description").takeIf { it.isNotBlank() }
-            val cleanSyn = syn?.let { stripHtml(it) }
-
-            val coverObj = attr.optJSONObject("coverImage")
-            val banner = coverObj?.optString("original")?.takeIf { it.isNotBlank() }
-                ?: coverObj?.optString("large")?.takeIf { it.isNotBlank() }
-
-            val altTitles = mutableListOf<String>()
-            attr.optString("canonicalTitle")?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-            val titlesObj = attr.optJSONObject("titles")
-            if (titlesObj != null) {
-                val keys = titlesObj.keys()
-                while (keys.hasNext()) {
-                    val k = keys.next()
-                    titlesObj.optString(k)?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-                }
-            }
-
-            AnimeMetadata(
-                synopsis = cleanSyn,
-                bannerUrl = banner,
-                altTitles = altTitles.distinct(),
-            )
-        }.getOrNull()
-    }
-
-    private fun sanitizeTitle(title: String): String = title.replace(Regex("""\b(19\d\d|20\d\d)\b"""), " ")
-        .replace(Regex("""(?i)\b(season\s*\d+|s\d+|part\s*\d+|cour\s*\d+|episode\s*\d+|ep\s*\d+)\b"""), " ")
-        .replace(Regex("""(?i)\b(hindi|tamil|telugu|bengali|malayalam|kannada|english|japanese|dual\s*audio|multi\s*audio|multi\s*sub|dubbed|dub|sub|subbed|esub)\b"""), " ")
-        .replace(Regex("""\[.*?\]|\(.*?\)|<.*?>|\{.*?\}"""), " ")
-        .replace(Regex("""[\-_:|]+"""), " ")
-        .replace(Regex("""\s+"""), " ")
-        .trim()
-
-    private fun stripHtml(text: String): String = text.replace(Regex("<[^>]+>"), "").trim()
 
     companion object {
         private const val PREF_QUALITY_KEY = "preferred_quality"
