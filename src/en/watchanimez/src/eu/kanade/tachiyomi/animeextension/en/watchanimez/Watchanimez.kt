@@ -9,7 +9,11 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.byseextractor.ByseExtractor
+import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
+import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
+import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
@@ -42,10 +46,39 @@ class Watchanimez : Source() {
         PlaylistUtils(client, headers)
     }
 
+    private val byseExtractor by lazy {
+        ByseExtractor(client, playlistUtils)
+    }
+
+    private val filemoonExtractor by lazy {
+        FilemoonExtractor(client)
+    }
+
+    private val voeExtractor by lazy {
+        VoeExtractor(client, headers)
+    }
+
+    private val vidMolyExtractor by lazy {
+        VidMolyExtractor(client)
+    }
+
+    private val episodeCache = mutableMapOf<String, EpisodeEmbedDto>()
+
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")
         .add("Origin", baseUrl)
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+    override fun getAnimeUrl(anime: SAnime): String {
+        val id = anime.url.substringBefore("#").trimStart('/')
+        return "$baseUrl/anime/$id"
+    }
+
+    override fun getEpisodeUrl(episode: SEpisode): String {
+        val anilistId = episode.url.substringBefore("#").trimStart('/')
+        val epNum = episode.url.substringAfter("#ep=", "").substringBefore("&")
+        return if (epNum.isNotBlank()) "$baseUrl/watch/$anilistId?ep=$epNum" else "$baseUrl/anime/$anilistId"
+    }
 
     private fun getCatalogBase(): String {
         val source = preferences.getString(PREF_CATALOG_KEY, PREF_CATALOG_DEFAULT) ?: PREF_CATALOG_DEFAULT
@@ -127,7 +160,7 @@ class Watchanimez : Source() {
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val anilistId = anime.url.substringBefore("#")
+        val anilistId = anime.url.substringBefore("#").trimStart('/')
         val response = client.newCall(GET("$baseUrl/api/v1/info/$anilistId", headers)).execute()
         val dto = response.parseAs<AnimeDetailsResponseDto>(json)
         val item = dto.results ?: return anime
@@ -158,7 +191,7 @@ class Watchanimez : Source() {
 
     // ============================== Episodes ==============================
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val anilistId = anime.url.substringBefore("#")
+        val anilistId = anime.url.substringBefore("#").trimStart('/')
         val response = client.newCall(GET("$baseUrl/api/v1/info/$anilistId", headers)).execute()
         val dto = response.parseAs<AnimeDetailsResponseDto>(json)
         val item = dto.results ?: return emptyList()
@@ -190,7 +223,7 @@ class Watchanimez : Source() {
 
     // ============================ Hoster Folders ==========================
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val anilistId = episode.url.substringBefore("#")
+        val anilistId = episode.url.substringBefore("#").trimStart('/')
         val epNum = episode.url.substringAfter("#ep=").substringBefore("&")
         val malId = episode.url.substringAfter("&mal=", "")
 
@@ -212,19 +245,35 @@ class Watchanimez : Source() {
             ),
         )
 
-        // 3. ReAnime (Server 7)
+        // 3. Server 14 (Byse)
         hosters.add(
             Hoster(
-                hosterName = "ReAnime (Server 7)",
-                hosterUrl = "type=reanime&anilistId=$anilistId&malId=$malId&ep=$epNum",
+                hosterName = "Server 14 (Byse)",
+                hosterUrl = "type=byse&anilistId=$anilistId&malId=$malId&ep=$epNum",
             ),
         )
 
-        // 4. Blakite (Server 20) - Multi-Language Server
+        // 4. Server 22 (Voe)
         hosters.add(
             Hoster(
-                hosterName = "Blakite (Server 20)",
-                hosterUrl = "type=blakite&anilistId=$anilistId&malId=$malId&ep=$epNum",
+                hosterName = "Server 22 (Voe)",
+                hosterUrl = "type=voe&anilistId=$anilistId&malId=$malId&ep=$epNum",
+            ),
+        )
+
+        // 5. Server 21 (Uqload)
+        hosters.add(
+            Hoster(
+                hosterName = "Server 21 (Uqload)",
+                hosterUrl = "type=uqload&anilistId=$anilistId&malId=$malId&ep=$epNum",
+            ),
+        )
+
+        // 6. Server 13 (Vidmoly)
+        hosters.add(
+            Hoster(
+                hosterName = "Server 13 (Vidmoly)",
+                hosterUrl = "type=vidmoly&anilistId=$anilistId&malId=$malId&ep=$epNum",
             ),
         )
 
@@ -247,12 +296,37 @@ class Watchanimez : Source() {
         val videos = when (type) {
             "selfhost" -> getSelfhostVideos(malId, epNum)
             "mega" -> getMegaPlayVideos(anilistId, epNum)
+            "byse" -> getServer14Videos(anilistId, epNum)
+            "voe" -> getServer22Videos(anilistId, epNum)
+            "uqload" -> getServer21Videos(anilistId, epNum)
+            "vidmoly" -> getServer13Videos(anilistId, epNum)
             "reanime" -> getReAnimeVideos(anilistId, epNum)
             "blakite" -> getBlakiteVideos(anilistId, epNum)
             else -> emptyList()
         }
 
         return videos.sortVideos()
+    }
+
+    // ---------------------------- Episode Embed Info ----------------------
+    private fun getEpisodeEmbedInfo(anilistId: String, epNum: String): EpisodeEmbedDto? {
+        val key = "$anilistId-$epNum"
+        episodeCache[key]?.let { return it }
+
+        return runCatching {
+            val url = "https://watchanimexembed.anshwatch.workers.dev/api/episode/$anilistId/$epNum"
+            val resp = client.newCall(GET(url, headersBuilder().build())).execute()
+            if (resp.isSuccessful) {
+                val dto = resp.parseAs<EpisodeEmbedDto>(json)
+                if (dto.anilist_id != null) {
+                    if (episodeCache.size > 100) episodeCache.clear()
+                    episodeCache[key] = dto
+                }
+                dto
+            } else {
+                null
+            }
+        }.getOrNull()
     }
 
     // ---------------------------- Selfhost --------------------------------
@@ -286,18 +360,59 @@ class Watchanimez : Source() {
                         }
                     }.getOrNull() ?: emptyList()
 
-                    val subVideos = playlistUtils.extractFromHls(
+                    val extractedVideos = playlistUtils.extractFromHls(
                         playlistUrl = masterUrl,
                         referer = baseUrl,
                         masterHeaders = streamHeaders,
                         videoHeaders = streamHeaders,
-                        videoNameGen = { quality -> "Selfhost - $quality (Sub)" },
+                        videoNameGen = { quality -> "Selfhost - $quality" },
                         subtitleList = subTracks,
                     )
-                    videos.addAll(subVideos)
+
+                    for (video in extractedVideos) {
+                        val audioTracks = video.audioTracks
+                        val englishTrack = audioTracks.firstOrNull {
+                            it.lang.contains("English", ignoreCase = true) ||
+                                it.lang.equals("en", ignoreCase = true) ||
+                                it.lang.contains("Dub", ignoreCase = true)
+                        }
+                        val japaneseTrack = audioTracks.firstOrNull {
+                            it.lang.contains("Japanese", ignoreCase = true) ||
+                                it.lang.equals("ja", ignoreCase = true) ||
+                                it.lang.contains("日本語")
+                        }
+
+                        // Sub stream
+                        videos.add(
+                            Video(
+                                videoUrl = video.videoUrl,
+                                videoTitle = "${video.videoTitle} (Sub)",
+                                headers = video.headers,
+                                subtitleTracks = video.subtitleTracks,
+                                audioTracks = if (japaneseTrack != null) {
+                                    listOf(japaneseTrack) + (audioTracks - japaneseTrack)
+                                } else {
+                                    audioTracks
+                                },
+                            ),
+                        )
+
+                        // Dub stream (English audio prioritized)
+                        if (englishTrack != null) {
+                            videos.add(
+                                Video(
+                                    videoUrl = video.videoUrl,
+                                    videoTitle = "${video.videoTitle} (Dub)",
+                                    headers = video.headers,
+                                    subtitleTracks = video.subtitleTracks,
+                                    audioTracks = listOf(englishTrack) + (audioTracks - englishTrack),
+                                ),
+                            )
+                        }
+                    }
                 }
 
-                // Check Dub availability
+                // Check external Dub availability fallback
                 if (aid != null) {
                     val dubAvailUrl = "https://animetvplus-dub.b-cdn.net/dub/$aid/$epNum/available"
                     val isDubAvailable = runCatching {
@@ -376,6 +491,152 @@ class Watchanimez : Source() {
         return videos
     }
 
+    // ---------------------------- Server 14 (Byse) ------------------------
+    private suspend fun getServer14Videos(anilistId: String, epNum: String): List<Video> {
+        val info = getEpisodeEmbedInfo(anilistId, epNum) ?: return emptyList()
+        val videos = mutableListOf<Video>()
+        val byseUrl = info.byse_url ?: info.byse_download
+
+        if (!byseUrl.isNullOrBlank()) {
+            val byseVideos = runCatching {
+                byseExtractor.videosFromUrl(byseUrl, prefix = "Server 14 - ")
+            }.getOrNull() ?: emptyList()
+            videos.addAll(byseVideos)
+
+            if (videos.isEmpty() && byseUrl.contains("filemoon")) {
+                val filemoonVideos = runCatching {
+                    filemoonExtractor.videosFromUrl(byseUrl, prefix = "Server 14 - ")
+                }.getOrNull() ?: emptyList()
+                videos.addAll(filemoonVideos)
+            }
+        }
+
+        if (videos.isEmpty() && !info.byse_code.isNullOrBlank()) {
+            val byseCode = info.byse_code
+            val proxies = listOf(
+                "https://byse-proxy.watchanimez-s12.workers.dev",
+                "https://byse-proxy.watchanimez-s12-2.workers.dev",
+                "https://byse-proxy.watchanimez-s12-3.workers.dev",
+            )
+            for (proxy in proxies) {
+                try {
+                    val resp = client.newCall(GET("$proxy/byse/resolve?code=$byseCode", headersBuilder().build())).execute()
+                    if (resp.isSuccessful) {
+                        val dto = resp.parseAs<WorkerResolveDto>(json)
+                        val streamUrl = dto.url ?: dto.master
+                        if (!streamUrl.isNullOrBlank()) {
+                            val hlsVideos = playlistUtils.extractFromHls(
+                                playlistUrl = streamUrl,
+                                referer = "$baseUrl/",
+                                masterHeaders = headersBuilder().build(),
+                                videoHeaders = headersBuilder().build(),
+                                videoNameGen = { quality -> "Server 14 - $quality" },
+                            )
+                            videos.addAll(hlsVideos)
+                            if (videos.isNotEmpty()) break
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        return videos
+    }
+
+    // ---------------------------- Server 22 (Voe) -------------------------
+    private fun getServer22Videos(anilistId: String, epNum: String): List<Video> {
+        val info = getEpisodeEmbedInfo(anilistId, epNum) ?: return emptyList()
+        val videos = mutableListOf<Video>()
+        val voeCode = info.voe_code
+        val voeUrl = info.voe_url
+
+        if (!voeCode.isNullOrBlank()) {
+            val proxies = listOf(
+                "https://voe-proxy.watchanimez-s12.workers.dev",
+                "https://voe-proxy.watchanimez-s12-2.workers.dev",
+                "https://voe-proxy.watchanimez-s12-3.workers.dev",
+            )
+            for (proxy in proxies) {
+                try {
+                    val resp = client.newCall(GET("$proxy/voe/resolve?code=$voeCode", headersBuilder().build())).execute()
+                    if (resp.isSuccessful) {
+                        val dto = resp.parseAs<WorkerResolveDto>(json)
+                        val streamUrl = dto.url ?: dto.master
+                        if (!streamUrl.isNullOrBlank()) {
+                            val hlsVideos = playlistUtils.extractFromHls(
+                                playlistUrl = streamUrl,
+                                referer = "$baseUrl/",
+                                masterHeaders = headersBuilder().build(),
+                                videoHeaders = headersBuilder().build(),
+                                videoNameGen = { quality -> "Server 22 - $quality" },
+                            )
+                            videos.addAll(hlsVideos)
+                            if (videos.isNotEmpty()) break
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        if (videos.isEmpty() && !voeUrl.isNullOrBlank()) {
+            val voeVideos = runCatching {
+                voeExtractor.videosFromUrl(voeUrl, prefix = "Server 22 - ")
+            }.getOrNull() ?: emptyList()
+            videos.addAll(voeVideos)
+        }
+
+        return videos
+    }
+
+    // ---------------------------- Server 21 (Uqload) ----------------------
+    private fun getServer21Videos(anilistId: String, epNum: String): List<Video> {
+        val info = getEpisodeEmbedInfo(anilistId, epNum) ?: return emptyList()
+        val videos = mutableListOf<Video>()
+        val uqloadCode = info.uqload_code
+
+        if (!uqloadCode.isNullOrBlank()) {
+            val proxies = listOf(
+                "https://uqload-proxy.watchanimez-s12.workers.dev",
+                "https://uqload-proxy.watchanimez-s12-2.workers.dev",
+                "https://uqload-proxy.watchanimez-s12-3.workers.dev",
+            )
+            for (proxy in proxies) {
+                try {
+                    val resp = client.newCall(GET("$proxy/uqload/resolve?code=$uqloadCode", headersBuilder().build())).execute()
+                    if (resp.isSuccessful) {
+                        val dto = resp.parseAs<WorkerResolveDto>(json)
+                        val streamUrl = dto.url ?: dto.master
+                        if (!streamUrl.isNullOrBlank()) {
+                            val hlsVideos = playlistUtils.extractFromHls(
+                                playlistUrl = streamUrl,
+                                referer = "$baseUrl/",
+                                masterHeaders = headersBuilder().build(),
+                                videoHeaders = headersBuilder().build(),
+                                videoNameGen = { quality -> "Server 21 - $quality" },
+                            )
+                            videos.addAll(hlsVideos)
+                            if (videos.isNotEmpty()) break
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
+        return videos
+    }
+
+    // ---------------------------- Server 13 (Vidmoly) ---------------------
+    private suspend fun getServer13Videos(anilistId: String, epNum: String): List<Video> {
+        val info = getEpisodeEmbedInfo(anilistId, epNum) ?: return emptyList()
+        val vmolyUrl = info.vmoly_url
+        if (!vmolyUrl.isNullOrBlank()) {
+            return runCatching {
+                vidMolyExtractor.videosFromUrl(vmolyUrl, prefix = "Server 13 - ")
+            }.getOrNull() ?: emptyList()
+        }
+        return emptyList()
+    }
+
     // ---------------------------- ReAnime (Server 7) ----------------------
     private fun getReAnimeVideos(anilistId: String, epNum: String): List<Video> {
         if (anilistId.isBlank()) return emptyList()
@@ -438,7 +699,6 @@ class Watchanimez : Source() {
     }
 
     // ---------------------------- Blakite (Server 20) ---------------------
-    // Multi-Language Server: Streams are served directly without language folder splits
     private fun getBlakiteVideos(anilistId: String, epNum: String): List<Video> {
         if (anilistId.isBlank()) return emptyList()
         val videos = mutableListOf<Video>()
@@ -475,8 +735,22 @@ class Watchanimez : Source() {
             ListPreference(context).apply {
                 key = PREF_SERVER_KEY
                 title = "Preferred Server"
-                entries = arrayOf("Selfhost", "MegaPlay (Server 15)", "ReAnime (Server 7)", "Blakite (Server 20)")
-                entryValues = arrayOf("Selfhost", "MegaPlay", "ReAnime", "Blakite")
+                entries = arrayOf(
+                    "Selfhost",
+                    "MegaPlay (Server 15)",
+                    "Server 14 (Byse)",
+                    "Server 22 (Voe)",
+                    "Server 21 (Uqload)",
+                    "Server 13 (Vidmoly)",
+                )
+                entryValues = arrayOf(
+                    "Selfhost",
+                    "MegaPlay",
+                    "Server 14",
+                    "Server 22",
+                    "Server 21",
+                    "Server 13",
+                )
                 setDefaultValue(PREF_SERVER_DEFAULT)
                 summary = "%s"
                 setOnPreferenceChangeListener { _, newValue ->
@@ -720,6 +994,29 @@ data class SelfhostMetaDto(
 @Serializable
 data class DubAvailableDto(
     val dub_available: Boolean? = null,
+)
+
+@Serializable
+data class EpisodeEmbedDto(
+    val anilist_id: Int? = null,
+    val title: String? = null,
+    val episode: Int? = null,
+    val variant: String? = null,
+    val vmoly_code: String? = null,
+    val vmoly_url: String? = null,
+    val byse_code: String? = null,
+    val byse_url: String? = null,
+    val byse_download: String? = null,
+    val uqload_code: String? = null,
+    val uqload_url: String? = null,
+    val voe_code: String? = null,
+    val voe_url: String? = null,
+)
+
+@Serializable
+data class WorkerResolveDto(
+    val url: String? = null,
+    val master: String? = null,
 )
 
 @Serializable

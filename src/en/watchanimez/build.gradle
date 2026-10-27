@@ -1,7 +1,7 @@
 ext {
     extName = 'WatchAnimeZ'
     extClass = '.Watchanimez'
-    extVersionCode = 3
+    extVersionCode = 4
     isNsfw = false
 }
 
@@ -9,4 +9,8 @@ apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:byse-extractor"))
+    implementation(project(":lib:filemoon-extractor"))
+    implementation(project(":lib:voe-extractor"))
+    implementation(project(":lib:vidmoly-extractor"))
 }
