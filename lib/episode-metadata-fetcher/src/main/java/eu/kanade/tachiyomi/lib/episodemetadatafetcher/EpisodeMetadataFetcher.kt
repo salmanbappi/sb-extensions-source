@@ -1416,8 +1416,11 @@ class EpisodeMetadataFetcher(
                 val dateLine = when {
                     !premiered.isNullOrBlank() && !dateRange.isNullOrBlank() ->
                         "* **Premiered:** $premiered ($dateRange)"
+
                     !dateRange.isNullOrBlank() -> "* **Aired:** $dateRange"
+
                     !premiered.isNullOrBlank() -> "* **Premiered:** $premiered"
+
                     else -> null
                 }
                 dateLine?.let { lines.add(it) }
@@ -1472,7 +1475,9 @@ class EpisodeMetadataFetcher(
 
             return if (links.isNotEmpty()) {
                 "### Database Links\n" + links.joinToString(" • ")
-            } else null
+            } else {
+                null
+            }
         }
 
         /**

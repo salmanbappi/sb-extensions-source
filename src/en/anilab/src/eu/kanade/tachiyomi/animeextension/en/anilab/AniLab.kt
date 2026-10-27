@@ -737,14 +737,13 @@ class AniLab : Source() {
         }.getOrNull()
     }
 
-    private fun sanitizeTitle(title: String): String =
-        title.replace(Regex("""\b(19\d\d|20\d\d)\b"""), " ")
-            .replace(Regex("""(?i)\b(season\s*\d+|s\d+|part\s*\d+|cour\s*\d+|episode\s*\d+|ep\s*\d+)\b"""), " ")
-            .replace(Regex("""(?i)\b(hindi|tamil|telugu|bengali|malayalam|kannada|english|japanese|dual\s*audio|multi\s*audio|multi\s*sub|dubbed|dub|sub|subbed|esub)\b"""), " ")
-            .replace(Regex("""\[.*?\]|\(.*?\)|<.*?>|\{.*?\}"""), " ")
-            .replace(Regex("""[\-_:|]+"""), " ")
-            .replace(Regex("""\s+"""), " ")
-            .trim()
+    private fun sanitizeTitle(title: String): String = title.replace(Regex("""\b(19\d\d|20\d\d)\b"""), " ")
+        .replace(Regex("""(?i)\b(season\s*\d+|s\d+|part\s*\d+|cour\s*\d+|episode\s*\d+|ep\s*\d+)\b"""), " ")
+        .replace(Regex("""(?i)\b(hindi|tamil|telugu|bengali|malayalam|kannada|english|japanese|dual\s*audio|multi\s*audio|multi\s*sub|dubbed|dub|sub|subbed|esub)\b"""), " ")
+        .replace(Regex("""\[.*?\]|\(.*?\)|<.*?>|\{.*?\}"""), " ")
+        .replace(Regex("""[\-_:|]+"""), " ")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
 
     private fun stripHtml(text: String): String = text.replace(Regex("<[^>]+>"), "").trim()
 
