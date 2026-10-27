@@ -41,8 +41,7 @@ object Filters {
             "Genres",
             GENRES.map { Genre(it) },
         ) {
-        fun getSelectedGenres(): List<String> =
-            state.filter { it.state }.map { it.id }
+        fun getSelectedGenres(): List<String> = state.filter { it.state }.map { it.id }
     }
 
     class FormatFilter :
