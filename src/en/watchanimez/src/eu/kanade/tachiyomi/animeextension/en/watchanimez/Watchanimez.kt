@@ -196,17 +196,15 @@ class Watchanimez : Source() {
         return AnimesPage(animes, container.hasNextPage ?: false)
     }
 
-    override fun getFilterList(): AnimeFilterList {
-        return AnimeFilterList(
-            Filters.SortFilter(),
-            Filters.GenreModeFilter(),
-            Filters.GenreFilter(),
-            Filters.FormatFilter(),
-            Filters.StatusFilter(),
-            Filters.SeasonFilter(),
-            Filters.YearFilter(),
-        )
-    }
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        Filters.SortFilter(),
+        Filters.GenreModeFilter(),
+        Filters.GenreFilter(),
+        Filters.FormatFilter(),
+        Filters.StatusFilter(),
+        Filters.SeasonFilter(),
+        Filters.YearFilter(),
+    )
 
     // =========================== Anime Details ============================
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
