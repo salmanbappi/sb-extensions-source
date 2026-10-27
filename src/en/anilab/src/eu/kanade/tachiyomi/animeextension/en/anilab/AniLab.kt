@@ -46,6 +46,12 @@ data class PostDto(
 )
 
 @Serializable
+data class SeasonDto(
+    val id: Long? = null,
+    val title: String? = null,
+)
+
+@Serializable
 data class PostDetailsDto(
     val id: Long? = null,
     val type: String? = null,
@@ -59,6 +65,7 @@ data class PostDetailsDto(
     val age: String? = null,
     val score: Float? = null,
     val genres: String? = null,
+    val seasons: List<SeasonDto>? = null,
 )
 
 @Serializable
@@ -185,11 +192,20 @@ class AniLab : Source() {
         details.initialized = true
 
         val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, PREF_LOAD_DESCRIPTIONS_DEFAULT)
-        if (loadDescriptions && details.description.isNullOrBlank()) {
+        if (loadDescriptions) {
             runCatching {
                 val synopsis = metadataFetcher.fetchAnimeSynopsis(details.title)
                 if (!synopsis.isNullOrBlank()) {
-                    details.description = synopsis
+                    val existingDesc = details.description ?: ""
+                    val separator = "\n\n---\n\n"
+                    val structuredBlock = if (existingDesc.contains(separator)) {
+                        existingDesc.substringAfter(separator)
+                    } else null
+
+                    details.description = EpisodeMetadataFetcher.buildStructuredDescription(
+                        synopsis = synopsis,
+                        detailsBlock = structuredBlock,
+                    )
                 }
             }
         }
@@ -200,10 +216,23 @@ class AniLab : Source() {
 
     override fun animeDetailsParse(response: Response): SAnime {
         val data = response.parseAs<PostDetailsDto>()
+        val isMovie = data.type?.contains("movie", ignoreCase = true) == true
+        val seasonsCount = data.seasons?.size?.let { if (it > 0) it + 1 else null }
+        val detailsBlock = EpisodeMetadataFetcher.formatMediaDetails(
+            isMovie = isMovie,
+            runtime = data.runtime,
+            premiered = data.premiered,
+            status = data.status,
+            contentRating = data.age ?: data.rating,
+            seasonsCount = seasonsCount,
+        )
         return SAnime.create().apply {
             title = data.title ?: ""
             thumbnail_url = data.poster
-            description = data.overview
+            description = EpisodeMetadataFetcher.buildStructuredDescription(
+                synopsis = data.overview,
+                detailsBlock = detailsBlock,
+            )
             genre = data.genres
             status = when {
                 data.status?.contains("airing", ignoreCase = true) == true -> SAnime.ONGOING
@@ -544,8 +573,8 @@ class AniLab : Source() {
         private const val PREF_LOAD_TITLES_DEFAULT = true
 
         private const val PREF_LOAD_DESCRIPTIONS_KEY = "pref_load_descriptions"
-        private const val PREF_LOAD_DESCRIPTIONS_TITLE = "Enrich episode descriptions & summaries"
-        private const val PREF_LOAD_DESCRIPTIONS_SUMMARY = "Fetch per-episode synopses & descriptions from AniList/TMDB/Kitsu"
+        private const val PREF_LOAD_DESCRIPTIONS_TITLE = "Enrich descriptions & summaries"
+        private const val PREF_LOAD_DESCRIPTIONS_SUMMARY = "Fetch canonical synopses & descriptions from AniList/TMDB/Kitsu"
         private const val PREF_LOAD_DESCRIPTIONS_DEFAULT = true
     }
 }
