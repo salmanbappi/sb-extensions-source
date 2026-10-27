@@ -1,7 +1,9 @@
 package eu.kanade.tachiyomi.animeextension.en.watchanimez
 
 import androidx.preference.ListPreference
+import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
@@ -110,7 +112,7 @@ class Watchanimez : Source() {
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        var genreMode = preferences.getString(PREF_GENRE_MODE_KEY, PREF_GENRE_MODE_DEFAULT) ?: PREF_GENRE_MODE_DEFAULT
+        var genreMode = "and"
         var selectedGenres = emptyList<String>()
 
         val url = if (query.isNotBlank()) {
@@ -195,12 +197,9 @@ class Watchanimez : Source() {
     }
 
     override fun getFilterList(): AnimeFilterList {
-        val defaultMode = preferences.getString(PREF_GENRE_MODE_KEY, PREF_GENRE_MODE_DEFAULT) ?: PREF_GENRE_MODE_DEFAULT
-        val defaultIndex = if (defaultMode == "or") 1 else 0
-
         return AnimeFilterList(
             Filters.SortFilter(),
-            Filters.GenreModeFilter(defaultIndex),
+            Filters.GenreModeFilter(),
             Filters.GenreFilter(),
             Filters.FormatFilter(),
             Filters.StatusFilter(),
@@ -253,13 +252,21 @@ class Watchanimez : Source() {
             ?: item.title?.romaji
             ?: anime.title
 
-        val metadataMap = runCatching {
-            metadataFetcher.fetch(
-                malId = malIdStr,
-                animeTitle = animeTitle,
-                fallbackThumbnailUrl = anime.thumbnail_url,
-            )
-        }.getOrNull() ?: emptyMap()
+        val loadThumbnails = preferences.getBoolean(PREF_LOAD_THUMBNAILS_KEY, true)
+        val loadTitles = preferences.getBoolean(PREF_LOAD_TITLES_KEY, true)
+        val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, true)
+
+        val metadataMap = if (loadThumbnails || loadTitles || loadDescriptions) {
+            runCatching {
+                metadataFetcher.fetch(
+                    malId = malIdStr,
+                    animeTitle = animeTitle,
+                    fallbackThumbnailUrl = anime.thumbnail_url,
+                )
+            }.getOrNull() ?: emptyMap()
+        } else {
+            emptyMap()
+        }
 
         val streamingMap = item.streamingEpisodes?.associateBy { ep ->
             Regex("""Episode\s+(\d+)""", RegexOption.IGNORE_CASE).find(ep.title ?: "")?.groupValues?.get(1)?.toIntOrNull()
@@ -277,7 +284,7 @@ class Watchanimez : Source() {
             val meta = metadataMap[epNum]
 
             SEpisode.create().apply {
-                val titleCandidate = meta?.title
+                val titleCandidate = if (loadTitles) meta?.title else null
                 name = if (!titleCandidate.isNullOrBlank()) {
                     "Episode $epNum - $titleCandidate"
                 } else {
@@ -287,15 +294,19 @@ class Watchanimez : Source() {
                 episode_number = epNum.toFloat()
                 url = "$anilistId#ep=$epNum&mal=$malIdStr"
 
-                val thumb = streamingEp?.thumbnail?.takeIf { it.isNotBlank() }
-                    ?: meta?.thumbnailUrl?.takeIf { it.isNotBlank() }
-                if (!thumb.isNullOrBlank()) {
-                    preview_url = thumb
+                if (loadThumbnails) {
+                    val thumb = streamingEp?.thumbnail?.takeIf { it.isNotBlank() }
+                        ?: meta?.thumbnailUrl?.takeIf { it.isNotBlank() }
+                    if (!thumb.isNullOrBlank()) {
+                        preview_url = thumb
+                    }
                 }
 
-                val synopsis = meta?.description
-                if (!synopsis.isNullOrBlank()) {
-                    summary = synopsis
+                if (loadDescriptions) {
+                    val synopsis = meta?.description
+                    if (!synopsis.isNullOrBlank()) {
+                        summary = synopsis
+                    }
                 }
             }
         }
@@ -902,20 +913,44 @@ class Watchanimez : Source() {
             },
         )
 
-        // 6. Default Genre Search Mode
-        screen.addPreference(
-            ListPreference(context).apply {
-                key = PREF_GENRE_MODE_KEY
-                title = "Default Genre Search Mode"
-                entries = arrayOf("AND", "OR")
-                entryValues = arrayOf("and", "or")
-                setDefaultValue(PREF_GENRE_MODE_DEFAULT)
-                summary = "%s"
+        // 6. Episode Metadata
+        PreferenceCategory(context).apply {
+            title = "Episode Metadata"
+            screen.addPreference(this)
+
+            SwitchPreferenceCompat(context).apply {
+                key = PREF_LOAD_THUMBNAILS_KEY
+                title = "Load episode thumbnails"
+                summaryOn = "Fetching preview images from external sources"
+                summaryOff = "Episode thumbnails disabled (faster episode list loading)"
+                setDefaultValue(true)
                 setOnPreferenceChangeListener { _, newValue ->
-                    preferences.edit().putString(PREF_GENRE_MODE_KEY, newValue as String).commit()
+                    preferences.edit().putBoolean(key, newValue as Boolean).commit()
                 }
-            },
-        )
+            }.also { addPreference(it) }
+
+            SwitchPreferenceCompat(context).apply {
+                key = PREF_LOAD_TITLES_KEY
+                title = "Load episode titles"
+                summaryOn = "Fetching canonical episode titles from metadata service"
+                summaryOff = "Using default episode numbers only"
+                setDefaultValue(true)
+                setOnPreferenceChangeListener { _, newValue ->
+                    preferences.edit().putBoolean(key, newValue as Boolean).commit()
+                }
+            }.also { addPreference(it) }
+
+            SwitchPreferenceCompat(context).apply {
+                key = PREF_LOAD_DESCRIPTIONS_KEY
+                title = "Load episode summaries (spoilers)"
+                summaryOn = "Fetching episode descriptions from external sources"
+                summaryOff = "Episode summaries disabled"
+                setDefaultValue(true)
+                setOnPreferenceChangeListener { _, newValue ->
+                    preferences.edit().putBoolean(key, newValue as Boolean).commit()
+                }
+            }.also { addPreference(it) }
+        }
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
@@ -958,8 +993,9 @@ class Watchanimez : Source() {
         private const val PREF_CATALOG_KEY = "pref_catalog_key"
         private const val PREF_CATALOG_DEFAULT = "anilist"
 
-        private const val PREF_GENRE_MODE_KEY = "pref_genre_mode_key"
-        private const val PREF_GENRE_MODE_DEFAULT = "and"
+        private const val PREF_LOAD_THUMBNAILS_KEY = "pref_load_thumbnails"
+        private const val PREF_LOAD_TITLES_KEY = "pref_load_titles"
+        private const val PREF_LOAD_DESCRIPTIONS_KEY = "pref_load_descriptions"
     }
 }
 
