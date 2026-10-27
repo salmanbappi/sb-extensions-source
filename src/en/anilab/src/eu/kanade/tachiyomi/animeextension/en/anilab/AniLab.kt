@@ -200,7 +200,9 @@ class AniLab : Source() {
                     val separator = "\n\n---\n\n"
                     val structuredBlock = if (existingDesc.contains(separator)) {
                         existingDesc.substringAfter(separator)
-                    } else null
+                    } else {
+                        null
+                    }
 
                     details.description = EpisodeMetadataFetcher.buildStructuredDescription(
                         synopsis = synopsis,
