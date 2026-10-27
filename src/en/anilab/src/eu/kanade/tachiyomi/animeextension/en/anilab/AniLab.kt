@@ -7,11 +7,13 @@ import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
+import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parallelMapNotNullBlocking
 import kotlinx.serialization.Serializable
@@ -107,6 +109,10 @@ class AniLab : Source() {
         PlaylistUtils(client, headers)
     }
 
+    private val metadataFetcher by lazy {
+        EpisodeMetadataFetcher(client, json)
+    }
+
     // ============================== Popular ===============================
 
     override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
@@ -174,6 +180,22 @@ class AniLab : Source() {
 
     // =========================== Anime Details ============================
 
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        val details = super.getAnimeDetails(anime)
+        details.initialized = true
+
+        val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, PREF_LOAD_DESCRIPTIONS_DEFAULT)
+        if (loadDescriptions && details.description.isNullOrBlank()) {
+            runCatching {
+                val synopsis = metadataFetcher.fetchAnimeSynopsis(details.title)
+                if (!synopsis.isNullOrBlank()) {
+                    details.description = synopsis
+                }
+            }
+        }
+        return details
+    }
+
     override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/post?id=${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
@@ -189,10 +211,64 @@ class AniLab : Source() {
                 else -> SAnime.UNKNOWN
             }
             author = data.type
+            initialized = true
         }
     }
 
     // ============================== Episodes ==============================
+
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
+        val episodes = super.getEpisodeList(anime)
+
+        val loadThumbnails = preferences.getBoolean(PREF_LOAD_THUMBNAILS_KEY, PREF_LOAD_THUMBNAILS_DEFAULT)
+        val loadTitles = preferences.getBoolean(PREF_LOAD_TITLES_KEY, PREF_LOAD_TITLES_DEFAULT)
+        val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, PREF_LOAD_DESCRIPTIONS_DEFAULT)
+
+        if (!loadThumbnails && !loadTitles && !loadDescriptions) return episodes
+
+        val resolvedTitle = if (anime.title.isNotBlank() && !anime.title.startsWith("Anime #")) {
+            anime.title
+        } else {
+            runCatching {
+                val detailResponse = client.newCall(GET("$baseUrl/post?id=${anime.url}", headers)).execute()
+                val detail = detailResponse.parseAs<PostDetailsDto>()
+                detail.title ?: anime.title
+            }.getOrDefault(anime.title)
+        }
+
+        return runCatching {
+            val metadataMap = metadataFetcher.fetch(
+                malId = "",
+                animeTitle = resolvedTitle,
+                fallbackThumbnailUrl = anime.thumbnail_url,
+            )
+            if (metadataMap.isEmpty()) return episodes
+
+            episodes.map { episode ->
+                val num = episode.episode_number.toInt()
+                val altNum = Regex("""#(\d+)""").find(episode.name)?.groupValues?.get(1)?.toIntOrNull()
+                val meta = metadataMap[num] ?: (altNum?.let { metadataMap[it] }) ?: return@map episode
+
+                episode.apply {
+                    if (loadThumbnails && !meta.thumbnailUrl.isNullOrEmpty() && (preview_url.isNullOrEmpty() || preview_url!!.contains("SiteTitle"))) {
+                        preview_url = meta.thumbnailUrl
+                    }
+                    if (loadDescriptions && !meta.description.isNullOrEmpty()) {
+                        summary = meta.description
+                    }
+                    if (loadTitles && !meta.title.isNullOrBlank()) {
+                        val isFiller = name.endsWith(" (Filler)")
+                        val baseName = if (isFiller) name.removeSuffix(" (Filler)").trim() else name
+                        name = if (isFiller) {
+                            "$baseName - ${meta.title} (Filler)"
+                        } else {
+                            "$baseName - ${meta.title}"
+                        }
+                    }
+                }
+            }
+        }.getOrDefault(episodes)
+    }
 
     override fun episodeListRequest(anime: SAnime): Request = GET("https://play.anidb.app/api/anime/${anime.url}/episodes", headers)
 
@@ -335,8 +411,8 @@ class AniLab : Source() {
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
-        val prefLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT)!!
+        val prefQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val prefLang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT) ?: PREF_LANG_DEFAULT
 
         return this.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(prefQuality) }
@@ -384,6 +460,24 @@ class AniLab : Source() {
             entryValues = PREF_EP_RENUMBER_VALUES,
             default = PREF_EP_RENUMBER_DEFAULT,
             summary = "%s",
+        )
+        screen.addSwitchPreference(
+            key = PREF_LOAD_THUMBNAILS_KEY,
+            title = PREF_LOAD_THUMBNAILS_TITLE,
+            summary = PREF_LOAD_THUMBNAILS_SUMMARY,
+            default = PREF_LOAD_THUMBNAILS_DEFAULT,
+        )
+        screen.addSwitchPreference(
+            key = PREF_LOAD_TITLES_KEY,
+            title = PREF_LOAD_TITLES_TITLE,
+            summary = PREF_LOAD_TITLES_SUMMARY,
+            default = PREF_LOAD_TITLES_DEFAULT,
+        )
+        screen.addSwitchPreference(
+            key = PREF_LOAD_DESCRIPTIONS_KEY,
+            title = PREF_LOAD_DESCRIPTIONS_TITLE,
+            summary = PREF_LOAD_DESCRIPTIONS_SUMMARY,
+            default = PREF_LOAD_DESCRIPTIONS_DEFAULT,
         )
     }
 
@@ -438,5 +532,20 @@ class AniLab : Source() {
             "Absolute numbering (Episode 73)",
         )
         private val PREF_EP_RENUMBER_VALUES = listOf("both", "season", "absolute")
+
+        private const val PREF_LOAD_THUMBNAILS_KEY = "pref_load_thumbnails"
+        private const val PREF_LOAD_THUMBNAILS_TITLE = "Enrich episode thumbnails"
+        private const val PREF_LOAD_THUMBNAILS_SUMMARY = "Fetch per-episode preview stills from AniList/TMDB/Kitsu"
+        private const val PREF_LOAD_THUMBNAILS_DEFAULT = true
+
+        private const val PREF_LOAD_TITLES_KEY = "pref_load_titles"
+        private const val PREF_LOAD_TITLES_TITLE = "Enrich episode titles"
+        private const val PREF_LOAD_TITLES_SUMMARY = "Fetch episode titles from AniList/TMDB/Kitsu"
+        private const val PREF_LOAD_TITLES_DEFAULT = true
+
+        private const val PREF_LOAD_DESCRIPTIONS_KEY = "pref_load_descriptions"
+        private const val PREF_LOAD_DESCRIPTIONS_TITLE = "Enrich episode descriptions & summaries"
+        private const val PREF_LOAD_DESCRIPTIONS_SUMMARY = "Fetch per-episode synopses & descriptions from AniList/TMDB/Kitsu"
+        private const val PREF_LOAD_DESCRIPTIONS_DEFAULT = true
     }
 }
