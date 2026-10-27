@@ -41,18 +41,6 @@ class EpisodeMetadataFetcher(
         val airdate: String?,
     )
 
-    data class AnimeMetadata(
-        val synopsis: String? = null,
-        val bannerUrl: String? = null,
-        val altTitles: List<String> = emptyList(),
-        val malId: String? = null,
-        val anilistId: String? = null,
-        val imdbId: String? = null,
-        val tmdbId: String? = null,
-        val tvdbId: String? = null,
-        val anidbId: String? = null,
-    )
-
     private data class CachedData(
         val episodes: Map<Int, EpisodeMetadata>,
         val bannerUrl: String?,
@@ -84,71 +72,39 @@ class EpisodeMetadataFetcher(
 
     suspend fun fetch(malId: String, fallbackThumbnailUrl: String?): Map<Int, EpisodeMetadata> = fetch(malId, null, fallbackThumbnailUrl)
 
-    suspend fun fetchAnimeSynopsis(title: String): String? = fetchAnimeMetadata(title)?.synopsis
-
-    suspend fun fetchAnimeMetadata(title: String): AnimeMetadata? {
+    suspend fun fetchAnimeSynopsis(title: String): String? {
         if (title.isBlank()) return null
         return withContext(Dispatchers.IO) {
             try {
                 val cleanTitle = sanitizeTitle(title)
-
-                // 1. Try AniList GraphQL first (clean, fast, rich metadata)
-                var meta = fetchAniListMetadata(cleanTitle)
-
-                // 2. If AniList is missing or incomplete, try Kitsu
-                if (meta == null || meta.synopsis.isNullOrBlank()) {
-                    val kitsuMeta = fetchKitsuMetadata(cleanTitle)
-                    if (kitsuMeta != null) {
-                        meta = if (meta == null) {
-                            kitsuMeta
-                        } else {
-                            meta.copy(
-                                synopsis = meta.synopsis ?: kitsuMeta.synopsis,
-                                bannerUrl = meta.bannerUrl ?: kitsuMeta.bannerUrl,
-                                altTitles = (meta.altTitles + kitsuMeta.altTitles).distinct(),
-                                malId = meta.malId ?: kitsuMeta.malId,
-                            )
-                        }
+                // 1. Try AniList GraphQL (clean text, no HTML, fastest ~300ms)
+                val aniListSyn = fetchAniListSynopsis(cleanTitle)
+                if (!aniListSyn.isNullOrBlank()) {
+                    return@withContext aniListSyn
+                }
+                // 2. Try Kitsu
+                val searchUrl = "https://kitsu.app/api/edge/anime?filter[text]=${URLEncoder.encode(cleanTitle, "UTF-8")}&page[limit]=1"
+                val body = fetchString(searchUrl)
+                if (body != null) {
+                    val response = localJson.decodeFromString(KitsuSearchResponse.serializer(), body)
+                    val syn = response.data.firstOrNull()?.attributes?.synopsis
+                        ?: response.data.firstOrNull()?.attributes?.description
+                    if (!syn.isNullOrBlank()) {
+                        return@withContext stripHtml(syn)
                     }
                 }
-
-                // 3. Fallback to Jikan if still no synopsis
-                if (meta == null || meta.synopsis.isNullOrBlank()) {
-                    val jikanMeta = fetchJikanMetadata(cleanTitle)
-                    if (jikanMeta != null) {
-                        meta = if (meta == null) {
-                            jikanMeta
-                        } else {
-                            meta.copy(
-                                synopsis = meta.synopsis ?: jikanMeta.synopsis,
-                                bannerUrl = meta.bannerUrl ?: jikanMeta.bannerUrl,
-                                altTitles = (meta.altTitles + jikanMeta.altTitles).distinct(),
-                                malId = meta.malId ?: jikanMeta.malId,
-                            )
-                        }
+                // 3. Try Jikan
+                val jikanUrl = "https://api.jikan.moe/v4/anime?q=${URLEncoder.encode(cleanTitle, "UTF-8")}&limit=1"
+                val jikanBody = fetchString(jikanUrl)
+                if (jikanBody != null) {
+                    val obj = JSONObject(jikanBody)
+                    val dataArr = obj.optJSONArray("data")
+                    val syn = dataArr?.optJSONObject(0)?.optString("synopsis")
+                    if (!syn.isNullOrBlank()) {
+                        return@withContext stripHtml(syn)
                     }
                 }
-
-                if (meta == null) return@withContext null
-
-                // 4. Enrich with Ani.zip for database mappings (IMDb, AniDB, TMDB, TVDB) & banner
-                val malId = meta.malId
-                val anilistId = meta.anilistId
-                if (!malId.isNullOrBlank() || !anilistId.isNullOrBlank()) {
-                    val anizip = fetchAniZipData(malId = malId, anilistId = anilistId)
-                    meta = meta.copy(
-                        bannerUrl = meta.bannerUrl ?: anizip.bannerUrl,
-                        altTitles = (meta.altTitles + anizip.titles).distinct(),
-                        malId = meta.malId ?: anizip.malId,
-                        anilistId = meta.anilistId ?: anizip.anilistId,
-                        anidbId = meta.anidbId ?: anizip.anidbId,
-                        imdbId = meta.imdbId ?: anizip.imdbId,
-                        tmdbId = meta.tmdbId ?: anizip.tmdbId,
-                        tvdbId = meta.tvdbId ?: anizip.tvdbId,
-                    )
-                }
-
-                meta
+                null
             } catch (e: Exception) {
                 null
             }
@@ -545,9 +501,9 @@ class EpisodeMetadataFetcher(
         val description: String?,
     )
 
-    private fun fetchAniListMetadata(title: String): AnimeMetadata? {
+    private fun fetchAniListByTitle(title: String): AniListResolved? {
         val cleanTitle = sanitizeTitle(title)
-        val query = """query (${'$'}search: String) { Media(search: ${'$'}search, type: ANIME) { id idMal bannerImage description(asHtml: false) title { english romaji native } synonyms } }"""
+        val query = """query (${'$'}search: String) { Media(search: ${'$'}search, type: ANIME) { id idMal bannerImage description(asHtml: false) } }"""
         val body = JSONObject().apply {
             put("query", query)
             put("variables", JSONObject().put("search", cleanTitle))
@@ -559,40 +515,29 @@ class EpisodeMetadataFetcher(
             val id = media.optInt("id").takeIf { it > 0 }?.toString()
             val malId = media.optInt("idMal").takeIf { it > 0 }?.toString()
             val banner = media.optString("bannerImage").takeIf { it.isNotBlank() }
-            val desc = media.optString("description")?.takeIf { it.isNotBlank() }?.let { stripHtml(it) }
-
-            val titleObj = media.optJSONObject("title")
-            val altTitles = mutableListOf<String>()
-            titleObj?.optString("english")?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-            titleObj?.optString("romaji")?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-            titleObj?.optString("native")?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-
-            val synArray = media.optJSONArray("synonyms")
-            if (synArray != null) {
-                for (i in 0 until synArray.length()) {
-                    val syn = synArray.optString(i)
-                    if (syn.isNotBlank()) altTitles.add(syn)
-                }
-            }
-
-            AnimeMetadata(
-                synopsis = desc,
-                bannerUrl = banner,
-                altTitles = altTitles.distinct(),
-                malId = malId,
-                anilistId = id,
-            )
+            val desc = media.optString("description").takeIf { it.isNotBlank() }
+            AniListResolved(id, malId, banner, desc)
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun fetchAniListByTitle(title: String): AniListResolved? {
-        val meta = fetchAniListMetadata(title) ?: return null
-        return AniListResolved(meta.anilistId, meta.malId, meta.bannerUrl, meta.synopsis)
+    private fun fetchAniListSynopsis(title: String): String? {
+        val cleanTitle = sanitizeTitle(title)
+        val query = """query (${'$'}search: String) { Media(search: ${'$'}search, type: ANIME) { description(asHtml: false) } }"""
+        val body = JSONObject().apply {
+            put("query", query)
+            put("variables", JSONObject().put("search", cleanTitle))
+        }.toString()
+        val respBody = postJson("https://graphql.anilist.co", body) ?: return null
+        return try {
+            val json = JSONObject(respBody)
+            val desc = json.optJSONObject("data")?.optJSONObject("Media")?.optString("description")
+            desc?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
     }
-
-    private fun fetchAniListSynopsis(title: String): String? = fetchAniListMetadata(title)?.synopsis
 
     private fun fetchAnikageEpisodes(anilistId: String): Map<Int, EpisodeMetadata> {
         // Anikage API is obsolete / Cloudflare-gated
@@ -604,8 +549,6 @@ class EpisodeMetadataFetcher(
         val malId: String?,
         val synopsis: String?,
         val episodes: Map<Int, EpisodeMetadata>,
-        val bannerUrl: String? = null,
-        val altTitles: List<String> = emptyList(),
     )
 
     private fun fetchKitsuByTitle(title: String): KitsuSearchResult? {
@@ -616,66 +559,12 @@ class EpisodeMetadataFetcher(
             val response = localJson.decodeFromString(KitsuSearchResponse.serializer(), body)
             val anime = response.data.firstOrNull() ?: return null
             val kitsuId = anime.id
-            val attr = anime.attributes
-            val synopsis = attr?.synopsis?.takeIf { it.isNotBlank() }
-                ?: attr?.description?.takeIf { it.isNotBlank() }
-            val cleanSyn = synopsis?.let { stripHtml(it) }
-            val banner = attr?.coverImage?.original ?: attr?.coverImage?.large
-
-            val altTitles = mutableListOf<String>()
-            attr?.canonicalTitle?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-            attr?.titles?.values?.filter { it.isNotBlank() }?.let { altTitles.addAll(it) }
-            attr?.abbreviatedTitles?.filter { it.isNotBlank() }?.let { altTitles.addAll(it) }
-
+            val synopsis = anime.attributes?.synopsis?.takeIf { it.isNotBlank() }?.let { stripHtml(it) }
             val malId = fetchMalIdFromKitsuMappings(kitsuId)
             val episodes = fetchKitsuEpisodesByKitsuId(kitsuId)
-            KitsuSearchResult(kitsuId, malId, cleanSyn, episodes, banner, altTitles.distinct())
+            KitsuSearchResult(kitsuId, malId, synopsis, episodes)
         } catch (e: Exception) {
             logd("Kitsu search by title failed — ${e.message}")
-            null
-        }
-    }
-
-    private fun fetchKitsuMetadata(title: String): AnimeMetadata? {
-        val res = fetchKitsuByTitle(title) ?: return null
-        return AnimeMetadata(
-            synopsis = res.synopsis,
-            bannerUrl = res.bannerUrl,
-            altTitles = res.altTitles,
-            malId = res.malId,
-        )
-    }
-
-    private fun fetchJikanMetadata(title: String): AnimeMetadata? {
-        val cleanTitle = sanitizeTitle(title)
-        val jikanUrl = "https://api.jikan.moe/v4/anime?q=${URLEncoder.encode(cleanTitle, "UTF-8")}&limit=1"
-        val jikanBody = fetchString(jikanUrl) ?: return null
-        return try {
-            val obj = JSONObject(jikanBody)
-            val dataArr = obj.optJSONArray("data") ?: return null
-            val first = dataArr.optJSONObject(0) ?: return null
-            val malId = first.optInt("mal_id").takeIf { it > 0 }?.toString()
-            val syn = first.optString("synopsis")?.takeIf { it.isNotBlank() }?.let { stripHtml(it) }
-            val images = first.optJSONObject("images")
-            val banner = images?.optJSONObject("jpg")?.optString("large_image_url")?.takeIf { it.isNotBlank() }
-
-            val altTitles = mutableListOf<String>()
-            first.optString("title_english")?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-            first.optString("title_japanese")?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-            val synArr = first.optJSONArray("title_synonyms")
-            if (synArr != null) {
-                for (i in 0 until synArr.length()) {
-                    synArr.optString(i)?.takeIf { it.isNotBlank() }?.let { altTitles.add(it) }
-                }
-            }
-
-            AnimeMetadata(
-                synopsis = syn,
-                bannerUrl = banner,
-                altTitles = altTitles.distinct(),
-                malId = malId,
-            )
-        } catch (_: Exception) {
             null
         }
     }
@@ -1159,11 +1048,6 @@ class EpisodeMetadataFetcher(
         val bannerUrl: String? = null,
         val malId: String? = null,
         val anilistId: String? = null,
-        val anidbId: String? = null,
-        val imdbId: String? = null,
-        val tmdbId: String? = null,
-        val tvdbId: String? = null,
-        val titles: List<String> = emptyList(),
     )
 
     private fun fetchAniZipData(
@@ -1222,34 +1106,10 @@ class EpisodeMetadataFetcher(
             }
 
             val mappings = root.optJSONObject("mappings")
-            val mappedMalId = mappings?.optString("mal_id")?.takeIf { it.isNotBlank() && it != "0" }
-            val mappedAniListId = mappings?.optString("anilist_id")?.takeIf { it.isNotBlank() && it != "0" }
-            val mappedAnidbId = mappings?.optString("anidb_id")?.takeIf { it.isNotBlank() && it != "0" }
-            val mappedImdbId = mappings?.optString("imdb_id")?.takeIf { it.isNotBlank() }
-            val mappedTmdbId = mappings?.optString("themoviedb_id")?.takeIf { it.isNotBlank() }
-            val mappedTvdbId = mappings?.optString("thetvdb_id")?.takeIf { it.isNotBlank() }
+            val mappedMalId = mappings?.optString("mal_id")?.takeIf { it.isNotBlank() }
+            val mappedAniListId = mappings?.optString("anilist_id")?.takeIf { it.isNotBlank() }
 
-            val aniZipTitles = mutableListOf<String>()
-            val titlesObj = root.optJSONObject("titles")
-            if (titlesObj != null) {
-                val tKeys = titlesObj.keys()
-                while (tKeys.hasNext()) {
-                    val k = tKeys.next()
-                    titlesObj.optString(k)?.takeIf { it.isNotBlank() }?.let { aniZipTitles.add(it) }
-                }
-            }
-
-            AniZipData(
-                episodes = result,
-                bannerUrl = bannerUrl,
-                malId = mappedMalId,
-                anilistId = mappedAniListId,
-                anidbId = mappedAnidbId,
-                imdbId = mappedImdbId,
-                tmdbId = mappedTmdbId,
-                tvdbId = mappedTvdbId,
-                titles = aniZipTitles.distinct(),
-            )
+            AniZipData(result, bannerUrl, mappedMalId, mappedAniListId)
         } catch (e: Exception) {
             logd("Ani.zip fetch failed — ${e.message}")
             AniZipData(emptyMap())
@@ -1392,19 +1252,10 @@ class EpisodeMetadataFetcher(
     )
 
     @Serializable
-    private data class KitsuCoverImage(
-        val original: String? = null,
-        val large: String? = null,
-    )
-
-    @Serializable
     private data class KitsuSearchAttributes(
         val canonicalTitle: String? = null,
         val synopsis: String? = null,
         val description: String? = null,
-        val titles: Map<String, String>? = null,
-        val abbreviatedTitles: List<String>? = null,
-        val coverImage: KitsuCoverImage? = null,
     )
 
     @Serializable
@@ -1477,7 +1328,7 @@ class EpisodeMetadataFetcher(
     )
 
     companion object {
-        const val VERSION = 4
+        const val VERSION = 3
         private const val TAG = "EpisodeMetadataFetcher"
         private const val FAST_TIMEOUT_MS = 2500L
         private const val FAST_CALL_TIMEOUT_MS = 3000L
@@ -1565,11 +1416,8 @@ class EpisodeMetadataFetcher(
                 val dateLine = when {
                     !premiered.isNullOrBlank() && !dateRange.isNullOrBlank() ->
                         "* **Premiered:** $premiered ($dateRange)"
-
                     !dateRange.isNullOrBlank() -> "* **Aired:** $dateRange"
-
                     !premiered.isNullOrBlank() -> "* **Premiered:** $premiered"
-
                     else -> null
                 }
                 dateLine?.let { lines.add(it) }
@@ -1624,9 +1472,7 @@ class EpisodeMetadataFetcher(
 
             return if (links.isNotEmpty()) {
                 "### Database Links\n" + links.joinToString(" • ")
-            } else {
-                null
-            }
+            } else null
         }
 
         /**
