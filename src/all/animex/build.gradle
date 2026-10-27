@@ -1,7 +1,7 @@
 ext {
     extName = 'Animex'
     extClass = '.Animex'
-    extVersionCode = 1057
+    extVersionCode = 1058
     isNsfw = false
 }
 
@@ -9,6 +9,6 @@ apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation(project(":lib:playlist-utils"))
-    implementation(project(":lib:okru-extractor"))
-    implementation(project(":lib:mp4upload-extractor"))
+    implementation(project(":lib:megacloud-extractor"))
+    implementation(project(":lib:m3u8server"))
 }

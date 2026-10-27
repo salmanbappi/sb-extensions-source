@@ -3,39 +3,29 @@ package eu.kanade.tachiyomi.animeextension.all.animex
 import android.app.Application
 import android.content.SharedPreferences
 import android.net.Uri
-import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animeextension.all.animex.hosts.HostResolver
+import eu.kanade.tachiyomi.animeextension.all.animex.hosts.KotoHostResolver
+import eu.kanade.tachiyomi.animeextension.all.animex.hosts.LoliResolver
+import eu.kanade.tachiyomi.animeextension.all.animex.hosts.NeroResolver
+import eu.kanade.tachiyomi.animeextension.all.animex.hosts.SoraResolver
+import eu.kanade.tachiyomi.animeextension.all.animex.hosts.VidcloudHostResolver
+import eu.kanade.tachiyomi.animeextension.all.animex.hosts.YukiResolver
+import eu.kanade.tachiyomi.animeextension.all.animex.hosts.ZunaResolver
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
-import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
-import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.lib.mp4uploadextractor.Mp4uploadExtractor
-import eu.kanade.tachiyomi.lib.okruextractor.OkruExtractor
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.util.asJsoup
 import extensions.utils.Source
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okhttp3.Cookie
-import okhttp3.CookieJar
-import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -43,16 +33,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.io.OutputStream
-import java.net.InetAddress
-import java.net.ServerSocket
-import java.net.Socket
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
-
-private const val API_UA =
-    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
 class Animex : Source() {
 
@@ -73,194 +53,35 @@ class Animex : Source() {
         .addNetworkInterceptor(AnimexInterceptor(network.client.cookieJar))
         .build()
 
-    private var proxy: LocalProxyServer? = null
+    private val proxy: AnimexProxy by lazy { AnimexProxy(client, json) }
 
-    private fun getProxyUrl(url: String, headers: Headers? = null): String {
-        if (proxy == null) {
-            proxy = LocalProxyServer(client, json).apply { start() }
-        }
-        val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val encodedHeaders = encodeHeaders(headers)
-        val path = if (url.contains(".m3u8") || url.contains(".txt")) "playlist.m3u8" else "segment.ts"
-        val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
-        return "http://127.0.0.1:${proxy!!.port}/$path?$query"
-    }
-
-    private fun getSubtitleProxyUrl(url: String, headers: Headers?): String {
-        if (proxy == null) {
-            proxy = LocalProxyServer(client, json).apply { start() }
-        }
-        val encodedUrl = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val encodedHeaders = encodeHeaders(headers)
-        val query = "url=$encodedUrl" + if (encodedHeaders != null) "&headers=$encodedHeaders" else ""
-        return "http://127.0.0.1:${proxy!!.port}/subtitle.vtt?$query"
-    }
-
-    private fun encodeHeaders(headers: Headers?): String? {
-        if (headers == null || headers.size == 0) return null
-        val map = mutableMapOf<String, String>()
-        for (i in 0 until headers.size) {
-            map[headers.name(i)] = headers.value(i)
-        }
-        return try {
-            Base64.encodeToString(json.encodeToString(map).toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        } catch (_: Exception) {
-            null
-        }
-    }
+    private val resolvers: Map<String, HostResolver> = listOf(
+        NeroResolver,
+        YukiResolver,
+        ZunaResolver,
+        LoliResolver,
+        SoraResolver,
+        VidcloudHostResolver,
+        KotoHostResolver,
+    ).associateBy { it.id.lowercase() }
 
     override fun headersBuilder() = super.headersBuilder().apply {
-        set("User-Agent", API_UA)
+        set("User-Agent", ANIMEX_API_UA)
         set("Referer", "https://animex.one/")
         set("Origin", "https://animex.one")
         set("Accept", "application/json, text/plain, */*")
     }
 
-    private fun absoluteUrl(url: String): String = when {
-        url.startsWith("http://") || url.startsWith("https://") -> url
-        url.startsWith("//") -> "https:$url"
-        else -> "$baseUrl${if (url.startsWith("/")) "" else "/"}$url"
-    }
-
-    private fun absoluteUrl(url: String, base: String): String = try {
-        val baseUri = java.net.URI(base)
-        val resolved = baseUri.resolve(url)
-        resolved.toString()
-    } catch (e: Exception) {
-        if (url.startsWith("http")) url else base.substringBeforeLast("/") + "/" + url
-    }
-
-    private fun extractDash(
-        mpdUrl: String,
-        headers: Headers,
-        quality: String,
-        providerName: String,
-        categoryLabel: String,
-        subStyle: String,
-        subtitleTracks: List<Track>,
-    ): List<Video> {
-        val request = GET(mpdUrl, headers)
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) {
-            response.close()
-            return emptyList()
-        }
-        val doc = response.asJsoup()
-
-        val adaptationSets = doc.select("AdaptationSet, adaptationset")
-        val videoRepresentations = mutableListOf<org.jsoup.nodes.Element>()
-        val audioTracks = mutableListOf<Track>()
-
-        adaptationSets.forEach { adaptationSet ->
-            val mimeType = adaptationSet.attr("mimeType").takeIf { it.isNotEmpty() }
-                ?: adaptationSet.attr("mimetype")
-            val isVideo = mimeType.contains("video", ignoreCase = true)
-            val isAudio = mimeType.contains("audio", ignoreCase = true)
-
-            adaptationSet.select("Representation, representation").forEach { representation ->
-                val repMimeType = representation.attr("mimeType").takeIf { it.isNotEmpty() }
-                    ?: representation.attr("mimetype")
-                val repIsVideo = isVideo || repMimeType.contains("video", ignoreCase = true)
-                val repIsAudio = isAudio || repMimeType.contains("audio", ignoreCase = true)
-
-                if (repIsVideo) {
-                    videoRepresentations.add(representation)
-                } else if (repIsAudio) {
-                    val bandwidth = representation.attr("bandwidth").toLongOrNull()
-                    val formatBytes = { bytes: Long? ->
-                        when {
-                            bytes == null -> ""
-                            bytes >= 1_000_000_000 -> "%.2f GB/s".format(bytes / 1_000_000_000.0)
-                            bytes >= 1_000_000 -> "%.2f MB/s".format(bytes / 1_000_000.0)
-                            bytes >= 1_000 -> "%.2f KB/s".format(bytes / 1_000.0)
-                            else -> "$bytes bytes/s"
-                        }
-                    }
-                    var baseUrlTag = representation.selectFirst("BaseURL, baseurl")
-                    if (baseUrlTag == null) {
-                        baseUrlTag = representation.parent()?.selectFirst("BaseURL, baseurl")
-                    }
-                    if (baseUrlTag == null) {
-                        baseUrlTag = representation.parent()?.parent()?.selectFirst("BaseURL, baseurl")
-                    }
-                    val relativeUrl = baseUrlTag?.text()?.trim() ?: representation.text().trim()
-                    if (relativeUrl.isNotEmpty()) {
-                        val audioUrl = absoluteUrl(relativeUrl, mpdUrl)
-                        audioTracks.add(Track(audioUrl, formatBytes(bandwidth)))
-                    }
-                }
-            }
-        }
-
-        if (videoRepresentations.isEmpty()) {
-            doc.select("Representation, representation").forEach { representation ->
-                val repMimeType = representation.attr("mimeType").takeIf { it.isNotEmpty() }
-                    ?: representation.attr("mimetype")
-                if (repMimeType.contains("video", ignoreCase = true)) {
-                    videoRepresentations.add(representation)
-                }
-            }
-        }
-
-        return videoRepresentations.mapNotNull { videoSrc ->
-            val bandwidth = videoSrc.attr("bandwidth")
-            val height = videoSrc.attr("height").takeIf { it.isNotEmpty() }
-                ?: videoSrc.parent()?.attr("height") ?: "Video"
-            val width = videoSrc.attr("width").takeIf { it.isNotEmpty() }
-                ?: videoSrc.parent()?.attr("width") ?: ""
-            val res = if (width.isNotEmpty() && height.isNotEmpty()) "$height (${width}x$height)" else height
-
-            var baseUrlTag = videoSrc.selectFirst("BaseURL, baseurl")
-            if (baseUrlTag == null) {
-                baseUrlTag = videoSrc.parent()?.selectFirst("BaseURL, baseurl")
-            }
-            if (baseUrlTag == null) {
-                baseUrlTag = videoSrc.parent()?.parent()?.selectFirst("BaseURL, baseurl")
-            }
-            val relativeUrl = baseUrlTag?.text()?.trim() ?: videoSrc.text().trim()
-            if (relativeUrl.isEmpty()) {
-                return@mapNotNull null
-            }
-            val videoUrl = absoluteUrl(relativeUrl, mpdUrl)
-            if (videoUrl == mpdUrl) {
-                return@mapNotNull null
-            }
-            val videoTitle = "$providerName: $res ($categoryLabel)$subStyle" + if (bandwidth.isNotEmpty()) " - $bandwidth" else ""
-
-            Video(
-                videoUrl = videoUrl,
-                videoTitle = videoTitle,
-                audioTracks = audioTracks,
-                subtitleTracks = subtitleTracks,
-                headers = headers,
-            )
-        }
-    }
-
     private fun getPreferredServer(): String {
-        val server = preferences.getString("pref_preferred_server", "yuki") ?: "yuki"
-        return if (server == "auto") "yuki" else server
+        val server = preferences.getString("pref_preferred_server", "nero") ?: "nero"
+        return if (server == "auto") "nero" else server.lowercase()
     }
 
-    /**
-     * pp.animex.one answers 5xx whenever an upstream provider is slow — yuki's
-     * gateway times out (504) after ~26s on roughly half of the requests, sora
-     * occasionally 500s. A single retry recovers most of those episodes instead
-     * of silently dropping the provider from the video list.
-     */
-    private suspend fun fetchWithApiRetry(request: Request, attempts: Int = 2): Response {
-        var response = client.newCall(request).execute()
-        var attempt = 1
-        while (attempt < attempts && response.code in 500..599) {
-            response.close()
-            delay(700)
-            response = client.newCall(request).execute()
-            attempt++
-        }
-        return response
-    }
+    private fun getPreferredQuality(): String =
+        preferences.getString("pref_preferred_quality", "1080") ?: "1080"
 
-    private fun getPreferredQuality(): String = preferences.getString("pref_preferred_quality", "1080") ?: "1080"
+    private fun getPreferredType(): String =
+        preferences.getString("pref_preferred_type", "sub") ?: "sub"
 
     // ============================== POPULAR / LATEST ==============================
 
@@ -371,41 +192,27 @@ class Animex : Source() {
 
                 is StatusFilter -> {
                     val value = filter.toValue()
-                    if (value.isNotEmpty()) {
-                        selectedStatus = listOf(value)
-                    }
+                    if (value.isNotEmpty()) selectedStatus = listOf(value)
                 }
 
                 is SeasonFilter -> {
                     val value = filter.toValue()
-                    if (value.isNotEmpty()) {
-                        selectedSeason = listOf(value)
-                    }
+                    if (value.isNotEmpty()) selectedSeason = listOf(value)
                 }
 
                 is FormatFilter -> {
-                    val formats = filter.state
-                        .filter { it.state }
-                        .map { it.value }
-                    if (formats.isNotEmpty()) {
-                        selectedFormats = formats
-                    }
+                    val formats = filter.state.filter { it.state }.map { it.value }
+                    if (formats.isNotEmpty()) selectedFormats = formats
                 }
 
                 is GenreFilter -> {
-                    val genres = filter.state
-                        .filter { it.state }
-                        .map { it.value }
-                    if (genres.isNotEmpty()) {
-                        selectedGenres = genres
-                    }
+                    val genres = filter.state.filter { it.state }.map { it.value }
+                    if (genres.isNotEmpty()) selectedGenres = genres
                 }
 
                 is YearFilter -> {
                     val value = filter.state
-                    if (value.isNotBlank()) {
-                        selectedYear = value.toIntOrNull()
-                    }
+                    if (value.isNotBlank()) selectedYear = value.toIntOrNull()
                 }
 
                 else -> {}
@@ -470,7 +277,7 @@ class Animex : Source() {
                 title = item.titleEnglish ?: item.titleRomaji ?: "Unknown Title"
                 thumbnail_url = item.coverImage?.extraLarge
                 description = item.description
-                genre = item.genres?.joinToString() ?: ""
+                genre = item.genres.joinToString()
             }
         } ?: emptyList()
         return AnimesPage(animeList, animeList.size >= 30)
@@ -524,52 +331,44 @@ class Animex : Source() {
                 anime.seasonYear?.let { append("\nYear: $it") }
                 anime.season?.let { append("\nSeason: $it") }
             }
-            genre = anime.genres?.joinToString() ?: ""
+            genre = anime.genres.joinToString()
             status = when (anime.status?.uppercase()) {
                 "FINISHED" -> SAnime.COMPLETED
                 "RELEASING" -> SAnime.ONGOING
-                "NOT_YET_RELEASED", "CANCELLED", "HIATUS" -> SAnime.UNKNOWN
                 else -> SAnime.UNKNOWN
             }
+            initialized = true
         }
     }
 
     // ============================== EPISODE LIST ==============================
 
     override fun episodeListRequest(anime: SAnime): Request {
-        val slug = when {
-            anime.url.contains("?id=") -> anime.url.substringAfter("?id=").substringBefore("&")
-            anime.url.contains("&id=") -> anime.url.substringAfter("&id=").substringBefore("&")
-            else -> anime.url.split("/").getOrNull(3)
-        } ?: throw Exception("Could not extract slug from URL: ${anime.url}")
+        val slug = extractSlug(anime.url)
+            ?: throw Exception("Could not extract slug from URL: ${anime.url}")
         return GET("https://pp.animex.one/rest/api/episodes?id=$slug", headers)
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val url = anime.url
-        val slug = when {
-            url.contains("?id=") -> url.substringAfter("?id=").substringBefore("&")
-            url.contains("&id=") -> url.substringAfter("&id=").substringBefore("&")
-            else -> null
-        }
-        val resolvedSlug = if (slug == null) {
-            val anilistId = url.substringAfter("/anime/").substringBefore("?").substringAfterLast("-").toIntOrNull()
-                ?: url.split("/").getOrNull(2)?.toIntOrNull()
-            if (anilistId != null) {
-                resolveSlugFromAnilistId(anilistId)
-            } else {
-                null
-            }
-        } else {
-            slug
-        } ?: throw Exception("Could not resolve slug for URL: ${anime.url}")
+        val resolvedSlug = extractSlug(anime.url)
+            ?: resolveSlugFromAnilistId(anime.url)
+            ?: throw Exception("Could not resolve slug for URL: ${anime.url}")
 
         val episodesRequest = GET("https://pp.animex.one/rest/api/episodes?id=$resolvedSlug", headers)
         val response = client.newCall(episodesRequest).execute()
         return episodeListParseWithSlug(response, resolvedSlug, anime)
     }
 
-    private fun resolveSlugFromAnilistId(anilistId: Int): String? {
+    private fun extractSlug(url: String): String? = when {
+        url.contains("?id=") -> url.substringAfter("?id=").substringBefore("&")
+        url.contains("&id=") -> url.substringAfter("&id=").substringBefore("&")
+        else -> null
+    }
+
+    private fun resolveSlugFromAnilistId(url: String): String? {
+        val anilistId = url.substringAfter("/anime/").substringBefore("?").substringAfterLast("-").toIntOrNull()
+            ?: url.split("/").getOrNull(2)?.toIntOrNull() ?: return null
+
         val queryBody = GraphQLRequest(
             query = """
                 query GetAnime(${'$'}anilistId: Int) {
@@ -587,11 +386,9 @@ class Animex : Source() {
                 if (response.isSuccessful) {
                     val result = json.decodeFromString<GetAnimeResponse>(response.body.string())
                     result.data?.anime?.id
-                } else {
-                    null
-                }
+                } else null
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -612,462 +409,194 @@ class Animex : Source() {
 
         val animeUrl = anime?.url
         val animePath = animeUrl?.substringAfter("/anime/")?.substringBefore("?")
-        val titleSlug = animePath?.substringBeforeLast("-")
-            ?: slug.substringBeforeLast("-")
-        val anilistId = animePath?.substringAfterLast("-")
-            ?: ""
+        val titleSlug = animePath?.substringBeforeLast("-") ?: slug.substringBeforeLast("-")
+        val anilistId = animePath?.substringAfterLast("-") ?: ""
 
         val episodes = restEpisodes.map { episode ->
+            val num = episode.number ?: 0f
             SEpisode.create().apply {
-                name = "Episode ${episode.number}${episode.titles?.en?.let { ": $it" } ?: ""}"
-                episode_number = (episode.number ?: 0).toFloat()
+                val numStr = if (num % 1f == 0f) num.toInt().toString() else num.toString()
+                name = "Episode $numStr${episode.titles?.en?.let { ": $it" } ?: ""}"
+                episode_number = num
                 url = if (anilistId.isNotEmpty()) {
-                    "/watch/$titleSlug-$anilistId-episode-${episode.number}?id=$slug"
+                    "/watch/$titleSlug-$anilistId-episode-$numStr?id=$slug"
                 } else {
-                    "/watch/$slug/${episode.number}"
+                    "/watch/$slug/$numStr"
                 }
             }
         }
         return episodes.sortedByDescending { it.episode_number }
     }
 
-    // ============================== VIDEO LIST (SOURCES) ==============================
+    // ============================== 2-TIER HOSTER LIST ==============================
 
     override fun videoListRequest(episode: SEpisode): Request = throw Exception("Not used")
 
     override fun videoListParse(response: Response): List<Video> = throw Exception("Not used")
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val separator = if (episode.url.contains("?")) "&" else "?"
-        val preferredType = preferences.getString("pref_preferred_type", "soft") ?: "soft"
-
-        val softHoster = Hoster(hosterName = "Soft Sub", hosterUrl = "${episode.url}${separator}type=soft")
-        val hardHoster = Hoster(hosterName = "Hard Sub", hosterUrl = "${episode.url}${separator}type=hard")
-        val dubHoster = Hoster(hosterName = "Dub", hosterUrl = "${episode.url}${separator}type=dub")
-
-        return when (preferredType) {
-            "hard" -> listOf(hardHoster, softHoster, dubHoster)
-            "dub" -> listOf(dubHoster, softHoster, hardHoster)
-            else -> listOf(softHoster, hardHoster, dubHoster)
-        }
-    }
-
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val url = hoster.hosterUrl
-        val slug: String
-        val epNum: String
-        if (url.contains("-episode-")) {
-            epNum = url.substringAfter("-episode-").substringBefore("?")
-            slug = url.substringAfter("?id=").substringBefore("&")
+        val url = episode.url
+        val slug = extractSlug(url)
+            ?: url.split("/").getOrNull(2)
+            ?: throw Exception("Invalid episode URL: $url")
+        val epNum = if (url.contains("-episode-")) {
+            url.substringAfter("-episode-").substringBefore("?")
         } else {
-            val cleanUrl = url.substringBefore("?")
-            val parts = cleanUrl.split("/")
-            slug = parts.getOrNull(2) ?: throw Exception("Invalid episode URL: $url")
-            epNum = parts.getOrNull(3) ?: throw Exception("Invalid episode URL: $url")
-        }
-        val type = url.substringAfter("&type=", "").takeIf { it.isNotEmpty() }
-            ?: url.substringAfter("?type=", "").takeIf { it.isNotEmpty() }
-
-        val preferredType = preferences.getString("pref_preferred_type", "soft") ?: "soft"
-
-        val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
-        val serversResponse = fetchWithApiRetry(serversRequest)
-        if (!serversResponse.isSuccessful) {
-            serversResponse.close()
-            return emptyList()
+            url.substringBefore("?").split("/").getOrNull(3) ?: "1"
         }
 
-        val serversData = try {
-            json.decodeFromString<ServersResponse>(serversResponse.body.string())
-        } finally {
-            serversResponse.close()
-        }
         val disabledServers = preferences.getStringSet("pref_disabled_servers", emptySet()) ?: emptySet()
+        val preferredServer = getPreferredServer()
+        val preferredType = getPreferredType()
 
-        val allTasks = (serversData.subProviders.map { it to "sub" } + serversData.dubProviders.map { it to "dub" })
-            .filter { (provider, _) -> (provider.id?.lowercase() ?: "") !in disabledServers }
+        val hosterList = mutableListOf<Hoster>()
 
-        val tasks = if (type.isNullOrEmpty()) {
-            allTasks
-        } else {
-            allTasks.filter { (provider, apiType) ->
-                when (type) {
-                    "soft" -> apiType == "sub" && provider.tip?.contains("soft sub", ignoreCase = true) == true
-                    "hard" -> apiType == "sub" && provider.tip?.contains("soft sub", ignoreCase = true) != true
-                    "dub" -> apiType == "dub"
-                    else -> true
-                }
-            }
-        }
+        try {
+            val serversRequest = GET("https://pp.animex.one/rest/api/servers?id=$slug&epNum=$epNum", headers)
+            client.newCall(serversRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    val serversData = json.decodeFromString<ServersResponse>(response.body.string())
 
-        val videos = coroutineScope {
-            tasks.map { (provider, apiType) ->
-                async {
-                    val providerId = provider.id ?: "PROVIDER"
-                    val categoryLabel = apiType.uppercase()
-                    val subStyle = if (apiType == "dub") {
-                        ""
-                    } else {
-                        when {
+                    for (provider in serversData.subProviders) {
+                        val pid = provider.id?.lowercase() ?: continue
+                        if (pid in disabledServers) continue
+                        val subStyle = when {
                             provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
                             provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
                             else -> ""
                         }
+                        val name = (provider.id ?: pid).uppercase()
+                        hosterList.add(
+                            Hoster(
+                                hosterName = "$name [SUB]$subStyle",
+                                hosterUrl = "$url&type=sub&providerId=$pid",
+                            ),
+                        )
                     }
 
-                    if (provider.type == "embed" && provider.url != null) {
-                        val embedUrl = absoluteUrl(provider.url ?: "")
-                        if (embedUrl.contains("ok.ru") || embedUrl.contains("okru")) {
-                            try {
-                                val okruClient = client.newBuilder()
-                                    .addInterceptor { chain ->
-                                        val originalRequest = chain.request()
-                                        val req = if (originalRequest.header("Referer") == null) {
-                                            originalRequest.newBuilder()
-                                                .header("Referer", "https://animex.one/")
-                                                .build()
-                                        } else {
-                                            originalRequest
-                                        }
-                                        chain.proceed(req)
-                                    }
-                                    .build()
-                                val okruExtractor = OkruExtractor(okruClient)
-                                val okruPrefix = "${providerId.uppercase()} ($categoryLabel)$subStyle"
-                                okruExtractor.videosFromUrl(embedUrl, prefix = okruPrefix)
-                            } catch (e: Exception) {
-                                emptyList()
-                            }
-                        } else if (embedUrl.contains("mp4upload")) {
-                            try {
-                                val embedHeaders = headersBuilder().apply {
-                                    removeAll("Origin")
-                                    removeAll("Accept")
-                                    set("Referer", "https://mp4upload.com/")
-                                }.build()
-                                val mp4uploadExtractor = Mp4uploadExtractor(client)
-                                val mp4Prefix = "${providerId.uppercase()}: ($categoryLabel)$subStyle "
-                                mp4uploadExtractor.videosFromUrl(embedUrl, headers = embedHeaders, prefix = mp4Prefix)
-                            } catch (e: Exception) {
-                                emptyList()
-                            }
-                        } else {
-                            val embedHeaders = headersBuilder().apply {
-                                removeAll("Origin")
-                                removeAll("Accept")
-                            }.build()
-                            listOf(
-                                Video(
-                                    videoUrl = embedUrl,
-                                    videoTitle = "${providerId.uppercase()} ($categoryLabel)$subStyle",
-                                    headers = embedHeaders,
-                                ),
-                            )
-                        }
-                    } else {
-                        val sourcesRequest = GET("https://pp.animex.one/rest/api/sources?id=$slug&epNum=$epNum&type=$apiType&providerId=$providerId", headers)
-                        try {
-                            fetchWithApiRetry(sourcesRequest).use { sourcesResponse ->
-                                if (sourcesResponse.isSuccessful) {
-                                    val sourcesData = json.decodeFromString<SourcesResponse>(sourcesResponse.body.string())
-                                    val subtitleTracks = sourcesData.tracks?.mapNotNull { track ->
-                                        val trackUrl = track.url ?: return@mapNotNull null
-                                        Track(absoluteUrl(trackUrl), track.label ?: track.lang ?: "English")
-                                    } ?: emptyList()
-
-                                    val providerVideos = mutableListOf<Video>()
-                                    sourcesData.sources.forEach { source ->
-                                        val sourceUrl = source.url ?: return@forEach
-                                        val streamUrl = absoluteUrl(sourceUrl)
-                                        val providerName = providerId.uppercase()
-                                        val quality = source.quality ?: "Auto"
-                                        val categoryLabel = apiType.uppercase()
-                                        val subStyle = if (apiType == "dub") {
-                                            ""
-                                        } else {
-                                            when {
-                                                provider.tip?.contains("soft sub", ignoreCase = true) == true -> " [Soft Subs]"
-                                                provider.tip?.contains("hard sub", ignoreCase = true) == true -> " [Hard Subs]"
-                                                else -> ""
-                                            }
-                                        }
-
-                                        val videoHeaders = headersBuilder().apply {
-                                            removeAll("Origin")
-                                            removeAll("Accept")
-                                            sourcesData.headers?.forEach { (key, value) ->
-                                                set(key, value)
-                                            }
-                                            // Sora's playlists load without it, but its segment hosts
-                                            // (st1.*.xyz) only answer when the request carries the
-                                            // krussdomi player origin — every segment 403s otherwise.
-                                            if (providerId.equals("sora", ignoreCase = true)) {
-                                                set("Origin", "https://krussdomi.com")
-                                            }
-                                            if (providerId.equals("uwu", ignoreCase = true) || providerId.equals("owo", ignoreCase = true)) {
-                                                if (get("Origin") == null) set("Origin", "https://animex.one")
-                                                if (get("Referer") == null) set("Referer", "https://animex.one/")
-                                            }
-                                        }.build()
-
-                                        // NEKO serves HLS with .txt extensions (master.txt, index-v1-a1.txt),
-                                        // so also trust the API-provided MIME type (video/mpegurl).
-                                        val isHls = streamUrl.contains(".m3u8", ignoreCase = true) ||
-                                            source.type?.contains("mpegurl", ignoreCase = true) == true
-                                        if (isHls) {
-                                            try {
-                                                val playlistUtils = PlaylistUtils(client, headers)
-                                                val playlistVideos = playlistUtils.extractFromHls(
-                                                    playlistUrl = streamUrl,
-                                                    masterHeaders = videoHeaders,
-                                                    videoHeaders = videoHeaders,
-                                                    videoNameGen = { hlsQuality ->
-                                                        val parsedQuality = if (hlsQuality == "Video") quality else hlsQuality
-                                                        "$providerName: $parsedQuality ($categoryLabel)$subStyle"
-                                                    },
-                                                    subtitleList = subtitleTracks,
-                                                ).map { video ->
-                                                    val cleanUrl = when {
-                                                        video.videoUrl.startsWith("//") -> "https:${video.videoUrl}"
-                                                        else -> video.videoUrl
-                                                    }
-                                                    video.copy(videoUrl = cleanUrl)
-                                                }
-                                                providerVideos.addAll(playlistVideos)
-                                            } catch (e: Exception) {
-                                                val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                                                providerVideos.add(
-                                                    Video(
-                                                        videoUrl = streamUrl,
-                                                        videoTitle = qualityLabel,
-                                                        headers = videoHeaders,
-                                                        subtitleTracks = subtitleTracks,
-                                                    ),
-                                                )
-                                            }
-                                        } else if (streamUrl.contains(".mpd", ignoreCase = true)) {
-                                            try {
-                                                val playlistVideos = extractDash(
-                                                    mpdUrl = streamUrl,
-                                                    headers = videoHeaders,
-                                                    quality = quality,
-                                                    providerName = providerName,
-                                                    categoryLabel = categoryLabel,
-                                                    subStyle = subStyle,
-                                                    subtitleTracks = subtitleTracks,
-                                                )
-                                                if (playlistVideos.isEmpty()) {
-                                                    throw Exception("No video representations found in DASH playlist")
-                                                }
-                                                providerVideos.addAll(playlistVideos)
-                                            } catch (e: Exception) {
-                                                val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                                                providerVideos.add(
-                                                    Video(
-                                                        videoUrl = streamUrl,
-                                                        videoTitle = qualityLabel,
-                                                        headers = videoHeaders,
-                                                        subtitleTracks = subtitleTracks,
-                                                    ),
-                                                )
-                                            }
-                                        } else {
-                                            val qualityLabel = "$providerName: $quality ($categoryLabel)$subStyle"
-                                            providerVideos.add(
-                                                Video(
-                                                    videoUrl = streamUrl,
-                                                    videoTitle = qualityLabel,
-                                                    headers = videoHeaders,
-                                                    subtitleTracks = subtitleTracks,
-                                                ),
-                                            )
-                                        }
-                                    }
-                                    providerVideos
-                                } else {
-                                    emptyList()
-                                }
-                            }
-                        } catch (e: Exception) {
-                            emptyList()
-                        }
+                    for (provider in serversData.dubProviders) {
+                        val pid = provider.id?.lowercase() ?: continue
+                        if (pid in disabledServers) continue
+                        val name = (provider.id ?: pid).uppercase()
+                        hosterList.add(
+                            Hoster(
+                                hosterName = "$name [DUB]",
+                                hosterUrl = "$url&type=dub&providerId=$pid",
+                            ),
+                        )
                     }
                 }
-            }.awaitAll().flatten().toMutableList()
+            }
+        } catch (_: Exception) {}
+
+        // Add external web hosters if not disabled
+        if ("vidcloud" !in disabledServers) {
+            hosterList.add(
+                Hoster(
+                    hosterName = "ZORO (VIDCLOUD) [SUB]",
+                    hosterUrl = "$url&type=sub&providerId=vidcloud",
+                ),
+            )
+            hosterList.add(
+                Hoster(
+                    hosterName = "ZORO (VIDCLOUD) [DUB]",
+                    hosterUrl = "$url&type=dub&providerId=vidcloud",
+                ),
+            )
+        }
+        if ("koto" !in disabledServers) {
+            hosterList.add(
+                Hoster(
+                    hosterName = "KOTO [SUB]",
+                    hosterUrl = "$url&type=sub&providerId=koto",
+                ),
+            )
         }
 
-        val preferredServer = getPreferredServer()
+        // Fallback default hosters if upstream servers API failed completely
+        if (hosterList.isEmpty()) {
+            hosterList.add(Hoster(hosterName = "NERO [SUB]", hosterUrl = "$url&type=sub&providerId=nero"))
+            hosterList.add(Hoster(hosterName = "YUKI [SUB]", hosterUrl = "$url&type=sub&providerId=yuki"))
+            hosterList.add(Hoster(hosterName = "ZUNA [SUB]", hosterUrl = "$url&type=sub&providerId=zuna"))
+            hosterList.add(Hoster(hosterName = "LOLI [SUB]", hosterUrl = "$url&type=sub&providerId=loli"))
+            hosterList.add(Hoster(hosterName = "NERO [DUB]", hosterUrl = "$url&type=dub&providerId=nero"))
+            hosterList.add(Hoster(hosterName = "YUKI [DUB]", hosterUrl = "$url&type=dub&providerId=yuki"))
+        }
+
+        // 2-Tier Hoster priority sorting: preferred server first, then preferred audio type
+        return hosterList.sortedWith(
+            compareByDescending<Hoster> { it.hosterName.contains(preferredServer, ignoreCase = true) }
+                .thenByDescending {
+                    when (preferredType) {
+                        "dub" -> it.hosterName.contains("[DUB]", ignoreCase = true)
+                        else -> it.hosterName.contains("[SUB]", ignoreCase = true)
+                    }
+                },
+        )
+    }
+
+    // ============================== VIDEO LIST (DISPATCH TO RESOLVERS) ==============================
+
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val url = hoster.hosterUrl
+        val uri = Uri.parse("https://animex.one$url")
+
+        val slug = uri.getQueryParameter("id")
+            ?: extractSlug(url)
+            ?: url.split("/").getOrNull(2)
+            ?: throw Exception("Invalid episode URL: $url")
+
+        val epNum = if (url.contains("-episode-")) {
+            url.substringAfter("-episode-").substringBefore("?")
+        } else {
+            url.substringBefore("?").split("/").getOrNull(3) ?: "1"
+        }
+
+        val type = uri.getQueryParameter("type") ?: "sub"
+        val providerId = uri.getQueryParameter("providerId")?.lowercase() ?: "nero"
+
+        val subStyle = when {
+            hoster.hosterName.contains("[Soft Subs]", ignoreCase = true) -> " [Soft Subs]"
+            hoster.hosterName.contains("[Hard Subs]", ignoreCase = true) -> " [Hard Subs]"
+            else -> ""
+        }
+
+        val resolver = resolvers[providerId] ?: NeroResolver
+        val videos = resolver.getVideos(
+            slug = slug,
+            epNum = epNum,
+            type = type,
+            subStyle = subStyle,
+            client = client,
+            baseHeaders = headers,
+            proxy = proxy,
+            json = json,
+        )
+
         val preferredQuality = getPreferredQuality()
-        videos.sortWith(
-            compareBy<Video> { video ->
-                val matchesPreferred = when (preferredType) {
-                    "soft" -> video.videoTitle.contains("[Soft Subs]", ignoreCase = true)
-                    "hard" -> video.videoTitle.contains("[Hard Subs]", ignoreCase = true)
-                    "dub" -> video.videoTitle.contains("(DUB)", ignoreCase = true)
-                    else -> false
-                }
-                if (matchesPreferred) 0 else 1
-            }.thenBy { video ->
-                val matchesCategory = when (preferredType) {
-                    "soft", "hard" -> video.videoTitle.contains("(SUB)", ignoreCase = true)
-                    "dub" -> video.videoTitle.contains("(DUB)", ignoreCase = true)
-                    else -> false
-                }
-                if (matchesCategory) 0 else 1
-            }.thenBy { video ->
-                if (video.videoTitle.contains(preferredQuality, ignoreCase = true)) 0 else 1
-            }.thenBy { video ->
-                val isPreferredServer = video.videoTitle.contains(preferredServer, ignoreCase = true)
-                if (isPreferredServer) 0 else 1
-            },
-        )
-
-        return videos.map { video ->
-            // Subtitle hosts (e.g. lostproject.club) fail TLS handshake on some device
-            // networks, so always fetch subtitle tracks through the local proxy.
-            val proxiedSubtitles = video.subtitleTracks.map { track ->
-                if (track.url.startsWith("http://127.0.0.1")) {
-                    track
-                } else {
-                    Track(getSubtitleProxyUrl(track.url, video.headers), track.lang)
-                }
-            }
-
-            // Route every non-direct-media stream through the local proxy: providers
-            // like Loli/Sora serve extension-less or .txt/JPEG-disguised HLS playlists
-            // with picky CDNs, which mpv cannot handle natively.
-            val isDirectMedia = video.videoUrl.contains(".mp4", ignoreCase = true) ||
-                video.videoUrl.contains(".mkv", ignoreCase = true) ||
-                video.videoUrl.contains(".webm", ignoreCase = true) ||
-                video.videoUrl.contains(".mpd", ignoreCase = true)
-
-            if (isDirectMedia) {
-                video.copy(subtitleTracks = proxiedSubtitles)
-            } else {
-                Video(
-                    videoUrl = getProxyUrl(video.videoUrl, video.headers),
-                    videoTitle = video.videoTitle,
-                    subtitleTracks = proxiedSubtitles,
-                    audioTracks = video.audioTracks,
-                    headers = video.headers,
-                )
-            }
-        }
+        return videos.sortedByDescending { it.videoTitle.contains(preferredQuality, ignoreCase = true) }
     }
 
-    // ============================== FILTERS ==============================
+    // ============================== FILTERS & PREFERENCES ==============================
 
-    override fun getFilterList() = AnimeFilterList(
-        SortFilter(),
-        StatusFilter(),
-        SeasonFilter(),
-        FormatFilter(),
-        GenreFilter(),
-        YearFilter(),
-    )
-
-    open class UriPartFilter(
-        displayName: String,
-        val vals: Array<Pair<String, String>>,
-    ) : AnimeFilter.Select<String>(
-        displayName,
-        vals.map { it.first }.toTypedArray(),
-    ) {
-        fun toValue() = vals[state].second
-    }
-
-    class SortFilter :
-        UriPartFilter(
-            "Sort By",
-            arrayOf(
-                Pair("Trending", "TRENDING_DESC"),
-                Pair("Popularity", "POPULARITY_DESC"),
-                Pair("Average Score", "SCORE_DESC"),
-                Pair("Favourites", "FAVOURITES_DESC"),
-                Pair("Newest", "START_DATE_DESC"),
-                Pair("Oldest", "START_DATE"),
-                Pair("Title A-Z", "TITLE_ENGLISH"),
-                Pair("Title Z-A", "TITLE_ENGLISH_DESC"),
-            ),
-        )
-
-    class StatusFilter :
-        UriPartFilter(
-            "Status",
-            arrayOf(
-                Pair("Any", ""),
-                Pair("Finished", "FINISHED"),
-                Pair("Releasing", "RELEASING"),
-                Pair("Not Yet Released", "NOT_YET_RELEASED"),
-                Pair("Cancelled", "CANCELLED"),
-                Pair("Hiatus", "HIATUS"),
-            ),
-        )
-
-    class SeasonFilter :
-        UriPartFilter(
-            "Season",
-            arrayOf(
-                Pair("Any", ""),
-                Pair("Winter", "WINTER"),
-                Pair("Spring", "SPRING"),
-                Pair("Summer", "SUMMER"),
-                Pair("Fall", "FALL"),
-            ),
-        )
-
-    class FormatFilter :
-        AnimeFilter.Group<FormatCheckBox>(
-            "Formats",
-            listOf(
-                FormatCheckBox("TV Show", "TV"),
-                FormatCheckBox("TV Short", "TV_SHORT"),
-                FormatCheckBox("Movie", "MOVIE"),
-                FormatCheckBox("Special", "SPECIAL"),
-                FormatCheckBox("OVA", "OVA"),
-                FormatCheckBox("ONA", "ONA"),
-                FormatCheckBox("Music Video", "MUSIC"),
-            ),
-        )
-
-    class FormatCheckBox(name: String, val value: String) : AnimeFilter.CheckBox(name)
-
-    class GenreFilter :
-        AnimeFilter.Group<GenreCheckBox>(
-            "Genres",
-            listOf(
-                GenreCheckBox("Action", "Action"),
-                GenreCheckBox("Adventure", "Adventure"),
-                GenreCheckBox("Comedy", "Comedy"),
-                GenreCheckBox("Drama", "Drama"),
-                GenreCheckBox("Ecchi", "Ecchi"),
-                GenreCheckBox("Fantasy", "Fantasy"),
-                GenreCheckBox("Horror", "Horror"),
-                GenreCheckBox("Mahou Shoujo", "Mahou Shoujo"),
-                GenreCheckBox("Mecha", "Mecha"),
-                GenreCheckBox("Music", "Music"),
-                GenreCheckBox("Mystery", "Mystery"),
-                GenreCheckBox("Psychological", "Psychological"),
-                GenreCheckBox("Romance", "Romance"),
-                GenreCheckBox("Sci-Fi", "Sci-Fi"),
-                GenreCheckBox("Slice of Life", "Slice of Life"),
-                GenreCheckBox("Sports", "Sports"),
-                GenreCheckBox("Supernatural", "Supernatural"),
-                GenreCheckBox("Thriller", "Thriller"),
-            ),
-        )
-
-    class GenreCheckBox(name: String, val value: String) : AnimeFilter.CheckBox(name)
-
-    class YearFilter : AnimeFilter.Text("Release Year")
+    override fun getFilterList() = getAnimexFilterList()
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         ListPreference(screen.context).apply {
+            key = "pref_preferred_server"
+            title = "Preferred Server"
+            entries = arrayOf("Nero", "Yuki", "Zuna", "Loli", "Zoro (Vidcloud)", "Koto", "Sora")
+            entryValues = arrayOf("nero", "yuki", "zuna", "loli", "vidcloud", "koto", "sora")
+            setDefaultValue("nero")
+            summary = "%s"
+        }.also { screen.addPreference(it) }
+
+        ListPreference(screen.context).apply {
             key = "pref_preferred_type"
-            title = "Preferred Type"
-            entries = arrayOf("Soft Sub", "Hard Sub", "Dub")
-            entryValues = arrayOf("soft", "hard", "dub")
-            setDefaultValue("soft")
+            title = "Preferred Audio/Sub Type"
+            entries = arrayOf("Subtitled (SUB)", "Dubbed (DUB)")
+            entryValues = arrayOf("sub", "dub")
+            setDefaultValue("sub")
             summary = "%s"
         }.also { screen.addPreference(it) }
 
@@ -1080,681 +609,12 @@ class Animex : Source() {
             summary = "%s"
         }.also { screen.addPreference(it) }
 
-        ListPreference(screen.context).apply {
-            key = "pref_preferred_server"
-            title = "Preferred Server"
-            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu", "Zuna", "Loli", "Sora")
-            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu", "zuna", "loli", "sora")
-            setDefaultValue("yuki")
-            summary = "%s"
-        }.also { screen.addPreference(it) }
-
         MultiSelectListPreference(screen.context).apply {
             key = "pref_disabled_servers"
             title = "Disable Servers"
-            entries = arrayOf("Beep", "Mimi", "Vee", "Yuki", "Neko", "Mochi", "Uwu", "Zuna", "Loli", "Sora")
-            entryValues = arrayOf("beep", "mimi", "vee", "yuki", "neko", "mochi", "uwu", "zuna", "loli", "sora")
+            entries = arrayOf("Nero", "Yuki", "Zuna", "Loli", "Zoro (Vidcloud)", "Koto", "Sora")
+            entryValues = arrayOf("nero", "yuki", "zuna", "loli", "vidcloud", "koto", "sora")
             setDefaultValue(emptySet<String>())
         }.also { screen.addPreference(it) }
-    }
-}
-
-// ============================== SESSION INTERCEPTOR ==============================
-
-/**
- * Handles the _amx_id antibot session cookie for pp.animex.one API endpoints.
- *
- * How it works:
- * 1. pp.animex.one issues a JWT _amx_id cookie on the FIRST request (even on 403).
- *    The JWT encodes: IP, User-Agent, expiry, nonce.
- * 2. Any subsequent request to the API must carry that same _amx_id cookie.
- * 3. The UA in the JWT must match the UA of subsequent requests — so we pin
- *    a stable browser UA specifically for pp.animex.one API calls. Video stream
- *    URLs (served to MPV) are NOT touched — MPV sets its own UA/headers natively.
- * 4. We run as a NETWORK interceptor so OkHttp's cookie layer has already
- *    saved Set-Cookie before we see the response, guaranteeing the jar is
- *    populated when we retry.
- */
-class AnimexInterceptor(private val cookieJar: CookieJar) : Interceptor {
-
-    companion object {
-        private val API_HOST = "pp.animex.one"
-
-        private fun hasSession(cookies: List<Cookie>): Boolean = cookies.any { it.name == "_amx_id" || it.name == "animex_session" }
-
-        private fun parseSessionCookie(header: String, url: okhttp3.HttpUrl): Cookie? {
-            // header is the raw Set-Cookie value e.g. "_amx_id=xxx; expires=...; path=/; ..."
-            return Cookie.parse(url, header)
-        }
-    }
-
-    override fun intercept(chain: Interceptor.Chain): Response {
-        val originalRequest = chain.request()
-        val isApiCall = originalRequest.url.host == API_HOST &&
-            originalRequest.url.encodedPath.contains("/api/")
-
-        // Pin the UA for API calls so it matches what the _amx_id JWT was issued for.
-        val request = if (isApiCall) {
-            originalRequest.newBuilder()
-                .header("User-Agent", API_UA)
-                .build()
-        } else {
-            originalRequest
-        }
-
-        val response = chain.proceed(request)
-
-        // Handle bot-detection 403 on API calls: extract and save the session cookie
-        // then retry immediately. As a network interceptor, OkHttp has already called
-        // CookieJar.saveFromResponse() before we see this response, so the cookie jar
-        // is populated. We still manually parse + save to handle edge cases where
-        // the jar implementation might be no-op for certain cookie attributes.
-        if (isApiCall && response.code == 403 && request.header("X-Animex-Retry") == null) {
-            synchronized(this) {
-                val setCookieHeaders = response.headers("Set-Cookie")
-                val sessionHeaders = setCookieHeaders.filter {
-                    it.contains("_amx_id") || it.contains("animex_session")
-                }
-
-                if (sessionHeaders.isNotEmpty()) {
-                    // Manually save each session cookie to ensure the jar has it
-                    val cookiesToSave = sessionHeaders.mapNotNull {
-                        parseSessionCookie(it, request.url)
-                    }
-                    if (cookiesToSave.isNotEmpty()) {
-                        try {
-                            cookieJar.saveFromResponse(request.url, cookiesToSave)
-                        } catch (_: Exception) {}
-                    }
-
-                    response.close()
-                    val retryRequest = request.newBuilder()
-                        .header("X-Animex-Retry", "true")
-                        .build()
-                    return chain.proceed(retryRequest)
-                }
-
-                // Cookie already in jar (e.g. expired + re-issued) — just retry
-                val jarCookies = cookieJar.loadForRequest(request.url)
-                if (hasSession(jarCookies)) {
-                    response.close()
-                    val retryRequest = request.newBuilder()
-                        .header("X-Animex-Retry", "true")
-                        .build()
-                    return chain.proceed(retryRequest)
-                }
-            }
-        }
-
-        return response
-    }
-}
-
-// ============================== DATA SERIALIZATION MODELS ==============================
-
-@Serializable
-data class GraphQLRequest(
-    val query: String? = null,
-    val variables: GraphQLVariables? = null,
-)
-
-@Serializable
-data class GraphQLVariables(
-    val filter: AnimeCatalogFilterInput? = null,
-    val sort: List<AnimeSortInput>? = null,
-    val limit: Int? = null,
-    val offset: Int? = null,
-    val anilistId: Int? = null,
-)
-
-@Serializable
-data class AnimeCatalogFilterInput(
-    val query: String? = null,
-    val statusIn: List<String>? = null,
-    val seasonIn: List<String>? = null,
-    val seasonYearMin: Int? = null,
-    val seasonYearMax: Int? = null,
-    val formatIn: List<String>? = null,
-    val genres: List<String>? = null,
-)
-
-@Serializable
-data class AnimeSortInput(
-    val field: String? = null,
-    val direction: String? = null,
-)
-
-@Serializable
-data class CatalogAnimeResponse(
-    val data: CatalogAnimeData? = null,
-)
-
-@Serializable
-data class CatalogAnimeData(
-    val catalogAnime: CatalogAnimeContent? = null,
-)
-
-@Serializable
-data class CatalogAnimeContent(
-    val items: List<AnimeCatalogItem> = emptyList(),
-)
-
-@Serializable
-data class CoverImage(
-    val extraLarge: String? = null,
-    val color: String? = null,
-)
-
-@Serializable
-data class AnimeCatalogItem(
-    val id: String,
-    val anilistId: Int,
-    val titleRomaji: String? = null,
-    val titleEnglish: String? = null,
-    val coverImage: CoverImage? = null,
-    val bannerImage: String? = null,
-    val backdropUrl: String? = null,
-    val description: String? = null,
-    val status: String? = null,
-    val format: String? = null,
-    val averageScore: Int? = null,
-    val popularity: Int? = null,
-    val episodeCount: Int? = null,
-    val seasonYear: Int? = null,
-    val season: String? = null,
-    val color: String? = null,
-    val genres: List<String> = emptyList(),
-)
-
-@Serializable
-data class GetAnimeResponse(
-    val data: GetAnimeData? = null,
-)
-
-@Serializable
-data class GetAnimeData(
-    val anime: AnimeDetailsItem? = null,
-)
-
-@Serializable
-data class AnimeDetailsItem(
-    val id: String,
-    val anilistId: Int,
-    val malId: Int? = null,
-    val titleRomaji: String? = null,
-    val titleEnglish: String? = null,
-    val description: String? = null,
-    val coverImage: CoverImage? = null,
-    val bannerImage: String? = null,
-    val status: String? = null,
-    val format: String? = null,
-    val genres: List<String> = emptyList(),
-    val averageScore: Int? = null,
-    val seasonYear: Int? = null,
-    val season: String? = null,
-)
-
-@Serializable
-data class RestEpisode(
-    val number: Int? = null,
-    val titles: EpisodeTitles? = null,
-    val img: String? = null,
-    val isFiller: Boolean? = null,
-    val hasSub: Boolean? = null,
-    val hasDub: Boolean? = null,
-)
-
-@Serializable
-data class EpisodeTitles(
-    val en: String? = null,
-)
-
-@Serializable
-data class ServersResponse(
-    val subProviders: List<ProviderItem> = emptyList(),
-    val dubProviders: List<ProviderItem> = emptyList(),
-)
-
-@Serializable
-data class ProviderItem(
-    val id: String? = null,
-    val default: Boolean? = null,
-    val tip: String? = null,
-    val type: String? = null,
-    val url: String? = null,
-)
-
-@Serializable
-data class SourcesResponse(
-    val sources: List<SourceItem> = emptyList(),
-    val tracks: List<TrackItem>? = null,
-    val headers: Map<String, String>? = null,
-)
-
-@Serializable
-data class SourceItem(
-    val url: String? = null,
-    val quality: String? = null,
-    val type: String? = null,
-)
-
-@Serializable
-data class TrackItem(
-    val id: String? = null,
-    val url: String? = null,
-    val lang: String? = null,
-    val label: String? = null,
-    val kind: String? = null,
-    val default: Boolean? = null,
-)
-
-private class LocalProxyServer(
-    private val client: OkHttpClient,
-    private val json: Json,
-) {
-    private val executor = Executors.newCachedThreadPool()
-    private val running = AtomicBoolean(false)
-    private var serverSocket: ServerSocket? = null
-    val port: Int
-        get() = serverSocket?.let { if (it.isClosed) 0 else it.localPort } ?: 0
-
-    fun start() {
-        if (running.get() && serverSocket?.isClosed == false) return
-        running.set(false)
-        try {
-            serverSocket?.close()
-        } catch (_: Exception) {}
-        try {
-            serverSocket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
-            running.set(true)
-            executor.execute {
-                while (running.get() && serverSocket?.isClosed == false) {
-                    try {
-                        val socket = serverSocket?.accept() ?: break
-                        executor.execute { handleClient(socket) }
-                    } catch (_: Exception) {
-                        if (serverSocket?.isClosed == true || !running.get()) break
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            running.set(false)
-        }
-    }
-
-    private fun handleClient(socket: Socket) {
-        socket.use { s ->
-            val input = s.getInputStream()
-            val output = s.getOutputStream()
-            val firstLine = input.bufferedReader().readLine() ?: return
-            val parts = firstLine.split(" ")
-            if (parts.size >= 2 && parts[0] == "GET") {
-                val path = parts[1]
-                routeRequest(path, output)
-            }
-        }
-    }
-
-    private fun routeRequest(path: String, output: OutputStream) {
-        val uri = Uri.parse("http://127.0.0.1$path")
-        val encodedUrl = uri.getQueryParameter("url") ?: return
-        val encodedHeaders = uri.getQueryParameter("headers")
-        val targetUrl = try {
-            String(Base64.decode(encodedUrl, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-        } catch (_: Exception) {
-            return
-        }
-        val headers = decodeHeaders(encodedHeaders)
-
-        try {
-            when {
-                path.contains("playlist.m3u8") -> servePlaylist(targetUrl, headers, encodedHeaders, output)
-                path.contains("key.bin") -> serveKey(targetUrl, headers, output)
-                path.contains("subtitle.vtt") -> serveText(targetUrl, headers, output, "text/vtt")
-                else -> serveSegment(targetUrl, headers, encodedHeaders, output)
-            }
-        } catch (_: Exception) {
-            try {
-                output.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n".toByteArray())
-            } catch (_: Exception) {}
-        }
-    }
-
-    private fun decodeHeaders(encoded: String?): Headers {
-        if (encoded.isNullOrEmpty()) {
-            return Headers.Builder()
-                .set("User-Agent", API_UA)
-                .set("Referer", "https://animex.one/")
-                .build()
-        }
-        return try {
-            val jsonStr = String(Base64.decode(encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-            val map = json.decodeFromString<Map<String, String>>(jsonStr)
-            Headers.Builder().apply {
-                for (entry in map.entries) {
-                    set(entry.key, entry.value)
-                }
-            }.build()
-        } catch (_: Exception) {
-            Headers.Builder()
-                .set("User-Agent", API_UA)
-                .set("Referer", "https://animex.one/")
-                .build()
-        }
-    }
-
-    private fun getProxyUrl(url: String, headersStr: String?, isKey: Boolean = false): String {
-        val encoded = Base64.encodeToString(url.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val path = when {
-            isKey || url.contains(".key") || url.contains("key.bin") -> "key.bin"
-            url.contains(".m3u8") || url.contains(".txt") -> "playlist.m3u8"
-            else -> "segment.ts"
-        }
-        val query = "url=$encoded" + if (!headersStr.isNullOrEmpty()) "&headers=$headersStr" else ""
-        return "http://127.0.0.1:$port/$path?$query"
-    }
-
-    // HTTP/1.1-preferring client: some provider CDNs reset HTTP/2 connections from
-    // mobile networks, which surfaces as TLS/connection exceptions in OkHttp.
-    private val httpClient: OkHttpClient by lazy {
-        client.newBuilder().protocols(listOf(okhttp3.Protocol.HTTP_1_1)).build()
-    }
-
-    private fun Response.silentClose() {
-        try {
-            close()
-        } catch (_: Exception) {}
-    }
-
-    private fun fetchWithRetry(targetUrl: String, headers: Headers): Response {
-        val fallbackHeaders = headers.newBuilder()
-            .set("Referer", "https://animex.one/")
-            .build()
-        val noRefererHeaders = headers.newBuilder().removeAll("Referer").build()
-        val httpUrl = targetUrl.replaceFirst("https://", "http://")
-
-        // Transport/header ladder: TLS/HTTP2 resets on some CDNs need HTTP/1.1,
-        // and a few hosts only respond over plain HTTP on flaky mobile networks.
-        // Attempt = (url, headers, force HTTP/1.1)
-        val attempts = mutableListOf(
-            Triple(targetUrl, headers, false),
-            Triple(targetUrl, fallbackHeaders, false),
-            Triple(targetUrl, noRefererHeaders, false),
-            Triple(targetUrl, headers, true),
-            Triple(targetUrl, fallbackHeaders, true),
-            Triple(httpUrl, noRefererHeaders, true),
-        )
-
-        // NEKO CDN hosts rotate; their Referer/Origin allowlist does too.
-        val isNekoCdn = targetUrl.contains("premilkyway", ignoreCase = true) ||
-            targetUrl.contains("otakuhg", ignoreCase = true) ||
-            targetUrl.contains("brandidentity", ignoreCase = true) ||
-            targetUrl.contains("vibevibe", ignoreCase = true)
-        if (isNekoCdn) {
-            attempts.add(
-                1,
-                Triple(
-                    targetUrl,
-                    headers.newBuilder().set("Referer", "https://premilkyway.com/").build(),
-                    false,
-                ),
-            )
-            attempts.add(
-                2,
-                Triple(
-                    targetUrl,
-                    headers.newBuilder()
-                        .set("Referer", "https://otakuhg.site/")
-                        .set("Origin", "https://otakuhg.site")
-                        .build(),
-                    false,
-                ),
-            )
-        }
-
-        var lastResponse: Response? = null
-        var lastError: Exception? = null
-        for ((url, requestHeaders, useHttp1) in attempts) {
-            try {
-                val callClient = if (useHttp1) httpClient else client
-                val response = callClient.newCall(GET(url, requestHeaders)).execute()
-                if (response.isSuccessful) {
-                    lastResponse?.silentClose()
-                    return response
-                }
-                lastResponse?.silentClose()
-                lastResponse = response
-            } catch (e: Exception) {
-                lastError = e
-            }
-        }
-        return lastResponse ?: throw lastError ?: java.io.IOException("All proxy fetch attempts failed for $targetUrl")
-    }
-
-    private fun servePlaylist(targetUrl: String, headers: Headers, encodedHeaders: String?, output: OutputStream) {
-        val response = fetchWithRetry(targetUrl, headers)
-        if (!response.isSuccessful) {
-            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
-            response.close()
-            return
-        }
-
-        val rawBytes = response.body.bytes()
-        response.silentClose()
-
-        // Some providers wrap playlists in image (JPEG/PNG) data. Strip everything
-        // before the #EXTM3U marker so mpv/ffmpeg sees clean playlist text.
-        val marker = "#EXTM3U".toByteArray(Charsets.US_ASCII)
-        val markerIndex = findAsciiMarker(rawBytes, marker, rawBytes.size)
-        val content = if (markerIndex > 0) {
-            String(rawBytes, markerIndex, rawBytes.size - markerIndex, Charsets.UTF_8)
-        } else {
-            String(rawBytes, Charsets.UTF_8)
-        }
-        val lines = content.split(Regex("""\r?\n"""))
-        val builder = StringBuilder(content.length * 2)
-
-        for (line in lines) {
-            val trimmed = line.trim()
-            if (trimmed.isEmpty()) {
-                builder.append("\n")
-                continue
-            }
-
-            if (trimmed.startsWith("#")) {
-                val uriRegex = Regex("""URI=["']?([^"',\s>]+)["']?""")
-                uriRegex.find(trimmed)?.let { match ->
-                    val uriValue = match.groupValues[1]
-                    val rawResolved = when {
-                        uriValue.startsWith("//") -> "https:$uriValue"
-                        else -> targetUrl.toHttpUrl().resolve(uriValue)?.toString() ?: uriValue
-                    }
-                    val resolvedUri = if (rawResolved.startsWith("//")) "https:$rawResolved" else rawResolved
-                    val isKeyLine = trimmed.contains("#EXT-X-KEY") || resolvedUri.contains(".key")
-                    val proxiedUri = getProxyUrl(resolvedUri, encodedHeaders, isKey = isKeyLine)
-                    builder.append(trimmed.replace(uriValue, proxiedUri))
-                } ?: builder.append(trimmed)
-            } else {
-                val rawResolved = when {
-                    trimmed.startsWith("//") -> "https:$trimmed"
-                    else -> targetUrl.toHttpUrl().resolve(trimmed)?.toString() ?: trimmed
-                }
-                val resolvedUri = if (rawResolved.startsWith("//")) "https:$rawResolved" else rawResolved
-                val isKeyLine = resolvedUri.contains(".key")
-                builder.append(getProxyUrl(resolvedUri, encodedHeaders, isKey = isKeyLine))
-            }
-            builder.append("\n")
-        }
-
-        val bodyBytes = builder.toString().toByteArray()
-        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
-        output.write("Content-Length: ${bodyBytes.size}\r\n".toByteArray())
-        output.write("Content-Type: application/vnd.apple.mpegurl\r\n".toByteArray())
-        output.write("Connection: close\r\n\r\n".toByteArray())
-        output.write(bodyBytes)
-        output.flush()
-    }
-
-    private fun serveText(targetUrl: String, headers: Headers, output: OutputStream, contentType: String) {
-        val response = fetchWithRetry(targetUrl, headers)
-        if (!response.isSuccessful) {
-            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
-            response.silentClose()
-            return
-        }
-
-        val bytes = response.body.bytes()
-        response.silentClose()
-
-        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
-        output.write("Content-Length: ${bytes.size}\r\n".toByteArray())
-        output.write("Content-Type: $contentType\r\n".toByteArray())
-        output.write("Connection: close\r\n\r\n".toByteArray())
-        output.write(bytes)
-        output.flush()
-    }
-
-    private fun serveKey(targetUrl: String, headers: Headers, output: OutputStream) {
-        val response = fetchWithRetry(targetUrl, headers)
-        if (!response.isSuccessful) {
-            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
-            response.close()
-            return
-        }
-
-        val bytes = response.body.bytes()
-        response.close()
-
-        output.write("HTTP/1.1 200 OK\r\n".toByteArray())
-        output.write("Content-Length: ${bytes.size}\r\n".toByteArray())
-        output.write("Content-Type: application/octet-stream\r\n".toByteArray())
-        output.write("Connection: close\r\n\r\n".toByteArray())
-        output.write(bytes)
-        output.flush()
-    }
-
-    private fun serveSegment(targetUrl: String, headers: Headers, encodedHeaders: String?, output: OutputStream) {
-        val response = fetchWithRetry(targetUrl, headers)
-        if (!response.isSuccessful) {
-            output.write("HTTP/1.1 ${response.code} Error\r\nConnection: close\r\n\r\n".toByteArray())
-            response.close()
-            return
-        }
-
-        val body = response.body
-        val inputStream = body.byteStream()
-
-        val headerBuffer = ByteArray(131072)
-        var totalRead = 0
-        while (totalRead < headerBuffer.size) {
-            val read = inputStream.read(headerBuffer, totalRead, headerBuffer.size - totalRead)
-            if (read == -1) break
-            totalRead += read
-        }
-
-        // Some providers (e.g. Loli/Sora) serve HLS playlists disguised as .jpg/.png
-        // files. If the payload contains playlist text, treat it as a playlist
-        // instead of a media segment.
-        if (looksLikePlaylist(headerBuffer)) {
-            response.close()
-            return servePlaylist(targetUrl, headers, encodedHeaders, output)
-        }
-
-        val sample = if (totalRead == headerBuffer.size) headerBuffer else headerBuffer.copyOf(totalRead)
-        val skipBytes = detectSkipBytes(sample)
-        val contentLength = body.contentLength()
-        val payloadLength = if (contentLength > 0) contentLength - skipBytes else -1L
-
-        val headerBuilder = StringBuilder("HTTP/1.1 200 OK\r\n")
-        if (payloadLength >= 0) {
-            headerBuilder.append("Content-Length: $payloadLength\r\n")
-        }
-        headerBuilder.append("Content-Type: video/mp2t\r\n")
-        headerBuilder.append("Connection: close\r\n\r\n")
-        output.write(headerBuilder.toString().toByteArray())
-
-        if (totalRead > skipBytes) {
-            output.write(sample, skipBytes, totalRead - skipBytes)
-        }
-
-        val buffer = ByteArray(8192)
-        var bytesRead: Int
-        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-            output.write(buffer, 0, bytesRead)
-        }
-        output.flush()
-        response.close()
-    }
-
-    private fun looksLikePlaylist(data: ByteArray): Boolean {
-        if (data.isEmpty()) return false
-        val marker = "#EXTM3U".toByteArray(Charsets.US_ASCII)
-        val extX = "#EXT-X".toByteArray(Charsets.US_ASCII)
-        return findAsciiMarker(data, marker, minOf(data.size, 65536)) >= 0 ||
-            findAsciiMarker(data, extX, minOf(data.size, 65536)) >= 0
-    }
-
-    private fun findAsciiMarker(data: ByteArray, marker: ByteArray, limit: Int): Int {
-        val maxStart = minOf(data.size, limit) - marker.size
-        if (maxStart < 0) return -1
-        var i = 0
-        while (i <= maxStart) {
-            if (data[i] == marker[0]) {
-                var j = 1
-                while (j < marker.size && data[i + j] == marker[j]) j++
-                if (j == marker.size) return i
-            }
-            i++
-        }
-        return -1
-    }
-
-    private fun detectSkipBytes(data: ByteArray): Int {
-        if (data.size < 4) return 0
-
-        val isPng = data[0] == 0x89.toByte() && data[1] == 0x50.toByte() && data[2] == 0x4E.toByte() && data[3] == 0x47.toByte()
-        val isJpeg = data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte() && data[2] == 0xFF.toByte()
-        val isGif = data[0] == 0x47.toByte() && data[1] == 0x49.toByte() && data[2] == 0x46.toByte()
-
-        if (!isPng && !isJpeg && !isGif) return 0
-
-        val maxScan = minOf(data.size, 131072)
-
-        val ftyp = byteArrayOf(0x66.toByte(), 0x74.toByte(), 0x79.toByte(), 0x70.toByte())
-        val maxFtyp = minOf(data.size - ftyp.size, maxScan)
-        for (i in 0..maxFtyp) {
-            if (data[i] == ftyp[0] && data[i + 1] == ftyp[1] && data[i + 2] == ftyp[2] && data[i + 3] == ftyp[3]) {
-                return if (i >= 4) i - 4 else i
-            }
-        }
-
-        if (isPng) {
-            val iend = byteArrayOf(0x49.toByte(), 0x45.toByte(), 0x4E.toByte(), 0x44.toByte())
-            val maxIend = minOf(data.size - iend.size, maxScan)
-            for (i in 0..maxIend) {
-                if (data[i] == iend[0] && data[i + 1] == iend[1] && data[i + 2] == iend[2] && data[i + 3] == iend[3]) {
-                    if (i + 8 <= data.size) return i + 8
-                }
-            }
-        }
-
-        val maxTs = minOf(data.size - 188 * 2, maxScan)
-        for (i in 0..maxTs) {
-            if (data[i] == 0x47.toByte()) {
-                var validCount = 0
-                val limit = minOf(data.size, i + 188 * 4)
-                var j = i
-                while (j < limit) {
-                    if (data[j] == 0x47.toByte()) {
-                        validCount++
-                    }
-                    j += 188
-                }
-                if (validCount >= 3) {
-                    return i
-                }
-            }
-        }
-        return 0
     }
 }
