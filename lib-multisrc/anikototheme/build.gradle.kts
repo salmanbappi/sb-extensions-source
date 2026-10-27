@@ -4,7 +4,7 @@ plugins {
     alias(kei.plugins.multisrc)
 }
 
-baseVersionCode = 10
+baseVersionCode = 11
 
 dependencies {
     implementation(project(":lib:episode-metadata-fetcher"))

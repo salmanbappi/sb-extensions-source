@@ -1328,7 +1328,7 @@ class EpisodeMetadataFetcher(
     )
 
     companion object {
-        const val VERSION = 2
+        const val VERSION = 3
         private const val TAG = "EpisodeMetadataFetcher"
         private const val FAST_TIMEOUT_MS = 2500L
         private const val FAST_CALL_TIMEOUT_MS = 3000L
@@ -1346,5 +1346,158 @@ class EpisodeMetadataFetcher(
         private val TAGS_REGEX = Regex("""(?i)\b(complete|batch|remastered|extended|unrated|directors\s*cut)\b""")
         private val BRACKETS_REGEX = Regex("""\[.*?\]|\(.*?\)|<.*?>|\{.*?\}""")
         private val SEPARATORS_REGEX = Regex("""[\-_:|]+""")
+
+        /**
+         * Formats multiple alternative titles into a numbered list without language labels.
+         * Drops empty values, deduplicates case-insensitively, and ignores the main title.
+         */
+        fun formatAlternativeTitles(
+            mainTitle: String,
+            vararg titles: String?,
+        ): String? {
+            val cleanMain = mainTitle.trim().lowercase()
+
+            val uniqueTitles = titles
+                .filterNotNull()
+                .map { it.trim() }
+                .filter { it.isNotBlank() && it.lowercase() != cleanMain }
+                .distinctBy { it.lowercase() }
+
+            if (uniqueTitles.isEmpty()) return null
+
+            return buildString {
+                append("### Alternative Titles\n")
+                uniqueTitles.forEachIndexed { index, title ->
+                    append("${index + 1}. $title\n")
+                }
+            }.trimEnd()
+        }
+
+        /**
+         * Formats media details for Anime, TV Series, or Movies into clean Markdown bullets.
+         */
+        fun formatMediaDetails(
+            isMovie: Boolean = false,
+            directorOrCreator: String? = null,
+            networkOrStudio: String? = null,
+            runtime: String? = null,
+            premiered: String? = null,
+            dateRange: String? = null,
+            seasonsCount: Int? = null,
+            episodesCount: Int? = null,
+            status: String? = null,
+            contentRating: String? = null,
+        ): String? {
+            val lines = mutableListOf<String>()
+
+            if (!directorOrCreator.isNullOrBlank()) {
+                val label = if (isMovie) "Director" else "Creator"
+                lines.add("* **$label:** $directorOrCreator")
+            }
+
+            if (!networkOrStudio.isNullOrBlank()) {
+                val label = if (isMovie) "Studio" else "Network"
+                lines.add("* **$label:** $networkOrStudio")
+            }
+
+            if (isMovie) {
+                if (!runtime.isNullOrBlank()) lines.add("* **Runtime:** $runtime")
+                if (!dateRange.isNullOrBlank()) lines.add("* **Released:** $dateRange")
+            } else {
+                val formatLine = buildString {
+                    append("* **Format:** TV Series")
+                    val counts = mutableListOf<String>()
+                    if (seasonsCount != null && seasonsCount > 0) counts.add("$seasonsCount Seasons")
+                    if (episodesCount != null && episodesCount > 0) counts.add("$episodesCount Episodes")
+                    if (counts.isNotEmpty()) append(" (${counts.joinToString(", ")})")
+                }
+                lines.add(formatLine)
+
+                val dateLine = when {
+                    !premiered.isNullOrBlank() && !dateRange.isNullOrBlank() ->
+                        "* **Premiered:** $premiered ($dateRange)"
+                    !dateRange.isNullOrBlank() -> "* **Aired:** $dateRange"
+                    !premiered.isNullOrBlank() -> "* **Premiered:** $premiered"
+                    else -> null
+                }
+                dateLine?.let { lines.add(it) }
+
+                if (!status.isNullOrBlank()) lines.add("* **Status:** $status")
+            }
+
+            if (!contentRating.isNullOrBlank()) {
+                lines.add("* **Content Rating:** $contentRating")
+            }
+
+            if (lines.isEmpty()) return null
+
+            val header = if (isMovie) "### Movie Details" else "### Show Details"
+            return "$header\n" + lines.joinToString("\n")
+        }
+
+        /**
+         * Formats clickable Markdown links for databases (IMDb, TMDB, TVDB, MAL, AniList, AniDB).
+         */
+        fun formatDatabaseLinks(
+            malId: String? = null,
+            anilistId: String? = null,
+            imdbId: String? = null,
+            tmdbId: String? = null,
+            tvdbId: String? = null,
+            anidbId: String? = null,
+            isMovie: Boolean = false,
+        ): String? {
+            val links = mutableListOf<String>()
+
+            if (!malId.isNullOrBlank()) {
+                links.add("[MyAnimeList](https://myanimelist.net/anime/$malId)")
+            }
+            if (!anilistId.isNullOrBlank()) {
+                links.add("[AniList](https://anilist.co/anime/$anilistId)")
+            }
+            if (!imdbId.isNullOrBlank()) {
+                val clean = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
+                links.add("[IMDb](https://www.imdb.com/title/$clean)")
+            }
+            if (!tmdbId.isNullOrBlank()) {
+                val type = if (isMovie) "movie" else "tv"
+                links.add("[TMDB](https://www.themoviedb.org/$type/$tmdbId)")
+            }
+            if (!tvdbId.isNullOrBlank() && !isMovie) {
+                links.add("[TVDB](https://thetvdb.com/dereferrer/series/$tvdbId)")
+            }
+            if (!anidbId.isNullOrBlank()) {
+                links.add("[AniDB](https://anidb.net/anime/$anidbId)")
+            }
+
+            return if (links.isNotEmpty()) {
+                "### Database Links\n" + links.joinToString(" • ")
+            } else null
+        }
+
+        /**
+         * Assembles the complete structured Markdown description with optional wide image banner.
+         */
+        fun buildStructuredDescription(
+            synopsis: String?,
+            bannerUrl: String? = null,
+            altTitlesBlock: String? = null,
+            detailsBlock: String? = null,
+            linksBlock: String? = null,
+        ): String = buildString {
+            if (!bannerUrl.isNullOrBlank()) {
+                append("![Banner]($bannerUrl)\n\n")
+            }
+
+            if (!synopsis.isNullOrBlank()) {
+                append(synopsis.trim())
+            }
+
+            val sections = listOfNotNull(altTitlesBlock, detailsBlock, linksBlock)
+            if (sections.isNotEmpty()) {
+                append("\n\n---\n\n")
+                append(sections.joinToString("\n\n"))
+            }
+        }
     }
 }
