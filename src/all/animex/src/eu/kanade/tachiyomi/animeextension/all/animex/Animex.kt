@@ -24,6 +24,8 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import extensions.utils.Source
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -284,7 +286,16 @@ class Animex : Source() {
     // ============================== ANIME DETAILS ==============================
 
     override fun animeDetailsRequest(anime: SAnime): Request {
-        val anilistId = anime.url.substringAfter("/anime/").substringBefore("?").substringAfterLast("-").toIntOrNull()
+        val fullUrl = when {
+            anime.url.startsWith("http://") || anime.url.startsWith("https://") -> anime.url
+            anime.url.startsWith("/") -> "$baseUrl${anime.url}"
+            else -> "$baseUrl/${anime.url}"
+        }
+        return GET(fullUrl, headers)
+    }
+
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime = withContext(Dispatchers.IO) {
+        val anilistId = anime.url.substringAfter("/anime/").substringBefore("?").trimEnd('/').substringAfterLast("-").toIntOrNull()
             ?: anime.url.split("/").getOrNull(2)?.toIntOrNull()
             ?: throw Exception("Invalid anime URL: ${anime.url}")
 
@@ -312,7 +323,9 @@ class Animex : Source() {
             variables = GraphQLVariables(anilistId = anilistId),
         )
         val body = json.encodeToString(queryBody).toRequestBody("application/json; charset=utf-8".toMediaType())
-        return POST("https://graphql.animex.one/graphql", headers, body)
+        val request = POST("https://graphql.animex.one/graphql", headers, body)
+        val response = client.newCall(request).execute()
+        animeDetailsParse(response)
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
