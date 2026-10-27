@@ -8,7 +8,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import extensions.utils.EpisodeMetadataFetcher as CommonFetcher
+import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher as CommonFetcher
 
 class EpisodeMetadataFetcher(
     private val client: OkHttpClient,

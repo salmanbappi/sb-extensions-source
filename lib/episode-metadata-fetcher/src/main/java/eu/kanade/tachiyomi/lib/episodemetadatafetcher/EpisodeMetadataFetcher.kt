@@ -1,4 +1,4 @@
-package extensions.utils
+package eu.kanade.tachiyomi.lib.episodemetadatafetcher
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +17,7 @@ import org.json.JSONObject
 import java.net.URLEncoder
 import java.text.Normalizer
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 class EpisodeMetadataFetcher(
     private val client: OkHttpClient,
@@ -26,6 +27,13 @@ class EpisodeMetadataFetcher(
     tmdbApiKey: String = "",
 ) {
     private val effectiveTmdbKey: String = tmdbApiKey.ifBlank { DEFAULT_TMDB_API_KEY }
+
+    private val metaClient: OkHttpClient = client.newBuilder()
+        .connectTimeout(FAST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(FAST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .callTimeout(FAST_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .build()
+
     data class EpisodeMetadata(
         val title: String?,
         val description: String?,
@@ -71,7 +79,12 @@ class EpisodeMetadataFetcher(
         return withContext(Dispatchers.IO) {
             try {
                 val cleanTitle = sanitizeTitle(title)
-                // 1. Try Kitsu
+                // 1. Try AniList GraphQL (clean text, no HTML, fastest ~300ms)
+                val aniListSyn = fetchAniListSynopsis(cleanTitle)
+                if (!aniListSyn.isNullOrBlank()) {
+                    return@withContext aniListSyn
+                }
+                // 2. Try Kitsu
                 val searchUrl = "https://kitsu.app/api/edge/anime?filter[text]=${URLEncoder.encode(cleanTitle, "UTF-8")}&page[limit]=1"
                 val body = fetchString(searchUrl)
                 if (body != null) {
@@ -82,7 +95,7 @@ class EpisodeMetadataFetcher(
                         return@withContext stripHtml(syn)
                     }
                 }
-                // 2. Try Jikan
+                // 3. Try Jikan
                 val jikanUrl = "https://api.jikan.moe/v4/anime?q=${URLEncoder.encode(cleanTitle, "UTF-8")}&limit=1"
                 val jikanBody = fetchString(jikanUrl)
                 if (jikanBody != null) {
@@ -119,60 +132,89 @@ class EpisodeMetadataFetcher(
                 logd("fetching for malId=$malId title=$animeTitle")
 
                 var resolvedMalId = malId
-                var kitsuEpsByTitle = emptyMap<Int, EpisodeMetadata>()
+                var resolvedAniListId: String? = null
+                var bannerUrl: String? = null
 
-                if (resolvedMalId.isBlank() && !animeTitle.isNullOrBlank()) {
-                    val kitsuSearchResult = fetchKitsuByTitle(animeTitle)
-                    if (kitsuSearchResult != null) {
-                        kitsuEpsByTitle = kitsuSearchResult.episodes
-                        resolvedMalId = kitsuSearchResult.malId ?: ""
+                // 1. Direct Tier-1 Ani.zip fast-path if malId is provided
+                if (resolvedMalId.isNotBlank()) {
+                    val anizipData = fetchAniZipData(malId = resolvedMalId)
+                    if (anizipData.episodes.isNotEmpty()) {
+                        val isComplete = anizipData.episodes.values.all {
+                            !it.description.isNullOrBlank() && !it.thumbnailUrl.isNullOrBlank()
+                        }
+                        if (isComplete) {
+                            val cached = CachedData(anizipData.episodes, anizipData.bannerUrl)
+                            synchronized(cache) { cache[cacheKey] = cached }
+                            val elapsed = System.currentTimeMillis() - startTime
+                            logi("Tier-1 Ani.zip fast-path resolved ${anizipData.episodes.size} episodes in ${elapsed}ms")
+                            return@withContext applyFallbackThumbnail(anizipData.episodes, anizipData.bannerUrl, fallbackThumbnailUrl)
+                        }
                     }
-                    if (resolvedMalId.isBlank()) {
+                }
+
+                // 2. If MAL ID was missing or Ani.zip was partial, resolve via AniList GraphQL
+                if (resolvedMalId.isBlank() && !animeTitle.isNullOrBlank()) {
+                    val anilistRes = fetchAniListByTitle(animeTitle)
+                    if (anilistRes != null) {
+                        resolvedAniListId = anilistRes.anilistId
+                        resolvedMalId = anilistRes.malId ?: ""
+                        bannerUrl = anilistRes.bannerUrl
+                    }
+                    if (resolvedMalId.isBlank() && resolvedAniListId == null) {
+                        val kitsuSearchResult = fetchKitsuByTitle(animeTitle)
+                        if (kitsuSearchResult != null) {
+                            resolvedMalId = kitsuSearchResult.malId ?: ""
+                        }
+                    }
+                    if (resolvedMalId.isBlank() && resolvedAniListId == null) {
                         resolvedMalId = fetchMalIdByJikan(animeTitle) ?: ""
                     }
                 }
 
-                // 1. Fetch AniList and Jikan concurrently
-                val jikanDeferred = async { if (resolvedMalId.isNotBlank()) fetchJikanEpisodes(resolvedMalId) else emptyMap() }
-                val anilistIdDeferred = async { if (resolvedMalId.isNotBlank()) fetchAniListId(resolvedMalId) else null }
-
-                val jikanEps = jikanDeferred.await()
-                val anilistId = anilistIdDeferred.await()
-
-                val anizipEps = if (resolvedMalId.isNotBlank() || anilistId != null) {
-                    fetchAniZipEpisodes(malId = resolvedMalId, anilistId = anilistId)
-                } else {
-                    emptyMap()
+                // 3. Query Ani.zip with resolved IDs
+                var anizipEps = emptyMap<Int, EpisodeMetadata>()
+                if (resolvedMalId.isNotBlank() || !resolvedAniListId.isNullOrBlank()) {
+                    val anizipData = fetchAniZipData(malId = resolvedMalId, anilistId = resolvedAniListId)
+                    anizipEps = anizipData.episodes
+                    if (bannerUrl == null) bannerUrl = anizipData.bannerUrl
                 }
 
-                val anikageEps = if (anilistId != null) fetchAnikageEpisodes(anilistId) else emptyMap()
-                val anilistStreaming = if (resolvedMalId.isNotBlank()) anilistStreamingCache[resolvedMalId] ?: emptyList() else emptyList()
-                val bannerUrl = if (resolvedMalId.isNotBlank()) anilistBannerCache[resolvedMalId] else null
+                var merged = anizipEps
 
-                // Merge primary metadata
-                var merged = mergeEpisodes(anikageEps, kitsuEpsByTitle, anilistStreaming, jikanEps)
-                if (anizipEps.isNotEmpty()) {
-                    merged = mergeWithFallback(merged, anizipEps)
-                }
-
-                // 2. If primary metadata is incomplete (missing synopsis/thumbnail), query TMDB fallback
+                // 4. Fallback if Ani.zip was missing or incomplete
                 val needsMoreMetadata = merged.isEmpty() || merged.values.any { it.description.isNullOrBlank() || it.thumbnailUrl.isNullOrBlank() }
-
-                if (needsMoreMetadata && !animeTitle.isNullOrBlank() && effectiveTmdbKey.isNotBlank()) {
-                    logd("Primary metadata incomplete/empty. Fetching from TMDB fallback...")
-                    val tmdbEps = fetchTmdbEpisodes(animeTitle)
-                    if (tmdbEps.isNotEmpty()) {
-                        merged = mergeWithFallback(merged, tmdbEps)
+                if (needsMoreMetadata) {
+                    val cinemetaDeferred = async {
+                        if (!animeTitle.isNullOrBlank()) {
+                            try { fetchCinemetaEpisodes(animeTitle, season = 1, isTv = true) } catch (_: Exception) { emptyMap() }
+                        } else emptyMap()
                     }
-                }
+                    val kitsuDeferred = async {
+                        if (resolvedMalId.isNotBlank()) {
+                            try { fetchKitsuEpisodes(resolvedMalId) } catch (_: Exception) { emptyMap() }
+                        } else emptyMap()
+                    }
+                    val tmdbDeferred = async {
+                        if (!animeTitle.isNullOrBlank() && effectiveTmdbKey.isNotBlank()) {
+                            try { fetchTmdbEpisodes(animeTitle) } catch (_: Exception) { emptyMap() }
+                        } else emptyMap()
+                    }
 
-                // 3. Last resort: If still incomplete, query Kitsu with resolvedMalId
-                val stillNeedsMetadata = merged.isEmpty() || merged.values.any { it.description.isNullOrBlank() || it.thumbnailUrl.isNullOrBlank() }
-                if (stillNeedsMetadata && resolvedMalId.isNotBlank() && kitsuEpsByTitle.isEmpty()) {
-                    logd("Metadata still incomplete. Fetching from Kitsu fallback...")
-                    val kitsuEps = fetchKitsuEpisodes(resolvedMalId)
-                    if (kitsuEps.isNotEmpty()) {
-                        merged = mergeWithFallback(merged, kitsuEps)
+                    val cinemetaEps = cinemetaDeferred.await()
+                    if (cinemetaEps.isNotEmpty()) {
+                        merged = mergeWithFallback(merged, cinemetaEps)
+                    }
+
+                    val stillNeeds = merged.isEmpty() || merged.values.any { it.description.isNullOrBlank() || it.thumbnailUrl.isNullOrBlank() }
+                    if (stillNeeds) {
+                        val kitsuEps = kitsuDeferred.await()
+                        if (kitsuEps.isNotEmpty()) {
+                            merged = mergeWithFallback(merged, kitsuEps)
+                        }
+                        val tmdbEps = tmdbDeferred.await()
+                        if (tmdbEps.isNotEmpty()) {
+                            merged = mergeWithFallback(merged, tmdbEps)
+                        }
                     }
                 }
 
@@ -247,20 +289,40 @@ class EpisodeMetadataFetcher(
             }
 
             val cinemetaEps = cinemetaDeferred.await()
-            val tmdbEps = tmdbDeferred.await()
-            val tvMazeEps = tvMazeDeferred.await()
+            if (cinemetaEps.isNotEmpty()) {
+                merged = mergeWithFallback(merged, cinemetaEps).toMutableMap()
+            }
 
-            merged = mergeWithFallback(merged, cinemetaEps).toMutableMap()
-            merged = mergeWithFallback(merged, tmdbEps).toMutableMap()
-            merged = mergeWithFallback(merged, tvMazeEps).toMutableMap()
+            val isComplete = merged.isNotEmpty() && merged.values.all {
+                !it.description.isNullOrBlank() && !it.thumbnailUrl.isNullOrBlank()
+            }
+
+            if (!isComplete) {
+                val tvMazeEps = tvMazeDeferred.await()
+                if (tvMazeEps.isNotEmpty()) {
+                    merged = mergeWithFallback(merged, tvMazeEps).toMutableMap()
+                }
+
+                val stillIncomplete = merged.isEmpty() || merged.values.any {
+                    it.description.isNullOrBlank() || it.thumbnailUrl.isNullOrBlank()
+                }
+                if (stillIncomplete) {
+                    val tmdbEps = tmdbDeferred.await()
+                    if (tmdbEps.isNotEmpty()) {
+                        merged = mergeWithFallback(merged, tmdbEps).toMutableMap()
+                    }
+                }
+            }
 
             // If still missing metadata, try Ani.zip mapping for anime
             val isMissing = merged.isEmpty() || merged.values.any { it.description.isNullOrBlank() || it.thumbnailUrl.isNullOrBlank() }
             if (isMissing) {
                 try {
-                    val malId = fetchMalIdByJikan(cleanTitle)
-                    if (!malId.isNullOrBlank()) {
-                        val anizipEps = fetchAniZipEpisodes(malId = malId)
+                    val anilistRes = fetchAniListByTitle(cleanTitle)
+                    val malId = anilistRes?.malId ?: fetchMalIdByJikan(cleanTitle)
+                    val alId = anilistRes?.anilistId
+                    if (!malId.isNullOrBlank() || !alId.isNullOrBlank()) {
+                        val anizipEps = fetchAniZipEpisodes(malId = malId, anilistId = alId)
                         if (anizipEps.isNotEmpty()) {
                             merged = mergeWithFallback(merged, anizipEps).toMutableMap()
                         }
@@ -418,27 +480,54 @@ class EpisodeMetadataFetcher(
         }
     }
 
+    private data class AniListResolved(
+        val anilistId: String?,
+        val malId: String?,
+        val bannerUrl: String?,
+        val description: String?,
+    )
+
+    private fun fetchAniListByTitle(title: String): AniListResolved? {
+        val cleanTitle = sanitizeTitle(title)
+        val query = """query (${'$'}search: String) { Media(search: ${'$'}search, type: ANIME) { id idMal bannerImage description(asHtml: false) } }"""
+        val body = JSONObject().apply {
+            put("query", query)
+            put("variables", JSONObject().put("search", cleanTitle))
+        }.toString()
+        val respBody = postJson("https://graphql.anilist.co", body) ?: return null
+        return try {
+            val json = JSONObject(respBody)
+            val media = json.optJSONObject("data")?.optJSONObject("Media") ?: return null
+            val id = media.optInt("id").takeIf { it > 0 }?.toString()
+            val malId = media.optInt("idMal").takeIf { it > 0 }?.toString()
+            val banner = media.optString("bannerImage").takeIf { it.isNotBlank() }
+            val desc = media.optString("description").takeIf { it.isNotBlank() }
+            AniListResolved(id, malId, banner, desc)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun fetchAniListSynopsis(title: String): String? {
+        val cleanTitle = sanitizeTitle(title)
+        val query = """query (${'$'}search: String) { Media(search: ${'$'}search, type: ANIME) { description(asHtml: false) } }"""
+        val body = JSONObject().apply {
+            put("query", query)
+            put("variables", JSONObject().put("search", cleanTitle))
+        }.toString()
+        val respBody = postJson("https://graphql.anilist.co", body) ?: return null
+        return try {
+            val json = JSONObject(respBody)
+            val desc = json.optJSONObject("data")?.optJSONObject("Media")?.optString("description")
+            desc?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun fetchAnikageEpisodes(anilistId: String): Map<Int, EpisodeMetadata> {
-        val url = "https://anikage.cc/api/media/anime/$anilistId/episodes"
-        val body = fetchString(url) ?: return emptyMap()
-        val episodes = try {
-            localJson.decodeFromString(kotlinx.serialization.builtins.ListSerializer(AnikageEpisode.serializer()), body)
-        } catch (e: Exception) {
-            logd("Anikage parse failed — ${e.message}")
-            return emptyMap()
-        }
-        val result = mutableMapOf<Int, EpisodeMetadata>()
-        for (ep in episodes) {
-            val num = ep.number ?: continue
-            result[num] = EpisodeMetadata(
-                title = ep.title?.takeIf { it.isNotBlank() },
-                description = ep.description?.takeIf { it.isNotBlank() }?.let { stripHtml(it) },
-                thumbnailUrl = ep.img?.takeIf { it.isNotBlank() },
-                airdate = ep.airDate?.takeIf { it.isNotBlank() },
-            )
-        }
-        logd("Anikage returned ${result.size} episodes")
-        return result
+        // Anikage API is obsolete / Cloudflare-gated
+        return emptyMap()
     }
 
     private data class KitsuSearchResult(
@@ -577,7 +666,7 @@ class EpisodeMetadataFetcher(
         }
         return try {
             val req = Request.Builder().url(url).headers(apiHeaders).build()
-            client.newCall(req).execute().use { resp ->
+            metaClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     logd("HTTP ${resp.code} for ${url.take(80)}")
                     return null
@@ -606,7 +695,7 @@ class EpisodeMetadataFetcher(
                 jsonBody,
             )
             val req = Request.Builder().url(url).headers(apiHeaders).post(body).build()
-            client.newCall(req).execute().use { resp ->
+            metaClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     logd("POST HTTP ${resp.code} for ${url.take(60)}")
                     return null
@@ -620,8 +709,6 @@ class EpisodeMetadataFetcher(
     }
 
     private fun stripHtml(text: String): String = text.replace(Regex("<[^>]+>"), "").trim()
-
-    // ── TMDB Fallback ──────────────────────────────────────────────────────────
 
     // ── TMDB Fallback ──────────────────────────────────────────────────────────
 
@@ -936,21 +1023,28 @@ class EpisodeMetadataFetcher(
 
     // ── Ani.zip Provider ───────────────────────────────────────────────────────
 
-    private fun fetchAniZipEpisodes(
+    private data class AniZipData(
+        val episodes: Map<Int, EpisodeMetadata>,
+        val bannerUrl: String? = null,
+        val malId: String? = null,
+        val anilistId: String? = null,
+    )
+
+    private fun fetchAniZipData(
         malId: String? = null,
         anilistId: String? = null,
-    ): Map<Int, EpisodeMetadata> {
+    ): AniZipData {
         val param = when {
             !anilistId.isNullOrBlank() -> "anilist_id=$anilistId"
             !malId.isNullOrBlank() -> "mal_id=$malId"
-            else -> return emptyMap()
+            else -> return AniZipData(emptyMap())
         }
         val url = "$ANIZIP_BASE_URL?$param"
-        val body = fetchString(url) ?: return emptyMap()
+        val body = fetchString(url) ?: return AniZipData(emptyMap())
 
         return try {
             val root = JSONObject(body)
-            val epsObj = root.optJSONObject("episodes") ?: return emptyMap()
+            val epsObj = root.optJSONObject("episodes") ?: return AniZipData(emptyMap())
             val result = mutableMapOf<Int, EpisodeMetadata>()
             val keys = epsObj.keys()
 
@@ -978,12 +1072,34 @@ class EpisodeMetadataFetcher(
                     airdate = airDate,
                 )
             }
-            result
+
+            var bannerUrl: String? = null
+            val images = root.optJSONArray("images")
+            if (images != null) {
+                for (i in 0 until images.length()) {
+                    val img = images.getJSONObject(i)
+                    if (img.optString("coverType") == "Banner") {
+                        bannerUrl = img.optString("url").takeIf { it.isNotBlank() }
+                        if (bannerUrl != null) break
+                    }
+                }
+            }
+
+            val mappings = root.optJSONObject("mappings")
+            val mappedMalId = mappings?.optString("mal_id")?.takeIf { it.isNotBlank() }
+            val mappedAniListId = mappings?.optString("anilist_id")?.takeIf { it.isNotBlank() }
+
+            AniZipData(result, bannerUrl, mappedMalId, mappedAniListId)
         } catch (e: Exception) {
             logd("Ani.zip fetch failed — ${e.message}")
-            emptyMap()
+            AniZipData(emptyMap())
         }
     }
+
+    private fun fetchAniZipEpisodes(
+        malId: String? = null,
+        anilistId: String? = null,
+    ): Map<Int, EpisodeMetadata> = fetchAniZipData(malId, anilistId).episodes
 
     // ── Title Sanitizer & Fuzzy Matcher ────────────────────────────────────────
 
@@ -1192,7 +1308,10 @@ class EpisodeMetadataFetcher(
     )
 
     companion object {
+        const val VERSION = 2
         private const val TAG = "EpisodeMetadataFetcher"
+        private const val FAST_TIMEOUT_MS = 2500L
+        private const val FAST_CALL_TIMEOUT_MS = 3000L
         private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         private const val TMDB_BASE_URL = "https://api.themoviedb.org/3"
         private const val DEFAULT_TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49"

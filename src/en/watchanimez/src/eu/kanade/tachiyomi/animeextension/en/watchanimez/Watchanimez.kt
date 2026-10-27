@@ -17,7 +17,7 @@ import eu.kanade.tachiyomi.lib.vidmolyextractor.VidMolyExtractor
 import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
-import extensions.utils.EpisodeMetadataFetcher
+import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher
 import extensions.utils.Source
 import extensions.utils.UrlUtils
 import extensions.utils.parseAs

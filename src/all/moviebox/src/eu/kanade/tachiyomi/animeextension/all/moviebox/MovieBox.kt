@@ -20,7 +20,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
-import extensions.utils.EpisodeMetadataFetcher
+import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher
 import extensions.utils.Source
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
