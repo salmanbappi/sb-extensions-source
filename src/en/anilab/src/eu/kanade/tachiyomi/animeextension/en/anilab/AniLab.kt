@@ -194,8 +194,8 @@ class AniLab : Source() {
         val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, PREF_LOAD_DESCRIPTIONS_DEFAULT)
         if (loadDescriptions) {
             runCatching {
-                val synopsis = metadataFetcher.fetchAnimeSynopsis(details.title)
-                if (!synopsis.isNullOrBlank()) {
+                val meta = metadataFetcher.fetchAnimeMetadata(details.title)
+                if (meta != null) {
                     val existingDesc = details.description ?: ""
                     val separator = "\n\n---\n\n"
                     val structuredBlock = if (existingDesc.contains(separator)) {
@@ -204,9 +204,29 @@ class AniLab : Source() {
                         null
                     }
 
+                    val altTitlesBlock = if (meta.altTitles.isNotEmpty()) {
+                        EpisodeMetadataFetcher.formatAlternativeTitles(details.title, *meta.altTitles.toTypedArray())
+                    } else null
+
+                    val linksBlock = EpisodeMetadataFetcher.formatDatabaseLinks(
+                        malId = meta.malId,
+                        anilistId = meta.anilistId,
+                        imdbId = meta.imdbId,
+                        tmdbId = meta.tmdbId,
+                        tvdbId = meta.tvdbId,
+                        anidbId = meta.anidbId,
+                        isMovie = details.author?.contains("movie", ignoreCase = true) == true,
+                    )
+
+                    val synopsis = meta.synopsis?.takeIf { it.isNotBlank() }
+                        ?: existingDesc.substringBefore(separator).takeIf { it.isNotBlank() }
+
                     details.description = EpisodeMetadataFetcher.buildStructuredDescription(
                         synopsis = synopsis,
+                        bannerUrl = meta.bannerUrl,
+                        altTitlesBlock = altTitlesBlock,
                         detailsBlock = structuredBlock,
+                        linksBlock = linksBlock,
                     )
                 }
             }
