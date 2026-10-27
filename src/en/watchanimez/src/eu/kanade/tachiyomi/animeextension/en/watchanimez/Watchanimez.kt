@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.watchanimez
 
 import androidx.preference.ListPreference
-import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -911,11 +910,8 @@ class Watchanimez : Source() {
             },
         )
 
-        // 6. Episode Metadata
-        PreferenceCategory(context).apply {
-            title = "Episode Metadata"
-            screen.addPreference(this)
-
+        // 6. Episode Metadata Settings
+        screen.addPreference(
             SwitchPreferenceCompat(context).apply {
                 key = PREF_LOAD_THUMBNAILS_KEY
                 title = "Load episode thumbnails"
@@ -925,8 +921,10 @@ class Watchanimez : Source() {
                 setOnPreferenceChangeListener { _, newValue ->
                     preferences.edit().putBoolean(key, newValue as Boolean).commit()
                 }
-            }.also { addPreference(it) }
+            },
+        )
 
+        screen.addPreference(
             SwitchPreferenceCompat(context).apply {
                 key = PREF_LOAD_TITLES_KEY
                 title = "Load episode titles"
@@ -936,8 +934,10 @@ class Watchanimez : Source() {
                 setOnPreferenceChangeListener { _, newValue ->
                     preferences.edit().putBoolean(key, newValue as Boolean).commit()
                 }
-            }.also { addPreference(it) }
+            },
+        )
 
+        screen.addPreference(
             SwitchPreferenceCompat(context).apply {
                 key = PREF_LOAD_DESCRIPTIONS_KEY
                 title = "Load episode summaries (spoilers)"
@@ -947,8 +947,8 @@ class Watchanimez : Source() {
                 setOnPreferenceChangeListener { _, newValue ->
                     preferences.edit().putBoolean(key, newValue as Boolean).commit()
                 }
-            }.also { addPreference(it) }
-        }
+            },
+        )
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
