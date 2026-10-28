@@ -1,9 +1,0 @@
-ext {
-    extName = 'Amader FTP'
-    extClass = '.AmaderFtp'
-    themePkg = 'jellyfin'
-    overrideVersionCode = 1016
-    isNsfw = false
-}
-
-apply from: "$rootDir/common.gradle"

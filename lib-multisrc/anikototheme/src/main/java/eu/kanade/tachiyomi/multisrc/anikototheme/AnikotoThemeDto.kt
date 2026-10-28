@@ -181,9 +181,9 @@ data class EpisodeMeta(
 
 @Serializable
 data class MapperStreamToken(
-    val serverName: String,
-    val audio: String,
-    val token: String,
+    val serverName: String = "",
+    val audio: String = "",
+    val token: String = "",
 )
 
 fun parseMapperResponse(obj: JsonObject): List<MapperStreamToken> {

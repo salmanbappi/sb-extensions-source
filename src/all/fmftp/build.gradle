@@ -1,8 +1,0 @@
-ext {
-    extName = 'FM FTP'
-    extClass = '.FmFtp'
-    extVersionCode = 1012
-    isNsfw = false
-}
-
-apply from: "$rootDir/common.gradle"

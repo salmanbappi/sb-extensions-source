@@ -531,7 +531,8 @@ abstract class AnikotoTheme : Source() {
                         summary = episodeMeta.description
                     }
                     if (loadTitles && !episodeMeta.title.isNullOrBlank()) {
-                        val epNumStr = if (episode_number % 1 == 0f) episode_number.toInt().toString() else episode_number.toString()
+                        val epNum = episode_number
+                        val epNumStr = if (epNum % 1f == 0f) "${epNum.toInt()}" else "$epNum"
                         name = "Episode $epNumStr: ${episodeMeta.title}"
                     }
                 }

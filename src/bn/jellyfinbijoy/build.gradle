@@ -1,0 +1,9 @@
+ext {
+    extName = 'Bijoy'
+    extClass = '.JellyfinBijoy'
+    themePkg = 'jellyfin'
+    overrideVersionCode = 1013
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

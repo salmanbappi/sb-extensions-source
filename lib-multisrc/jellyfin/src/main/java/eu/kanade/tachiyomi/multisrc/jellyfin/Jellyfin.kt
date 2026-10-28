@@ -80,9 +80,9 @@ object ItemTypeSerializer : KSerializer<ItemType> {
 @Serializable data class ItemListDto(val items: List<ItemDto> = emptyList(), val totalRecordCount: Int = 0)
 
 @Serializable data class ItemDto(
-    val name: String,
+    val name: String = "",
     val type: ItemType? = ItemType.Other,
-    val id: String,
+    val id: String = "",
     val locationType: String? = null,
     val imageTags: ImageDto? = ImageDto(),
     val collectionType: String? = null,
@@ -312,8 +312,8 @@ object ItemTypeSerializer : KSerializer<ItemType> {
     }
 }
 
-@Serializable data class LoginDto(val accessToken: String, val sessionInfo: LoginSessionDto) {
-    @Serializable data class LoginSessionDto(val userId: String)
+@Serializable data class LoginDto(val accessToken: String = "", val sessionInfo: LoginSessionDto = LoginSessionDto()) {
+    @Serializable data class LoginSessionDto(val userId: String = "")
 }
 
 @Serializable data class MediaDto(
@@ -392,18 +392,18 @@ abstract class Jellyfin(
     open val hasCustomAuthSettings: Boolean = false
 
     override val baseUrl: String
-        get() = preferences.getString(PREF_BASE_URL, defaultBaseUrl)!!.removeSuffix("/")
+        get() = (preferences.getString(PREF_BASE_URL, defaultBaseUrl) ?: defaultBaseUrl).removeSuffix("/")
 
     open val username: String
         get() = if (hasCustomAuthSettings) {
-            preferences.getString(PREF_USERNAME, defaultUsername)!!
+            preferences.getString(PREF_USERNAME, defaultUsername) ?: defaultUsername
         } else {
             defaultUsername
         }
 
     open val password: String
         get() = if (hasCustomAuthSettings) {
-            preferences.getString(PREF_PASSWORD, defaultPassword)!!
+            preferences.getString(PREF_PASSWORD, defaultPassword) ?: defaultPassword
         } else {
             defaultPassword
         }
@@ -522,7 +522,7 @@ abstract class Jellyfin(
         val items = if (epUrl.contains("Episodes")) resp.parseAs<ItemListDto>(json).items else listOf(resp.parseAs<ItemDto>(json))
         val showThumbnails = preferences.getBoolean(PREF_SHOW_THUMBNAILS_KEY, true)
         val showSummary = preferences.getBoolean(PREF_SHOW_SUMMARY_KEY, true)
-        val episodeTemplate = preferences.getString(PREF_EPISODE_NAME_TEMPLATE_KEY, PREF_EPISODE_NAME_TEMPLATE_DEFAULT)!!
+        val episodeTemplate = preferences.getString(PREF_EPISODE_NAME_TEMPLATE_KEY, PREF_EPISODE_NAME_TEMPLATE_DEFAULT) ?: PREF_EPISODE_NAME_TEMPLATE_DEFAULT
         return items.map { it.toSEpisode(baseUrl, userId, showThumbnails, showSummary, episodeTemplate) }.reversed()
     }
 

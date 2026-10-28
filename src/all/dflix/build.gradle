@@ -1,7 +1,0 @@
-ext {
-    extName = 'Dflix'
-    extClass = '.Dflix'
-    extVersionCode = 1055
-}
-
-apply from: "$rootDir/common.gradle"

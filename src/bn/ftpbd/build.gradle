@@ -1,0 +1,8 @@
+ext {
+    extName = 'FtpBd'
+    extClass = '.FtpBdFactory'
+    extVersionCode = 1354
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

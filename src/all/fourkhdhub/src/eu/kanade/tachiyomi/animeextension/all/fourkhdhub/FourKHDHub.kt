@@ -416,12 +416,10 @@ class FourKHDHub : Source() {
                     }
 
                     links.distinct().forEach { link ->
-                        runBlocking {
-                            try {
-                                list.addAll(resolveVideoUrl(link, suffix))
-                            } catch (e: Exception) {
-                                // ignore
-                            }
+                        try {
+                            list.addAll(resolveVideoUrl(link, suffix))
+                        } catch (e: Exception) {
+                            // ignore
                         }
                     }
                 }
@@ -866,8 +864,8 @@ class FourKHDHub : Source() {
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
-        val preferredQuality = preferences.getString(PREF_PREFERRED_QUALITY, DEFAULT_PREFERRED_QUALITY)!!
-        val preferredServer = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)!!
+        val preferredQuality = preferences.getString(PREF_PREFERRED_QUALITY, DEFAULT_PREFERRED_QUALITY) ?: DEFAULT_PREFERRED_QUALITY
+        val preferredServer = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER) ?: DEFAULT_PREFERRED_SERVER
 
         return sortedWith(
             compareByDescending<Video> { it.videoTitle.contains(preferredQuality, ignoreCase = true) }

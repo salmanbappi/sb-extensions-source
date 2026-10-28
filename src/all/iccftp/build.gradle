@@ -1,8 +1,0 @@
-ext {
-    extName = 'ICC FTP'
-    extClass = '.IccFtp'
-    extVersionCode = 1017
-    isNsfw = false
-}
-
-apply from: "$rootDir/common.gradle"

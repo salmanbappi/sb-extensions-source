@@ -319,7 +319,7 @@ class LocalProxyServer(
         val pl = playlist ?: return sendError(output, 500, "No playlist")
         val stream = pl.streams.firstOrNull { it.audioType == audioType }
             ?: return sendError(output, 404, "Audio type not found: $audioType")
-        val variant = stream.variants.firstOrNull { it.quality == quality }
+        val variant = stream.variants.firstOrNull { v -> v.quality == quality }
             ?: return sendError(output, 404, "Quality not found: $quality")
         val state = variantState(stream, variant)
 
@@ -343,7 +343,7 @@ class LocalProxyServer(
         val pl = playlist ?: return sendError(output, 500, "No playlist")
         val stream = pl.streams.firstOrNull { it.audioType == audioType }
             ?: return sendError(output, 404, "Audio type not found: $audioType")
-        val variant = stream.variants.firstOrNull { it.quality == quality }
+        val variant = stream.variants.firstOrNull { v -> v.quality == quality }
             ?: return sendError(output, 404, "Quality not found: $quality")
         val state = variantState(stream, variant)
         if (index !in state.segments.indices) {
@@ -552,7 +552,7 @@ class LocalProxyServer(
         val resolver = reResolveStream ?: return false
         return try {
             val resolved = resolver(stream) ?: return false
-            val variant = resolved.variants.firstOrNull { it.quality == state.quality }
+            val variant = resolved.variants.firstOrNull { v -> v.quality == state.quality }
                 ?: selectClosestVariant(resolved.variants, state.quality)
                 ?: return false
             if (variant.segments.isEmpty()) return false
@@ -579,7 +579,7 @@ class LocalProxyServer(
         return true
     }
 
-    private fun selectMatchingVariant(variants: List<VariantInfo>, quality: String): VariantInfo? = variants.firstOrNull { it.quality == quality }
+    private fun selectMatchingVariant(variants: List<VariantInfo>, quality: String): VariantInfo? = variants.firstOrNull { v -> v.quality == quality }
         ?: variants.minByOrNull { kotlin.math.abs(it.resolution - quality.filter(Char::isDigit).toIntOrNull().orZero()) }
 
     private fun selectClosestVariant(variants: List<VariantData>, quality: String): VariantData? = variants.minByOrNull { kotlin.math.abs(it.resolution - quality.filter(Char::isDigit).toIntOrNull().orZero()) }

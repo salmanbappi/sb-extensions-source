@@ -328,7 +328,7 @@ class AnikotoExtractors(
                 loge("resolveVidTube: no variants in master m3u8")
                 return null
             }
-            logi("resolveVidTube: ${variants.size} variants: ${variants.joinToString { it.quality }}")
+            logi("resolveVidTube: ${variants.size} variants: ${variants.joinToString { v -> v.quality }}")
             logi("resolveVidTube: [4/5] fetching ${variants.size} variant playlists")
 
             val seg = segHeaders(host)
@@ -427,7 +427,7 @@ class AnikotoExtractors(
                     loge("resolveKiwi: no variants in master m3u8")
                     return null
                 }
-                logi("resolveKiwi: ${variants.size} variants: ${variants.joinToString { it.quality }}")
+                logi("resolveKiwi: ${variants.size} variants: ${variants.joinToString { v -> v.quality }}")
                 logd("resolveKiwi: [3/4] fetching ${variants.size} variant playlists (NO ad filter)")
 
                 val variantDataList = coroutineScope {

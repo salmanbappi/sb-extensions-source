@@ -11,7 +11,7 @@ import okhttp3.Response
 
 abstract class AnimeHttpHosterSource : AnimeHttpSource() {
     open suspend fun getVideoList(episode: SEpisode): List<Video> = getHosterList(episode)
-        .parallelCatchingFlatMapBlocking(::getVideoList)
+        .parallelCatchingFlatMap(::getVideoList)
 
     override fun seasonListParse(response: Response) = throw UnsupportedOperationException()
 

@@ -1,8 +1,0 @@
-ext {
-    extName = 'InfoMedia'
-    extClass = '.InfoMedia'
-    extVersionCode = 1010
-    isNsfw = false
-}
-
-apply from: "$rootDir/common.gradle"

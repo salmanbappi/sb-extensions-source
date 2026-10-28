@@ -1,0 +1,8 @@
+ext {
+    extName = 'Cineplexbd'
+    extClass = '.CineplexBD'
+    extVersionCode = 1067
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

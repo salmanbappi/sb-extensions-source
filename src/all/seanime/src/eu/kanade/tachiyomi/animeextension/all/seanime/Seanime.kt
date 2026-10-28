@@ -352,7 +352,7 @@ class Seanime :
     override val id: Long = 85274903847291047L
 
     override val baseUrl: String
-        get() = preferences.getString(PREF_BASE_URL, DEFAULT_BASE_URL)!!.removeSuffix("/")
+        get() = (preferences.getString(PREF_BASE_URL, DEFAULT_BASE_URL) ?: DEFAULT_BASE_URL).removeSuffix("/")
 
     override val json = Json {
         isLenient = true
@@ -366,7 +366,7 @@ class Seanime :
     private var lastPassword = ""
 
     private fun getSeanimeHeaders(): okhttp3.Headers {
-        val password = preferences.getString(PREF_SERVER_PASSWORD, DEFAULT_SERVER_PASSWORD)!!
+        val password = preferences.getString(PREF_SERVER_PASSWORD, DEFAULT_SERVER_PASSWORD) ?: DEFAULT_SERVER_PASSWORD
         if (cachedHeaders != null && password == lastPassword) {
             return cachedHeaders!!
         }
@@ -477,7 +477,7 @@ class Seanime :
         val sortFilter = filters.filterIsInstance<SortFilter>().firstOrNull()
         val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
 
-        val mode = preferences.getString(PREF_STREAMING_MODE, DEFAULT_STREAMING_MODE)!!
+        val mode = preferences.getString(PREF_STREAMING_MODE, DEFAULT_STREAMING_MODE) ?: DEFAULT_STREAMING_MODE
 
         // If in local mode AND query is set AND no other filters, search local library
         if (query.isNotBlank() && mode != MODE_ONLINE) {
@@ -660,7 +660,7 @@ class Seanime :
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val url = anime.url
-        val mode = preferences.getString(PREF_STREAMING_MODE, DEFAULT_STREAMING_MODE)!!
+        val mode = preferences.getString(PREF_STREAMING_MODE, DEFAULT_STREAMING_MODE) ?: DEFAULT_STREAMING_MODE
         val headers = getSeanimeHeaders()
         val showEpisodeMetadata = preferences.getBoolean(PREF_SHOW_EPISODE_METADATA, DEFAULT_SHOW_EPISODE_METADATA)
 
@@ -691,7 +691,7 @@ class Seanime :
                 throw Exception("No online streaming extensions installed in Seanime. Please install one in your Seanime server.")
             }
 
-            val preferredProvider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER)!!
+            val preferredProvider = preferences.getString(PREF_PREFERRED_PROVIDER, DEFAULT_PREFERRED_PROVIDER) ?: DEFAULT_PREFERRED_PROVIDER
             val selectedProviders = if (preferredProvider.isNotBlank()) {
                 providers.filter { provider ->
                     provider.id?.contains(preferredProvider, ignoreCase = true) == true ||
@@ -981,8 +981,8 @@ class Seanime :
                     throw Exception("No video sources found for this episode.")
                 }
 
-                val preferredQuality = preferences.getString(PREF_PREFERRED_QUALITY, DEFAULT_PREFERRED_QUALITY)!!
-                val preferredServer = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER)!!
+                val preferredQuality = preferences.getString(PREF_PREFERRED_QUALITY, DEFAULT_PREFERRED_QUALITY) ?: DEFAULT_PREFERRED_QUALITY
+                val preferredServer = preferences.getString(PREF_PREFERRED_SERVER, DEFAULT_PREFERRED_SERVER) ?: DEFAULT_PREFERRED_SERVER
 
                 val processedVideos = if (preferences.getBoolean(PREF_USE_LOCAL_PROXY, DEFAULT_USE_LOCAL_PROXY)) {
                     m3u8Integration.processVideoList(allVideos)

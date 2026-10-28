@@ -1,0 +1,8 @@
+ext {
+    extName = 'Roar zone tv'
+    extClass = '.RoarZoneTV'
+    extVersionCode = 4
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

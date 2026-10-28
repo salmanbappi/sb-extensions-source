@@ -1,0 +1,8 @@
+ext {
+    extName = 'BDIX Live TV'
+    extClass = '.BDIXLiveTV'
+    extVersionCode = 4
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"

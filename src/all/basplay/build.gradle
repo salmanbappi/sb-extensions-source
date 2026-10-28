@@ -1,8 +1,0 @@
-ext {
-    extName = 'Bas play'
-    extClass = '.BasPlay'
-    extVersionCode = 1437
-    isNsfw = false
-}
-
-apply from: "$rootDir/common.gradle"
