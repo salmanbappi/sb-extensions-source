@@ -142,14 +142,21 @@ class AniPm : Source() {
                 }
 
                 val isMovie = dto.type?.contains("movie", ignoreCase = true) == true
+                val rawDuration = dto.duration?.content?.takeIf { it.isNotBlank() }
+                val formattedDuration = if (rawDuration != null && rawDuration.all { it.isDigit() }) {
+                    "$rawDuration min"
+                } else {
+                    rawDuration
+                }
+
                 val detailsBlock = EpisodeMetadataFetcher.formatMediaDetails(
                     isMovie = isMovie,
                     networkOrStudio = dto.studios?.joinToString(", "),
-                    runtime = dto.duration,
+                    runtime = formattedDuration,
                     dateRange = dto.year?.content,
-                    episodesCount = dto.episodeCount,
+                    episodesCount = dto.episodeCount?.content?.toIntOrNull(),
                     status = dto.status,
-                    contentRating = dto.rating,
+                    contentRating = dto.rating?.content,
                 )
 
                 val linksBlock = EpisodeMetadataFetcher.formatDatabaseLinks(
@@ -218,8 +225,9 @@ class AniPm : Source() {
         }
 
         val needsDescriptions = loadDescriptions && (metadataMap.isEmpty() || metadataMap.values.all { it.description.isNullOrBlank() })
-        val nativeDescriptions = if (needsDescriptions && dto.episodeDescriptions == "separate") {
-            fetchAniPmEpisodeDescriptions(isAni, sid, dto.episodes?.size ?: 100)
+        val nativeDescriptions = if (needsDescriptions && dto.episodeDescriptions?.content == "separate") {
+            val epCount = dto.episodes?.size ?: dto.episodeCount?.content?.toIntOrNull() ?: 100
+            fetchAniPmEpisodeDescriptions(isAni, sid, epCount)
         } else {
             emptyMap()
         }

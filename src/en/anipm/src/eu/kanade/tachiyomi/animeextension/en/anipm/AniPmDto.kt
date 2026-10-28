@@ -65,11 +65,11 @@ data class AnimeDetailDto(
     val anilistId: JsonPrimitive? = null,
     val year: JsonPrimitive? = null,
     val type: String? = null,
-    val duration: String? = null,
-    val rating: String? = null,
+    val duration: JsonPrimitive? = null,
+    val rating: JsonPrimitive? = null,
     val score: JsonPrimitive? = null,
-    val episodeCount: Int? = null,
-    val episodeDescriptions: String? = null,
+    val episodeCount: JsonPrimitive? = null,
+    val episodeDescriptions: JsonPrimitive? = null,
     val providerTitles: List<String>? = null,
 ) {
     fun toSAnime(baseUrl: String): SAnime = SAnime.create().apply {
@@ -98,7 +98,7 @@ data class EpisodeItemDto(
     val sub: Boolean? = null,
     val dub: Boolean? = null,
     val aired: String? = null,
-    val rating: String? = null,
+    val rating: JsonPrimitive? = null,
     val description: String? = null,
 )
 
