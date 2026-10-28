@@ -61,6 +61,16 @@ data class AnimeDetailDto(
     val studios: List<String>? = null,
     val synopsis: String? = null,
     val episodes: List<EpisodeItemDto>? = null,
+    val malId: JsonPrimitive? = null,
+    val anilistId: JsonPrimitive? = null,
+    val year: JsonPrimitive? = null,
+    val type: String? = null,
+    val duration: String? = null,
+    val rating: String? = null,
+    val score: JsonPrimitive? = null,
+    val episodeCount: Int? = null,
+    val episodeDescriptions: String? = null,
+    val providerTitles: List<String>? = null,
 ) {
     fun toSAnime(baseUrl: String): SAnime = SAnime.create().apply {
         val src = source?.lowercase() ?: "settlar"
@@ -88,6 +98,15 @@ data class EpisodeItemDto(
     val sub: Boolean? = null,
     val dub: Boolean? = null,
     val aired: String? = null,
+    val rating: String? = null,
+    val description: String? = null,
+)
+
+@Serializable
+data class EpisodeDescriptionsResponseDto(
+    val from: Int? = null,
+    val to: Int? = null,
+    val descriptions: Map<String, String>? = null,
 )
 
 @Serializable

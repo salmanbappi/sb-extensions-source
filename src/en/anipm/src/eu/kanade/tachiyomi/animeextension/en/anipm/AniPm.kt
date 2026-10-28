@@ -9,10 +9,13 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
+import extensions.utils.UrlUtils
+import extensions.utils.addSwitchPreference
 import extensions.utils.parseAs
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -43,6 +46,7 @@ class AniPm : Source() {
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
     private val localProxy by lazy { LocalProxy(client) }
+    private val metadataFetcher by lazy { EpisodeMetadataFetcher(client, json) }
 
     // ============================== Popular Anime ==============================
 
@@ -108,56 +112,186 @@ class AniPm : Source() {
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val path = anime.url.substringBefore("#")
-        val apiUrl = if (path.startsWith("/ani/")) {
-            val id = path.substringAfter("/ani/")
-            "$baseUrl/api/anime/ani/$id?routes=e4"
+        val isAni = path.startsWith("/ani/")
+        val sid = if (isAni) path.substringAfter("/ani/") else path.substringAfter("/anime/")
+        val apiUrl = if (isAni) {
+            "$baseUrl/api/anime/ani/$sid?routes=e4"
         } else {
-            val id = path.substringAfter("/anime/")
-            "$baseUrl/api/anime/series/$id?routes=e4"
+            "$baseUrl/api/anime/series/$sid?routes=e4"
         }
 
         val response = client.newCall(GET(apiUrl, headers)).execute()
         val dto = response.parseAs<AnimeDetailDto>(json)
-        return dto.toSAnime(baseUrl).apply {
-            initialized = true
+        val details = dto.toSAnime(baseUrl)
+
+        val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, PREF_LOAD_DESCRIPTIONS_DEFAULT)
+        if (loadDescriptions) {
+            runCatching {
+                val malIdStr = dto.malId?.content?.takeIf { it.isNotBlank() }
+                val anilistIdStr = dto.anilistId?.content?.takeIf { it.isNotBlank() }
+                val meta = metadataFetcher.fetchAnimeMetadata(details.title)
+
+                val allAltTitles = mutableListOf<String>()
+                dto.native?.let { allAltTitles.add(it) }
+                dto.providerTitles?.let { allAltTitles.addAll(it) }
+                meta?.altTitles?.let { allAltTitles.addAll(it) }
+                val altTitlesBlock = if (allAltTitles.isNotEmpty()) {
+                    EpisodeMetadataFetcher.formatAlternativeTitles(details.title, *allAltTitles.toTypedArray())
+                } else {
+                    null
+                }
+
+                val isMovie = dto.type?.contains("movie", ignoreCase = true) == true
+                val detailsBlock = EpisodeMetadataFetcher.formatMediaDetails(
+                    isMovie = isMovie,
+                    networkOrStudio = dto.studios?.joinToString(", "),
+                    runtime = dto.duration,
+                    dateRange = dto.year?.content,
+                    episodesCount = dto.episodeCount,
+                    status = dto.status,
+                    contentRating = dto.rating,
+                )
+
+                val linksBlock = EpisodeMetadataFetcher.formatDatabaseLinks(
+                    malId = malIdStr ?: meta?.malId,
+                    anilistId = anilistIdStr ?: meta?.anilistId,
+                    imdbId = meta?.imdbId,
+                    tmdbId = meta?.tmdbId,
+                    tvdbId = meta?.tvdbId,
+                    anidbId = meta?.anidbId,
+                    isMovie = isMovie,
+                )
+
+                val synopsis = meta?.synopsis?.takeIf { it.isNotBlank() } ?: dto.synopsis
+                val bannerUrl = meta?.bannerUrl ?: dto.banner?.let { UrlUtils.fixUrl(it, baseUrl) }
+
+                details.description = EpisodeMetadataFetcher.buildStructuredDescription(
+                    synopsis = synopsis,
+                    bannerUrl = bannerUrl,
+                    altTitlesBlock = altTitlesBlock,
+                    detailsBlock = detailsBlock,
+                    linksBlock = linksBlock,
+                )
+
+                if (details.background_url.isNullOrBlank() && !bannerUrl.isNullOrBlank()) {
+                    details.background_url = bannerUrl
+                }
+            }
         }
+
+        details.initialized = true
+        return details
     }
 
     // ============================== Episode List ===============================
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val path = anime.url.substringBefore("#")
-        val apiUrl = if (path.startsWith("/ani/")) {
-            val id = path.substringAfter("/ani/")
-            "$baseUrl/api/anime/ani/$id?routes=e4"
+        val isAni = path.startsWith("/ani/")
+        val sid = if (isAni) path.substringAfter("/ani/") else path.substringAfter("/anime/")
+        val apiUrl = if (isAni) {
+            "$baseUrl/api/anime/ani/$sid?routes=e4"
         } else {
-            val id = path.substringAfter("/anime/")
-            "$baseUrl/api/anime/series/$id?routes=e4"
+            "$baseUrl/api/anime/series/$sid?routes=e4"
         }
 
         val response = client.newCall(GET(apiUrl, headers)).execute()
         val dto = response.parseAs<AnimeDetailDto>(json)
+
+        val loadThumbnails = preferences.getBoolean(PREF_LOAD_THUMBNAILS_KEY, PREF_LOAD_THUMBNAILS_DEFAULT)
+        val loadTitles = preferences.getBoolean(PREF_LOAD_TITLES_KEY, PREF_LOAD_TITLES_DEFAULT)
+        val loadDescriptions = preferences.getBoolean(PREF_LOAD_DESCRIPTIONS_KEY, PREF_LOAD_DESCRIPTIONS_DEFAULT)
+
+        val malId = dto.malId?.content?.takeIf { it.isNotBlank() } ?: ""
+        val animeTitle = dto.title ?: anime.title
+
+        val metadataMap = if (loadThumbnails || loadTitles || loadDescriptions) {
+            runCatching {
+                metadataFetcher.fetch(
+                    malId = malId,
+                    animeTitle = animeTitle,
+                    fallbackThumbnailUrl = anime.thumbnail_url,
+                )
+            }.getOrDefault(emptyMap())
+        } else {
+            emptyMap()
+        }
+
+        val needsDescriptions = loadDescriptions && (metadataMap.isEmpty() || metadataMap.values.all { it.description.isNullOrBlank() })
+        val nativeDescriptions = if (needsDescriptions && dto.episodeDescriptions == "separate") {
+            fetchAniPmEpisodeDescriptions(isAni, sid, dto.episodes?.size ?: 100)
+        } else {
+            emptyMap()
+        }
 
         val episodes = (dto.episodes ?: emptyList()).mapNotNull { ep ->
             val epNum = ep.number ?: return@mapNotNull null
             val sub = ep.sub == true
             val dub = ep.dub == true
             val epInt = if (epNum % 1f == 0f) epNum.toInt().toString() else epNum.toString()
+            val meta = metadataMap[epNum.toInt()]
 
             SEpisode.create().apply {
-                name = if (!ep.title.isNullOrBlank()) "Episode $epInt: ${ep.title}" else "Episode $epInt"
+                val resolvedTitle = (if (loadTitles) meta?.title?.takeIf { it.isNotBlank() } else null)
+                    ?: ep.title?.takeIf { it.isNotBlank() }
+                name = if (!resolvedTitle.isNullOrBlank()) "Episode $epInt: $resolvedTitle" else "Episode $epInt"
                 episode_number = epNum
                 url = "${anime.url}#ep=$epInt&sub=$sub&dub=$dub"
-                date_upload = parseDate(ep.aired)
+
+                val parsedDate = parseDate(ep.aired)
+                date_upload = if (parsedDate > 0L) {
+                    parsedDate
+                } else {
+                    meta?.airdate?.let { parseDate(it) } ?: 0L
+                }
+
                 scanlator = when {
                     sub && dub -> "Sub, Dub"
                     dub -> "Dub"
                     else -> "Sub"
                 }
+
+                val rawThumb = ep.thumbnail?.takeIf { it.isNotBlank() }?.let { UrlUtils.fixUrl(it, baseUrl) }
+                if (loadThumbnails) {
+                    preview_url = rawThumb ?: meta?.thumbnailUrl ?: anime.thumbnail_url
+                } else if (!rawThumb.isNullOrBlank()) {
+                    preview_url = rawThumb
+                }
+
+                if (loadDescriptions) {
+                    val desc = ep.description?.takeIf { it.isNotBlank() }
+                        ?: meta?.description?.takeIf { it.isNotBlank() }
+                        ?: nativeDescriptions[epNum.toInt()]
+                    if (!desc.isNullOrBlank()) {
+                        summary = desc
+                    }
+                }
             }
         }
 
         return episodes.sortedByDescending { it.episode_number }
+    }
+
+    private fun fetchAniPmEpisodeDescriptions(isAni: Boolean, id: String, epCount: Int): Map<Int, String> {
+        if (epCount <= 0) return emptyMap()
+        val map = mutableMapOf<Int, String>()
+        val endpointPrefix = if (isAni) "$baseUrl/api/anime/ani/$id" else "$baseUrl/api/anime/series/$id"
+        val batches = (epCount + 99) / 100
+        for (i in 0 until minOf(batches, 10)) {
+            val from = i * 100 + 1
+            val to = (i + 1) * 100
+            runCatching {
+                val url = "$endpointPrefix/episode-descriptions?from=$from&to=$to"
+                val res = client.newCall(GET(url, headers)).execute()
+                val descDto = res.parseAs<EpisodeDescriptionsResponseDto>(json)
+                descDto.descriptions?.forEach { (k, v) ->
+                    k.toIntOrNull()?.let { num ->
+                        if (v.isNotBlank()) map[num] = v.trim()
+                    }
+                }
+            }
+        }
+        return map
     }
 
     // ============================ Hoster & Video Links =========================
@@ -308,6 +442,27 @@ class AniPm : Source() {
                 preferences.edit().putString(key, newValue as String).commit()
             }
         }.also(screen::addPreference)
+
+        screen.addSwitchPreference(
+            key = PREF_LOAD_THUMBNAILS_KEY,
+            default = PREF_LOAD_THUMBNAILS_DEFAULT,
+            title = PREF_LOAD_THUMBNAILS_TITLE,
+            summary = PREF_LOAD_THUMBNAILS_SUMMARY,
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_LOAD_TITLES_KEY,
+            default = PREF_LOAD_TITLES_DEFAULT,
+            title = PREF_LOAD_TITLES_TITLE,
+            summary = PREF_LOAD_TITLES_SUMMARY,
+        )
+
+        screen.addSwitchPreference(
+            key = PREF_LOAD_DESCRIPTIONS_KEY,
+            default = PREF_LOAD_DESCRIPTIONS_DEFAULT,
+            title = PREF_LOAD_DESCRIPTIONS_TITLE,
+            summary = PREF_LOAD_DESCRIPTIONS_SUMMARY,
+        )
     }
 
     private fun parseDate(dateStr: String?): Long {
@@ -328,5 +483,20 @@ class AniPm : Source() {
 
         private const val PREF_AUDIO_KEY = "preferred_audio"
         private const val PREF_AUDIO_DEFAULT = "sub"
+
+        private const val PREF_LOAD_THUMBNAILS_KEY = "pref_load_thumbnails"
+        private const val PREF_LOAD_THUMBNAILS_TITLE = "Enrich episode thumbnails"
+        private const val PREF_LOAD_THUMBNAILS_SUMMARY = "Fetch per-episode preview stills from AniList/TVDB/Kitsu"
+        private const val PREF_LOAD_THUMBNAILS_DEFAULT = true
+
+        private const val PREF_LOAD_TITLES_KEY = "pref_load_titles"
+        private const val PREF_LOAD_TITLES_TITLE = "Enrich episode titles"
+        private const val PREF_LOAD_TITLES_SUMMARY = "Fetch episode titles from AniList/TVDB/Kitsu"
+        private const val PREF_LOAD_TITLES_DEFAULT = true
+
+        private const val PREF_LOAD_DESCRIPTIONS_KEY = "pref_load_descriptions"
+        private const val PREF_LOAD_DESCRIPTIONS_TITLE = "Enrich descriptions & summaries"
+        private const val PREF_LOAD_DESCRIPTIONS_SUMMARY = "Fetch canonical synopses & episode summaries from AniList/TVDB/Kitsu"
+        private const val PREF_LOAD_DESCRIPTIONS_DEFAULT = true
     }
 }
