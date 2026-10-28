@@ -26,7 +26,7 @@ import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
-class AgniSYS : Jellyfin("AgniSYS", \"bn\") {
+class AgniSYS : Jellyfin("AgniSYS", "bn") {
     override val defaultBaseUrl = "http://182.252.81.180:8096"
     override val defaultUsername = "vibe"
     override val defaultPassword = "121121"

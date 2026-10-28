@@ -3,7 +3,7 @@ package eu.kanade.tachiyomi.animeextension.bn.jellyfinbijoy
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.multisrc.jellyfin.Jellyfin
 
-class JellyfinBijoy : Jellyfin("Bijoy", \"bn\") {
+class JellyfinBijoy : Jellyfin("Bijoy", "bn") {
     override val defaultBaseUrl = "http://10.20.30.50"
     override val defaultUsername = "bijoy"
     override val defaultPassword = ""

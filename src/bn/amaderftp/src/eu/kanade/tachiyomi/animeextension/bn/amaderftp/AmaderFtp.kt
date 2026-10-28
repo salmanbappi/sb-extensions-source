@@ -17,7 +17,7 @@ import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
-class AmaderFtp : Jellyfin("Amader FTP", \"bn\") {
+class AmaderFtp : Jellyfin("Amader FTP", "bn") {
     override val defaultBaseUrl = "http://amaderftp.net:8096"
     override val defaultUsername = "user"
     override val defaultPassword = "1234"

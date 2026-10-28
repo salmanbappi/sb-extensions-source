@@ -18,7 +18,7 @@ import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
-class RoarZone : Jellyfin("RoarZone", \"bn\") {
+class RoarZone : Jellyfin("RoarZone", "bn") {
     override val defaultBaseUrl = "https://play.roarzone.net"
     override val defaultUsername = "Roarzone_guest"
     override val defaultPassword = ""
