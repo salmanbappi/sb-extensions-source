@@ -12,6 +12,8 @@ VERSION_NAME_REGEX = re.compile(r"versionName='([^']+)'")
 IS_NSFW_REGEX = re.compile(r"'tachiyomi.animeextension.nsfw' value='([^']+)'")
 # Modern extensions-lib v17 metadata: 0 = Safe, 1 = Mixed, 2 = NSFW (> 0 means NSFW).
 CONTENT_WARNING_REGEX = re.compile(r"'aniyomix.contentWarning' value='([^']+)'")
+EXTENSION_LIB_REGEX = re.compile(r"'aniyomix.extensionLib' value='([^']+)'")
+IS_TORRENT_REGEX = re.compile(r"'(?:tachiyomi.animeextension.isTorrent|aniyomix.isTorrent)' value='([^']+)'")
 APPLICATION_LABEL_REGEX = re.compile(r"^application-label:'([^']+)'", re.MULTILINE)
 APPLICATION_ICON_320_REGEX = re.compile(r"^application-icon-(?:320|480|640|240|160):'([^']+)'", re.MULTILINE)
 APPLICATION_ICON_FALLBACK_REGEX = re.compile(r"(?:application-icon(?:-\d+)?|icon)='([^']+)'")
@@ -103,19 +105,37 @@ if REPO_APK_DIR.is_dir():
         # (or both) is indexed with the correct NSFW status.
         cw_match = CONTENT_WARNING_REGEX.search(badging)
         nsfw_match = IS_NSFW_REGEX.search(badging)
+        ext_lib_match = EXTENSION_LIB_REGEX.search(badging)
+        is_torrent_match = IS_TORRENT_REGEX.search(badging)
+
         is_nsfw = 0
+        content_warning = 1  # 1 = SAFE
         if cw_match:
             try:
-                if int(cw_match[1]) > 0:
+                cw_raw = int(cw_match[1])
+                if cw_raw > 0:
                     is_nsfw = 1
+                # In gradle: 0 = Safe, 1 = Mixed, 2 = NSFW.
+                # In proto: 1 = SAFE, 2 = MIXED, 3 = NSFW.
+                content_warning = min(cw_raw + 1, 3)
             except ValueError:
                 pass
         if not is_nsfw and nsfw_match:
             try:
                 if int(nsfw_match[1]) == 1:
                     is_nsfw = 1
+                    content_warning = 3  # NSFW
             except ValueError:
                 pass
+
+        if ext_lib_match:
+            extension_lib = ext_lib_match[1]
+        elif "." in version_name:
+            extension_lib = version_name.split(".")[0]
+        else:
+            extension_lib = "16"
+
+        is_torrent = bool(is_torrent_match and is_torrent_match[1].strip() in {"1", "true", "True"})
 
         common_data = {
             "name": app_name,
@@ -125,6 +145,9 @@ if REPO_APK_DIR.is_dir():
             "code": version_code,
             "version": version_name,
             "nsfw": is_nsfw,
+            "contentRating": content_warning,
+            "extensionLib": extension_lib,
+            "isTorrent": is_torrent,
         }
         min_data = {
             **common_data,
@@ -138,6 +161,7 @@ if REPO_APK_DIR.is_dir():
                     "lang": source.get("lang", ""),
                     "id": source.get("id", ""),
                     "baseUrl": source.get("baseUrl", ""),
+                    "mirrorUrls": source.get("mirrorUrls", []),
                 }
             )
 

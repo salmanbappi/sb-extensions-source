@@ -221,6 +221,7 @@ jobs:
           DELETED_MODULES: ${{ needs.prepare.outputs.delete }}
         run: |
           cd repo
+          pip install --no-cache-dir protobuf
           python ../${{ github.ref_name }}/.github/scripts/merge-repo.py "$DELETED_MODULES" '${{ github.ref_name }}/repo'
 
       - name: Sync repo
@@ -244,9 +245,13 @@ jobs:
           curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.json || true
           curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.min.json || true
           curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.html || true
+          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.pb || true
+          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/repo.json || true
           curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.json || true
           curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.min.json || true
           curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.html || true
+          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.pb || true
+          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/repo.json || true
 
       - name: Create GitHub Release
         working-directory: ${{ github.ref_name }}
