@@ -19,7 +19,7 @@ REPO_NAME = "SalmanBappi Extensions"
 REPO_BADGE = "SB"
 REPO_SHORT_NAME = "salmanbappi"
 REPO_WEBSITE = "https://github.com/salmanbappi/extensions-repo"
-COMMUNITY_DISCORD = "https://discord.gg/anizen"
+COMMUNITY_DISCORD = "https://discord.gg/G6g4vBmcXp"
 RAW_BASE_URL = "https://raw.githubusercontent.com/salmanbappi/extensions-repo/main"
 INDEX_PB_URL = f"{RAW_BASE_URL}/index.pb"
 
@@ -153,6 +153,7 @@ repo_json_data = {
         "name": REPO_NAME,
         "shortName": REPO_SHORT_NAME,
         "website": REPO_WEBSITE,
+        "discord": COMMUNITY_DISCORD,
         "signingKeyFingerprint": SIGNING_KEY_FINGERPRINT,
     },
 }
