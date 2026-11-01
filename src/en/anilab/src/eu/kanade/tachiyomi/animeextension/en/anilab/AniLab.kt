@@ -199,8 +199,7 @@ class AniLab : Source() {
         } catch (_: Exception) {}
     }
 
-    private fun sha256Hex(bytes: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    private fun sha256Hex(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     private fun hmacSha256Hex(key: ByteArray, data: String): String {
         val mac = Mac.getInstance("HmacSHA256")
@@ -579,7 +578,9 @@ class AniLab : Source() {
                 val lang = parts[0]
                 val idParts = parts[1].split("|", limit = 2)
                 if (idParts.size == 2) Triple(lang, idParts[0], idParts[1]) else null
-            } else null
+            } else {
+                null
+            }
         }
         if (targets.isEmpty()) return emptyList()
 
