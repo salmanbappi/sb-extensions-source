@@ -144,22 +144,6 @@ class AniLab : Source() {
         EpisodeMetadataFetcher(client, json)
     }
 
-    companion object {
-        private const val KYOTO_API_URL = "https://api.kyotoplayer.com"
-        private const val KYOTO_APP_ID = "com.kyotoplayer"
-        private const val KYOTO_APP_VER = "131"
-        private const val KYOTO_OS_VER = "33"
-        private const val KYOTO_MODEL = "Xiaomi M2101K6P"
-        private const val CERT_FP_HEX = "482a900b2906766b2e8d3cf19fcf6d06d0b6c9569cb6305c9c43200a8e20979e"
-
-        private val DERIVED_KEY = byteArrayOf(
-            0x8a.toByte(), 0x63.toByte(), 0xcb.toByte(), 0xb1.toByte(), 0xa5.toByte(), 0x76.toByte(), 0x30.toByte(), 0xf7.toByte(),
-            0x01.toByte(), 0xb4.toByte(), 0xe9.toByte(), 0x96.toByte(), 0x95.toByte(), 0xda.toByte(), 0x82.toByte(), 0xca.toByte(),
-            0x6f.toByte(), 0x4d.toByte(), 0x7a.toByte(), 0xc4.toByte(), 0x28.toByte(), 0xaf.toByte(), 0x69.toByte(), 0x40.toByte(),
-            0xc4.toByte(), 0xed.toByte(), 0xa8.toByte(), 0xa4.toByte(), 0x1e.toByte(), 0xe1.toByte(), 0x9a.toByte(), 0xdd.toByte(),
-        )
-    }
-
     private val secureRandom = SecureRandom()
     private val serverClockOffset = AtomicLong(0)
     private val hasSyncedTime = AtomicBoolean(false)
@@ -757,6 +741,20 @@ class AniLab : Source() {
     }
 
     companion object {
+        private const val KYOTO_API_URL = "https://api.kyotoplayer.com"
+        private const val KYOTO_APP_ID = "com.kyotoplayer"
+        private const val KYOTO_APP_VER = "131"
+        private const val KYOTO_OS_VER = "33"
+        private const val KYOTO_MODEL = "Xiaomi M2101K6P"
+        private const val CERT_FP_HEX = "482a900b2906766b2e8d3cf19fcf6d06d0b6c9569cb6305c9c43200a8e20979e"
+
+        private val DERIVED_KEY = byteArrayOf(
+            0x8a.toByte(), 0x63.toByte(), 0xcb.toByte(), 0xb1.toByte(), 0xa5.toByte(), 0x76.toByte(), 0x30.toByte(), 0xf7.toByte(),
+            0x01.toByte(), 0xb4.toByte(), 0xe9.toByte(), 0x96.toByte(), 0x95.toByte(), 0xda.toByte(), 0x82.toByte(), 0xca.toByte(),
+            0x6f.toByte(), 0x4d.toByte(), 0x7a.toByte(), 0xc4.toByte(), 0x28.toByte(), 0xaf.toByte(), 0x69.toByte(), 0x40.toByte(),
+            0xc4.toByte(), 0xed.toByte(), 0xa8.toByte(), 0xa4.toByte(), 0x1e.toByte(), 0xe1.toByte(), 0x9a.toByte(), 0xdd.toByte(),
+        )
+
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_TITLE = "Preferred quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
