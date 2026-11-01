@@ -375,7 +375,9 @@ class AniLab : Source() {
 
             val baseName = when (numberingMode) {
                 "season" -> "Episode ${adjustedNum.toInt()}"
+
                 "absolute" -> ep.name ?: "Episode ${rawNum.toInt()}"
+
                 else -> { // "both"
                     if (offset > 0f) {
                         "Episode ${adjustedNum.toInt()} (#${rawNum.toInt()})"
@@ -455,12 +457,10 @@ class AniLab : Source() {
         }.getOrDefault(emptyList())
     }
 
-    private fun parseEpisodeUrl(url: String): Pair<String, String> {
-        return when {
-            url.contains('/') -> url.substringBefore('/') to url.substringAfter('/')
-            url.contains('#') -> url.substringBefore('#') to url.substringAfter('#')
-            else -> "" to url
-        }
+    private fun parseEpisodeUrl(url: String): Pair<String, String> = when {
+        url.contains('/') -> url.substringBefore('/') to url.substringAfter('/')
+        url.contains('#') -> url.substringBefore('#') to url.substringAfter('#')
+        else -> "" to url
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -478,7 +478,9 @@ class AniLab : Source() {
                     p[0] to p[1]
                 } else if (entry.isNotBlank()) {
                     "SUB" to entry
-                } else null
+                } else {
+                    null
+                }
             }
         } else if (raw.contains('/')) {
             postId = raw.substringBefore('/')
