@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.anilab
 
-import android.util.Base64
+import android.util.LruCache
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
 import extensions.utils.Source
 import extensions.utils.parseAs
 import keiyoushi.utils.addListPreference
@@ -20,21 +21,9 @@ import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parallelMapNotNullBlocking
 import kotlinx.serialization.Serializable
 import okhttp3.FormBody
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import okio.Buffer
 import java.net.URLEncoder
-import java.security.MessageDigest
-import java.security.SecureRandom
-import java.text.SimpleDateFormat
-import java.util.Locale
-import java.util.TimeZone
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 
 @Serializable
 data class HomeResponseDto(
@@ -94,6 +83,7 @@ data class EpisodeItemDto(
     val name: String? = null,
     val number: String? = null,
     val filler: Boolean = false,
+    val servers: List<ServerItemDto>? = null,
 )
 
 @Serializable
@@ -120,7 +110,10 @@ data class KyotoSubtitleDto(
     val label: String? = null,
     val lang: String? = null,
     val default: Boolean = false,
-)
+) {
+    // The "OFF" entry is the player's "subtitles off" option, not a track
+    fun toTrack(): Track? = file?.takeIf { lang != "OFF" }?.let { Track(it, label ?: lang.orEmpty()) }
+}
 
 class AniLab : Source() {
 
@@ -136,6 +129,12 @@ class AniLab : Source() {
         .set("User-Agent", "okhttp/4.9.2")
         .set("Accept", "application/json")
 
+    private val deviceModel by lazy { KyotoInterceptor.getDeviceModel(preferences) }
+
+    override val client = network.client.newBuilder()
+        .addInterceptor(KyotoInterceptor { deviceModel })
+        .build()
+
     private val playlistUtils by lazy {
         PlaylistUtils(client, headers)
     }
@@ -144,115 +143,7 @@ class AniLab : Source() {
         EpisodeMetadataFetcher(client, json)
     }
 
-    private val secureRandom = SecureRandom()
-    private val serverClockOffset = AtomicLong(0)
-    private val hasSyncedTime = AtomicBoolean(false)
-
-    private fun ensureServerTime() {
-        if (hasSyncedTime.get()) return
-        try {
-            val req = Request.Builder()
-                .url("$KYOTO_API_URL/update")
-                .post(ByteArray(0).toRequestBody("application/json".toMediaType()))
-                .header("Accept", "application/json")
-                .header("os-version", KYOTO_OS_VER)
-                .header("app-id", KYOTO_APP_ID)
-                .header("app-version", KYOTO_APP_VER)
-                .header("device-model", KYOTO_MODEL)
-                .build()
-            val res = client.newCall(req).execute()
-            updateServerTime(res.header("Date"))
-            res.close()
-        } catch (_: Exception) {}
-    }
-
-    private fun updateServerTime(dateHeader: String?) {
-        if (dateHeader.isNullOrBlank()) return
-        try {
-            val format = SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("GMT")
-                isLenient = false
-            }
-            val date = format.parse(dateHeader)
-            if (date != null) {
-                val serverSec = date.time / 1000
-                val localSec = System.currentTimeMillis() / 1000
-                serverClockOffset.set(serverSec - localSec)
-                hasSyncedTime.set(true)
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun sha256Hex(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-
-    private fun hmacSha256Hex(key: ByteArray, data: String): String {
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(key, "HmacSHA256"))
-        return mac.doFinal(data.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-    }
-
-    private fun generateNonce(): String {
-        val bytes = ByteArray(16)
-        secureRandom.nextBytes(bytes)
-        return Base64.encodeToString(bytes, Base64.NO_WRAP or Base64.NO_PADDING)
-    }
-
-    private fun kyotoPostRequest(
-        path: String,
-        formMap: Map<String, String>,
-        animeId: String? = null,
-    ): Request {
-        val formBuilder = FormBody.Builder()
-        for ((k, v) in formMap) {
-            formBuilder.add(k, v)
-        }
-        val requestBody = formBuilder.build()
-
-        val buffer = Buffer()
-        requestBody.writeTo(buffer)
-        val bodyBytes = buffer.readByteArray()
-        val bodyHash = sha256Hex(bodyBytes)
-
-        val ts = (System.currentTimeMillis() / 1000 + serverClockOffset.get()).toString()
-        val nonce = generateNonce()
-        val payload = "POST\n$path\n$bodyHash\n$ts\n$nonce\n$KYOTO_APP_VER"
-        val sig = hmacSha256Hex(DERIVED_KEY, payload)
-
-        val builder = Request.Builder()
-            .url("$KYOTO_API_URL$path")
-            .post(requestBody)
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("os-version", KYOTO_OS_VER)
-            .header("app-id", KYOTO_APP_ID)
-            .header("app-version", KYOTO_APP_VER)
-            .header("device-model", KYOTO_MODEL)
-            .header("X-Kyoto-Ts", ts)
-            .header("X-Kyoto-Nonce", nonce)
-            .header("X-Kyoto-Sig", sig)
-            .header("X-Kyoto-Cert", CERT_FP_HEX)
-
-        if (animeId != null) {
-            builder.header("X-Anime-Id", animeId)
-        }
-        return builder.build()
-    }
-
-    private fun executeSignedKyoto(path: String, formMap: Map<String, String>, animeId: String? = null): Response {
-        ensureServerTime()
-        val req = kyotoPostRequest(path, formMap, animeId)
-        val res = client.newCall(req).execute()
-        if (res.code == 401) {
-            val dateHeader = res.header("Date")
-            if (!dateHeader.isNullOrBlank()) {
-                res.close()
-                updateServerTime(dateHeader)
-                val retryReq = kyotoPostRequest(path, formMap, animeId)
-                return client.newCall(retryReq).execute()
-            }
-        }
-        return res
-    }
+    private val serverCache by lazy { LruCache<String, List<ServerItemDto>>(SERVER_CACHE_SIZE) }
 
     // ============================== Popular ===============================
 
@@ -458,25 +349,13 @@ class AniLab : Source() {
     }
 
     override fun episodeListRequest(anime: SAnime): Request {
-        ensureServerTime()
-        return kyotoPostRequest("/episodes", mapOf("id" to anime.url), animeId = anime.url)
+        val body = FormBody.Builder().add("id", anime.url).build()
+        return Request.Builder().url("${KyotoInterceptor.PLAY_URL}/episodes").post(body).build()
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val resp = if (response.code == 401) {
-            val date = response.header("Date")
-            response.close()
-            updateServerTime(date)
-            val animeId = response.request.header("X-Anime-Id") ?: ""
-            val retryReq = kyotoPostRequest("/episodes", mapOf("id" to animeId), animeId = animeId)
-            client.newCall(retryReq).execute()
-        } else {
-            response
-        }
-
-        updateServerTime(resp.header("Date"))
-        val animeId = resp.request.header("X-Anime-Id") ?: ""
-        val data = resp.parseAs<EpisodesResponseDto>()
+        val postId = (response.request.body as? FormBody)?.value(0) ?: ""
+        val data = response.parseAs<EpisodesResponseDto>()
         val episodes = data.list ?: emptyList()
 
         val minEpNumber = episodes.minOfOrNull { it.number?.toFloatOrNull() ?: 1f } ?: 1f
@@ -496,9 +375,7 @@ class AniLab : Source() {
 
             val baseName = when (numberingMode) {
                 "season" -> "Episode ${adjustedNum.toInt()}"
-
                 "absolute" -> ep.name ?: "Episode ${rawNum.toInt()}"
-
                 else -> { // "both"
                     if (offset > 0f) {
                         "Episode ${adjustedNum.toInt()} (#${rawNum.toInt()})"
@@ -508,10 +385,16 @@ class AniLab : Source() {
                 }
             }
 
+            val epUrl = "$postId/$epId"
+            ep.servers?.let {
+                serverCache.put(epUrl, it)
+                serverCache.put("$postId#$epId", it)
+            }
+
             SEpisode.create().apply {
                 name = if (ep.filler) "$baseName (Filler)" else baseName
                 episode_number = epNumber
-                url = if (animeId.isNotBlank()) "$animeId#$epId" else epId
+                url = epUrl
             }
         }.reversed()
     }
@@ -519,13 +402,10 @@ class AniLab : Source() {
     // ============================== Hosters (2-Tier Folders) ==============================
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val parts = episode.url.split("#")
-        val animeId = parts[0]
-        val epId = parts.getOrElse(1) { parts[0] }
-
-        val res = executeSignedKyoto("/servers", mapOf("id" to animeId, "episode" to epId))
-        val data = res.parseAs<ServersResponseDto>()
-        val servers = data.list ?: emptyList()
+        val (postId, epId) = parseEpisodeUrl(episode.url)
+        val servers = serverCache[episode.url]
+            ?: serverCache["$postId#$epId"]
+            ?: fetchServers(postId, epId)
 
         // Group servers by Server # (e.g. Server #1, Server #2) to keep SUB and DUB in the same folder
         val serverMap = linkedMapOf<String, MutableList<Pair<String, String>>>()
@@ -535,16 +415,27 @@ class AniLab : Source() {
             val rawName = server.name ?: ""
             val serverNumMatch = Regex("""Server\s*#?(\d+)""", RegexOption.IGNORE_CASE).find(rawName)
             val serverNum = serverNumMatch?.groupValues?.get(1) ?: "1"
-            val langType = if (rawName.contains("dub", ignoreCase = true) || server.lang == "dub") "DUB" else "SUB"
+            val langType = if (rawName.contains("dub", ignoreCase = true) || server.lang?.equals("dub", ignoreCase = true) == true) "DUB" else "SUB"
 
-            serverMap.getOrPut(serverNum) { mutableListOf() }.add(langType to "$animeId|$sId")
+            serverMap.getOrPut(serverNum) { mutableListOf() }.add(langType to sId)
+        }
+
+        if (serverMap.isEmpty()) {
+            return servers.distinctBy { it.id }.mapNotNull { server ->
+                val sId = server.id ?: return@mapNotNull null
+                val langType = if (server.name?.contains("dub", ignoreCase = true) == true || server.lang?.equals("dub", ignoreCase = true) == true) "DUB" else "SUB"
+                Hoster(
+                    hosterName = server.name ?: "Server",
+                    hosterUrl = "$postId|$langType:$sId",
+                )
+            }
         }
 
         val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
 
         return serverMap.map { (serverNum, entries) ->
             val folderName = "Server #$serverNum"
-            val encodedTarget = entries.joinToString("|") { "${it.first}:${it.second}" }
+            val encodedTarget = "$postId|" + entries.distinctBy { it.second }.joinToString(";") { "${it.first}:${it.second}" }
             Hoster(
                 hosterName = folderName,
                 hosterUrl = encodedTarget,
@@ -555,36 +446,63 @@ class AniLab : Source() {
         )
     }
 
-    override suspend fun getVideoList(hoster: Hoster): List<Video> {
-        val targets = hoster.hosterUrl.split("|").mapNotNull { entry ->
-            val parts = entry.split(":", limit = 2)
-            if (parts.size == 2) {
-                val lang = parts[0]
-                val idParts = parts[1].split("|", limit = 2)
-                if (idParts.size == 2) Triple(lang, idParts[0], idParts[1]) else null
-            } else {
-                null
-            }
+    private suspend fun fetchServers(postId: String, epId: String): List<ServerItemDto> {
+        if (postId.isBlank() || epId.isBlank()) return emptyList()
+        return runCatching {
+            val body = FormBody.Builder().add("id", postId).add("episode", epId).build()
+            val req = Request.Builder().url("${KyotoInterceptor.PLAY_URL}/servers").post(body).build()
+            client.newCall(req).awaitSuccess().parseAs<ServersResponseDto>().list.orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun parseEpisodeUrl(url: String): Pair<String, String> {
+        return when {
+            url.contains('/') -> url.substringBefore('/') to url.substringAfter('/')
+            url.contains('#') -> url.substringBefore('#') to url.substringAfter('#')
+            else -> "" to url
         }
-        if (targets.isEmpty()) return emptyList()
+    }
 
-        return targets.parallelCatchingFlatMapBlocking { (lang, animeId, serverId) ->
-            val streamResp = executeSignedKyoto("/stream", mapOf("id" to animeId, "server" to serverId))
-            if (!streamResp.isSuccessful) return@parallelCatchingFlatMapBlocking emptyList()
-            val streamJson = streamResp.parseAs<KyotoStreamDto>()
-            val m3u8Url = streamJson.link ?: return@parallelCatchingFlatMapBlocking emptyList()
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val raw = hoster.hosterUrl
+        val postId: String
+        val targets: List<Pair<String, String>> // (lang, serverId)
 
-            val subTracks = streamJson.subtitles.orEmpty().mapNotNull { sub ->
-                val file = sub.file ?: return@mapNotNull null
-                val label = sub.label ?: sub.lang ?: "Subtitle"
-                Track(file, label)
+        if (raw.contains('|')) {
+            val parts = raw.split('|', limit = 2)
+            postId = parts[0]
+            val rest = parts[1]
+            targets = rest.split(";").mapNotNull { entry ->
+                val p = entry.split(":", limit = 2)
+                if (p.size == 2) {
+                    p[0] to p[1]
+                } else if (entry.isNotBlank()) {
+                    "SUB" to entry
+                } else null
             }
+        } else if (raw.contains('/')) {
+            postId = raw.substringBefore('/')
+            val serverId = raw.substringAfter('/')
+            targets = listOf("SUB" to serverId)
+        } else {
+            return emptyList()
+        }
+
+        if (targets.isEmpty() || postId.isBlank()) return emptyList()
+
+        return targets.parallelCatchingFlatMapBlocking { (lang, serverId) ->
+            val body = FormBody.Builder().add("id", postId).add("server", serverId).build()
+            val req = Request.Builder().url("${KyotoInterceptor.PLAY_URL}/stream").post(body).build()
+            val streamJson = runCatching {
+                client.newCall(req).awaitSuccess().parseAs<KyotoStreamDto>()
+            }.getOrNull() ?: return@parallelCatchingFlatMapBlocking emptyList()
+
+            val m3u8Url = streamJson.link?.takeIf { it.isNotBlank() } ?: return@parallelCatchingFlatMapBlocking emptyList()
+            val subTracks = streamJson.subtitles.orEmpty().mapNotNull { it.toTrack() }
 
             playlistUtils.extractFromHls(
                 playlistUrl = m3u8Url,
-                referer = "$KYOTO_API_URL/",
-                masterHeaders = headers,
-                videoHeaders = headers,
+                referer = "${KyotoInterceptor.PLAY_URL}/",
                 videoNameGen = { quality -> "$lang - $quality" },
                 subtitleList = subTracks,
             )
@@ -594,51 +512,34 @@ class AniLab : Source() {
     // ============================ Fallback Video Links =============================
 
     override fun videoListRequest(episode: SEpisode): Request {
-        val parts = episode.url.split("#")
-        val animeId = parts[0]
-        val epId = parts.getOrElse(1) { parts[0] }
-        ensureServerTime()
-        return kyotoPostRequest("/servers", mapOf("id" to animeId, "episode" to epId), animeId = animeId)
+        val (postId, epId) = parseEpisodeUrl(episode.url)
+        val body = FormBody.Builder().add("id", postId).add("episode", epId).build()
+        return Request.Builder().url("${KyotoInterceptor.PLAY_URL}/servers").post(body).build()
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val resp = if (response.code == 401) {
-            val date = response.header("Date")
-            response.close()
-            updateServerTime(date)
-            val animeId = response.request.header("X-Anime-Id") ?: ""
-            val parts = response.request.tag(SEpisode::class.java)?.url?.split("#")
-            val epId = parts?.getOrNull(1) ?: ""
-            val retryReq = kyotoPostRequest("/servers", mapOf("id" to animeId, "episode" to epId), animeId = animeId)
-            client.newCall(retryReq).execute()
-        } else {
-            response
-        }
+        val postId = (response.request.body as? FormBody)?.let { form ->
+            (0 until form.size).firstOrNull { form.name(it) == "id" }?.let { form.value(it) }
+        }.orEmpty()
 
-        updateServerTime(resp.header("Date"))
-        val animeId = resp.request.header("X-Anime-Id") ?: ""
-        val data = resp.parseAs<ServersResponseDto>()
-        val servers = data.list ?: emptyList()
+        val data = response.parseAs<ServersResponseDto>()
+        val servers = data.list.orEmpty().distinctBy { it.id }
 
         return servers.parallelCatchingFlatMapBlocking { server ->
             val serverId = server.id ?: return@parallelCatchingFlatMapBlocking emptyList()
-            val streamResp = executeSignedKyoto("/stream", mapOf("id" to animeId, "server" to serverId))
-            if (!streamResp.isSuccessful) return@parallelCatchingFlatMapBlocking emptyList()
-            val streamJson = streamResp.parseAs<KyotoStreamDto>()
-            val m3u8Url = streamJson.link ?: return@parallelCatchingFlatMapBlocking emptyList()
+            val body = FormBody.Builder().add("id", postId).add("server", serverId).build()
+            val req = Request.Builder().url("${KyotoInterceptor.PLAY_URL}/stream").post(body).build()
+            val streamJson = runCatching {
+                client.newCall(req).execute().parseAs<KyotoStreamDto>()
+            }.getOrNull() ?: return@parallelCatchingFlatMapBlocking emptyList()
 
-            val subTracks = streamJson.subtitles.orEmpty().mapNotNull { sub ->
-                val file = sub.file ?: return@mapNotNull null
-                val label = sub.label ?: sub.lang ?: "Subtitle"
-                Track(file, label)
-            }
+            val m3u8Url = streamJson.link?.takeIf { it.isNotBlank() } ?: return@parallelCatchingFlatMapBlocking emptyList()
+            val subTracks = streamJson.subtitles.orEmpty().mapNotNull { it.toTrack() }
+            val langLabel = if (server.name?.contains("dub", ignoreCase = true) == true || server.lang?.equals("dub", ignoreCase = true) == true) "DUB" else "SUB"
 
-            val langLabel = if (server.name?.contains("dub", ignoreCase = true) == true || server.lang == "dub") "DUB" else "SUB"
             playlistUtils.extractFromHls(
                 playlistUrl = m3u8Url,
-                referer = "$KYOTO_API_URL/",
-                masterHeaders = headers,
-                videoHeaders = headers,
+                referer = "${KyotoInterceptor.PLAY_URL}/",
                 videoNameGen = { quality -> "${server.name ?: "Server"} ($langLabel) - $quality" },
                 subtitleList = subTracks,
             )
@@ -741,19 +642,7 @@ class AniLab : Source() {
     }
 
     companion object {
-        private const val KYOTO_API_URL = "https://api.kyotoplayer.com"
-        private const val KYOTO_APP_ID = "com.kyotoplayer"
-        private const val KYOTO_APP_VER = "131"
-        private const val KYOTO_OS_VER = "33"
-        private const val KYOTO_MODEL = "Xiaomi M2101K6P"
-        private const val CERT_FP_HEX = "482a900b2906766b2e8d3cf19fcf6d06d0b6c9569cb6305c9c43200a8e20979e"
-
-        private val DERIVED_KEY = byteArrayOf(
-            0x8a.toByte(), 0x63.toByte(), 0xcb.toByte(), 0xb1.toByte(), 0xa5.toByte(), 0x76.toByte(), 0x30.toByte(), 0xf7.toByte(),
-            0x01.toByte(), 0xb4.toByte(), 0xe9.toByte(), 0x96.toByte(), 0x95.toByte(), 0xda.toByte(), 0x82.toByte(), 0xca.toByte(),
-            0x6f.toByte(), 0x4d.toByte(), 0x7a.toByte(), 0xc4.toByte(), 0x28.toByte(), 0xaf.toByte(), 0x69.toByte(), 0x40.toByte(),
-            0xc4.toByte(), 0xed.toByte(), 0xa8.toByte(), 0xa4.toByte(), 0x1e.toByte(), 0xe1.toByte(), 0x9a.toByte(), 0xdd.toByte(),
-        )
+        private const val SERVER_CACHE_SIZE = 2000
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_TITLE = "Preferred quality"
