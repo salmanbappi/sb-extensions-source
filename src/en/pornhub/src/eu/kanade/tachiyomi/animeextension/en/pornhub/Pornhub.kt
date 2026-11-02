@@ -1,13 +1,13 @@
 package eu.kanade.tachiyomi.animeextension.en.pornhub
 
 import androidx.preference.PreferenceScreen
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.util.asJsoup
@@ -85,12 +85,11 @@ class Pornhub : Source() {
 
     // ============================= Popular Videos =============================
 
-    override fun popularAnimeRequest(page: Int): Request =
-        if (page == 1) {
-            GET("$baseUrl/", headers)
-        } else {
-            GET("$baseUrl/video?o=ht&page=$page", headers)
-        }
+    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
+        GET("$baseUrl/", headers)
+    } else {
+        GET("$baseUrl/video?o=ht&page=$page", headers)
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -160,36 +159,34 @@ class Pornhub : Source() {
         return AnimesPage(animeList, hasNextPage)
     }
 
-    private fun parseVideoCards(elements: Iterable<Element>): List<SAnime> =
-        elements.mapNotNull { element ->
-            val linkElement = element.selectFirst("a[href*=/view_video.php]")
-                ?: element.selectFirst("a[href*=\"viewkey=\"]")
-                ?: return@mapNotNull null
+    private fun parseVideoCards(elements: Iterable<Element>): List<SAnime> = elements.mapNotNull { element ->
+        val linkElement = element.selectFirst("a[href*=/view_video.php]")
+            ?: element.selectFirst("a[href*=\"viewkey=\"]")
+            ?: return@mapNotNull null
 
-            val imageElement = element.selectFirst("img")
-            val title = element
-                .selectFirst("span.title a[href], a.thumbnailTitle[href], a[href][title]")
-                ?.text()
-                ?.ifEmpty {
-                    element.selectFirst("a[href][title]")?.attr("title").orEmpty()
-                }
-                ?.ifEmpty {
-                    imageElement?.attr("alt").orEmpty()
-                }
-                ?.takeIf { it.isNotEmpty() }
-                ?: return@mapNotNull null
-
-            SAnime.create().apply {
-                setUrlWithoutDomain(linkElement.absUrl("href"))
-                this.title = title
-                thumbnail_url = imageElement?.let(::extractListingThumbnail)
+        val imageElement = element.selectFirst("img")
+        val title = element
+            .selectFirst("span.title a[href], a.thumbnailTitle[href], a[href][title]")
+            ?.text()
+            ?.ifEmpty {
+                element.selectFirst("a[href][title]")?.attr("title").orEmpty()
             }
-        }.distinctBy { it.url }
+            ?.ifEmpty {
+                imageElement?.attr("alt").orEmpty()
+            }
+            ?.takeIf { it.isNotEmpty() }
+            ?: return@mapNotNull null
 
-    private fun hasNextPage(document: Document): Boolean =
-        document.selectFirst(
-            "div.page_next a[href], li.page_next a[href], a.page_next[href], a.next[href], ul.pagination li.next a, a[rel=next], .paginationWrapper .next a",
-        ) != null
+        SAnime.create().apply {
+            setUrlWithoutDomain(linkElement.absUrl("href"))
+            this.title = title
+            thumbnail_url = imageElement?.let(::extractListingThumbnail)
+        }
+    }.distinctBy { it.url }
+
+    private fun hasNextPage(document: Document): Boolean = document.selectFirst(
+        "div.page_next a[href], li.page_next a[href], a.page_next[href], a.next[href], ul.pagination li.next a, a[rel=next], .paginationWrapper .next a",
+    ) != null
 
     // ============================= Search =============================
 
@@ -278,8 +275,7 @@ class Pornhub : Source() {
 
     // ============================= Details =============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request =
-        GET(if (anime.url.startsWith("http")) anime.url else "$baseUrl${anime.url}", headers)
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(if (anime.url.startsWith("http")) anime.url else "$baseUrl${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
@@ -331,8 +327,7 @@ class Pornhub : Source() {
 
     // ============================= Video Streams =============================
 
-    override fun videoListRequest(episode: SEpisode): Request =
-        GET(if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}", headers)
+    override fun videoListRequest(episode: SEpisode): Request = GET(if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}", headers)
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
@@ -440,7 +435,7 @@ class Pornhub : Source() {
                 playlistUtils.extractFromHls(
                     playlistUrl = url,
                     referer = "$baseUrl/",
-                    videoNameGen = { quality -> "${quality} (HLS)" },
+                    videoNameGen = { quality -> "$quality (HLS)" },
                 )
             }.getOrDefault(emptyList())
             results.addAll(variants)
@@ -472,8 +467,7 @@ class Pornhub : Source() {
         }
     }
 
-    private fun videoResolution(video: Video): Int? =
-        video.videoTitle.filter { it.isDigit() }.toIntOrNull()
+    private fun videoResolution(video: Video): Int? = video.videoTitle.filter { it.isDigit() }.toIntOrNull()
 
     private fun parseFlashvars(document: Document): Flashvars? = document.select("script")
         .asSequence()
@@ -485,11 +479,10 @@ class Pornhub : Source() {
         }
         .firstOrNull()
 
-    private fun extractTitle(document: Document, flashvars: Flashvars?): String =
-        document.selectFirst("h1.title span.inlineFree, h1.title, .video-wrapper h1")?.text()
-            ?: flashvars?.videoTitle
-            ?: document.selectFirst("meta[property=og:title]")?.attr("content")
-            ?: "Pornhub Video"
+    private fun extractTitle(document: Document, flashvars: Flashvars?): String = document.selectFirst("h1.title span.inlineFree, h1.title, .video-wrapper h1")?.text()
+        ?: flashvars?.videoTitle
+        ?: document.selectFirst("meta[property=og:title]")?.attr("content")
+        ?: "Pornhub Video"
 
     private fun extractUploader(document: Document): String? {
         val jsonLd = document.selectFirst("script[type=application/ld+json]")?.data().orEmpty()
@@ -558,10 +551,9 @@ class Pornhub : Source() {
             .toString()
     }
 
-    private fun extractDetailThumbnail(document: Document, flashvars: Flashvars?): String? =
-        document.selectFirst("meta[name=twitter:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
-            ?: document.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
-            ?: flashvars?.imageUrl
+    private fun extractDetailThumbnail(document: Document, flashvars: Flashvars?): String? = document.selectFirst("meta[name=twitter:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
+        ?: document.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
+        ?: flashvars?.imageUrl
 
     // ============================= Dynamic Categories =============================
 
