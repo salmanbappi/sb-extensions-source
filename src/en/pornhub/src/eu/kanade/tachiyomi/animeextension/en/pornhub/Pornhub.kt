@@ -104,11 +104,12 @@ class Pornhub : Source() {
 
     // ============================= Popular Videos =============================
 
-    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
-        GET("$baseUrl/", headers)
-    } else {
-        GET("$baseUrl/video?o=ht&page=$page", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request =
+        if (page == 1) {
+            GET("$baseUrl/", headers)
+        } else {
+            GET("$baseUrl/video?o=ht&page=$page", headers)
+        }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -178,49 +179,51 @@ class Pornhub : Source() {
         return AnimesPage(animeList, hasNextPage)
     }
 
-    private fun parseVideoCards(elements: Iterable<Element>): List<SAnime> = elements.mapNotNull { element ->
-        val linkElement = element.selectFirst("a[href*=/view_video.php]")
-            ?: element.selectFirst("a[href*=\"viewkey=\"]")
-            ?: return@mapNotNull null
+    private fun parseVideoCards(elements: Iterable<Element>): List<SAnime> =
+        elements.mapNotNull { element ->
+            val linkElement = element.selectFirst("a[href*=/view_video.php]")
+                ?: element.selectFirst("a[href*=\"viewkey=\"]")
+                ?: return@mapNotNull null
 
-        val imageElement = element.selectFirst("img")
+            val imageElement = element.selectFirst("img")
 
-        // Prioritize title elements specifically tied to the video, never uploader/model links
-        val titleLink = element.selectFirst(
-            ".vidTitleWrapper a[href*=/view_video.php], " +
-                ".vidTitleWrapper a[href*=\"viewkey=\"], " +
-                "span.title a[href*=/view_video.php], " +
-                "span.title a[href*=\"viewkey=\"], " +
-                "a.thumbnailTitle[href*=/view_video.php], " +
-                "a.thumbnailTitle[href*=\"viewkey=\"], " +
-                ".vidTitleWrapper a, " +
-                "span.title a, " +
-                "a.thumbnailTitle",
-        )
+            // Prioritize title elements specifically tied to the video, never uploader/model links
+            val titleLink = element.selectFirst(
+                ".vidTitleWrapper a[href*=/view_video.php], " +
+                    ".vidTitleWrapper a[href*=\"viewkey=\"], " +
+                    "span.title a[href*=/view_video.php], " +
+                    "span.title a[href*=\"viewkey=\"], " +
+                    "a.thumbnailTitle[href*=/view_video.php], " +
+                    "a.thumbnailTitle[href*=\"viewkey=\"], " +
+                    ".vidTitleWrapper a, " +
+                    "span.title a, " +
+                    "a.thumbnailTitle",
+            )
 
-        val videoTitleAttrLink = element.selectFirst(
-            "a[href*=/view_video.php][title], a[href*=\"viewkey=\"][title]",
-        )
+            val videoTitleAttrLink = element.selectFirst(
+                "a[href*=/view_video.php][title], a[href*=\"viewkey=\"][title]",
+            )
 
-        val title = titleLink?.attr("title")?.takeIf { it.isNotBlank() }
-            ?: titleLink?.text()?.takeIf { it.isNotBlank() }
-            ?: videoTitleAttrLink?.attr("title")?.takeIf { it.isNotBlank() }
-            ?: imageElement?.attr("alt")?.takeIf { it.isNotBlank() }
-            ?: imageElement?.attr("title")?.takeIf { it.isNotBlank() }
-            ?: linkElement.attr("title").takeIf { it.isNotBlank() }
-            ?: linkElement.text().takeIf { it.isNotBlank() }
-            ?: return@mapNotNull null
+            val title = titleLink?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: titleLink?.text()?.takeIf { it.isNotBlank() }
+                ?: videoTitleAttrLink?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: imageElement?.attr("alt")?.takeIf { it.isNotBlank() }
+                ?: imageElement?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: linkElement.attr("title").takeIf { it.isNotBlank() }
+                ?: linkElement.text().takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
 
-        SAnime.create().apply {
-            setUrlWithoutDomain(linkElement.absUrl("href"))
-            this.title = title.trim()
-            thumbnail_url = imageElement?.let(::extractListingThumbnail)
-        }
-    }.distinctBy { it.url }
+            SAnime.create().apply {
+                setUrlWithoutDomain(linkElement.absUrl("href"))
+                this.title = title.trim()
+                thumbnail_url = imageElement?.let(::extractListingThumbnail)
+            }
+        }.distinctBy { it.url }
 
-    private fun hasNextPage(document: Document): Boolean = document.selectFirst(
-        "div.page_next a[href], li.page_next a[href], a.page_next[href], a.next[href], ul.pagination li.next a, a[rel=next], .paginationWrapper .next a",
-    ) != null
+    private fun hasNextPage(document: Document): Boolean =
+        document.selectFirst(
+            "div.page_next a[href], li.page_next a[href], a.page_next[href], a.next[href], ul.pagination li.next a, a[rel=next], .paginationWrapper .next a",
+        ) != null
 
     // ============================= Search =============================
 
@@ -366,7 +369,8 @@ class Pornhub : Source() {
 
     // ============================= Details =============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request = GET(if (anime.url.startsWith("http")) anime.url else "$baseUrl${anime.url}", headers)
+    override fun animeDetailsRequest(anime: SAnime): Request =
+        GET(if (anime.url.startsWith("http")) anime.url else "$baseUrl${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
@@ -418,24 +422,42 @@ class Pornhub : Source() {
 
     // ============================= Video Streams =============================
 
-    override fun videoListRequest(episode: SEpisode): Request = GET(if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}", headers)
+    override fun videoListRequest(episode: SEpisode): Request =
+        GET(if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}", headers)
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val flashvars = parseFlashvars(document)
 
+        val formatPref = preferences.getString(PREF_FORMAT_KEY, PREF_FORMAT_DEFAULT) ?: PREF_FORMAT_DEFAULT
+
         val remoteVideos = extractRemoteMediaVideos(flashvars, response)
         val directVideos = extractDirectVideos(document)
-        val hlsVideos = extractHlsVideos(flashvars)
-        val expandedHlsVideos = extractExpandedHlsVideos(flashvars)
+        val mp4Videos = (remoteVideos + directVideos).distinctBy { it.videoUrl }
 
-        val allVideos = (remoteVideos + directVideos + expandedHlsVideos + hlsVideos)
-            .distinctBy { video ->
-                videoResolution(video)?.let { "res:$it" } ?: video.videoUrl
+        val hlsVideos = if (formatPref == "mp4_only") emptyList() else extractHlsVideos(flashvars)
+        val expandedHlsVideos = if (formatPref == "mp4_only") emptyList() else extractExpandedHlsVideos(flashvars)
+        val allHlsVideos = (expandedHlsVideos + hlsVideos).distinctBy { it.videoUrl }
+
+        val selectedVideos = when (formatPref) {
+            "mp4_only" -> {
+                if (mp4Videos.isNotEmpty()) {
+                    mp4Videos
+                } else {
+                    // Fallback to HLS if no MP4 stream is found
+                    allHlsVideos.ifEmpty { extractExpandedHlsVideos(flashvars) + extractHlsVideos(flashvars) }
+                }
             }
-            .sortedByDescending { videoResolution(it) ?: 0 }
+            "hls_only" -> allHlsVideos
+            else -> mp4Videos + allHlsVideos
+        }
 
-        return allVideos
+        return selectedVideos
+            .distinctBy { it.videoUrl }
+            .sortedWith(
+                compareByDescending<Video> { it.videoTitle.contains("MP4", ignoreCase = true) }
+                    .thenByDescending { videoResolution(it) ?: 0 }
+            )
     }
 
     private fun extractRemoteMediaVideos(flashvars: Flashvars?, pageResponse: Response): List<Video> {
@@ -472,7 +494,7 @@ class Pornhub : Source() {
                 response
                     .parseAs<List<MediaDefinition>>(jsonHelper)
                     .mapNotNull { definition ->
-                        val url = definition.videoUrl?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
+                        val url = definition.videoUrl?.takeIf { it.startsWith("http") }?.replace("&amp;", "&") ?: return@mapNotNull null
                         if (!url.substringBefore('?').endsWith(".mp4", ignoreCase = true)) return@mapNotNull null
 
                         val resolution = definition.qualityInt
@@ -482,7 +504,10 @@ class Pornhub : Source() {
                         Video(
                             videoUrl = url,
                             videoTitle = "${resolution}p (MP4)",
-                            headers = headers,
+                            headers = headers.newBuilder()
+                                .set("Referer", "$baseUrl/")
+                                .set("User-Agent", headers["User-Agent"] ?: DEFAULT_USER_AGENT)
+                                .build(),
                         )
                     }
             }
@@ -526,7 +551,7 @@ class Pornhub : Source() {
                 playlistUtils.extractFromHls(
                     playlistUrl = url,
                     referer = "$baseUrl/",
-                    videoNameGen = { quality -> "$quality (HLS)" },
+                    videoNameGen = { quality -> "${quality} (HLS)" },
                 )
             }.getOrDefault(emptyList())
             results.addAll(variants)
@@ -535,13 +560,25 @@ class Pornhub : Source() {
     }
 
     private fun extractDirectVideos(document: Document): List<Video> {
-        val urls = document
-            .select("meta[property=og:video], meta[name=twitter:player:stream]")
+        val metaUrls = document
+            .select("meta[property=og:video], meta[property=og:video:url], meta[property=og:video:secure_url], meta[name=twitter:player:stream]")
             .map { it.attr("content").trim() }
+
+        val tagUrls = document
+            .select("video source[src*=.mp4], video[src*=.mp4]")
+            .map { it.attr("abs:src").ifEmpty { it.attr("src") }.trim() }
+
+        val urls = (metaUrls + tagUrls)
             .filter { url ->
                 url.isNotEmpty() && url.substringBefore('?').endsWith(".mp4", ignoreCase = true)
             }
+            .map { it.replace("&amp;", "&") }
             .distinct()
+
+        val mp4Headers = headers.newBuilder()
+            .set("Referer", "$baseUrl/")
+            .set("User-Agent", headers["User-Agent"] ?: DEFAULT_USER_AGENT)
+            .build()
 
         return urls.map { url ->
             val resolution = RESOLUTION_REGEX
@@ -553,12 +590,14 @@ class Pornhub : Source() {
             Video(
                 videoUrl = url,
                 videoTitle = if (resolution != null) "${resolution}p (MP4)" else "Direct MP4",
-                headers = headers,
+                headers = mp4Headers,
             )
         }
     }
 
-    private fun videoResolution(video: Video): Int? = video.videoTitle.filter { it.isDigit() }.toIntOrNull()
+    private fun videoResolution(video: Video): Int? =
+        Regex("""(\d+)p""", RegexOption.IGNORE_CASE).find(video.videoTitle)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: RESOLUTION_REGEX.find(video.videoUrl)?.groupValues?.getOrNull(1)?.toIntOrNull()
 
     private fun parseFlashvars(document: Document): Flashvars? = document.select("script")
         .asSequence()
@@ -570,10 +609,11 @@ class Pornhub : Source() {
         }
         .firstOrNull()
 
-    private fun extractTitle(document: Document, flashvars: Flashvars?): String = document.selectFirst("h1.title span.inlineFree, h1.title, .video-wrapper h1")?.text()
-        ?: flashvars?.videoTitle
-        ?: document.selectFirst("meta[property=og:title]")?.attr("content")
-        ?: "Pornhub Video"
+    private fun extractTitle(document: Document, flashvars: Flashvars?): String =
+        document.selectFirst("h1.title span.inlineFree, h1.title, .video-wrapper h1")?.text()
+            ?: flashvars?.videoTitle
+            ?: document.selectFirst("meta[property=og:title]")?.attr("content")
+            ?: "Pornhub Video"
 
     private fun extractUploader(document: Document): String? {
         val jsonLd = document.selectFirst("script[type=application/ld+json]")?.data().orEmpty()
@@ -642,9 +682,10 @@ class Pornhub : Source() {
             .toString()
     }
 
-    private fun extractDetailThumbnail(document: Document, flashvars: Flashvars?): String? = document.selectFirst("meta[name=twitter:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
-        ?: document.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
-        ?: flashvars?.imageUrl
+    private fun extractDetailThumbnail(document: Document, flashvars: Flashvars?): String? =
+        document.selectFirst("meta[name=twitter:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
+            ?: document.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
+            ?: flashvars?.imageUrl
 
     // ============================= Dynamic Categories =============================
 
@@ -714,6 +755,15 @@ class Pornhub : Source() {
         customUrlPref.setupPreferenceScreen(screen)
 
         screen.addListPreference(
+            key = PREF_FORMAT_KEY,
+            default = PREF_FORMAT_DEFAULT,
+            title = "Preferred Stream Format",
+            summary = "%s",
+            entries = listOf("MP4 Only (Recommended for stability)", "All Streams (MP4 + HLS)", "HLS Only"),
+            entryValues = listOf("mp4_only", "all", "hls_only"),
+        )
+
+        screen.addListPreference(
             key = PREF_QUALITY_KEY,
             default = PREF_QUALITY_DEFAULT,
             title = "Preferred Video Quality",
@@ -724,9 +774,13 @@ class Pornhub : Source() {
     }
 
     companion object {
+        private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         private const val PREF_BASE_URL_DEFAULT = "https://www.pornhub.com"
         private const val IMAGE_BASE_URL = "https://ei.phncdn.com"
         private const val IMAGE_HOST = "ei.phncdn.com"
+
+        private const val PREF_FORMAT_KEY = "preferred_stream_format"
+        private const val PREF_FORMAT_DEFAULT = "mp4_only"
 
         private const val PREF_QUALITY_KEY = "preferred_video_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
