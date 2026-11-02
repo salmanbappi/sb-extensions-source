@@ -40,7 +40,7 @@ internal class KyotoInterceptor(private val deviceModel: () -> String) : Interce
 
     private fun Request.signed(offset: Long): Request {
         val timestamp = (System.currentTimeMillis() / 1000 + offset).toString()
-        val nonce = ByteArray(16).also(secureRandom::nextBytes).toByteString().base64Url().trimEnd('=')
+        val nonce = ByteArray(16).also(secureRandom::nextBytes).toByteString().base64().trimEnd('=')
         val bodyHash = Buffer().also { body?.writeTo(it) }.sha256().hex()
         val canonical = listOf(method, url.encodedPath, bodyHash, timestamp, nonce, APP_VERSION).joinToString("\n")
 
@@ -53,6 +53,7 @@ internal class KyotoInterceptor(private val deviceModel: () -> String) : Interce
             .header("X-Kyoto-Ts", timestamp)
             .header("X-Kyoto-Nonce", nonce)
             .header("X-Kyoto-Sig", canonical.encodeUtf8().hmacSha256(SIGNING_KEY).hex())
+            .header("X-Kyoto-Cert", CERT_HEX)
             .build()
     }
 
@@ -61,7 +62,8 @@ internal class KyotoInterceptor(private val deviceModel: () -> String) : Interce
 
         private const val API_HOST = "api.kyotoplayer.com"
         private const val APP_ID = "com.kyotoplayer"
-        private const val APP_VERSION = "129"
+        private const val APP_VERSION = "132"
+        private const val CERT_HEX = "482a900b2906766b2e8d3cf19fcf6d06d0b6c9569cb6305c9c43200a8e20979e"
 
         // Android 16, which every device in DEVICE_MODELS runs
         private const val OS_VERSION = "36"
@@ -95,8 +97,8 @@ internal class KyotoInterceptor(private val deviceModel: () -> String) : Interce
         // HMAC-SHA256 keyed with the constant table in libkyoto.so (key[i] = data[i] xor (i * 0x49 + 0x29)),
         // over the SHA-256 of the first certificate in the official APK's v3 signature block.
         private val SIGNING_KEY by lazy {
-            "482a900b2906766b2e8d3cf19fcf6d06d0b6c9569cb6305c9c43200a8e20979e".decodeHex()
-                .hmacSha256("c41cdebbe95894b9301a39825db7152c4b9cbabb6b8246724411fe3307a60f0f".decodeHex())
+            CERT_HEX.decodeHex()
+                .hmacSha256("9589ba06efeb990bafe302235854766f4d5b9cabcb57ad6ad6bb41cd7b6a8408".decodeHex())
         }
 
         fun getDeviceModel(preferences: SharedPreferences): String = preferences.getString(PREF_DEVICE_KEY, null)
