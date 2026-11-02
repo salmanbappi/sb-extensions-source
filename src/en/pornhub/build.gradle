@@ -1,0 +1,13 @@
+ext {
+    extName = 'Pornhub'
+    extClass = '.Pornhub'
+    extVersionCode = 6
+    baseUrl = 'https://www.pornhub.com'
+    isNsfw = true
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+}
