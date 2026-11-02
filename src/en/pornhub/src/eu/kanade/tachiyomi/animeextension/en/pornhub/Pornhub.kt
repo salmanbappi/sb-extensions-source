@@ -11,7 +11,6 @@ import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.util.asJsoup
-import keiyoushi.source.CustomUrlPreferences
 import keiyoushi.utils.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.parseAs
