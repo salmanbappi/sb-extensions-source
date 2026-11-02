@@ -464,13 +464,17 @@ class AniLab : Source() {
     }
 
     private fun parseEpisodeUrl(url: String): Pair<String, String> {
-        val postId = url.substringBefore('/', "").substringBefore('#', "")
+        val rawPost = when {
+            url.contains('/') -> url.substringBefore('/')
+            url.contains('#') -> url.substringBefore('#')
+            else -> ""
+        }
         val epId = when {
             url.contains('/') -> url.substringAfter('/')
             url.contains('#') -> url.substringAfter('#')
             else -> url
         }
-        val normalizedPostId = if (postId.isNotBlank()) postId.toPostId().toString() else ""
+        val normalizedPostId = if (rawPost.isNotBlank()) rawPost.toPostId().toString() else ""
         return normalizedPostId to epId
     }
 
@@ -551,7 +555,6 @@ class AniLab : Source() {
 
             playlistUtils.extractFromHls(
                 playlistUrl = m3u8Url,
-                referer = "${KyotoInterceptor.PLAY_URL}/",
                 videoNameGen = { quality -> "${server.name ?: "Server"} ($langLabel) - $quality" },
                 subtitleList = subTracks,
             )
