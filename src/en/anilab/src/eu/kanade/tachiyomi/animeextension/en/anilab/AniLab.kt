@@ -126,7 +126,7 @@ class AniLab : Source() {
     override val supportsLatest = true
 
     override fun headersBuilder() = super.headersBuilder()
-        .set("User-Agent", "okhttp/4.9.2")
+        .set("User-Agent", "okhttp/4.12.0")
         .set("Accept", "application/json")
 
     private val deviceModel by lazy { KyotoInterceptor.getDeviceModel(preferences) }
@@ -261,7 +261,7 @@ class AniLab : Source() {
         return details
     }
 
-    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/post?id=${anime.url}", headers)
+    override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseUrl/post?id=${anime.url.toPostId()}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val data = response.parseAs<PostDetailsDto>()
@@ -308,7 +308,7 @@ class AniLab : Source() {
             anime.title
         } else {
             runCatching {
-                val detailResponse = client.newCall(GET("$baseUrl/post?id=${anime.url}", headers)).execute()
+                val detailResponse = client.newCall(GET("$baseUrl/post?id=${anime.url.toPostId()}", headers)).execute()
                 val detail = detailResponse.parseAs<PostDetailsDto>()
                 detail.title ?: anime.title
             }.getOrDefault(anime.title)
@@ -349,8 +349,9 @@ class AniLab : Source() {
     }
 
     override fun episodeListRequest(anime: SAnime): Request {
+        val postId = anime.url.toPostId().toString()
         val body = FormBody.Builder()
-            .add("id", anime.url)
+            .add("id", postId)
             .add("token", "undefined")
             .build()
         return Request.Builder().url("${KyotoInterceptor.PLAY_URL}/episodes").post(body).build()
@@ -462,10 +463,15 @@ class AniLab : Source() {
         }.getOrDefault(emptyList())
     }
 
-    private fun parseEpisodeUrl(url: String): Pair<String, String> = when {
-        url.contains('/') -> url.substringBefore('/') to url.substringAfter('/')
-        url.contains('#') -> url.substringBefore('#') to url.substringAfter('#')
-        else -> "" to url
+    private fun parseEpisodeUrl(url: String): Pair<String, String> {
+        val postId = url.substringBefore('/', "").substringBefore('#', "")
+        val epId = when {
+            url.contains('/') -> url.substringAfter('/')
+            url.contains('#') -> url.substringAfter('#')
+            else -> url
+        }
+        val normalizedPostId = if (postId.isNotBlank()) postId.toPostId().toString() else ""
+        return normalizedPostId to epId
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -509,7 +515,6 @@ class AniLab : Source() {
 
             playlistUtils.extractFromHls(
                 playlistUrl = m3u8Url,
-                referer = "${KyotoInterceptor.PLAY_URL}/",
                 videoNameGen = { quality -> "$lang - $quality" },
                 subtitleList = subTracks,
             )
@@ -649,6 +654,14 @@ class AniLab : Source() {
     }
 
     companion object {
+        private const val POST_ID_OFFSET = 1_000_000_000L
+        private val POST_ID_REGEX = Regex("""\d+$""")
+
+        private fun String.toPostId(): Long {
+            val id = POST_ID_REGEX.find(trimEnd('/'))?.value?.toLongOrNull() ?: 0L
+            return if (id in 1 until POST_ID_OFFSET) id + POST_ID_OFFSET else id
+        }
+
         private const val SERVER_CACHE_SIZE = 2000
 
         private const val PREF_QUALITY_KEY = "preferred_quality"

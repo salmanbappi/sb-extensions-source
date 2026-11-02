@@ -40,7 +40,7 @@ internal class KyotoInterceptor(private val deviceModel: () -> String) : Interce
 
     private fun Request.signed(offset: Long): Request {
         val timestamp = (System.currentTimeMillis() / 1000 + offset).toString()
-        val nonce = ByteArray(16).also(secureRandom::nextBytes).toByteString().base64().trimEnd('=')
+        val nonce = ByteArray(16).also(secureRandom::nextBytes).toByteString().base64Url().trimEnd('=')
         val bodyHash = Buffer().also { body?.writeTo(it) }.sha256().hex()
         val canonical = listOf(method, url.encodedPath, bodyHash, timestamp, nonce, APP_VERSION).joinToString("\n")
 
