@@ -349,12 +349,17 @@ class AniLab : Source() {
     }
 
     override fun episodeListRequest(anime: SAnime): Request {
-        val body = FormBody.Builder().add("id", anime.url).build()
+        val body = FormBody.Builder()
+            .add("id", anime.url)
+            .add("token", "undefined")
+            .build()
         return Request.Builder().url("${KyotoInterceptor.PLAY_URL}/episodes").post(body).build()
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val postId = (response.request.body as? FormBody)?.value(0) ?: ""
+        val postId = (response.request.body as? FormBody)?.let { form ->
+            (0 until form.size).firstOrNull { form.name(it) == "id" }?.let { form.value(it) }
+        }.orEmpty()
         val data = response.parseAs<EpisodesResponseDto>()
         val episodes = data.list ?: emptyList()
 
