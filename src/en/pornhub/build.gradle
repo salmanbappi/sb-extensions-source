@@ -1,7 +1,7 @@
 ext {
     extName = 'Pornhub'
     extClass = '.Pornhub'
-    extVersionCode = 6
+    extVersionCode = 7
     baseUrl = 'https://www.pornhub.com'
     isNsfw = true
 }

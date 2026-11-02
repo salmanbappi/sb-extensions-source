@@ -1,13 +1,13 @@
 package eu.kanade.tachiyomi.animeextension.en.pornhub
 
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import eu.kanade.tachiyomi.util.asJsoup
@@ -57,6 +57,26 @@ class Pornhub : Source() {
         network.client.newBuilder()
             .retryOnConnectionFailure(true)
             .rateLimit(permits = 5, period = 1.seconds)
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val response = chain.proceed(request)
+                val path = request.url.encodedPath
+                val isSearchOrListing = path.contains("/search") ||
+                    path.endsWith("/videos") ||
+                    path.endsWith("/videos/public") ||
+                    path == "/video" ||
+                    path == "/transgender" ||
+                    path == "/gay/video"
+                if (response.code == 404 && isSearchOrListing) {
+                    // Pornhub returns HTTP 404 for search queries with 0 results or past last page
+                    response.newBuilder()
+                        .code(200)
+                        .message("OK")
+                        .build()
+                } else {
+                    response
+                }
+            }
             .build()
     }
 
@@ -84,11 +104,12 @@ class Pornhub : Source() {
 
     // ============================= Popular Videos =============================
 
-    override fun popularAnimeRequest(page: Int): Request = if (page == 1) {
-        GET("$baseUrl/", headers)
-    } else {
-        GET("$baseUrl/video?o=ht&page=$page", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request =
+        if (page == 1) {
+            GET("$baseUrl/", headers)
+        } else {
+            GET("$baseUrl/video?o=ht&page=$page", headers)
+        }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -158,34 +179,51 @@ class Pornhub : Source() {
         return AnimesPage(animeList, hasNextPage)
     }
 
-    private fun parseVideoCards(elements: Iterable<Element>): List<SAnime> = elements.mapNotNull { element ->
-        val linkElement = element.selectFirst("a[href*=/view_video.php]")
-            ?: element.selectFirst("a[href*=\"viewkey=\"]")
-            ?: return@mapNotNull null
+    private fun parseVideoCards(elements: Iterable<Element>): List<SAnime> =
+        elements.mapNotNull { element ->
+            val linkElement = element.selectFirst("a[href*=/view_video.php]")
+                ?: element.selectFirst("a[href*=\"viewkey=\"]")
+                ?: return@mapNotNull null
 
-        val imageElement = element.selectFirst("img")
-        val title = element
-            .selectFirst("span.title a[href], a.thumbnailTitle[href], a[href][title]")
-            ?.text()
-            ?.ifEmpty {
-                element.selectFirst("a[href][title]")?.attr("title").orEmpty()
+            val imageElement = element.selectFirst("img")
+
+            // Prioritize title elements specifically tied to the video, never uploader/model links
+            val titleLink = element.selectFirst(
+                ".vidTitleWrapper a[href*=/view_video.php], " +
+                    ".vidTitleWrapper a[href*=\"viewkey=\"], " +
+                    "span.title a[href*=/view_video.php], " +
+                    "span.title a[href*=\"viewkey=\"], " +
+                    "a.thumbnailTitle[href*=/view_video.php], " +
+                    "a.thumbnailTitle[href*=\"viewkey=\"], " +
+                    ".vidTitleWrapper a, " +
+                    "span.title a, " +
+                    "a.thumbnailTitle",
+            )
+
+            val videoTitleAttrLink = element.selectFirst(
+                "a[href*=/view_video.php][title], a[href*=\"viewkey=\"][title]",
+            )
+
+            val title = titleLink?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: titleLink?.text()?.takeIf { it.isNotBlank() }
+                ?: videoTitleAttrLink?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: imageElement?.attr("alt")?.takeIf { it.isNotBlank() }
+                ?: imageElement?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: linkElement.attr("title").takeIf { it.isNotBlank() }
+                ?: linkElement.text().takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+
+            SAnime.create().apply {
+                setUrlWithoutDomain(linkElement.absUrl("href"))
+                this.title = title.trim()
+                thumbnail_url = imageElement?.let(::extractListingThumbnail)
             }
-            ?.ifEmpty {
-                imageElement?.attr("alt").orEmpty()
-            }
-            ?.takeIf { it.isNotEmpty() }
-            ?: return@mapNotNull null
+        }.distinctBy { it.url }
 
-        SAnime.create().apply {
-            setUrlWithoutDomain(linkElement.absUrl("href"))
-            this.title = title
-            thumbnail_url = imageElement?.let(::extractListingThumbnail)
-        }
-    }.distinctBy { it.url }
-
-    private fun hasNextPage(document: Document): Boolean = document.selectFirst(
-        "div.page_next a[href], li.page_next a[href], a.page_next[href], a.next[href], ul.pagination li.next a, a[rel=next], .paginationWrapper .next a",
-    ) != null
+    private fun hasNextPage(document: Document): Boolean =
+        document.selectFirst(
+            "div.page_next a[href], li.page_next a[href], a.page_next[href], a.next[href], ul.pagination li.next a, a[rel=next], .paginationWrapper .next a",
+        ) != null
 
     // ============================= Search =============================
 
@@ -243,26 +281,44 @@ class Pornhub : Source() {
         }
 
         // Standard Keyword Search or Filtered Catalog Browsing
-        val url = if (trimmedQuery.isNotBlank()) {
-            "$baseUrl/video/search".toHttpUrl().newBuilder().apply {
-                addQueryParameter("search", trimmedQuery)
+        val sanitizedQuery = trimmedQuery
+            .replace(Regex("[/?#]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        val url = if (sanitizedQuery.isNotBlank()) {
+            val searchPath = when (filterData.orientation) {
+                "gay" -> "$baseUrl/gay/video/search"
+                else -> "$baseUrl/video/search"
+            }
+            searchPath.toHttpUrl().newBuilder().apply {
+                addQueryParameter("search", sanitizedQuery)
                 addQueryParameter("page", page.toString())
-                if (filterData.sort.isNotBlank()) addQueryParameter("o", filterData.sort)
-                if (filterData.production.isNotBlank()) addQueryParameter("p", filterData.production)
-                if (filterData.quality.isNotBlank()) addQueryParameter("hd", "1")
-                if (filterData.categoryId.isNotBlank()) addQueryParameter("c", filterData.categoryId)
+                // Pornhub only accepts these specific sorts on /video/search
+                if (filterData.sort in setOf("mr", "mv", "tr", "lg")) {
+                    addQueryParameter("o", filterData.sort)
+                }
+                if (filterData.production in setOf("professional", "homemade")) {
+                    addQueryParameter("p", filterData.production)
+                }
+                if (filterData.quality.isNotBlank()) {
+                    addQueryParameter("hd", "1")
+                }
+                // Do NOT add 'c' here because /video/search returns 404 if 'c' is passed
             }.build()
         } else {
             val baseCatalog = when (filterData.orientation) {
                 "gay" -> "$baseUrl/gay/video"
-                "transgender" -> "$baseUrl/transgender/video"
+                "transgender" -> "$baseUrl/transgender"
                 else -> "$baseUrl/video"
             }
             baseCatalog.toHttpUrl().newBuilder().apply {
                 addQueryParameter("page", page.toString())
                 if (filterData.categoryId.isNotBlank()) addQueryParameter("c", filterData.categoryId)
                 if (filterData.sort.isNotBlank()) addQueryParameter("o", filterData.sort)
-                if (filterData.production.isNotBlank()) addQueryParameter("p", filterData.production)
+                if (filterData.production in setOf("professional", "homemade")) {
+                    addQueryParameter("p", filterData.production)
+                }
                 if (filterData.quality.isNotBlank()) addQueryParameter("hd", "1")
             }.build()
         }
@@ -270,11 +326,51 @@ class Pornhub : Source() {
         return GET(url, headers)
     }
 
-    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
+
+        // Handle Pornhub's 404 / No results found pages
+        if (document.title().contains("No results found", ignoreCase = true) ||
+            document.title().contains("Page Not Found", ignoreCase = true) ||
+            document.selectFirst("h1.searchPageTitle:matches((?i)no results)") != null ||
+            document.selectFirst("div.noResults") != null
+        ) {
+            return AnimesPage(emptyList(), false)
+        }
+
+        val searchElements = document.select(
+            "ul#videoSearchResult li.pcVideoListItem[data-video-vkey], " +
+                "ul#videoSearchResult li[data-video-id][data-video-vkey], " +
+                "ul#videoSearchResult li.videoBox, " +
+                "#searchVideos li[data-video-vkey], " +
+                "div.searchPageVideos li.pcVideoListItem",
+        )
+
+        val elements = if (searchElements.isNotEmpty()) {
+            searchElements
+        } else {
+            // For user/model/channel video grids or filtered catalog fallback
+            document.select(
+                "li.pcVideoListItem[data-video-vkey], " +
+                    "li[data-video-id][data-video-vkey], " +
+                    "li.pcVideoListItem, " +
+                    "li.videoBox, " +
+                    "li.js-popvideoblock, " +
+                    "ul#videoSearchResult li, " +
+                    "#searchVideos li",
+            )
+        }
+
+        val animeList = parseVideoCards(elements)
+        val hasNextPage = hasNextPage(document)
+
+        return AnimesPage(animeList, hasNextPage)
+    }
 
     // ============================= Details =============================
 
-    override fun animeDetailsRequest(anime: SAnime): Request = GET(if (anime.url.startsWith("http")) anime.url else "$baseUrl${anime.url}", headers)
+    override fun animeDetailsRequest(anime: SAnime): Request =
+        GET(if (anime.url.startsWith("http")) anime.url else "$baseUrl${anime.url}", headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
@@ -326,7 +422,8 @@ class Pornhub : Source() {
 
     // ============================= Video Streams =============================
 
-    override fun videoListRequest(episode: SEpisode): Request = GET(if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}", headers)
+    override fun videoListRequest(episode: SEpisode): Request =
+        GET(if (episode.url.startsWith("http")) episode.url else "$baseUrl${episode.url}", headers)
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
@@ -434,7 +531,7 @@ class Pornhub : Source() {
                 playlistUtils.extractFromHls(
                     playlistUrl = url,
                     referer = "$baseUrl/",
-                    videoNameGen = { quality -> "$quality (HLS)" },
+                    videoNameGen = { quality -> "${quality} (HLS)" },
                 )
             }.getOrDefault(emptyList())
             results.addAll(variants)
@@ -466,7 +563,8 @@ class Pornhub : Source() {
         }
     }
 
-    private fun videoResolution(video: Video): Int? = video.videoTitle.filter { it.isDigit() }.toIntOrNull()
+    private fun videoResolution(video: Video): Int? =
+        video.videoTitle.filter { it.isDigit() }.toIntOrNull()
 
     private fun parseFlashvars(document: Document): Flashvars? = document.select("script")
         .asSequence()
@@ -478,10 +576,11 @@ class Pornhub : Source() {
         }
         .firstOrNull()
 
-    private fun extractTitle(document: Document, flashvars: Flashvars?): String = document.selectFirst("h1.title span.inlineFree, h1.title, .video-wrapper h1")?.text()
-        ?: flashvars?.videoTitle
-        ?: document.selectFirst("meta[property=og:title]")?.attr("content")
-        ?: "Pornhub Video"
+    private fun extractTitle(document: Document, flashvars: Flashvars?): String =
+        document.selectFirst("h1.title span.inlineFree, h1.title, .video-wrapper h1")?.text()
+            ?: flashvars?.videoTitle
+            ?: document.selectFirst("meta[property=og:title]")?.attr("content")
+            ?: "Pornhub Video"
 
     private fun extractUploader(document: Document): String? {
         val jsonLd = document.selectFirst("script[type=application/ld+json]")?.data().orEmpty()
@@ -550,9 +649,10 @@ class Pornhub : Source() {
             .toString()
     }
 
-    private fun extractDetailThumbnail(document: Document, flashvars: Flashvars?): String? = document.selectFirst("meta[name=twitter:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
-        ?: document.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
-        ?: flashvars?.imageUrl
+    private fun extractDetailThumbnail(document: Document, flashvars: Flashvars?): String? =
+        document.selectFirst("meta[name=twitter:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
+            ?: document.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.isNotEmpty() }
+            ?: flashvars?.imageUrl
 
     // ============================= Dynamic Categories =============================
 
