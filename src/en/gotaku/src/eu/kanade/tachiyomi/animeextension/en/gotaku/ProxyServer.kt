@@ -110,12 +110,15 @@ class ProxyServer(
         return try {
             when {
                 params["sub"]?.firstOrNull() == "1" -> serveSubtitle(url)
+
                 params["m3u8"]?.firstOrNull() == "1" -> serveManifest(
                     url,
                     params["key"]?.firstOrNull().orEmpty(),
                     params["sb"]?.firstOrNull()?.toIntOrNull() ?: 0,
                 )
+
                 params["plain"]?.firstOrNull() == "1" -> servePassthrough(url)
+
                 else -> serveSegment(
                     url,
                     params["key"]?.firstOrNull(),
@@ -217,7 +220,9 @@ class ProxyServer(
             val trimmed = line.trim()
             when {
                 trimmed.isEmpty() -> line
+
                 trimmed.startsWith("#") -> rewriteTagLine(trimmed, parent, keySeed, segmentBytes)
+
                 else -> {
                     val resolved = parent.resolve(trimmed)?.toString() ?: trimmed
                     createProxyUrl(resolved, keySeed, segmentBytes, isManifest = isMaster)
