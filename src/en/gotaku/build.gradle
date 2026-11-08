@@ -1,0 +1,14 @@
+ext {
+    extName = 'Gotaku'
+    extClass = '.Gotaku'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+    implementation(project(":lib:playlist-utils"))
+    implementation(project(":lib:episode-metadata-fetcher"))
+}
