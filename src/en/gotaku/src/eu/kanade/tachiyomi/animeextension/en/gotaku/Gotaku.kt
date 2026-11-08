@@ -30,6 +30,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.nanohttpd.protocols.http.NanoHTTPD
 import java.lang.ref.WeakReference
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -895,7 +896,7 @@ class Gotaku : Source() {
             proxyServer?.stop()
             proxyServer = ProxyServer(headers, baseUrl)
             proxyServerDomain = baseUrl
-            proxyServer!!.start()
+            proxyServer!!.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
         }
         return proxyServer!!
     }

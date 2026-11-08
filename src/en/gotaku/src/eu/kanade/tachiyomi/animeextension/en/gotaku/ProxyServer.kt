@@ -1,10 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.gotaku
 
 import android.util.Log
-import fi.iki.elonen.NanoHTTPD
-import fi.iki.elonen.NanoHTTPD.IHTTPSession
-import fi.iki.elonen.NanoHTTPD.Response
-import fi.iki.elonen.NanoHTTPD.Response.Status
 import okhttp3.ConnectionPool
 import okhttp3.Headers
 import okhttp3.HttpUrl
@@ -12,7 +8,12 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okio.buffer
-import java.io.ByteArrayOutputStream
+import org.nanohttpd.protocols.http.IHTTPSession
+import org.nanohttpd.protocols.http.NanoHTTPD
+import org.nanohttpd.protocols.http.response.Response
+import org.nanohttpd.protocols.http.response.Response.newChunkedResponse
+import org.nanohttpd.protocols.http.response.Response.newFixedLengthResponse
+import org.nanohttpd.protocols.http.response.Status
 import java.net.SocketTimeoutException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -36,15 +37,16 @@ import kotlin.time.Duration.Companion.seconds
 class ProxyServer(
     siteHeaders: Headers,
     refererRoot: String,
-) : NanoHTTPD(0) {
+) : NanoHTTPD("127.0.0.1", 0) {
 
+    // Mimic the site's player. Accept-Encoding stripped: byte-level surgery
+    // needs identity encoding and a trustworthy Content-Length.
     private val cdnHeaders: Headers = siteHeaders.newBuilder()
         .set("Accept", "*/*")
         .set("Referer", "$refererRoot/")
         .removeAll("Origin")
         .removeAll("Accept-Encoding")
         .build()
-
     private val proxyClient by lazy {
         OkHttpClient.Builder()
             .readTimeout(30.seconds)
@@ -74,15 +76,15 @@ class ProxyServer(
             if (referer != null) append("&ref=").append(URLEncoder.encode(referer, "UTF-8"))
         }
         val path = if (isManifest) "/proxy/playlist.m3u8" else "/proxy/segment.ts"
-        return "http://127.0.0.1:$listeningPort$path?$params"
+        return "http://$hostname:$listeningPort$path?$params"
     }
 
-    fun createPlainProxyUrl(originalUrl: String): String = "http://127.0.0.1:$listeningPort/proxy/key.bin?url=${URLEncoder.encode(originalUrl, "UTF-8")}&plain=1"
+    fun createPlainProxyUrl(originalUrl: String): String = "http://$hostname:$listeningPort/proxy/key.bin?url=${URLEncoder.encode(originalUrl, "UTF-8")}&plain=1"
 
-    fun createSubtitleProxyUrl(originalUrl: String): String = "http://127.0.0.1:$listeningPort/proxy/subtitles.vtt?url=${URLEncoder.encode(originalUrl, "UTF-8")}&sub=1"
+    fun createSubtitleProxyUrl(originalUrl: String): String = "http://$hostname:$listeningPort/proxy/subtitles.vtt?url=${URLEncoder.encode(originalUrl, "UTF-8")}&sub=1"
 
     // ============================== Dispatch ==============================
-    override fun serve(session: IHTTPSession): Response {
+    override fun handle(session: IHTTPSession): Response {
         val params = session.parameters
         val url = params["url"]?.firstOrNull()
             ?: return newFixedLengthResponse(Status.BAD_REQUEST, "text/plain", "Missing url")
@@ -90,6 +92,7 @@ class ProxyServer(
             return newFixedLengthResponse(Status.BAD_REQUEST, "text/plain", "https only")
         }
 
+        // Per-request Referer/Origin override for download-path requests
         val customReferer = params["ref"]?.firstOrNull()
         val upstreamHeaders = if (customReferer != null) {
             val origin = customReferer.trimEnd('/')
@@ -107,26 +110,22 @@ class ProxyServer(
         return try {
             when {
                 params["sub"]?.firstOrNull() == "1" -> serveSubtitle(url)
-
                 params["m3u8"]?.firstOrNull() == "1" -> serveManifest(
                     url,
                     params["key"]?.firstOrNull().orEmpty(),
                     params["sb"]?.firstOrNull()?.toIntOrNull() ?: 0,
-                    upstreamHeaders,
                 )
-
-                params["plain"]?.firstOrNull() == "1" -> servePassthrough(url, upstreamHeaders)
-
+                params["plain"]?.firstOrNull() == "1" -> servePassthrough(url)
                 else -> serveSegment(
                     url,
                     params["key"]?.firstOrNull(),
                     params["sb"]?.firstOrNull()?.toIntOrNull() ?: 0,
                     session.headers["range"]
                         ?.let { RANGE_START_REGEX.find(it)?.groupValues?.get(1)?.toLongOrNull() } ?: 0L,
-                    upstreamHeaders,
                 )
             }
         } catch (_: SocketTimeoutException) {
+            // 503: the player retries the segment instead of failing playback
             newFixedLengthResponse(Status.SERVICE_UNAVAILABLE, "text/plain", "Upstream timeout")
         } catch (e: Exception) {
             newFixedLengthResponse(Status.INTERNAL_ERROR, "text/plain", e.toString())
@@ -138,7 +137,6 @@ class ProxyServer(
         url: String,
         keySeed: String,
         segmentBytes: Int,
-        reqHeaders: Headers = cdnHeaders,
     ): Response {
         val rawText = run {
             var response: okhttp3.Response? = null
@@ -146,7 +144,7 @@ class ProxyServer(
             while (response == null) {
                 try {
                     response = proxyClient.newCall(
-                        Request.Builder().url(url).headers(reqHeaders).build(),
+                        Request.Builder().url(url).headers(cdnHeaders).build(),
                     ).execute()
                 } catch (e: SocketTimeoutException) {
                     attempt++
@@ -189,12 +187,16 @@ class ProxyServer(
             } catch (e: Exception) {
                 Log.w(
                     TAG,
-                    "Playlist GCM decrypt failed: len=${bodyBytes.size} key=${keySeed.isNotBlank()} - ${e.message}",
+                    "Playlist GCM decrypt failed: len=${bodyBytes.size} key=${keySeed.isNotBlank()} " +
+                        "token=${runCatching { url.toHttpUrl().pathSegments.getOrNull(3) }.getOrNull()} - ${e.message}",
                 )
                 val asText = String(bodyBytes, Charsets.UTF_8)
                 if (asText.removePrefix("\uFEFF").trimStart().startsWith("#EXTM3U")) {
+                    // Body was plaintext after all — serve it as-is.
                     asText
                 } else {
+                    // Not decryptable and not a playlist: fail loudly instead of feeding
+                    // the player rewritten ciphertext as a 200 "playlist".
                     return newFixedLengthResponse(
                         Status.INTERNAL_ERROR,
                         "text/plain",
@@ -215,9 +217,7 @@ class ProxyServer(
             val trimmed = line.trim()
             when {
                 trimmed.isEmpty() -> line
-
                 trimmed.startsWith("#") -> rewriteTagLine(trimmed, parent, keySeed, segmentBytes)
-
                 else -> {
                     val resolved = parent.resolve(trimmed)?.toString() ?: trimmed
                     createProxyUrl(resolved, keySeed, segmentBytes, isManifest = isMaster)
@@ -248,22 +248,20 @@ class ProxyServer(
 
             else -> createProxyUrl(resolved, keySeed, segmentBytes)
         }
+        // Lambda form: $ characters in URLs must not be read as group refs.
         return URI_REGEX.replace(line) { "URI=\"$replacement\"" }
     }
 
     // ============================== Segments ==============================
 
-    private fun serveSegment(
-        url: String,
-        keySeed: String?,
-        segmentBytes: Int,
-        rangeStart: Long,
-        reqHeaders: Headers = cdnHeaders,
-    ): Response {
+    /**
+     * Streaming decrypt of a segment's encrypted prefix.
+     */
+    private fun serveSegment(url: String, keySeed: String?, segmentBytes: Int, rangeStart: Long): Response {
         val key = keySeed?.takeIf { it.isNotBlank() }?.let { Crypto.b64UrlDecode(it) }
-        if (key == null || segmentBytes <= 0) return servePassthrough(url, reqHeaders)
+        if (key == null || segmentBytes <= 0) return servePassthrough(url)
 
-        val request = Request.Builder().url(url).headers(reqHeaders).apply {
+        val request = Request.Builder().url(url).headers(cdnHeaders).apply {
             if (rangeStart > 0) header("Range", "bytes=$rangeStart-")
         }.build()
 
@@ -283,6 +281,7 @@ class ProxyServer(
         val source = body.source()
         val actualStart = if (response.code == 206) rangeStart else 0L
 
+        // 3 TS packets = 3 sync bytes (~24 bits) of plaintext evidence
         val head = try {
             val peek = source.peek()
             peek.request(384)
@@ -293,6 +292,8 @@ class ProxyServer(
 
         val isPlaintext = head.isNotEmpty() && Crypto.looksLikeMedia(head)
 
+        // Oracle: only judge candidates on a sample big enough to verify boundaries —
+        // an 8-byte peek can't distinguish a right answer from a 1/256 coincidence.
         if (!isPlaintext && actualStart == 0L && head.size >= 189 && counterFullPath == null) {
             for (candidate in booleanArrayOf(true, false)) {
                 val decrypted = Crypto.decryptPrefix(head, url, key, candidate, segmentBytes) ?: continue
@@ -327,13 +328,18 @@ class ProxyServer(
         return resp
     }
 
+    /**
+     * Runtime oracle for the drop(2) ambiguity in the site's counter code.
+     * Learns once, on the first segment whose head doesn't already look like
+     * media, then sticks for the proxy's lifetime. Null = undetected.
+     */
     @Volatile
     private var counterFullPath: Boolean? = null
 
     // ====================== Passthrough & Subtitles =======================
-    private fun servePassthrough(url: String, reqHeaders: Headers = cdnHeaders): Response {
+    private fun servePassthrough(url: String): Response {
         val response = proxyClient.newCall(
-            Request.Builder().url(url).headers(reqHeaders).build(),
+            Request.Builder().url(url).headers(cdnHeaders).build(),
         ).execute()
 
         if (!response.isSuccessful) {
@@ -375,7 +381,7 @@ class ProxyServer(
         val maxBytes = 512 * 1024
         val bytes = try {
             body.byteStream().use { input ->
-                val out = ByteArrayOutputStream()
+                val out = java.io.ByteArrayOutputStream()
                 val buf = ByteArray(8192)
                 var total = 0
                 while (true) {

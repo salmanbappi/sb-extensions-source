@@ -1,14 +1,14 @@
 ext {
     extName = 'Gotaku'
     extClass = '.Gotaku'
-    extVersionCode = 2
+    extVersionCode = 3
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
 
 dependencies {
-    implementation("org.nanohttpd:nanohttpd:2.3.1")
+    implementation("com.github.komikku-app.nanohttpd:nanohttpd:gradle-upgrade-SNAPSHOT")
     implementation(project(":lib:playlist-utils"))
     implementation(project(":lib:episode-metadata-fetcher"))
 }
