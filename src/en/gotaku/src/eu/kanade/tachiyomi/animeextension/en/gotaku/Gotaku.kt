@@ -94,11 +94,6 @@ class Gotaku : Source() {
 
     private val detailCache by lazy { LruCache<String, DetailsDataDto>(16) }
 
-    private val dateFormatLock = Any()
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
-    }
-
     private fun apiHeaders(referer: String = baseUrl): Headers = headers.newBuilder()
         .set("Accept", "application/json")
         .set("Accept-Language", "en-US,en;q=0.9")
@@ -500,43 +495,6 @@ class Gotaku : Source() {
         }
     }
 
-    // ============================== Related ===============================
-    override val disableRelatedAnimesBySearch = true
-
-    override suspend fun fetchRelatedAnimeList(anime: SAnime): List<SAnime> {
-        val data = fetchDetails(anime.url) ?: return emptyList()
-
-        val seasons = data.seasons.mapNotNull { season ->
-            val id = season.id.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            if (id == anime.url) return@mapNotNull null
-            val sName = season.fullName?.takeIf { it.isNotBlank() }
-                ?: season.name?.takeIf { it.isNotBlank() }
-                ?: return@mapNotNull null
-
-            SAnime.create().apply {
-                url = id
-                title = sName
-                thumbnail_url = season.posterUrl?.takeIf { it.isNotBlank() }
-            }
-        }
-
-        val related = (data.relations + data.recommendations).mapNotNull { rel ->
-            val relId = rel.id?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val relName = rel.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            if (relId == anime.url) return@mapNotNull null
-
-            SAnime.create().apply {
-                url = relId
-                title = relName
-                thumbnail_url = rel.posterUrl?.takeIf { it.isNotBlank() }
-            }
-        }
-
-        return (seasons + related).distinctBy { it.url }
-    }
-
-    override fun relatedAnimeListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
-
     // ========================= Episodes (encrypted) =======================
     override fun episodeListRequest(anime: SAnime): Request = GET("$apiUrl/titles/${anime.url}/episodes?k=${credentials.version}", apiHeaders("$baseUrl/title/${anime.url}"))
 
@@ -582,11 +540,11 @@ class Gotaku : Source() {
                 fillermark = ep.isFiller
                 preview_url = ep.thumbnailUrl?.takeIf { it.isNotBlank() } ?: meta?.thumbnailUrl ?: anime.thumbnail_url
 
-                val parsedDate = synchronized(dateFormatLock) { dateFormat.tryParse(ep.airedAt) }
+                val parsedDate = parseDate(ep.airedAt)
                 date_upload = if (parsedDate > 0L) {
                     parsedDate
                 } else {
-                    meta?.airdate?.let { parseDate(it) } ?: 0L
+                    parseDate(meta?.airdate)
                 }
 
                 val desc = meta?.description?.takeIf { it.isNotBlank() }
@@ -1001,7 +959,7 @@ class Gotaku : Source() {
             summary = "Include download links in the hoster list alongside streaming links.",
             default = PREF_SHOW_DOWNLOADS_DEFAULT,
             onChange = { _, newValue ->
-                serverTypePref.isEnabled = newValue
+                serverTypePref.setEnabled(newValue)
                 true
             },
         )
