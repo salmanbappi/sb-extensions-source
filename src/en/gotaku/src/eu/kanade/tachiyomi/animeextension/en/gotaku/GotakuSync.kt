@@ -32,15 +32,14 @@ class GotakuSync(
     private val syncSessionCounter = AtomicInteger(0)
 
     @Volatile private var activeCompletionLatch: CountDownLatch? = null
+
     @Volatile private var currentPageUrl: String? = null
 
-    private fun isTrustedPageUrl(url: String?): Boolean {
-        return !url.isNullOrEmpty() && try {
-            val parsed = url.toHttpUrl()
-            parsed.scheme == "https" && parsed.host == trustedHost
-        } catch (_: Exception) {
-            false
-        }
+    private fun isTrustedPageUrl(url: String?): Boolean = !url.isNullOrEmpty() && try {
+        val parsed = url.toHttpUrl()
+        parsed.scheme == "https" && parsed.host == trustedHost
+    } catch (_: Exception) {
+        false
     }
 
     private val trustedHost: String by lazy {
@@ -245,8 +244,7 @@ class GotakuSync(
                             }
                         }
 
-                        override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean =
-                            !isTrustedPageUrl(request?.url?.toString())
+                        override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean = !isTrustedPageUrl(request?.url?.toString())
 
                         @Deprecated("Deprecated in Java")
                         override fun shouldOverrideUrlLoading(v: WebView?, url: String?): Boolean = !isTrustedPageUrl(url)

@@ -122,8 +122,7 @@ class Gotaku : Source() {
         null
     }
 
-    private fun Response.readBodyBoundedString(limit: Int): String? =
-        readBodyBounded(limit)?.let { String(it, Charsets.UTF_8) }
+    private fun Response.readBodyBoundedString(limit: Int): String? = readBodyBounded(limit)?.let { String(it, Charsets.UTF_8) }
 
     private val sync by lazy { GotakuSync(preferences, baseUrl, headers, client) }
 
@@ -276,8 +275,11 @@ class Gotaku : Source() {
         filters.forEach { f ->
             when (f) {
                 is Filters.SortFilter -> params += "sort" to f.getValue()
+
                 is Filters.SelectFilter -> f.getValue()?.let { params += f.param to it }
+
                 is Filters.TrackFilter -> f.getValue()?.let { params += "track" to it }
+
                 is Filters.TriStateGroup -> {
                     f.state.forEach { item ->
                         when (item.state) {
@@ -287,7 +289,9 @@ class Gotaku : Source() {
                         }
                     }
                 }
+
                 is Filters.TagModeFilter -> f.getValue()?.let { params += "tag_mode" to it }
+
                 else -> {}
             }
         }
@@ -313,8 +317,7 @@ class Gotaku : Source() {
         return GET(url, apiHeaders(referer))
     }
 
-    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage =
-        fetchTitlesSkippingNsfw(page) { searchAnimeRequest(it, query, filters) }
+    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage = fetchTitlesSkippingNsfw(page) { searchAnimeRequest(it, query, filters) }
 
     private suspend fun fetchTitlesSkippingNsfw(
         page: Int,
@@ -353,8 +356,7 @@ class Gotaku : Source() {
     // =============================== Details ==============================
     override fun getAnimeUrl(anime: SAnime): String = "$baseUrl/title/${anime.url}"
 
-    override fun animeDetailsRequest(anime: SAnime): Request =
-        GET("$apiUrl/titles/${anime.url}", apiHeaders("$baseUrl/title/${anime.url}"))
+    override fun animeDetailsRequest(anime: SAnime): Request = GET("$apiUrl/titles/${anime.url}", apiHeaders("$baseUrl/title/${anime.url}"))
 
     override fun animeDetailsParse(response: Response): SAnime {
         val data = response.parseAs<DetailsResponseDto>(json).data
@@ -383,7 +385,9 @@ class Gotaku : Source() {
                 val allAltTitles = (data.title.altNames + (meta?.altTitles.orEmpty())).distinct()
                 val altTitlesBlock = if (allAltTitles.isNotEmpty()) {
                     EpisodeMetadataFetcher.formatAlternativeTitles(details.title, *allAltTitles.toTypedArray())
-                } else null
+                } else {
+                    null
+                }
 
                 val isMovie = data.title.format?.equals("movie", ignoreCase = true) == true
                 val detailsBlock = EpisodeMetadataFetcher.formatMediaDetails(
@@ -470,7 +474,9 @@ class Gotaku : Source() {
         when {
             dto.aired != null && dto.ended != null ->
                 infoLines.add("**Airing**: From ${dto.aired} to ${dto.ended}")
+
             dto.aired != null -> infoLines.add("**Start Date**: ${dto.aired}")
+
             dto.ended != null -> infoLines.add("**End Date**: ${dto.ended}")
         }
 
@@ -532,8 +538,7 @@ class Gotaku : Source() {
     override fun relatedAnimeListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
 
     // ========================= Episodes (encrypted) =======================
-    override fun episodeListRequest(anime: SAnime): Request =
-        GET("$apiUrl/titles/${anime.url}/episodes?k=${credentials.version}", apiHeaders("$baseUrl/title/${anime.url}"))
+    override fun episodeListRequest(anime: SAnime): Request = GET("$apiUrl/titles/${anime.url}/episodes?k=${credentials.version}", apiHeaders("$baseUrl/title/${anime.url}"))
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val jsonStr = decryptApiCall("$apiUrl/titles/${anime.url}/episodes?k=${credentials.version}", "$baseUrl/title/${anime.url}")
@@ -693,7 +698,9 @@ class Gotaku : Source() {
                 val embedUrl = if (embedPath.startsWith("https")) embedPath else "$baseUrl$embedPath"
                 extractViaHttp(embedUrl, watchReferer, embedDto, hoster)
             }
+
             "download" -> extractDownload(epId, type, watchReferer, hoster)
+
             else -> emptyList()
         }
     }
@@ -922,6 +929,7 @@ class Gotaku : Source() {
 
     // ================================ Proxy ===============================
     @Volatile private var proxyServer: ProxyServer? = null
+
     @Volatile private var proxyServerDomain: String? = null
 
     @Synchronized

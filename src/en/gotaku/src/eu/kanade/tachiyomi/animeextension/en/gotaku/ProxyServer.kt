@@ -77,11 +77,9 @@ class ProxyServer(
         return "http://$hostname:$listeningPort$path?$params"
     }
 
-    fun createPlainProxyUrl(originalUrl: String): String =
-        "http://$hostname:$listeningPort/proxy/key.bin?url=${URLEncoder.encode(originalUrl, "UTF-8")}&plain=1"
+    fun createPlainProxyUrl(originalUrl: String): String = "http://$hostname:$listeningPort/proxy/key.bin?url=${URLEncoder.encode(originalUrl, "UTF-8")}&plain=1"
 
-    fun createSubtitleProxyUrl(originalUrl: String): String =
-        "http://$hostname:$listeningPort/proxy/subtitles.vtt?url=${URLEncoder.encode(originalUrl, "UTF-8")}&sub=1"
+    fun createSubtitleProxyUrl(originalUrl: String): String = "http://$hostname:$listeningPort/proxy/subtitles.vtt?url=${URLEncoder.encode(originalUrl, "UTF-8")}&sub=1"
 
     // ============================== Dispatch ==============================
     override fun serve(session: IHTTPSession): Response {
@@ -109,13 +107,16 @@ class ProxyServer(
         return try {
             when {
                 params["sub"]?.firstOrNull() == "1" -> serveSubtitle(url)
+
                 params["m3u8"]?.firstOrNull() == "1" -> serveManifest(
                     url,
                     params["key"]?.firstOrNull().orEmpty(),
                     params["sb"]?.firstOrNull()?.toIntOrNull() ?: 0,
                     upstreamHeaders,
                 )
+
                 params["plain"]?.firstOrNull() == "1" -> servePassthrough(url, upstreamHeaders)
+
                 else -> serveSegment(
                     url,
                     params["key"]?.firstOrNull(),
@@ -214,7 +215,9 @@ class ProxyServer(
             val trimmed = line.trim()
             when {
                 trimmed.isEmpty() -> line
+
                 trimmed.startsWith("#") -> rewriteTagLine(trimmed, parent, keySeed, segmentBytes)
+
                 else -> {
                     val resolved = parent.resolve(trimmed)?.toString() ?: trimmed
                     createProxyUrl(resolved, keySeed, segmentBytes, isManifest = isMaster)
@@ -353,46 +356,45 @@ class ProxyServer(
         }
     }
 
-    private fun serveSubtitle(url: String): Response =
-        proxyClient.newCall(Request.Builder().url(url).headers(cdnHeaders).build()).execute().use { response ->
-            if (!response.isSuccessful) {
-                val code = response.code
-                return@use newFixedLengthResponse(
-                    Status.lookup(code) ?: Status.INTERNAL_ERROR,
-                    "text/plain",
-                    "Subtitle Error: $code",
-                )
-            }
-            val body = response.body
-            val contentType = when {
-                url.endsWith(".ass", true) -> "text/x-ass"
-                url.endsWith(".srt", true) -> "application/x-subrip"
-                url.endsWith(".vtt", true) -> "text/vtt"
-                else -> body.contentType()?.toString() ?: "text/plain"
-            }
-            val maxBytes = 512 * 1024
-            val bytes = try {
-                body.byteStream().use { input ->
-                    val out = ByteArrayOutputStream()
-                    val buf = ByteArray(8192)
-                    var total = 0
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n == -1) break
-                        total += n
-                        if (total > maxBytes) error("too large")
-                        out.write(buf, 0, n)
-                    }
-                    out.toByteArray()
-                }
-            } catch (_: Exception) {
-                return@use newFixedLengthResponse(Status.INTERNAL_ERROR, "text/plain", "Subtitle too large / read error")
-            }
-            newFixedLengthResponse(Status.OK, contentType, bytes.inputStream(), bytes.size.toLong()).apply {
-                addHeader("Access-Control-Allow-Origin", "*")
-                addHeader("Access-Control-Allow-Headers", "*")
-            }
+    private fun serveSubtitle(url: String): Response = proxyClient.newCall(Request.Builder().url(url).headers(cdnHeaders).build()).execute().use { response ->
+        if (!response.isSuccessful) {
+            val code = response.code
+            return@use newFixedLengthResponse(
+                Status.lookup(code) ?: Status.INTERNAL_ERROR,
+                "text/plain",
+                "Subtitle Error: $code",
+            )
         }
+        val body = response.body
+        val contentType = when {
+            url.endsWith(".ass", true) -> "text/x-ass"
+            url.endsWith(".srt", true) -> "application/x-subrip"
+            url.endsWith(".vtt", true) -> "text/vtt"
+            else -> body.contentType()?.toString() ?: "text/plain"
+        }
+        val maxBytes = 512 * 1024
+        val bytes = try {
+            body.byteStream().use { input ->
+                val out = ByteArrayOutputStream()
+                val buf = ByteArray(8192)
+                var total = 0
+                while (true) {
+                    val n = input.read(buf)
+                    if (n == -1) break
+                    total += n
+                    if (total > maxBytes) error("too large")
+                    out.write(buf, 0, n)
+                }
+                out.toByteArray()
+            }
+        } catch (_: Exception) {
+            return@use newFixedLengthResponse(Status.INTERNAL_ERROR, "text/plain", "Subtitle too large / read error")
+        }
+        newFixedLengthResponse(Status.OK, contentType, bytes.inputStream(), bytes.size.toLong()).apply {
+            addHeader("Access-Control-Allow-Origin", "*")
+            addHeader("Access-Control-Allow-Headers", "*")
+        }
+    }
 
     companion object {
         private const val TAG = "GotakuProxy"

@@ -38,8 +38,7 @@ object Crypto {
 
     private val MANIFEST_SEED = "458e5403c40a73332706df406193dd6b040a2ea97a6bb59b52b294a61006e6ef".decodeHex()
 
-    fun getApiKeySpec(seed: ByteArray, info: String = "api-seal|v1"): SecretKeySpec =
-        SecretKeySpec(hkdfSha256(seed, ByteArray(0), info.toByteArray(), 32), "AES")
+    fun getApiKeySpec(seed: ByteArray, info: String = "api-seal|v1"): SecretKeySpec = SecretKeySpec(hkdfSha256(seed, ByteArray(0), info.toByteArray(), 32), "AES")
 
     private val manifestKeySpec by lazy { SecretKeySpec(MANIFEST_SEED, "AES") }
 
@@ -134,7 +133,7 @@ object Crypto {
             } else {
                 url.toHttpUrl().encodedPath.split("/").filter { it.isNotEmpty() }.drop(2).joinToString("/")
             }
-        ).substringBeforeLast('.')
+            ).substringBeforeLast('.')
         val digest = MessageDigest.getInstance("SHA-256").digest(urlId.toByteArray())
         return digest.copyOf(8) + ByteArray(8)
     }
@@ -234,8 +233,7 @@ object Crypto {
         null
     }
 
-    fun b64UrlEncode(bytes: ByteArray): String =
-        Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    fun b64UrlEncode(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 
     fun b64UrlDecode(text: String): ByteArray? = try {
         val cleaned = text.trim().trimEnd('=').replace('-', '+').replace('_', '/')
