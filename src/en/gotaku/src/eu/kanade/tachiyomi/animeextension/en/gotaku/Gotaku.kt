@@ -25,7 +25,6 @@ import extensions.utils.addListPreference
 import extensions.utils.addSwitchPreference
 import extensions.utils.getListPreference
 import extensions.utils.parseAs
-import fi.iki.elonen.NanoHTTPD
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -896,7 +895,7 @@ class Gotaku : Source() {
             proxyServer?.stop()
             proxyServer = ProxyServer(headers, baseUrl)
             proxyServerDomain = baseUrl
-            proxyServer!!.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+            proxyServer!!.start()
         }
         return proxyServer!!
     }

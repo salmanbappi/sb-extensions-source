@@ -36,7 +36,7 @@ import kotlin.time.Duration.Companion.seconds
 class ProxyServer(
     siteHeaders: Headers,
     refererRoot: String,
-) : NanoHTTPD("127.0.0.1", 0) {
+) : NanoHTTPD(0) {
 
     private val cdnHeaders: Headers = siteHeaders.newBuilder()
         .set("Accept", "*/*")
@@ -74,12 +74,12 @@ class ProxyServer(
             if (referer != null) append("&ref=").append(URLEncoder.encode(referer, "UTF-8"))
         }
         val path = if (isManifest) "/proxy/playlist.m3u8" else "/proxy/segment.ts"
-        return "http://$hostname:$listeningPort$path?$params"
+        return "http://127.0.0.1:$listeningPort$path?$params"
     }
 
-    fun createPlainProxyUrl(originalUrl: String): String = "http://$hostname:$listeningPort/proxy/key.bin?url=${URLEncoder.encode(originalUrl, "UTF-8")}&plain=1"
+    fun createPlainProxyUrl(originalUrl: String): String = "http://127.0.0.1:$listeningPort/proxy/key.bin?url=${URLEncoder.encode(originalUrl, "UTF-8")}&plain=1"
 
-    fun createSubtitleProxyUrl(originalUrl: String): String = "http://$hostname:$listeningPort/proxy/subtitles.vtt?url=${URLEncoder.encode(originalUrl, "UTF-8")}&sub=1"
+    fun createSubtitleProxyUrl(originalUrl: String): String = "http://127.0.0.1:$listeningPort/proxy/subtitles.vtt?url=${URLEncoder.encode(originalUrl, "UTF-8")}&sub=1"
 
     // ============================== Dispatch ==============================
     override fun serve(session: IHTTPSession): Response {
