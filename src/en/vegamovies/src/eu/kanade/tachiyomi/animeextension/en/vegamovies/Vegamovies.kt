@@ -32,7 +32,7 @@ class Vegamovies : Source() {
 
     override val name = "Vegamovies"
 
-    override val baseUrl = "https://vegamoviess.you"
+    override val baseUrl = "https://vegamovies9.co.in"
 
     override val lang = "en"
 
@@ -162,22 +162,20 @@ class Vegamovies : Source() {
             "Category / Type",
             arrayOf(
                 Pair("All", ""),
-                Pair("Movies", "category/movies"),
-                Pair("TV / Web Series", "category/web-series"),
-                Pair("Bollywood Movies", "category/bollywood-movies"),
-                Pair("Hollywood Movies", "category/hollywood-movies"),
-                Pair("South Indian Movies", "category/south-indian-dubbed-movies"),
-                Pair("Hindi Dubbed Movies", "category/hindi-dubbed-movies"),
-                Pair("Korean Series", "category/korean-series"),
-                Pair("Anime", "category/anime"),
-                Pair("Netflix", "category/netflix"),
-                Pair("Amazon Prime Video", "category/amazon-prime"),
-                Pair("Disney+ Hotstar", "category/disney-plus-hotstar"),
-                Pair("Dual Audio", "category/dual-audio"),
-                Pair("4K Ultra HD", "category/4k-ultrahd"),
-                Pair("480p Movies", "category/480p-movies"),
-                Pair("720p Movies", "category/720p-movies"),
-                Pair("1080p Movies", "category/1080p-movies"),
+                Pair("Bollywood Movies", "bollywood-movies"),
+                Pair("Hollywood Movies", "hollywood-movies"),
+                Pair("Dual Audio", "dual-audio-hindi-english-movies"),
+                Pair("Web Series (Hindi)", "tv-shows/web-series-hindi"),
+                Pair("TV Series (Dubbed)", "tv-shows/hindi-dubbed-tv-shows"),
+                Pair("South Indian Dubbed", "dual-audio-hindi-english-movies/south-indian-dubbed-movies-download"),
+                Pair("1080p Bollywood", "bollywood-movies/1080p-bollywood-movies-dvdrip-brrip"),
+                Pair("720p Bollywood", "bollywood-movies/720p-bollywood-movies-dvdrip-brrip"),
+                Pair("300MB Bollywood", "bollywood-movies/bollywood-movies-300mb"),
+                Pair("1080p Hollywood", "hollywood-movies/1080p-hollywood-movies-dvdrip-brrip"),
+                Pair("720p Hollywood", "hollywood-movies/720p-hollywood-movies-dvdrip-brrip"),
+                Pair("1080p Dual Audio", "dual-audio-hindi-english-movies/dual-audio-hindi-english-movies-mkv-1080p"),
+                Pair("720p Dual Audio", "dual-audio-hindi-english-movies/dual-audio-hindi-english-movies-mkv-720p"),
+                Pair("300MB Dual Audio", "dual-audio-hindi-english-movies/dual-audio-hindi-english-movies-300mb"),
             ),
         )
 
@@ -612,6 +610,35 @@ class Vegamovies : Source() {
                         url.contains("streamwish", ignoreCase = true) || url.contains("awish", ignoreCase = true) ->
                             streamwishExtractor.videosFromUrl(url, prefix = "$qualityLabel - ").let { videoList.addAll(it) }
 
+                        url.contains("fast-dl", ignoreCase = true) || url.contains("fastcloud", ignoreCase = true) -> {
+                            val pageResp = runCatching { client.newCall(GET(url, refHeaders)).execute() }.getOrNull()
+                            val pageDoc = pageResp?.asJsoup()
+                            val btnHref = pageDoc?.selectFirst("a#download-button, a.download, a[href*='dl.php']")?.attr("href")
+                            if (!btnHref.isNullOrBlank()) {
+                                val dlUrl = if (btnHref.startsWith("http")) {
+                                    btnHref
+                                } else {
+                                    val baseDl = url.substringBeforeLast('/')
+                                    "$baseDl/${btnHref.removePrefix("/")}"
+                                }
+                                val prepUrl = if (dlUrl.contains("?")) "$dlUrl&prepare=1&auto=1" else "$dlUrl?prepare=1&auto=1"
+                                val prepHeaders = refHeaders.newBuilder()
+                                    .set("Referer", url)
+                                    .set("X-Requested-With", "XMLHttpRequest")
+                                    .build()
+                                val jsonResp = runCatching { client.newCall(GET(prepUrl, prepHeaders)).execute().body.string() }.getOrNull()
+                                val directUrl = jsonResp?.let { Regex(""""url"\s*:\s*"([^"]+)"""").find(it)?.groupValues?.get(1)?.replace("\\/", "/") }
+                                val streamUrl = directUrl?.takeIf { it.isNotBlank() } ?: dlUrl
+                                videoList.add(
+                                    Video(
+                                        videoUrl = streamUrl,
+                                        videoTitle = "$qualityLabel - Fast Download",
+                                        headers = refHeaders,
+                                    ),
+                                )
+                            }
+                        }
+
                         else -> {
                             val postReq = Request.Builder()
                                 .url(url)
@@ -621,7 +648,7 @@ class Vegamovies : Source() {
                             val postResp = runCatching { client.newCall(postReq).execute() }.getOrNull()
                             val doc = postResp?.asJsoup() ?: client.newCall(GET(url, refHeaders)).execute().asJsoup()
 
-                            val vdLink = doc.selectFirst("a#vd, a[cf-cache], a[href*='/file/'], a.btn-success, a.download-btn, div.vd a[href]")?.attr("abs:href")
+                            val vdLink = doc.selectFirst("a#download-button, a.download, a#vd, a[cf-cache], a[href*='/file/'], a.btn-success, a.download-btn, div.vd a[href]")?.attr("abs:href")
                             val finalStreamUrl = if (!vdLink.isNullOrBlank()) vdLink else url
 
                             if (finalStreamUrl.contains(".m3u8")) {
