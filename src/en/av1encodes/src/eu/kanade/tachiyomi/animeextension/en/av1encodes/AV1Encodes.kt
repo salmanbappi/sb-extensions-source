@@ -934,14 +934,12 @@ class AV1Encodes : Source() {
         return cleaned.trim()
     }
 
-    private fun sanitizeAnimeTitle(raw: String): String {
-        return raw.replace(Regex("""\[[^]]*]"""), "")
-            .replace(Regex("""\((?:Dual|Sub|Dub|English Dub)[^)]*\)""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""\s*·\s*.*"""), "")
-            .replace(Regex("""\s+Season\s+\d+.*""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""\s+S\d+.*""", RegexOption.IGNORE_CASE), "")
-            .trim()
-    }
+    private fun sanitizeAnimeTitle(raw: String): String = raw.replace(Regex("""\[[^]]*]"""), "")
+        .replace(Regex("""\((?:Dual|Sub|Dub|English Dub)[^)]*\)""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s*·\s*.*"""), "")
+        .replace(Regex("""\s+Season\s+\d+.*""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s+S\d+.*""", RegexOption.IGNORE_CASE), "")
+        .trim()
 
     private fun getListImageUrl(anchor: Element): String? {
         val img = anchor.selectFirst("img")
