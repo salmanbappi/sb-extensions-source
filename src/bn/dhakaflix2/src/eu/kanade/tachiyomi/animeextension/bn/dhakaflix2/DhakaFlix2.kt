@@ -640,8 +640,9 @@ class DhakaFlix2(
                 val response = client.newCall(animeDetailsRequest(anime)).execute()
                 if (response.isSuccessful) {
                     val parsed = animeDetailsParse(response)
-                    if (parsed.thumbnail_url.isNotEmpty() && !parsed.thumbnail_url.contains("folder.png") && !parsed.thumbnail_url.contains(IMAGE_PROBE_MARKER)) {
-                        anime.thumbnail_url = parsed.thumbnail_url
+                    val parsedThumb = parsed.thumbnail_url
+                    if (!parsedThumb.isNullOrEmpty() && !parsedThumb.contains("folder.png") && !parsedThumb.contains(IMAGE_PROBE_MARKER)) {
+                        anime.thumbnail_url = parsedThumb
                     }
                 }
                 response.close()
