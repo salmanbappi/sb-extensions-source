@@ -584,13 +584,18 @@ class AV1Encodes : Source() {
                 Log.d(TAG, "episodeListParse: found ${downloadLinks.size} download links for season $season (quality $quality)")
 
                 if (downloadLinks.isNotEmpty()) {
-                    return@parallelCatchingFlatMapBlocking downloadLinks.map { link ->
+                    return@parallelCatchingFlatMapBlocking downloadLinks.mapIndexed { idx, link ->
                         val fullHref = link.attr("href")
-                        val filename = Uri.decode(fullHref.substringBefore("?").substringAfterLast("/"))
-                        val epNum = episodeNumberRegex.find(fullHref)?.groupValues?.get(1)?.toIntOrNull()
-                            ?: parseEpisodeNumberOnly(filename).toInt()
-                        val cleanTitle = extractTitleFromFilename(filename)
-                        val audio = subdubRegex.find(filename)?.groupValues?.get(1)
+                        val linkText = link.text().trim()
+                        val container = link.closest("tr, li, .episode, .card, [class*='ep']")
+                        val containerText = container?.text()?.trim() ?: linkText
+
+                        val epNum = extractEpisodeNumber(linkText, containerText, idx + 1)
+                        val cleanTitle = extractEpisodeTitle(linkText, containerText)
+                        val audio = subdubRegex.find(containerText)?.groupValues?.get(1)
+                            ?: subdubRegex.find(linkText)?.groupValues?.get(1)
+                            ?: subdubRegex.find(fullHref)?.groupValues?.get(1)
+
                         ParsedEp(sNum, epNum, fullHref, cleanTitle, audio)
                     }
                 }
@@ -598,10 +603,10 @@ class AV1Encodes : Source() {
                 val filenames = extractFilenames(epHtml)
                 if (filenames.isNotEmpty()) {
                     Log.d(TAG, "episodeListParse: regex found ${filenames.size} filenames")
-                    return@parallelCatchingFlatMapBlocking filenames.map { filename ->
+                    return@parallelCatchingFlatMapBlocking filenames.mapIndexed { idx, filename ->
                         val encodedFilename = URLEncoder.encode(filename, "UTF-8").replace("+", "%20")
-                        val epNum = parseEpisodeNumberOnly(filename).toInt()
-                        val cleanTitle = extractTitleFromFilename(filename)
+                        val epNum = extractEpisodeNumber(filename, filename, idx + 1)
+                        val cleanTitle = extractEpisodeTitle(filename, filename)
                         val audio = subdubRegex.find(filename)?.groupValues?.get(1)
                         ParsedEp(sNum, epNum, "/download/$slug/$season/$encodedRes/$encodedFilename", cleanTitle, audio)
                     }
@@ -731,15 +736,22 @@ class AV1Encodes : Source() {
         } else {
             "$baseUrl/${cleanEpisodeUrl.removePrefix("/")}"
         }
+        val encodedDownloadPageUrl = downloadPageUrl.replace(" ", "%20")
+        val slug = Regex("""/download/([a-zA-Z0-9_\-]+)/""").find(episodeUrl)?.groupValues?.get(1)
+        val referer = if (!slug.isNullOrBlank()) "$baseUrl/anime/$slug" else "$baseUrl/"
 
-        val pageHtml = try {
+        val resp = try {
             client.newCall(
-                GET(downloadPageUrl, headers.newBuilder().set("Referer", "$baseUrl/").build()),
-            ).awaitSuccess().bodyString()
+                GET(encodedDownloadPageUrl, headers.newBuilder().set("Referer", referer).build()),
+            ).awaitSuccess()
         } catch (e: Exception) {
-            Log.e(TAG, "extractAllVideos: initial download page failed — ${e.message}")
-            ""
+            Log.e(TAG, "extractAllVideos: initial download page failed for $encodedDownloadPageUrl — ${e.message}")
+            return emptyList()
         }
+
+        val finalUrl = resp.request.url.toString()
+        val pageHtml = resp.bodyString()
+        Log.d(TAG, "extractAllVideos: download page status=${resp.code} finalUrl=$finalUrl htmlLen=${pageHtml.length}")
 
         if (pageHtml.isBlank()) return emptyList()
 
@@ -760,21 +772,35 @@ class AV1Encodes : Source() {
 
         val videos = mutableListOf<Video>()
 
-        // 1. Direct stream link from [data-stream] (highest quality / direct stream)
+        // 1. Direct stream link from [data-stream] or data attributes
         val streamData = doc.selectFirst("[data-stream]")?.attr("data-stream")?.takeIf { it.isNotBlank() }
+            ?: doc.selectFirst("[data-src*='/r/'], [data-url*='/r/']")?.let {
+                it.attr("data-src").ifBlank { it.attr("data-url") }
+            }?.takeIf { it.isNotBlank() }
 
         // 2. Video player iframe (/r/ or direct)
-        val iframeSrc = doc.selectFirst("iframe#anime-video-player, iframe.anime-video-player, iframe[src*='/r/'], iframe[src*='/stream/'], iframe[src*='/watch/']")?.let {
+        val iframeSrc = doc.selectFirst("iframe#anime-video-player, iframe.anime-video-player, iframe[src*='/r/'], iframe[src*='/stream/'], iframe[src*='/watch/'], iframe[src*='cdn']")?.let {
             it.attr("abs:src").ifBlank { it.attr("src") }
         }?.takeIf { it.isNotBlank() }
 
         // 3. Fallback regex in page script
         val scriptStreamLink = Regex("""['"](/r/[a-zA-Z0-9_\-]+)['"]""").find(pageHtml)?.groupValues?.get(1)
+            ?: Regex("""['"](https?://[^'"]*cdn[^'"]*/(?:stream|watch|dl|dash)/[^'"]+)['"]""").find(pageHtml)?.groupValues?.get(1)
 
-        val candidateLinks = listOfNotNull(streamData, iframeSrc, scriptStreamLink).distinct()
+        val directVideoSrc = doc.selectFirst("video source[src], video[src]")?.let {
+            it.attr("abs:src").ifBlank { it.attr("src") }
+        }?.takeIf { it.isNotBlank() }
+
+        val candidateLinks = listOfNotNull(streamData, iframeSrc, scriptStreamLink, directVideoSrc).distinct()
+        Log.d(TAG, "extractAllVideos: candidateLinks=$candidateLinks")
 
         for (candidate in candidateLinks) {
-            val resolved = resolveRedirect(candidate)
+            val resolved = if (candidate.contains("/stream/") || candidate.contains("/watch/") || candidate.contains("/dash/") || candidate.contains("/dl/")) {
+                sanitizeCdnDomain(candidate)
+            } else {
+                resolveRedirect(candidate, refererUrl = encodedDownloadPageUrl)
+            }
+            Log.d(TAG, "extractAllVideos: candidate=$candidate resolved=$resolved")
             if (resolved != null && (resolved.contains("/stream/") || resolved.contains("/watch/") || resolved.contains("/dash/") || resolved.contains("/dl/"))) {
                 val dlUrl = toDlUrl(resolved, ext)
                 val streamUrl = toStreamUrl(resolved, ext)
@@ -784,11 +810,33 @@ class AV1Encodes : Source() {
             }
         }
 
+        // Direct stream if download page itself redirected to stream/watch
+        if (videos.isEmpty() && (finalUrl.contains("/stream/") || finalUrl.contains("/watch/") || finalUrl.contains("/dl/"))) {
+            val dlUrl = toDlUrl(finalUrl, ext)
+            val streamUrl = toStreamUrl(finalUrl, ext)
+            videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL", headers = vHeaders))
+            videos.add(Video(videoUrl = streamUrl, videoTitle = "$qualLabel · Stream", headers = vHeaders))
+        }
+
+        // Direct player links on page
+        if (videos.isEmpty()) {
+            val linkCandidate = doc.selectFirst("a[href*='/r/'], a[href*='/stream/'], a[href*='/watch/'], a[href*='/dl/']")?.attr("href")
+            if (!linkCandidate.isNullOrBlank()) {
+                val resolved = resolveRedirect(linkCandidate, refererUrl = encodedDownloadPageUrl)
+                if (resolved != null && (resolved.contains("/stream/") || resolved.contains("/watch/") || resolved.contains("/dl/"))) {
+                    val dlUrl = toDlUrl(resolved, ext)
+                    val streamUrl = toStreamUrl(resolved, ext)
+                    videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL", headers = vHeaders))
+                    videos.add(Video(videoUrl = streamUrl, videoTitle = "$qualLabel · Stream", headers = vHeaders))
+                }
+            }
+        }
+
         // 4. Torrent link if enabled
         if (preferences.getBoolean(PREF_SHOW_TORRENT_KEY, PREF_SHOW_TORRENT_DEFAULT)) {
             val torrentLink = doc.selectFirst("a#torrent-btn, a[href*='/r/']:has(.fa-magnet), a[href^='magnet:']")?.attr("href")
             if (!torrentLink.isNullOrBlank()) {
-                val torrentUrl = if (torrentLink.startsWith("magnet:")) torrentLink else resolveRedirect(torrentLink)
+                val torrentUrl = if (torrentLink.startsWith("magnet:")) torrentLink else resolveRedirect(torrentLink, refererUrl = encodedDownloadPageUrl)
                 if (torrentUrl != null) {
                     videos.add(Video(videoUrl = torrentUrl, videoTitle = "$qualLabel · Torrent", headers = vHeaders))
                 }
@@ -799,7 +847,7 @@ class AV1Encodes : Source() {
         return videos
     }
 
-    private suspend fun resolveRedirect(path: String?, depth: Int = 0): String? {
+    private suspend fun resolveRedirect(path: String?, refererUrl: String = baseUrl, depth: Int = 0): String? {
         if (path.isNullOrBlank() || depth > 5) return null
         val target = if (path.startsWith("/")) "$baseUrl$path" else sanitizeCdnDomain(path)
         return try {
@@ -807,17 +855,18 @@ class AV1Encodes : Source() {
                 GET(
                     target,
                     headers.newBuilder()
-                        .set("Referer", "$baseUrl/")
+                        .set("Referer", refererUrl)
                         .set("Sec-Fetch-Site", "same-origin")
                         .build(),
                 ),
             ).await().use { resp ->
                 val loc = resp.header("Location")
+                Log.d(TAG, "resolveRedirect: target=$target code=${resp.code} loc=$loc")
                 when {
                     !loc.isNullOrBlank() -> {
                         val nextUrl = if (loc.startsWith("/")) "$baseUrl$loc" else loc
                         val cleanNext = sanitizeCdnDomain(nextUrl)
-                        if (cleanNext.contains("/r/")) resolveRedirect(cleanNext, depth + 1) else cleanNext
+                        if (cleanNext.contains("/r/")) resolveRedirect(cleanNext, refererUrl, depth + 1) else cleanNext
                     }
 
                     resp.isSuccessful -> sanitizeCdnDomain(resp.request.url.toString())
@@ -901,6 +950,31 @@ class AV1Encodes : Source() {
         return cleanName.takeIf { it.isNotBlank() }
     }
 
+    private fun extractEpisodeNumber(linkText: String, containerText: String, fallbackIndex: Int): Int {
+        val epRegex = Regex("""(?:Episode|Ep\.?|E)\s*(\d+)""", RegexOption.IGNORE_CASE)
+        epRegex.find(linkText)?.groupValues?.get(1)?.toIntOrNull()?.let { if (it in 0..3000) return it }
+        epRegex.find(containerText)?.groupValues?.get(1)?.toIntOrNull()?.let { if (it in 0..3000) return it }
+
+        Regex("""\b(\d{1,4})\b""").find(linkText)?.groupValues?.get(1)?.toIntOrNull()?.let {
+            if (it in 0..3000) return it
+        }
+
+        return fallbackIndex
+    }
+
+    private fun extractEpisodeTitle(linkText: String, containerText: String): String? {
+        val epRegex = Regex("""(?:Episode|Ep\.?|E)\s*\d+[\s:\-–—·]*""", RegexOption.IGNORE_CASE)
+        val textToUse = if (linkText.isNotBlank() && !linkText.equals("Download", ignoreCase = true)) linkText else containerText
+        val withoutEpPrefix = epRegex.replace(textToUse, "").trim()
+        val cleaned = withoutEpPrefix
+            .replace(qualityRegex, "")
+            .replace(subdubRegex, "")
+            .replace(cleanTitleRegex1, "")
+            .replace(cleanTitleRegex4, "")
+            .trim()
+        return cleaned.takeIf { it.isNotBlank() && !it.equals("Download", ignoreCase = true) && !it.matches(Regex("""^[0-9a-fA-F\-]{20,}$""")) }
+    }
+
     private fun formatEpisodeName(
         seasonNum: Int,
         epNum: Int,
@@ -913,7 +987,10 @@ class AV1Encodes : Source() {
         return if (cleanTitle != null &&
             !cleanTitle.equals("Episode $epNum", ignoreCase = true) &&
             !cleanTitle.equals("Ep $epNum", ignoreCase = true) &&
-            !cleanTitle.equals("Ep. $epNum", ignoreCase = true)
+            !cleanTitle.equals("Ep. $epNum", ignoreCase = true) &&
+            !cleanTitle.equals("E$epNum", ignoreCase = true) &&
+            !cleanTitle.equals("Download", ignoreCase = true) &&
+            !cleanTitle.matches(Regex("""^[0-9a-fA-F\-]{20,}$"""))
         ) {
             "S$s E$epNum : $cleanTitle$audioSuffix"
         } else {
