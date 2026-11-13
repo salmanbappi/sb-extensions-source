@@ -1,8 +1,12 @@
 ext {
     extName = 'AV1Encodes'
     extClass = '.AV1Encodes'
-    extVersionCode = 8
+    extVersionCode = 9
     isNsfw = false
 }
 
 apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:episode-metadata-fetcher"))
+}

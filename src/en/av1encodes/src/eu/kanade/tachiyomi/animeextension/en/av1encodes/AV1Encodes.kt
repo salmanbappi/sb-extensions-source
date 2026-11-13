@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
@@ -45,9 +46,11 @@ class AV1Encodes : Source() {
     private val prefQuality: String
         get() = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
 
-    override val client: OkHttpClient = network.client.newBuilder()
+    override val client: OkHttpClient = network.cloudflareClient.newBuilder()
         .dispatcher(Dispatcher().apply { maxRequestsPerHost = 10 })
         .build()
+
+    private val metadataFetcher by lazy { EpisodeMetadataFetcher(client, json) }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("User-Agent", DESKTOP_UA)
@@ -463,6 +466,47 @@ class AV1Encodes : Source() {
         }
     }
 
+    override suspend fun getAnimeDetails(anime: SAnime): SAnime {
+        val details = super.getAnimeDetails(anime)
+        runCatching {
+            val meta = metadataFetcher.fetchAnimeMetadata(details.title)
+            if (meta != null) {
+                val allAltTitles = meta.altTitles.toTypedArray()
+                val altTitlesBlock = if (allAltTitles.isNotEmpty()) {
+                    EpisodeMetadataFetcher.formatAlternativeTitles(details.title, *allAltTitles)
+                } else {
+                    null
+                }
+
+                val linksBlock = EpisodeMetadataFetcher.formatDatabaseLinks(
+                    malId = meta.malId,
+                    anilistId = meta.anilistId,
+                    imdbId = meta.imdbId,
+                    tmdbId = meta.tmdbId,
+                    tvdbId = meta.tvdbId,
+                    anidbId = meta.anidbId,
+                )
+
+                val synopsis = meta.synopsis?.takeIf { it.isNotBlank() } ?: details.description
+                val bannerUrl = meta.bannerUrl
+
+                details.description = EpisodeMetadataFetcher.buildStructuredDescription(
+                    synopsis = synopsis,
+                    bannerUrl = bannerUrl,
+                    altTitlesBlock = altTitlesBlock,
+                    detailsBlock = null,
+                    linksBlock = linksBlock,
+                )
+
+                if (details.thumbnail_url.isNullOrBlank() && !bannerUrl.isNullOrBlank()) {
+                    details.thumbnail_url = bannerUrl
+                }
+            }
+        }
+        details.initialized = true
+        return details
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     // EPISODE LIST
     // ══════════════════════════════════════════════════════════════════════════
@@ -486,6 +530,7 @@ class AV1Encodes : Source() {
         val qualityList = listOf(prefQuality) + QUALITY_VALUES.filter { it != prefQuality }
 
         return seasons.sortedByDescending { it.toIntOrNull() ?: 0 }.parallelCatchingFlatMapBlocking { season ->
+            val sNum = season.toIntOrNull() ?: 1
             for (quality in qualityList) {
                 val encodedRes = URLEncoder.encode(quality, "UTF-8").replace("+", "%20")
                 val epPageUrl = "$baseUrl/episodes/$slug/$season/$encodedRes"
@@ -511,26 +556,15 @@ class AV1Encodes : Source() {
                         Log.d(TAG, "episodeListParse: JSON array found ${items.size} episodes")
                         return@parallelCatchingFlatMapBlocking items.sortedByDescending { it.num }.map { item ->
                             val fn = Uri.decode(item.href.substringBefore("?").substringAfterLast("/"))
-                            val epNum = if (item.num > 0) item.num.toFloat() else parseEpisodeNumber(fn, season)
-                            val finalNum = if (item.num > 0) {
-                                val s = season.toIntOrNull() ?: 1
-                                if (s > 1) ((s - 1) * 100 + epNum) else epNum
-                            } else {
-                                epNum
-                            }
+                            val epNum = if (item.num > 0) item.num.toFloat() else parseEpisodeNumberOnly(fn)
+                            val finalNum = if (sNum > 1) ((sNum - 1) * 100 + epNum) else epNum
+                            val cleanTitle = if (item.label.isNotBlank()) item.label else extractTitleFromFilename(fn)
+                            val audio = item.audio.ifBlank { subdubRegex.find(fn)?.groupValues?.get(1) }
                             SEpisode.create().apply {
                                 setUrlWithoutDomain(item.href)
-                                name = if (item.label.isNotBlank()) {
-                                    val audioTag = if (item.audio.isNotBlank()) " [${item.audio}]" else ""
-                                    if (season != "1" && season.isNotBlank()) {
-                                        "Season $season Ep ${item.num} - ${item.label}$audioTag"
-                                    } else {
-                                        "Ep ${item.num} - ${item.label}$audioTag"
-                                    }
-                                } else {
-                                    buildEpisodeLabel(fn, season)
-                                }
+                                name = formatEpisodeName(sNum, epNum.toInt(), cleanTitle, audio)
                                 episode_number = finalNum
+                                if (!audio.isNullOrBlank()) scanlator = audio
                             }
                         }
                     }
@@ -546,10 +580,15 @@ class AV1Encodes : Source() {
                     }.map { link ->
                         val fullHref = link.attr("href")
                         val filename = Uri.decode(fullHref.substringBefore("?").substringAfterLast("/"))
+                        val epNum = parseEpisodeNumberOnly(filename)
+                        val finalNum = if (sNum > 1) ((sNum - 1) * 100 + epNum) else epNum
+                        val cleanTitle = extractTitleFromFilename(filename)
+                        val audio = subdubRegex.find(filename)?.groupValues?.get(1)
                         SEpisode.create().apply {
                             setUrlWithoutDomain(fullHref)
-                            name = buildEpisodeLabel(filename, season)
-                            episode_number = parseEpisodeNumber(filename, season)
+                            name = formatEpisodeName(sNum, epNum.toInt(), cleanTitle, audio)
+                            episode_number = finalNum
+                            if (!audio.isNullOrBlank()) scanlator = audio
                         }
                     }
                 }
@@ -557,18 +596,66 @@ class AV1Encodes : Source() {
                 val filenames = extractFilenames(epHtml)
                 if (filenames.isNotEmpty()) {
                     Log.d(TAG, "episodeListParse: regex found ${filenames.size} filenames")
-                    return@parallelCatchingFlatMapBlocking filenames.sortedByDescending { parseEpisodeNumber(it, season) }.map { filename ->
+                    return@parallelCatchingFlatMapBlocking filenames.sortedByDescending { parseEpisodeNumberOnly(it) }.map { filename ->
                         val encodedFilename = URLEncoder.encode(filename, "UTF-8").replace("+", "%20")
+                        val epNum = parseEpisodeNumberOnly(filename)
+                        val finalNum = if (sNum > 1) ((sNum - 1) * 100 + epNum) else epNum
+                        val cleanTitle = extractTitleFromFilename(filename)
+                        val audio = subdubRegex.find(filename)?.groupValues?.get(1)
                         SEpisode.create().apply {
                             setUrlWithoutDomain("/download/$slug/$season/$encodedRes/$encodedFilename")
-                            name = buildEpisodeLabel(filename, season)
-                            episode_number = parseEpisodeNumber(filename, season)
+                            name = formatEpisodeName(sNum, epNum.toInt(), cleanTitle, audio)
+                            episode_number = finalNum
+                            if (!audio.isNullOrBlank()) scanlator = audio
                         }
                     }
                 }
             }
             emptyList()
         }
+    }
+
+    override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
+        val episodes = super.getEpisodeList(anime)
+        if (episodes.isEmpty()) return episodes
+
+        return runCatching {
+            val metadataMap = metadataFetcher.fetch(
+                malId = "",
+                animeTitle = anime.title,
+                fallbackThumbnailUrl = anime.thumbnail_url,
+            )
+            if (metadataMap.isEmpty()) return@runCatching episodes
+
+            episodes.map { episode ->
+                val epRaw = episode.episode_number
+                val epNum = if (epRaw > 100f) {
+                    ((epRaw % 100).toInt()).coerceAtLeast(1)
+                } else {
+                    epRaw.toInt().coerceAtLeast(1)
+                }
+                val seasonNum = if (epRaw > 100f) {
+                    (epRaw / 100).toInt() + 1
+                } else {
+                    1
+                }
+
+                val meta = metadataMap[epNum]
+                if (meta != null) {
+                    if (!meta.thumbnailUrl.isNullOrBlank()) {
+                        episode.preview_url = meta.thumbnailUrl
+                    }
+                    if (!meta.description.isNullOrBlank()) {
+                        episode.summary = meta.description
+                    }
+                    if (!meta.title.isNullOrBlank()) {
+                        val audioTag = episode.scanlator ?: subdubRegex.find(episode.name)?.groupValues?.get(1)
+                        episode.name = formatEpisodeName(seasonNum, epNum, meta.title, audioTag)
+                    }
+                }
+                episode
+            }
+        }.getOrDefault(episodes)
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -784,7 +871,9 @@ class AV1Encodes : Source() {
         }
     }
 
-    private fun sanitizeCdnDomain(url: String): String = url.replace("animealpha.cc", "av1encodes.com")
+    private fun sanitizeCdnDomain(url: String): String = url
+        .replace("av1encodes.com", "animealpha.cc")
+        .replace("av1please.com", "animealpha.cc")
 
     private fun toStreamUrl(url: String, ext: String = ".mkv"): String {
         val clean = sanitizeCdnDomain(url)
@@ -850,31 +939,43 @@ class AV1Encodes : Source() {
     private val episodeNameRegex by lazy { Regex("""\[(?:S\d+-)?E(\d+)]\s*(.+?)\s*\[""") }
     private val subdubRegex by lazy { Regex("""\[(Dual|Sub|Dub|English Dub)]""", RegexOption.IGNORE_CASE) }
     private val qualityRegex by lazy { Regex("""\[\d{3,4}p].*""") }
+    private val episodeSNumberRegex by lazy { Regex("""\[(?:S\d+-)?E(\d+)]""") }
 
-    private fun buildEpisodeLabel(filename: String, season: String): String {
-        val epMatch = episodeNameRegex.find(filename)
-        return if (epMatch != null) {
-            val e = epMatch.groupValues[1]
-            val titlePart = epMatch.groupValues[2].trim()
-            val audioTag = subdubRegex
-                .find(filename)?.groupValues?.get(1) ?: ""
-            val audioSuffix = if (audioTag.isNotBlank()) " [$audioTag]" else ""
-            if (season != "1" && season.isNotBlank()) "Season $season Ep $e - $titlePart$audioSuffix" else "Ep $e - $titlePart$audioSuffix"
-        } else {
-            val cleanName = filename.replace(qualityRegex, "")
-                .substringBeforeLast(".").trim()
-            if (season != "1" && season.isNotBlank()) "Season $season - $cleanName" else cleanName
-        }
+    private fun parseEpisodeNumberOnly(filename: String): Float {
+        return episodeSNumberRegex.find(filename)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
     }
 
-    private val episodeSNumberRegex by lazy { Regex("""\[(?:S\d+-)?E(\d+)]""") }
-    private fun parseEpisodeNumber(filename: String, season: String = "1"): Float {
-        val epNum = episodeSNumberRegex.find(filename)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
-        val s = season.toIntOrNull() ?: 1
-        return if (s > 1) {
-            ((s - 1) * 100 + epNum)
+    private fun extractTitleFromFilename(filename: String): String? {
+        val epMatch = episodeNameRegex.find(filename)
+        if (epMatch != null) {
+            val titlePart = epMatch.groupValues[2].trim()
+            if (titlePart.isNotBlank()) return titlePart
+        }
+        val withoutBracket = filename.replace(Regex("""^\[[^]]+]\s*"""), "")
+        val cleanName = withoutBracket.replace(qualityRegex, "")
+            .replace(subdubRegex, "")
+            .substringBeforeLast(".")
+            .trim()
+        return cleanName.takeIf { it.isNotBlank() }
+    }
+
+    private fun formatEpisodeName(
+        seasonNum: Int,
+        epNum: Int,
+        title: String?,
+        audio: String? = null,
+    ): String {
+        val s = seasonNum.coerceAtLeast(1)
+        val audioSuffix = if (!audio.isNullOrBlank()) " [$audio]" else ""
+        val cleanTitle = title?.trim()?.takeIf { it.isNotBlank() }
+        return if (cleanTitle != null &&
+            !cleanTitle.equals("Episode $epNum", ignoreCase = true) &&
+            !cleanTitle.equals("Ep $epNum", ignoreCase = true) &&
+            !cleanTitle.equals("Ep. $epNum", ignoreCase = true)
+        ) {
+            "S$s E$epNum : $cleanTitle$audioSuffix"
         } else {
-            epNum
+            "S$s E$epNum$audioSuffix"
         }
     }
 
