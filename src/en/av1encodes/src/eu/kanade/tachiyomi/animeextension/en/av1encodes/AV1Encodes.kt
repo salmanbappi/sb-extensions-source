@@ -941,9 +941,7 @@ class AV1Encodes : Source() {
     private val qualityRegex by lazy { Regex("""\[\d{3,4}p].*""") }
     private val episodeSNumberRegex by lazy { Regex("""\[(?:S\d+-)?E(\d+)]""") }
 
-    private fun parseEpisodeNumberOnly(filename: String): Float {
-        return episodeSNumberRegex.find(filename)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
-    }
+    private fun parseEpisodeNumberOnly(filename: String): Float = episodeSNumberRegex.find(filename)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
 
     private fun extractTitleFromFilename(filename: String): String? {
         val epMatch = episodeNameRegex.find(filename)
