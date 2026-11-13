@@ -134,24 +134,10 @@ class DhakaFlix2(
             val currentFileName = if (url.contains("/")) url.substringAfterLast("/").substringBefore("?") else ""
             if (COVER_MARKERS.any { it.equals(currentFileName, ignoreCase = true) }) {
                 val folder = if (url.contains("/")) url.substringBeforeLast("/") + "/" else baseUrl
-                for (marker in COVER_MARKERS) {
-                    if (marker.equals(currentFileName, ignoreCase = true)) continue
-                    response.close()
-                    val probeUrl = fixUrl(folder + marker)
-                    response = chain.proceed(
-                        request.newBuilder()
-                            .url(probeUrl)
-                            .header("Referer", folder)
-                            .headers(imageHeaders)
-                            .build(),
-                    )
-                    if (response.isSuccessful && response.header("Content-Type")?.startsWith("image") == true) {
-                        return response
-                    }
-                }
 
-                // Tier 2: Universal Directory Inspection
-                // If no known markers matched, fetch the folder HTML to discover ANY custom image name (e.g. Accez.jpg, Air_d.jpg, akaz.jpg)
+                // Fast Direct Directory Inspection:
+                // Instead of sequentially probing markers with 100+ separate HTTP calls,
+                // fetch the folder index once to find the actual cover file that exists.
                 try {
                     response.close()
                     val folderResp = chain.proceed(
@@ -163,24 +149,34 @@ class DhakaFlix2(
                     if (folderResp.isSuccessful) {
                         val body = folderResp.body?.string().orEmpty()
                         folderResp.close()
-                        val imgMatch = Regex("""href=["']([^"']+\.(?:jpg|jpeg|png|webp))["']""", RegexOption.IGNORE_CASE)
+                        val candidates = Regex("""href=["']([^"']+\.(?:jpg|jpeg|png|webp))["']""", RegexOption.IGNORE_CASE)
                             .findAll(body)
                             .map { it.groupValues[1] }
-                            .firstOrNull { candidate ->
+                            .filterNot { candidate ->
                                 val cLower = candidate.lowercase()
-                                !cLower.contains("/_h5ai/") && !cLower.contains("favicon") && !cLower.contains("icon")
+                                cLower.contains("/_h5ai/") || cLower.contains("favicon") ||
+                                    cLower.contains("icon") || cLower.contains("folder") ||
+                                    cLower.contains("parent") || cLower.contains("fallback") ||
+                                    cLower.contains("menu") || cLower.contains("nav")
                             }
-                        if (imgMatch != null) {
-                            val targetImgUrl = folder.toHttpUrlOrNull()?.resolve(imgMatch)?.toString() ?: (folder + imgMatch)
-                            response = chain.proceed(
+                            .toList()
+
+                        val bestCandidate = candidates.find { cand ->
+                            val fname = cand.substringAfterLast("/").substringBefore("?")
+                            COVER_MARKERS.any { it.equals(fname, ignoreCase = true) }
+                        } ?: candidates.firstOrNull()
+
+                        if (bestCandidate != null) {
+                            val targetImgUrl = folder.toHttpUrlOrNull()?.resolve(bestCandidate)?.toString() ?: (folder + bestCandidate)
+                            val targetResp = chain.proceed(
                                 request.newBuilder()
                                     .url(fixUrl(targetImgUrl))
                                     .header("Referer", folder)
                                     .headers(imageHeaders)
                                     .build(),
                             )
-                            if (response.isSuccessful && response.header("Content-Type")?.startsWith("image") == true) {
-                                return response
+                            if (targetResp.isSuccessful && targetResp.header("Content-Type")?.startsWith("image") == true) {
+                                return targetResp
                             }
                         }
                     }
@@ -264,9 +260,9 @@ class DhakaFlix2(
         val apiKey = preferences.getString(PREF_TMDB_API_KEY, "") ?: ""
 
         withContext(Dispatchers.IO) {
-            withTimeoutOrNull(20000) {
+            withTimeoutOrNull(30000) {
                 coroutineScope {
-                    animes.take(25).map { anime ->
+                    animes.take(50).map { anime ->
                         async {
                             enrichmentSemaphore.withPermit {
                                 // 1. Try TMDb first if enabled
@@ -278,55 +274,38 @@ class DhakaFlix2(
                                     }
                                 }
 
-                                // 2. SMART RESOLVE: Fetch folder HTML and scan for thumbnails WITHOUT loading the whole page into memory
+                                // 2. SMART RESOLVE: Fetch folder HTML and scan for real content cover image
                                 try {
                                     val response = client.newCall(GET(fixUrl(anime.url), headers)).execute()
                                     if (response.isSuccessful) {
-                                        val source = response.body?.source()
-                                        if (source != null) {
-                                            var foundThumbUrl: String? = null
-                                            var firstAnyImageUrl: String? = null
-                                            val thumbRegex = Regex("href=\"([^\"]+(?:a_al|000|a_vl|a11|a_v1|a\\._v1|a0_al|a06|a07|a607|aer|url|a22|aal|a20|ater|a08|images|age|a00|a720|alg|ar2|a606|aster|aer2|a_a1|a18|av1|aull|a608|a01|a\\._al|00|aver|a04|aurl|a19|a5_al|axlg|mv5bz|a02|a14|a15|a-1|aer3|aad|a10|a-2|ane|aon|a00_|arl|aoster|a13|a9_al|mv5z|arge|aan|a03|a1|aer4|ar3|ae|aes|a09|a014|aed|aie|a16|a80|a2|a015|url1|aay|a50|aer1|anz|a24|ad|ar4|a500|a88|ang|a_3|a00_al|a918|a68|iko|aoad|a40|download|a_hq|a-3|and|azz|aaer|a39|a801|a0_vl|a4e|afull|poster|cover)[^\"]*\\.(?:jpg|jpeg|png|webp))\"", RegexOption.IGNORE_CASE)
-                                            val anyImageRegex = Regex("href=\"([^\"]+\\.(?:jpg|jpeg|png|webp))\"", RegexOption.IGNORE_CASE)
-                                            val excludeRegex = Regex("parent|icon|menu|nav|/_h5ai/", RegexOption.IGNORE_CASE)
-
-                                            var bytesRead = 0L
-                                            val maxScanBytes = 512 * 1024L // 512KB limit
-
-                                            while (bytesRead < maxScanBytes) {
-                                                val line = source.readUtf8Line() ?: break
-                                                bytesRead += line.length
-
-                                                // Check for high-quality thumb first
-                                                val thumbMatch = thumbRegex.find(line)
-                                                if (thumbMatch != null) {
-                                                    foundThumbUrl = thumbMatch.groupValues[1]
-                                                    break // STOP IMMEDIATELY
-                                                }
-
-                                                // Keep track of any image as fallback
-                                                if (firstAnyImageUrl == null) {
-                                                    val anyMatch = anyImageRegex.find(line)
-                                                    if (anyMatch != null) {
-                                                        val url = anyMatch.groupValues[1]
-                                                        if (!excludeRegex.containsMatchIn(url)) {
-                                                            firstAnyImageUrl = url
-                                                        }
-                                                    }
-                                                }
+                                        val body = response.body?.string().orEmpty()
+                                        response.close()
+                                        val candidates = Regex("""href=["']([^"']+\.(?:jpg|jpeg|png|webp))["']""", RegexOption.IGNORE_CASE)
+                                            .findAll(body)
+                                            .map { it.groupValues[1] }
+                                            .filterNot { candidate ->
+                                                val cLower = candidate.lowercase()
+                                                cLower.contains("/_h5ai/") || cLower.contains("favicon") ||
+                                                    cLower.contains("icon") || cLower.contains("folder") ||
+                                                    cLower.contains("parent") || cLower.contains("fallback") ||
+                                                    cLower.contains("menu") || cLower.contains("nav")
                                             }
+                                            .toList()
 
-                                            val finalThumbUrl = foundThumbUrl ?: firstAnyImageUrl
-                                            if (finalThumbUrl != null) {
-                                                val baseUrl = response.request.url.toString()
-                                                val absoluteUrl = response.request.url.resolve(finalThumbUrl)?.toString() ?: ""
-                                                if (absoluteUrl.isNotEmpty()) {
-                                                    anime.thumbnail_url = formatThumbUrl(absoluteUrl)
-                                                }
+                                        val bestCandidate = candidates.find { cand ->
+                                            val fname = cand.substringAfterLast("/").substringBefore("?")
+                                            COVER_MARKERS.any { it.equals(fname, ignoreCase = true) }
+                                        } ?: candidates.firstOrNull()
+
+                                        if (bestCandidate != null) {
+                                            val absoluteUrl = response.request.url.resolve(bestCandidate)?.toString().orEmpty()
+                                            if (absoluteUrl.isNotEmpty()) {
+                                                anime.thumbnail_url = formatThumbUrl(absoluteUrl)
                                             }
                                         }
+                                    } else {
+                                        response.close()
                                     }
-                                    response.close()
                                 } catch (e: Exception) {}
                             }
                         }
@@ -391,7 +370,10 @@ class DhakaFlix2(
     }
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        if (query.isEmpty()) return super.getSearchAnime(page, query, filters)
+        if (query.isEmpty()) {
+            val response = client.newCall(searchAnimeRequest(page, query, filters)).execute()
+            return searchAnimeParse(response).also { enrichAnimes(it.animes) }
+        }
 
         val now = System.currentTimeMillis()
         if (searchCache.containsKey(query) && now - (cacheTime[query] ?: 0) < 1800000) {
@@ -570,10 +552,11 @@ class DhakaFlix2(
         val document = response.asJsoup()
         val cards = document.select("div.card")
 
-        // Extract all image links from this page once
+        // Extract all image links from this page once, excluding icons/folders/system assets
         val pageImageLinks = document.select("a").filter {
             val href = it.attr("href").lowercase()
-            href.endsWith(".jpg") || href.endsWith(".jpeg") || href.endsWith(".png") || href.endsWith(".webp")
+            !href.contains(Regex("parent|icon|favicon|folder|menu|nav|/_h5ai/|fallback")) &&
+                (href.endsWith(".jpg") || href.endsWith(".jpeg") || href.endsWith(".png") || href.endsWith(".webp"))
         }
 
         val animeList = if (cards.isNotEmpty()) {
@@ -582,7 +565,7 @@ class DhakaFlix2(
                 SAnime.create().apply {
                     title = link.text().trim()
                     url = fixUrl(link.attr("abs:href"))
-                    val thumbElement = card.selectFirst("img[src~=(?i)a_al|000|a_vl|a11|a_v1|a\\._v1|a0_al|a06|a07|a607|aer|url|a22|aal|a20|ater|a08|images|age|a00|a720|alg|ar2|a606|aster|aer2|a_a1|a18|av1|aull|a608|a01|a\\._al|00|aver|a04|aurl|a19|a5_al|axlg|mv5bz|a02|a14|a15|a-1|aer3|aad|a10|a-2|ane|aon|a00_|arl|aoster|a13|a9_al|mv5z|arge|aan|a03|a1|aer4|ar3|ae|aes|a09|a014|aed|aie|a16|a80|a2|a015|url1|aay|a50|aer1|anz|a24|ad|ar4|a500|a88|ang|a_3|a00_al|a918|a68|iko|aoad|a40|download|a_hq|a-3|and|azz|aaer|a39|a801|a0_vl|a4e|afull|poster|cover], img:not([src~=(?i)back|parent|icon|/icons/|menu|nav|folder|fallback|/_h5ai/])")
+                    val thumbElement = card.selectFirst("img:not([src~=(?i)back|parent|icon|/icons/|menu|nav|folder|fallback|/_h5ai/|favicon])")
                     val thumbUrl = thumbElement?.let {
                         it.attr("abs:data-src").ifEmpty { it.attr("abs:data-lazy-src").ifEmpty { it.attr("abs:src") } }
                     } ?: ""
@@ -602,8 +585,9 @@ class DhakaFlix2(
                         val currentDir = if (href.endsWith("/")) href else href.substringBeforeLast("/") + "/"
                         val foundThumb = pageImageLinks.find {
                             val imgHref = it.attr("abs:href")
+                            val fileName = imgHref.substringAfterLast("/").substringBefore("?")
                             imgHref.startsWith(currentDir) &&
-                                COVER_NAME_REGEX.containsMatchIn(imgHref)
+                                COVER_MARKERS.any { marker -> marker.equals(fileName, ignoreCase = true) }
                         } ?: pageImageLinks.find { it.attr("abs:href").startsWith(currentDir) }
 
                         thumbnail_url = if (foundThumb != null) formatThumbUrl(foundThumb.attr("abs:href")) else getFolderThumb(url)
@@ -643,6 +627,26 @@ class DhakaFlix2(
                 fetchTmdbImage(anime.title)?.let { anime.thumbnail_url = it }
             } catch (e: Exception) {}
         }
+        val currentThumb = anime.thumbnail_url.orEmpty()
+        val isThumbInvalid = currentThumb.isBlank() ||
+            currentThumb.contains("folder.png") ||
+            currentThumb.contains("favicon") ||
+            currentThumb.contains("/_h5ai/") ||
+            currentThumb.endsWith(IMAGE_PROBE_MARKER) ||
+            currentThumb.contains(IMAGE_PROBE_MARKER)
+
+        if (isThumbInvalid && anime.url.isNotEmpty()) {
+            try {
+                val response = client.newCall(animeDetailsRequest(anime)).execute()
+                if (response.isSuccessful) {
+                    val parsed = animeDetailsParse(response)
+                    if (parsed.thumbnail_url.isNotEmpty() && !parsed.thumbnail_url.contains("folder.png") && !parsed.thumbnail_url.contains(IMAGE_PROBE_MARKER)) {
+                        anime.thumbnail_url = parsed.thumbnail_url
+                    }
+                }
+                response.close()
+            } catch (e: Exception) {}
+        }
         return anime
     }
 
@@ -658,8 +662,8 @@ class DhakaFlix2(
             genre = document.select("div.ganre-wrapper a").joinToString { it.text().replace(",", "").trim() }
             description = document.selectFirst("p.storyline")?.text()?.trim() ?: ""
 
-            // 1. Look for images already rendered as tags
-            val thumbElement = document.selectFirst("img[src~=(?i)a_al|000|a_vl|a11|a_v1|a\\._v1|a0_al|a06|a07|a607|aer|url|a22|aal|a20|ater|a08|images|age|a00|a720|alg|ar2|a606|aster|aer2|a_a1|a18|av1|aull|a608|a01|a\\._al|00|aver|a04|aurl|a19|a5_al|axlg|mv5bz|a02|a14|a15|a-1|aer3|aad|a10|a-2|ane|aon|a00_|arl|aoster|a13|a9_al|mv5z|arge|aan|a03|a1|aer4|ar3|ae|aes|a09|a014|aed|aie|a16|a80|a2|a015|url1|aay|a50|aer1|anz|a24|ad|ar4|a500|a88|ang|a_3|a00_al|a918|a68|iko|aoad|a40|download|a_hq|a-3|and|azz|aaer|a39|a801|a0_vl|a4e|afull|poster|cover], img:not([src~=(?i)back|parent|icon|/icons/|menu|nav|folder|fallback|/_h5ai/])")
+            // 1. Look for images already rendered as tags (excluding system icons/folders/favicons)
+            val thumbElement = document.selectFirst("img:not([src~=(?i)back|parent|icon|/icons/|menu|nav|folder|fallback|/_h5ai/|favicon])")
 
             var thumbUrl = thumbElement?.let {
                 it.attr("abs:data-src").ifEmpty { it.attr("abs:data-lazy-src").ifEmpty { it.attr("abs:src") } }
@@ -667,33 +671,25 @@ class DhakaFlix2(
 
             // 2. TRUE SMART DETECTION: Look for thumbnail files in the links list (h5ai fallback)
             if (thumbUrl.isEmpty()) {
-                val allLinks = document.select("a")
-
-                // Try to find known good names first
-                val foundThumb = allLinks.find {
+                val allLinks = document.select("a").filter {
                     val href = it.attr("href").lowercase()
-                    COVER_NAME_REGEX.containsMatchIn(href) &&
+                    !href.contains(Regex("parent|icon|favicon|folder|menu|nav|/_h5ai/|fallback")) &&
                         (href.endsWith(".jpg") || href.endsWith(".jpeg") || href.endsWith(".png") || href.endsWith(".webp"))
                 }
 
-                // If no known name, just take the FIRST image link available (excluding icons/parent)
-                val firstAnyImage = if (foundThumb == null) {
-                    allLinks.find {
-                        val href = it.attr("href").lowercase()
-                        (href.endsWith(".jpg") || href.endsWith(".jpeg") || href.endsWith(".png") || href.endsWith(".webp")) &&
-                            !href.contains(Regex("parent|icon|menu|nav|/_h5ai/"))
-                    }
-                } else {
-                    null
-                }
+                // Try to find known good names first (checked against filename only)
+                val foundThumb = allLinks.find {
+                    val fileName = it.attr("href").substringAfterLast('/').substringBefore('?')
+                    COVER_MARKERS.any { marker -> marker.equals(fileName, ignoreCase = true) }
+                } ?: allLinks.firstOrNull()
 
-                // USE abs:href DIRECTLY - Do NOT pass through fixUrl to avoid re-encoding issues
-                thumbUrl = (foundThumb ?: firstAnyImage)?.attr("abs:href") ?: ""
+                thumbUrl = foundThumb?.attr("abs:href") ?: ""
             }
 
             // 3. Last resort - fallback guessing
             if (thumbUrl.isEmpty()) {
-                thumbUrl = document.selectFirst("""a[href~=(?i)\.(jpg|jpeg|png|webp)]:not([href~=(?i)back|parent|icon|menu])""")?.attr("abs:href") ?: ""
+                val candidateLink = document.selectFirst("""a[href~=(?i)\.(jpg|jpeg|png|webp)]:not([href~=(?i)back|parent|icon|menu|folder|favicon|/_h5ai/|fallback])""")
+                thumbUrl = candidateLink?.attr("abs:href") ?: ""
             }
             if (thumbUrl.isEmpty() && response.request.url.toString().endsWith("/")) {
                 thumbUrl = getFolderThumb(response.request.url.toString())
