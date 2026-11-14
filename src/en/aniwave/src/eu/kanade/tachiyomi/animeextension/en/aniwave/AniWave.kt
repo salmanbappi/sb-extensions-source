@@ -192,7 +192,7 @@ class AniWave : Source() {
             if (discoveredMapperServersCache == null) {
                 discoveredMapperServersCache = preferences.getStringSet(PREF_DISCOVERED_MAPPER_SERVERS_KEY, null) ?: emptySet()
             }
-            val merged = discoveredHtmlServersCache!! + discoveredMapperServersCache!!
+            val merged = (discoveredHtmlServersCache ?: emptySet()) + (discoveredMapperServersCache ?: emptySet())
             return merged.ifEmpty { hosterNames.toSet() }
         }
 
@@ -201,6 +201,9 @@ class AniWave : Source() {
             .filter { it.isNotEmpty() }
             .toSet()
         if (newExact.isEmpty()) return
+
+        // Ensure caches are initialized from preferences
+        discoveredServers
 
         val now = System.currentTimeMillis()
         val serverTimestamps = (
@@ -214,14 +217,16 @@ class AniWave : Source() {
         newExact.forEach { serverTimestamps[it] = now }
 
         if (isMapper) {
-            val mergedMapper = discoveredMapperServersCache!! + newExact
+            val currentMapper = discoveredMapperServersCache ?: emptySet()
+            val mergedMapper = currentMapper + newExact
             if (mergedMapper != discoveredMapperServersCache) {
                 discoveredMapperServersCache = mergedMapper
                 preferences.edit().putStringSet(PREF_DISCOVERED_MAPPER_SERVERS_KEY, mergedMapper).apply()
             }
         } else {
             val sevenDaysMillis = TimeUnit.DAYS.toMillis(7)
-            val validHtmlServers = (discoveredHtmlServersCache!! + newExact).filter { server ->
+            val currentHtml = discoveredHtmlServersCache ?: emptySet()
+            val validHtmlServers = (currentHtml + newExact).filter { server ->
                 val ts = serverTimestamps[server] ?: 0L
                 server in newExact || now - ts < sevenDaysMillis
             }.toSet()
@@ -233,7 +238,7 @@ class AniWave : Source() {
             }
         }
 
-        val currentValidServers = discoveredHtmlServersCache!! + discoveredMapperServersCache!!
+        val currentValidServers = (discoveredHtmlServersCache ?: emptySet()) + (discoveredMapperServersCache ?: emptySet())
         serverTimestamps.keys.retainAll(currentValidServers)
 
         preferences.edit().putStringSet(
@@ -253,7 +258,7 @@ class AniWave : Source() {
                     ?.takeIf { it.isNotEmpty() }
                     ?: seedTypes
             }
-            return discoveredTypesCache!!
+            return discoveredTypesCache ?: seedTypes
         }
 
     internal fun updateDiscoveredTypes(rawTypes: Collection<String>) {
