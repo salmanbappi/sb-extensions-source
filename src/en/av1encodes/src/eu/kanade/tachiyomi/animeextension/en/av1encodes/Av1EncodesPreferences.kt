@@ -61,7 +61,7 @@ private val resolutionRegex by lazy { Regex("""(\d{3,4})p""") }
 
 internal fun List<Video>.sortByPreferredQuality(preferences: SharedPreferences): List<Video> {
     val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
-    val preferredResolution = qualityRegex.find(preferredQuality)?.groupValues?.getOrNull(1) ?: preferredQuality
+    val preferredResolution = qualityRegex.findAll(preferredQuality).lastOrNull()?.groupValues?.getOrNull(1) ?: preferredQuality
     val linkType = preferences.getString(PREF_LINK_TYPE_KEY, PREF_LINK_TYPE_DEFAULT) ?: PREF_LINK_TYPE_DEFAULT
     return sortedWith(
         compareByDescending<Video> { it.videoTitle.contains(linkType, ignoreCase = true) }

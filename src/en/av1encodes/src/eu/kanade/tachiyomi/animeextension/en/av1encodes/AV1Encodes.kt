@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.en.av1encodes
 
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
@@ -9,28 +10,37 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
-import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.episodemetadatafetcher.EpisodeMetadataFetcher
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import extensions.utils.Source
+import extensions.utils.UrlUtils
 import keiyoushi.utils.bodyString
-import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parallelMapNotNullBlocking
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.useAsJsoup
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import okhttp3.CacheControl
 import okhttp3.Dispatcher
+import okhttp3.FormBody
 import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.Locale
 
@@ -617,15 +627,13 @@ class AV1Encodes : Source() {
 
         if (allParsed.isEmpty()) return emptyList()
 
-        val distinctParsed = allParsed.distinctBy { it.href }
+        val distinctParsed = allParsed.distinctBy { it.seasonNum to it.epNum }
             .sortedWith(compareBy({ it.seasonNum }, { it.epNum }))
 
-        val isSingleSeason = distinctParsed.map { it.seasonNum }.distinct().size <= 1
-
-        val episodes = distinctParsed.mapIndexed { index, p ->
-            val num = if (isSingleSeason) p.epNum.toFloat() else (index + 1).toFloat()
+        val episodes = distinctParsed.map { p ->
+            val num = ((p.seasonNum - 1) * 100 + p.epNum).toFloat()
             SEpisode.create().apply {
-                setUrlWithoutDomain(p.href)
+                url = "$urlPath#season=${p.seasonNum}&ep=${p.epNum}"
                 name = formatEpisodeName(p.seasonNum, p.epNum, p.title, p.audio)
                 episode_number = num
                 if (!p.audio.isNullOrBlank()) scanlator = p.audio
@@ -727,179 +735,283 @@ class AV1Encodes : Source() {
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> = extractAllVideos(episode.url).sortVideos()
 
-    private suspend fun extractAllVideos(episodeUrl: String): List<Video> {
-        Log.d(TAG, "extractAllVideos: episodeUrl=$episodeUrl")
+    private val playbackMutex = Mutex()
+    private var cachedPlayback: Triple<String, Long, List<Video>>? = null
 
-        val cleanEpisodeUrl = sanitizeCdnDomain(episodeUrl)
-        val downloadPageUrl = if (cleanEpisodeUrl.startsWith("http")) {
-            cleanEpisodeUrl
-        } else {
-            "$baseUrl/${cleanEpisodeUrl.removePrefix("/")}"
-        }
-        val encodedDownloadPageUrl = downloadPageUrl.replace(" ", "%20")
-        val slug = Regex("""/download/([a-zA-Z0-9_\-]+)/""").find(episodeUrl)?.groupValues?.get(1)
-        val referer = if (!slug.isNullOrBlank()) "$baseUrl/anime/$slug" else "$baseUrl/"
-
-        val resp = try {
-            client.newCall(
-                GET(encodedDownloadPageUrl, headers.newBuilder().set("Referer", referer).build()),
-            ).awaitSuccess()
-        } catch (e: Exception) {
-            Log.e(TAG, "extractAllVideos: initial download page failed for $encodedDownloadPageUrl — ${e.message}")
-            return emptyList()
+    private suspend fun extractAllVideos(episodeUrl: String): List<Video> = playbackMutex.withLock {
+        val cacheKey = "$baseUrl|$prefQuality|${preferences.getBoolean(PREF_SHOW_TORRENT_KEY, PREF_SHOW_TORRENT_DEFAULT)}|$episodeUrl"
+        val cached = cachedPlayback
+        if (cached != null && cached.first == cacheKey && SystemClock.elapsedRealtime() - cached.second < PLAYBACK_CACHE_MS) {
+            return@withLock cached.third
         }
 
-        val finalUrl = resp.request.url.toString()
-        val pageHtml = resp.bodyString()
-        Log.d(TAG, "extractAllVideos: download page status=${resp.code} finalUrl=$finalUrl htmlLen=${pageHtml.length}")
-
-        if (pageHtml.isBlank()) return emptyList()
-
-        val doc = Jsoup.parse(pageHtml)
-        val ext = if (episodeUrl.endsWith(".mp4", ignoreCase = true)) ".mp4" else ".mkv"
-
-        val rawFilename = Uri.decode(episodeUrl.substringBefore("?").substringAfterLast("/"))
-        val realFilename = doc.selectFirst("#dl-file-name, .dl-file-name")?.text()?.trim() ?: rawFilename
+        val downloadPageUrl = freshDownloadUrl(episodeUrl)
+        val doc = loadDownloadPage(downloadPageUrl)
+        val realFilename = doc.selectFirst("#dl-file-name, .dl-file-name")?.text()?.trim()
+            ?: doc.selectFirst("#file-details[data-file-name]")?.attr("data-file-name").orEmpty()
         val fileSize = doc.selectFirst("#dl-stat-size")?.text()?.trim()
         val fileQuality = doc.selectFirst("#dl-stat-quality")?.text()?.trim()
-            ?: (Regex("""\[(\d+p)]""").find(realFilename)?.groupValues?.get(1) ?: prefQuality)
+            ?: Regex("""\[(\d+p)]""").find(realFilename)?.groupValues?.get(1)
+            ?: prefQuality
         val fileCodec = doc.selectFirst("#dl-stat-codec")?.text()?.trim() ?: "AV1"
-        val audioTag = subdubRegex.find(realFilename)?.groupValues?.get(1) ?: ""
-        val audioSuffix = if (audioTag.isNotBlank()) " [$audioTag]" else ""
-        val sizeLabel = if (!fileSize.isNullOrBlank()) " · $fileSize" else ""
-        val qualLabel = "$fileCodec · $fileQuality$audioSuffix$sizeLabel"
+        val audioTag = subdubRegex.find(realFilename)?.groupValues?.get(1)
+        val qualLabel = buildString {
+            append("$fileCodec · $fileQuality")
+            if (!audioTag.isNullOrBlank()) append(" [$audioTag]")
+            if (!fileSize.isNullOrBlank()) append(" · $fileSize")
+        }
+        val resolution = Regex("""(\d{3,4})p""").find(fileQuality)?.groupValues?.get(1)?.toIntOrNull()
         val vHeaders = getVideoHeaders()
-
         val videos = mutableListOf<Video>()
 
-        // 1. Direct stream link from [data-stream] or data attributes
-        val streamData = doc.selectFirst("[data-stream]")?.attr("data-stream")?.takeIf { it.isNotBlank() }
-            ?: doc.selectFirst("[data-src*='/r/'], [data-url*='/r/']")?.let {
-                it.attr("data-src").ifBlank { it.attr("data-url") }
-            }?.takeIf { it.isNotBlank() }
-
-        // 2. Video player iframe (/r/ or direct)
-        val iframeSrc = doc.selectFirst("iframe#anime-video-player, iframe.anime-video-player, iframe[src*='/r/'], iframe[src*='/stream/'], iframe[src*='/watch/'], iframe[src*='cdn']")?.let {
-            it.attr("abs:src").ifBlank { it.attr("src") }
-        }?.takeIf { it.isNotBlank() }
-
-        // 3. Fallback regex in page script
-        val scriptStreamLink = Regex("""['"](/r/[a-zA-Z0-9_\-]+)['"]""").find(pageHtml)?.groupValues?.get(1)
-            ?: Regex("""['"](https?://[^'"]*cdn[^'"]*/(?:stream|watch|dl|dash)/[^'"]+)['"]""").find(pageHtml)?.groupValues?.get(1)
-
-        val directVideoSrc = doc.selectFirst("video source[src], video[src]")?.let {
-            it.attr("abs:src").ifBlank { it.attr("src") }
-        }?.takeIf { it.isNotBlank() }
-
-        val candidateLinks = listOfNotNull(streamData, iframeSrc, scriptStreamLink, directVideoSrc).distinct()
-        Log.d(TAG, "extractAllVideos: candidateLinks=$candidateLinks")
-
-        for (candidate in candidateLinks) {
-            val resolved = if (candidate.contains("/stream/") || candidate.contains("/watch/") || candidate.contains("/dash/") || candidate.contains("/dl/")) {
-                sanitizeCdnDomain(candidate)
-            } else {
-                resolveRedirect(candidate, refererUrl = encodedDownloadPageUrl)
+        // Older templates exposed the links through get_ddl rather than SSR.
+        val ddlToken = Regex("""['"](A{4,}[A-Za-z0-9_\-]{10,})['"]""")
+            .find(doc.select("script").joinToString("\n") { it.data() })?.groupValues?.get(1)
+        val ddl = if (ddlToken != null) {
+            try {
+                val encodedFile = downloadPageUrl.toHttpUrl().encodedPath.substringAfterLast('/')
+                client.newCall(
+                    GET(
+                        "$baseUrl/get_ddl/$encodedFile",
+                        headers.newBuilder()
+                            .set("Accept", "application/json")
+                            .set("Referer", downloadPageUrl)
+                            .set("X-Ddl-Token", ddlToken)
+                            .set("Sec-Fetch-Dest", "empty")
+                            .set("Sec-Fetch-Mode", "cors")
+                            .build(),
+                    ),
+                ).awaitSuccess().bodyString().parseAs<DdlResponse>().takeIf { it.success }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w(TAG, "extractAllVideos: legacy DDL lookup failed: ${e.message}")
+                null
             }
-            Log.d(TAG, "extractAllVideos: candidate=$candidate resolved=$resolved")
-            if (resolved != null && (resolved.contains("/stream/") || resolved.contains("/watch/") || resolved.contains("/dash/") || resolved.contains("/dl/"))) {
-                val dlUrl = toDlUrl(resolved, ext)
-                val streamUrl = toStreamUrl(resolved, ext)
-                videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL", headers = vHeaders))
-                videos.add(Video(videoUrl = streamUrl, videoTitle = "$qualLabel · Stream", headers = vHeaders))
-                break
+        } else {
+            null
+        }
+
+        val downloadLinks = listOfNotNull(
+            doc.selectFirst("#download-now-btn[data-href]")?.attr("data-href"),
+            doc.selectFirst("a#download-link[href], a[href*='/dl/']")?.attr("href"),
+            ddl?.downloadLink,
+            ddl?.ddl,
+        ).filter { it.isNotBlank() }.distinct()
+        for (path in downloadLinks) {
+            val link = resolveRedirect(path, downloadPageUrl) ?: continue
+            if (link.isHtml) continue
+            videos.add(
+                Video(
+                    videoUrl = withMediaHint(link.url, realFilename),
+                    videoTitle = "$qualLabel · Direct DL",
+                    headers = vHeaders,
+                    resolution = resolution,
+                ),
+            )
+        }
+
+        val streamLinks = listOfNotNull(
+            doc.selectFirst("[data-stream]")?.attr("data-stream"),
+            doc.selectFirst("iframe#anime-video-player, iframe.anime-video-player")?.attr("src"),
+            doc.selectFirst("video source[src], video[src], dash-video[src]")?.attr("src"),
+            ddl?.streamLink,
+            ddl?.watchLink,
+        ).filter { it.isNotBlank() }.distinct()
+        for (path in streamLinks) {
+            for (url in streamUrls(path, downloadPageUrl)) {
+                videos.add(
+                    Video(
+                        videoUrl = withMediaHint(url, realFilename),
+                        videoTitle = "$qualLabel · Stream",
+                        headers = vHeaders,
+                        resolution = resolution,
+                    ),
+                )
             }
         }
 
-        // Direct stream if download page itself redirected to stream/watch
-        if (videos.isEmpty() && (finalUrl.contains("/stream/") || finalUrl.contains("/watch/") || finalUrl.contains("/dl/"))) {
-            val dlUrl = toDlUrl(finalUrl, ext)
-            val streamUrl = toStreamUrl(finalUrl, ext)
-            videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL", headers = vHeaders))
-            videos.add(Video(videoUrl = streamUrl, videoTitle = "$qualLabel · Stream", headers = vHeaders))
-        }
-
-        // Direct player links on page
-        if (videos.isEmpty()) {
-            val linkCandidate = doc.selectFirst("a[href*='/r/'], a[href*='/stream/'], a[href*='/watch/'], a[href*='/dl/']")?.attr("href")
-            if (!linkCandidate.isNullOrBlank()) {
-                val resolved = resolveRedirect(linkCandidate, refererUrl = encodedDownloadPageUrl)
-                if (resolved != null && (resolved.contains("/stream/") || resolved.contains("/watch/") || resolved.contains("/dl/"))) {
-                    val dlUrl = toDlUrl(resolved, ext)
-                    val streamUrl = toStreamUrl(resolved, ext)
-                    videos.add(Video(videoUrl = dlUrl, videoTitle = "$qualLabel · Direct DL", headers = vHeaders))
-                    videos.add(Video(videoUrl = streamUrl, videoTitle = "$qualLabel · Stream", headers = vHeaders))
-                }
-            }
-        }
-
-        // 4. Torrent link if enabled
         if (preferences.getBoolean(PREF_SHOW_TORRENT_KEY, PREF_SHOW_TORRENT_DEFAULT)) {
-            val torrentLink = doc.selectFirst("a#torrent-btn, a[href*='/r/']:has(.fa-magnet), a[href^='magnet:']")?.attr("href")
-            if (!torrentLink.isNullOrBlank()) {
-                val torrentUrl = if (torrentLink.startsWith("magnet:")) torrentLink else resolveRedirect(torrentLink, refererUrl = encodedDownloadPageUrl)
-                if (torrentUrl != null) {
-                    videos.add(Video(videoUrl = torrentUrl, videoTitle = "$qualLabel · Torrent", headers = vHeaders))
-                }
+            val path = doc.selectFirst("a#torrent-btn[href], a[href^='magnet:']")?.attr("href")
+                ?: ddl?.torrentLink
+            val torrentUrl = if (path?.startsWith("magnet:") == true) path else resolveRedirect(path, downloadPageUrl)?.url
+            if (torrentUrl != null) {
+                videos.add(Video(videoUrl = torrentUrl, videoTitle = "$qualLabel · Torrent", headers = vHeaders))
             }
         }
 
-        Log.d(TAG, "extractAllVideos: returning ${videos.size} videos")
-        return videos
+        val result = videos.distinctBy { it.videoUrl to it.videoTitle }.sortVideos()
+        if (result.isEmpty()) {
+            throw IOException("The download page did not provide a playable video. Open the episode in WebView and retry.")
+        }
+        cachedPlayback = Triple(cacheKey, SystemClock.elapsedRealtime(), result)
+        Log.d(TAG, "extractAllVideos: returning ${result.size} videos")
+        result
     }
 
-    private suspend fun resolveRedirect(path: String?, refererUrl: String = baseUrl, depth: Int = 0): String? {
-        if (path.isNullOrBlank() || depth > 5) return null
-        val target = if (path.startsWith("/")) "$baseUrl$path" else sanitizeCdnDomain(path)
-        return try {
-            noRedirectClient.newCall(
-                GET(
-                    target,
-                    headers.newBuilder()
-                        .set("Referer", refererUrl)
-                        .set("Sec-Fetch-Site", "same-origin")
-                        .build(),
-                ),
-            ).await().use { resp ->
-                val loc = resp.header("Location")
-                Log.d(TAG, "resolveRedirect: target=$target code=${resp.code} loc=$loc")
-                when {
-                    !loc.isNullOrBlank() -> {
-                        val nextUrl = if (loc.startsWith("/")) "$baseUrl$loc" else loc
-                        val cleanNext = sanitizeCdnDomain(nextUrl)
-                        if (cleanNext.contains("/r/")) resolveRedirect(cleanNext, refererUrl, depth + 1) else cleanNext
-                    }
-
-                    resp.isSuccessful -> sanitizeCdnDomain(resp.request.url.toString())
-
-                    else -> null
-                }
+    private suspend fun freshDownloadUrl(episodeUrl: String): String {
+        val episode = siteUrl(episodeUrl)
+        val download = if (episode.encodedPath.startsWith("/download/")) {
+            // Keep old library entries working, but never reuse their expired token.
+            episode.newBuilder().fragment(null).build()
+        } else {
+            val params = episode.fragment.orEmpty().split('&').associate {
+                it.substringBefore('=') to Uri.decode(it.substringAfter('=', ""))
             }
+            val season = params["season"]?.toIntOrNull() ?: 1
+            val number = params["ep"]?.toIntOrNull() ?: throw IOException("Refresh the episode list before playing.")
+            val slug = episode.pathSegments.lastOrNull { it.isNotBlank() }
+                ?: throw IOException("Missing anime identifier.")
+            val qualities = listOf(prefQuality) + QUALITY_VALUES.filter { it != prefQuality }
+            var href: String? = null
+            for (quality in qualities) {
+                val episodesUrl = "$baseUrl/episodes/$slug/$season/${Uri.encode(quality)}"
+                val body = client.newCall(
+                    GET(episodesUrl, headers.newBuilder().set("Referer", "$baseUrl/anime/$slug").build()),
+                ).awaitSuccess().bodyString()
+                val page = Jsoup.parse(body, episodesUrl)
+                checkWebsiteVerification(page)
+                href = if (body.trimStart().startsWith("[")) {
+                    body.parseAs<List<EpisodeItem>>().firstOrNull { it.num == number }?.href
+                } else {
+                    page.select("a[href*='/download/']").firstOrNull { link ->
+                        val container = link.closest(".episode-item, tr, li, .episode, .card")
+                        extractEpisodeNumber(link.text(), container?.text().orEmpty(), -1) == number
+                    }?.attr("href")
+                }
+                if (!href.isNullOrBlank()) break
+            }
+            siteUrl(href?.takeIf { it.isNotBlank() } ?: throw IOException("Episode $number is not available at the selected resolutions."))
+        }
+
+        val token = client.newCall(
+            GET(
+                "$baseUrl/get_token",
+                headers.newBuilder().set("Accept", "application/json").set("Referer", download.toString()).build(),
+                cache = CacheControl.FORCE_NETWORK,
+            ),
+        ).awaitSuccess().bodyString().parseAs<Av1TokenResponseDto>().token
+            ?: throw IOException("The website did not issue a download token. Open the source in WebView and retry.")
+        return download.newBuilder().setQueryParameter("token", token).build().toString()
+    }
+
+    private suspend fun loadDownloadPage(downloadPageUrl: String): Document {
+        val slug = downloadPageUrl.toHttpUrl().pathSegments.getOrNull(1)
+        val pageHeaders = headers.newBuilder().set("Referer", "$baseUrl/anime/$slug").build()
+        var doc = client.newCall(GET(downloadPageUrl, pageHeaders, cache = CacheControl.FORCE_NETWORK)).awaitSuccess().useAsJsoup()
+        var adChecks = 0
+        var reloads = 0
+        while (true) {
+            checkWebsiteVerification(doc)
+            val state = doc.selectFirst("#main-content[data-state]")?.attr("data-state").orEmpty()
+            Log.d(TAG, "loadDownloadPage: state=$state adChecks=$adChecks reloads=$reloads")
+            when (state) {
+                "adcheck" -> {
+                    if (++adChecks > MAX_ADCHECK_SUBMITS) throw IOException("The download verification failed. Allow website cookies in WebView and retry.")
+                    val form = doc.selectFirst("form#ddl-adcheck-form")
+                        ?: throw IOException("The download verification form is missing.")
+                    val body = FormBody.Builder().apply {
+                        form.select("input[name]:not([disabled])").forEach { add(it.attr("name"), it.attr("value")) }
+                    }.build()
+                    val action = resolveUrl(form.attr("action").ifBlank { downloadPageUrl }, doc.location())
+                        ?: throw IOException("Invalid download verification URL.")
+                    doc = client.newCall(
+                        POST(
+                            action,
+                            pageHeaders.newBuilder().set("Referer", downloadPageUrl).set("Origin", baseUrl).build(),
+                            body,
+                        ),
+                    ).awaitSuccess().useAsJsoup()
+                }
+                "preparing" -> {
+                    if (++reloads > MAX_PREPARE_RELOADS) throw IOException("The website is still preparing this video. Please retry shortly.")
+                    delay(DOWNLOAD_PREPARE_DELAY_MS)
+                    doc = client.newCall(GET(downloadPageUrl, pageHeaders, cache = CacheControl.FORCE_NETWORK)).awaitSuccess().useAsJsoup()
+                }
+                "adblock", "error" -> throw IOException(doc.selectFirst("#error-message")?.text() ?: "The website could not prepare this video.")
+                else -> return doc
+            }
+        }
+    }
+
+    private fun checkWebsiteVerification(doc: Document) {
+        if (doc.selectFirst("script#anubis_challenge") != null) {
+            throw IOException("Website verification required. Open AV1Encodes in WebView, wait for the page to load, then retry.")
+        }
+        if (doc.location().contains("/home/blocked") || doc.title().contains("Access Blocked", ignoreCase = true)) {
+            throw IOException("The download session was rejected. Refresh the episode list and retry.")
+        }
+    }
+
+    private suspend fun streamUrls(path: String, referer: String): List<String> {
+        val link = resolveRedirect(path, referer) ?: return emptyList()
+        if (!link.isHtml) return listOf(link.url)
+        return try {
+            val doc = client.newCall(GET(link.url, getVideoHeaders().newBuilder().set("Referer", referer).build()))
+                .awaitSuccess().useAsJsoup()
+            checkWebsiteVerification(doc)
+            doc.select("dash-video[src], video source[src], video[src]")
+                .mapNotNull { resolveUrl(it.attr("src"), doc.location()) }
+                .distinct()
         } catch (e: Exception) {
-            Log.e(TAG, "resolveRedirect failed for $path: ${e.message}")
+            if (e is CancellationException) throw e
+            Log.w(TAG, "streamUrls: player extraction failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private data class ResolvedLink(val url: String, val isHtml: Boolean)
+
+    private suspend fun resolveRedirect(path: String?, refererUrl: String = baseUrl): ResolvedLink? {
+        if (path.isNullOrBlank()) return null
+        var target = resolveUrl(path, refererUrl)?.toHttpUrlOrNull() ?: return null
+        val visited = mutableSetOf(target)
+        return try {
+            repeat(MAX_REDIRECTS) {
+                val next = noRedirectClient.newCall(GET(target.toString(), getVideoHeaders().newBuilder().set("Referer", refererUrl).build()))
+                    .await().use { response ->
+                        when {
+                            response.code in listOf(301, 302, 303, 307, 308) -> response.header("Location")?.let { response.request.url.resolve(it) }
+                            response.isSuccessful -> {
+                                val type = response.header("Content-Type").orEmpty()
+                                val peek = response.peekBody(HTML_PEEK_BYTES).string().trimStart()
+                                val isHtml = type.contains("text/html", ignoreCase = true) ||
+                                    peek.startsWith("<!doctype html", ignoreCase = true) || peek.startsWith("<html", ignoreCase = true)
+                                return ResolvedLink(response.request.url.toString(), isHtml)
+                            }
+                            else -> return null
+                        }
+                    } ?: return null
+                if (!visited.add(next)) return null
+                target = next
+            }
+            null
+        } catch (e: IOException) {
+            Log.w(TAG, "resolveRedirect: ${e.message}")
             null
         }
     }
 
-    private fun sanitizeCdnDomain(url: String): String = url
-        .replace("av1encodes.com", "animealpha.cc")
-        .replace("av1please.com", "animealpha.cc")
-
-    private fun toStreamUrl(url: String, ext: String = ".mkv"): String {
-        val clean = sanitizeCdnDomain(url)
-            .replace("/watch/", "/stream/")
-            .replace("/dl/", "/stream/")
-            .replace("/dash/", "/stream/")
-            .substringBefore("/manifest.mpd")
-        return if (clean.contains("#")) clean else "$clean#$ext"
+    private fun resolveUrl(path: String, base: String): String? {
+        val url = base.toHttpUrlOrNull()?.resolve(path) ?: return null
+        return UrlUtils.fixUrl(url.toString(), baseUrl)
     }
 
-    private fun toDlUrl(url: String, ext: String = ".mkv"): String {
-        val clean = sanitizeCdnDomain(url)
-            .replace("/watch/", "/dl/")
-            .replace("/stream/", "/dl/")
-            .replace("/dash/", "/dl/")
-            .substringBefore("/manifest.mpd")
-        return if (clean.contains("#")) clean else "$clean#$ext"
+    private fun siteUrl(path: String): HttpUrl {
+        val url = UrlUtils.fixUrl(path, baseUrl).toHttpUrl()
+        // Only migrate the source origin. CDN subdomains still use av1please.com.
+        return if (url.host == "av1encodes.com" || url.host == "av1please.com") {
+            val origin = baseUrl.toHttpUrl()
+            url.newBuilder().scheme(origin.scheme).host(origin.host).build()
+        } else {
+            url
+        }
+    }
+
+    private fun withMediaHint(url: String, filename: String): String {
+        val parsed = url.toHttpUrl()
+        if (parsed.encodedPath.endsWith(".mpd") || parsed.encodedPath.endsWith(".m3u8") || parsed.fragment != null) return url
+        val ext = filename.substringAfterLast('.', "").lowercase(Locale.US)
+        return if (ext == "mkv" || ext == "mp4") parsed.newBuilder().fragment(".$ext").build().toString() else url
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1065,6 +1177,12 @@ class AV1Encodes : Source() {
 
     companion object {
         private const val TAG = "AV1Encodes"
+        private const val PLAYBACK_CACHE_MS = 60_000L
+        private const val DOWNLOAD_PREPARE_DELAY_MS = 5_000L
+        private const val MAX_PREPARE_RELOADS = 6
+        private const val MAX_ADCHECK_SUBMITS = 2
+        private const val MAX_REDIRECTS = 8
+        private const val HTML_PEEK_BYTES = 512L
         private const val DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }

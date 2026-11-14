@@ -3,6 +3,11 @@ package eu.kanade.tachiyomi.animeextension.en.av1encodes
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+@Serializable
+internal data class Av1TokenResponseDto(
+    @SerialName("token") val token: String? = null,
+)
+
 // CHANGED: Added watch_link (confirmed from live API response).
 @Serializable
 internal data class DdlResponse(
