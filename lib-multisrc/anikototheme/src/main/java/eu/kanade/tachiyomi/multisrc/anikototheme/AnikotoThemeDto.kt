@@ -129,12 +129,33 @@ data class EpisodeMeta(
     }
 
     companion object {
+        private fun cleanSlug(raw: String): String {
+            var s = raw
+            if (s.contains("://")) {
+                s = s.substringAfter("://")
+                s = if (s.contains("/")) s.substringAfter("/") else ""
+            }
+            s = s.substringBefore("?").substringBefore("#")
+            while (s.startsWith("/")) {
+                s = s.removePrefix("/")
+            }
+            if (s.startsWith("watch/")) {
+                s = s.removePrefix("watch/")
+            } else if (s.startsWith("anime/")) {
+                s = s.removePrefix("anime/")
+            }
+            while (s.startsWith("/")) {
+                s = s.removePrefix("/")
+            }
+            return s.substringBefore("/ep-").trim('/')
+        }
+
         fun decode(encoded: String): EpisodeMeta {
             if (!encoded.startsWith("/watch/") || !encoded.contains("#")) {
                 val parts = encoded.split("|")
                 val urlPart = parts.getOrElse(0) { "" }
-                val slug = urlPart.removePrefix("/watch/").substringBefore("/ep-")
-                val epNum = urlPart.substringAfter("/ep-")
+                val slug = cleanSlug(urlPart)
+                val epNum = urlPart.substringAfter("/ep-", "")
                 val malId = parts.getOrElse(1) { "" }
                 val timestamp = parts.getOrElse(2) { "" }
                 val dataIds = parts.getOrElse(3) { "" }
@@ -146,8 +167,8 @@ data class EpisodeMeta(
 
             val mainParts = encoded.split("#", limit = 2)
             val urlPart = mainParts[0].removePrefix("/watch/")
-            val slug = urlPart.substringBefore("/ep-")
-            val epNum = urlPart.substringAfter("/ep-")
+            val slug = cleanSlug(urlPart)
+            val epNum = urlPart.substringAfter("/ep-", "")
 
             val parts = mainParts[1].split("|")
             val malId = parts.getOrElse(0) { "" }
@@ -162,19 +183,24 @@ data class EpisodeMeta(
 
         fun extractUrlPath(encoded: String): String {
             if (encoded.startsWith("/watch/") && encoded.contains("#")) {
-                return encoded.substringBefore("#")
+                val path = encoded.substringBefore("#")
+                val slug = cleanSlug(path)
+                val epNum = path.substringAfter("/ep-", "")
+                return if (epNum.isNotEmpty()) "/watch/$slug/ep-$epNum" else "/watch/$slug"
             }
             if (encoded.startsWith("/watch/")) {
-                return encoded
+                val slug = cleanSlug(encoded)
+                val epNum = encoded.substringAfter("/ep-", "")
+                return if (epNum.isNotEmpty()) "/watch/$slug/ep-$epNum" else "/watch/$slug"
             }
             if (!encoded.contains("|")) {
-                return "/watch/$encoded/ep-1"
+                val slug = cleanSlug(encoded)
+                return "/watch/$slug/ep-1"
             }
             val firstPart = encoded.substringBefore("|")
-            if (firstPart.contains("/ep-")) {
-                return "/watch/$firstPart"
-            }
-            return "/watch/$firstPart/ep-1"
+            val slug = cleanSlug(firstPart)
+            val epNum = firstPart.substringAfter("/ep-", "")
+            return if (epNum.isNotEmpty()) "/watch/$slug/ep-$epNum" else "/watch/$slug/ep-1"
         }
     }
 }

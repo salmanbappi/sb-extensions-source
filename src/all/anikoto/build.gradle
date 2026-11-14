@@ -2,7 +2,7 @@ ext {
     extName = 'Anikoto'
     extClass = '.Anikoto'
     themePkg = 'anikototheme'
-    overrideVersionCode = 63
+    overrideVersionCode = 64
 }
 
 apply from: "$rootDir/common.gradle"

@@ -62,7 +62,7 @@ class AniWave : Source() {
         "aniwaves.ru",
     )
 
-    private val hosterNames = listOf("HD-1", "Vidstream-2", "VidCloud-1", "Kiwi-Stream", "VidPlay-1")
+    private val hosterNames = listOf("HD-1", "Vidstream-2", "VidPlay", "VidCloud-1", "Kiwi-Stream", "VidPlay-1")
 
     private val defaultBaseUrl = "https://${domainEntries.first()}"
 
@@ -611,12 +611,8 @@ class AniWave : Source() {
     }
 
     override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
-        val isServerInvalid = preferences.getBoolean(PREF_SERVER_INVALID_FLAG, false) ||
-            (prefServer.isNotEmpty() && prefServer !in discoveredServers && prefServer !in hosterNames)
-
-        if (isServerInvalid) {
-            preferences.edit().putBoolean(PREF_SERVER_INVALID_FLAG, true).apply()
-            throw Exception("The site's video servers have changed. Please open the extension settings to update your Preferred Server.")
+        if (preferences.getBoolean(PREF_SERVER_INVALID_FLAG, false)) {
+            preferences.edit().putBoolean(PREF_SERVER_INVALID_FLAG, false).apply()
         }
 
         val response = client.newCall(videoListRequest(episode)).awaitSuccess()
@@ -639,8 +635,8 @@ class AniWave : Source() {
         serverData.addAll(mapperServers)
 
         val grouped = serverData.groupBy { getServerDisplayName(it.serverName) }
-        val preferredServer = prefServer
-        val preferredBase = extractBaseServerName(prefServer)
+        val preferredServer = prefServer.takeIf { it in discoveredServers || it in hosterNames } ?: ""
+        val preferredBase = extractBaseServerName(preferredServer)
 
         return grouped.map { (serverName, items) ->
             val payload = json.encodeToString(
@@ -690,7 +686,7 @@ class AniWave : Source() {
         if (m3u8ServerManager.isRunning()) return
         try {
             m3u8ServerManager.startServer()
-            val deadline = System.currentTimeMillis() + 2000L
+            val deadline = System.currentTimeMillis() + 3000L
             while (!m3u8ServerManager.isRunning() && System.currentTimeMillis() < deadline) {
                 kotlinx.coroutines.delay(50L)
             }

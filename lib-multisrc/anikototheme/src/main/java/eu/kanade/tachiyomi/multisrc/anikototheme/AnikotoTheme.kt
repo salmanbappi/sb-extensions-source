@@ -237,7 +237,7 @@ abstract class AnikotoTheme : Source() {
         val referer = if (baseUrl.contains("animesuge")) {
             if (clean.isEmpty()) "$baseUrl/" else "$baseUrl/anime/$clean/ep-1"
         } else {
-            if (slug.isEmpty()) "$baseUrl/" else "$baseUrl/watch/$slug/ep-1"
+            if (clean.isEmpty()) "$baseUrl/" else "$baseUrl/watch/$clean/ep-1"
         }
         return headers.newBuilder()
             .set("X-Requested-With", "XMLHttpRequest")
@@ -384,41 +384,52 @@ abstract class AnikotoTheme : Source() {
         return getAnikotoThemeFilters()
     }
 
+    protected open fun extractAnimeId(doc: Document): String? {
+        val watchMain = doc.selectFirst("#watch-page[data-id], #watch-main[data-id], .watch-wrap[data-id], .favourite[data-id]")
+            ?: doc.selectFirst("#watch-page, #watch-main, .watch-wrap, .favourite[data-id], [data-id]")
+        val id = watchMain?.attr("data-id")?.takeIf { it.isNotBlank() }
+            ?: doc.selectFirst("[data-id]")?.attr("data-id")?.takeIf { it.isNotBlank() }
+            ?: doc.selectFirst("[data-tip]")?.attr("data-tip")?.takeIf { it.isNotBlank() }
+            ?: Regex("""mangaId\s*=\s*['"]?(\d+)""").find(doc.html())?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+            ?: Regex("""data-id=["'](\d+)["']""").find(doc.html())?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+        return id
+    }
+
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
-        val detailUrl = if (baseUrl.contains("animesuge")) {
-            val path = if (anime.url.startsWith("/")) anime.url else "/${anime.url}"
-            val clean = getCleanSlug(path)
-            "$baseUrl/anime/$clean"
+        val cleanSlug = getCleanSlug(anime.url)
+        val detailUrls = if (baseUrl.contains("animesuge")) {
+            listOf("$baseUrl/anime/$cleanSlug", "$baseUrl/anime/$cleanSlug/ep-1")
         } else {
-            "$baseUrl/watch/${anime.url}/ep-1"
+            listOf("$baseUrl/watch/$cleanSlug", "$baseUrl/watch/$cleanSlug/ep-1")
         }
-        val response = client.newCall(GET(detailUrl)).execute()
-        return parseAnimeDetails(response.asJsoup(), anime.url)
+        val response = detailUrls.firstNotNullOfOrNull { url ->
+            runCatching {
+                val resp = client.newCall(GET(url)).execute()
+                if (resp.isSuccessful) resp else null
+            }.getOrNull()
+        } ?: client.newCall(GET(detailUrls.first())).execute()
+        return parseAnimeDetails(response.asJsoup(), cleanSlug)
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        logi("getEpisodeList(url=${anime.url})")
-        val slug = anime.url
-        // Suge's detail pages live under /anime/ — probe the right detail path per skin.
+        val cleanSlug = getCleanSlug(anime.url)
+        logi("getEpisodeList(slug=$cleanSlug, rawUrl=${anime.url})")
         val detailUrls = if (baseUrl.contains("animesuge")) {
-            val cleanSlug = getCleanSlug(slug)
             listOf("$baseUrl/anime/$cleanSlug", "$baseUrl/anime/$cleanSlug/ep-1")
         } else {
-            listOf("$baseUrl/watch/$slug/ep-1")
+            listOf("$baseUrl/watch/$cleanSlug", "$baseUrl/watch/$cleanSlug/ep-1")
         }
         val detailDoc = detailUrls.firstNotNullOfOrNull { url ->
             runCatching {
                 val doc = client.newCall(GET(url)).execute().asJsoup()
-                val watchMain = doc.selectFirst("#watch-page, #watch-main, .watch-wrap, .favourite[data-id], [data-id]")
-                val animeId = watchMain?.attr("data-id")
-                if (animeId.isNullOrEmpty()) null else doc
+                val id = extractAnimeId(doc)
+                if (id.isNullOrEmpty()) null else doc
             }.getOrNull()
         } ?: run {
-            loge("getEpisodeList: no watch main element or data-id found")
+            loge("getEpisodeList: no watch main element or data-id found for slug=$cleanSlug")
             return emptyList()
         }
-        val watchMain = detailDoc.selectFirst("#watch-page, #watch-main, .watch-wrap, .favourite[data-id], [data-id]")
-        val animeId = watchMain?.attr("data-id") ?: run {
+        val animeId = extractAnimeId(detailDoc) ?: run {
             loge("getEpisodeList: no watch main element or data-id found")
             return emptyList()
         }
@@ -429,7 +440,7 @@ abstract class AnikotoTheme : Source() {
 
         val vrf = getVrf(animeId)
         val ajaxUrl = "$baseUrl/ajax/episode/list/$animeId?vrf=$vrf&style=default"
-        val ajaxResponse = client.newCall(GET(ajaxUrl, ajaxHeaders(slug))).execute()
+        val ajaxResponse = client.newCall(GET(ajaxUrl, ajaxHeaders(cleanSlug))).execute()
         val ajaxJson = json.decodeFromString<EpisodeListResponse>(ajaxResponse.body.string())
         if (ajaxJson.status != 200 || ajaxJson.result.isEmpty()) {
             loge("getEpisodeList: ajax status=${ajaxJson.status}")
@@ -453,7 +464,7 @@ abstract class AnikotoTheme : Source() {
             if (title.isBlank()) title = element.text().trim()
             if (title.isBlank()) title = element.parent()?.attr("title")?.trim() ?: ""
             if (title.isBlank()) title = "Episode $num"
-            val meta = EpisodeMeta(slug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
+            val meta = EpisodeMeta(cleanSlug, num, malId, timestamp, dataIds, hasSub, hasDub, title)
             SEpisode.create().apply {
                 url = meta.encode()
                 name = title
@@ -467,7 +478,7 @@ abstract class AnikotoTheme : Source() {
         }.reversed()
 
         val malId = elements.firstNotNullOfOrNull { it.attr("data-mal").takeIf { mal -> mal.isNotEmpty() } } ?: ""
-        if (malId.isNotBlank()) malIdBySlug[slug] = malId
+        if (malId.isNotBlank()) malIdBySlug[cleanSlug] = malId
         return enrichEpisodesWithMetadata(episodes, detailDoc, malId)
     }
 
@@ -773,26 +784,22 @@ abstract class AnikotoTheme : Source() {
     }
 
     open suspend fun fetchFreshEpisodeMeta(slug: String, epNum: String): EpisodeMeta? {
+        val cleanSlug = getCleanSlug(slug)
         // Suge's detail pages live under /anime/ — probe the right detail path per skin.
         val detailPaths = if (baseUrl.contains("animesuge")) {
-            val cleanSlug = getCleanSlug(slug)
             listOf("$baseUrl/anime/$cleanSlug", "$baseUrl/anime/$cleanSlug/ep-1")
         } else {
-            val cleanSlug = getCleanSlug(slug)
-            listOf("$baseUrl/watch/$cleanSlug/ep-$epNum")
+            listOf("$baseUrl/watch/$cleanSlug/ep-$epNum", "$baseUrl/watch/$cleanSlug")
         }
         try {
-            val cleanSlug = getCleanSlug(slug)
             val detailDoc = detailPaths.firstNotNullOfOrNull { url ->
                 runCatching {
                     val doc = client.newCall(GET(url)).execute().asJsoup()
-                    val watchMain = doc.selectFirst("#watch-page, #watch-main, .watch-wrap, .favourite[data-id], [data-id]")
-                    val animeId = watchMain?.attr("data-id")
-                    if (animeId.isNullOrEmpty()) null else doc
+                    val id = extractAnimeId(doc)
+                    if (id.isNullOrEmpty()) null else doc
                 }.getOrNull()
             } ?: return null
-            val watchMain = detailDoc.selectFirst("#watch-page, #watch-main, .watch-wrap, .favourite[data-id], [data-id]")
-            val animeId = watchMain?.attr("data-id") ?: return null
+            val animeId = extractAnimeId(detailDoc) ?: return null
             if (animeId.isEmpty()) return null
 
             val vrf = getVrf(animeId)
@@ -972,14 +979,15 @@ abstract class AnikotoTheme : Source() {
             el.tagName() == "a" && el.hasClass("name") -> el
             el.selectFirst("a.name.d-title") != null -> el.selectFirst("a.name.d-title")!!
             el.selectFirst("a[href*=/watch/]") != null -> el.selectFirst("a[href*=/watch/]")!!
+            el.selectFirst("a[href*=/anime/]") != null -> el.selectFirst("a[href*=/anime/]")!!
             else -> el
         }
-        var href = linkEl.attr("href")
-        if (href.startsWith("http")) href = href.substringAfter(baseUrl)
-        val slug = href.removePrefix("/watch/").substringBefore("/ep-")
+        val rawHref = linkEl.attr("href")
+        val slug = getCleanSlug(rawHref)
         val titleText = linkEl.selectFirst(".name")?.text()?.trim()
             ?: linkEl.text().trim().ifEmpty { "Unknown" }
-        val thumb = el.selectFirst("img")?.absUrl("src")
+        val thumb = el.selectFirst("img")?.absUrl("data-src")?.ifEmpty { null }
+            ?: el.selectFirst("img")?.absUrl("src")
             ?: linkEl.selectFirst("img")?.absUrl("src")
         return SAnime.create().apply {
             url = slug
@@ -1387,18 +1395,26 @@ abstract class AnikotoTheme : Source() {
         pref.summary = spannable
     }
 
-    protected fun getCleanSlug(slug: String): String {
-        var s = slug
-        while (true) {
-            val prev = s
-            s = s.removePrefix("/")
-                .removePrefix("watch/")
-                .removePrefix("anime/")
-                .removePrefix("watch/")
-                .removeSuffix("/")
-            if (s == prev) break
+    protected fun getCleanSlug(rawSlug: String): String {
+        var s = rawSlug
+        if (s.contains("://")) {
+            s = s.substringAfter("://")
+            s = if (s.contains("/")) s.substringAfter("/") else ""
         }
-        return s
+        s = s.substringBefore("?").substringBefore("#")
+        while (s.startsWith("/")) {
+            s = s.removePrefix("/")
+        }
+        if (s.startsWith("watch/")) {
+            s = s.removePrefix("watch/")
+        } else if (s.startsWith("anime/")) {
+            s = s.removePrefix("anime/")
+        }
+        while (s.startsWith("/")) {
+            s = s.removePrefix("/")
+        }
+        s = s.substringBefore("/ep-")
+        return s.trim('/')
     }
 
     // ---- Logging ----

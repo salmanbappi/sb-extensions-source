@@ -477,28 +477,30 @@ class AniWaveExtractor(private val source: AniWave) {
 
     private suspend fun proxyVideoList(videos: List<Video>): List<Video> {
         if (!source.m3u8ServerManager.isRunning()) {
-            Log.e("AniWaveExtractor", "M3U8 server not running, dropping ${videos.size} videos")
-            return emptyList()
+            Log.w("AniWaveExtractor", "M3U8 server not running, falling back to direct video URLs")
+            return videos
         }
-        return videos.mapNotNull { video ->
-            val processedUrl = proxyThroughM3u8Server(video.videoUrl)
-            if (processedUrl == null) {
-                Log.w("AniWaveExtractor", "Proxy failed for: ${video.videoTitle}")
-            }
-            processedUrl?.let {
+        return videos.map { video ->
+            val referer = video.headers?.get("Referer")
+            val userAgent = video.headers?.get("User-Agent")
+            val processedUrl = proxyThroughM3u8Server(video.videoUrl, referer, userAgent)
+            if (processedUrl != null) {
                 Video(
-                    videoUrl = it,
+                    videoUrl = processedUrl,
                     videoTitle = video.videoTitle,
                     headers = video.headers,
                     subtitleTracks = video.subtitleTracks,
                     audioTracks = video.audioTracks,
                 )
+            } else {
+                Log.w("AniWaveExtractor", "Proxy failed for: ${video.videoTitle}, using direct URL")
+                video
             }
         }
     }
 
-    private fun proxyThroughM3u8Server(originalUrl: String): String? = try {
-        source.m3u8ServerManager.processM3u8Url(originalUrl)
+    private fun proxyThroughM3u8Server(originalUrl: String, referer: String? = null, userAgent: String? = null): String? = try {
+        source.m3u8ServerManager.processM3u8Url(originalUrl, referer, userAgent)
     } catch (e: Exception) {
         Log.e("AniWaveExtractor", "Proxy process failed: ${e.message}")
         null
@@ -551,6 +553,7 @@ class AniWaveExtractor(private val source: AniWave) {
         /** Returns true when the embed CDN host serves PNG-obfuscated .ts segments. */
         fun isMegaPlayHost(host: String): Boolean = host.contains("megaplay.buzz", ignoreCase = true) ||
             host.contains("mikora.top", ignoreCase = true) ||
-            host.contains("megap.", ignoreCase = true)
+            host.contains("megap.", ignoreCase = true) ||
+            host.contains("shiora.top", ignoreCase = true)
     }
 }
