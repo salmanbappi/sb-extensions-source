@@ -28,7 +28,7 @@ class M3u8HttpServer(
     private val client: OkHttpClient,
     port: Int = 0, // 0 means random port
     private val fallbackClient: OkHttpClient? = null,
-) : NanoHTTPD("127.0.0.1", port) {
+) : NanoHTTPD(port) {
 
     val port: Int
         get() = super.getListeningPort()
