@@ -132,7 +132,6 @@ class AniWave : Source() {
         client.newBuilder()
             .readTimeout(30, TimeUnit.SECONDS)
             .protocols(listOf(Protocol.HTTP_1_1))
-            .addInterceptor(JunkBytesInterceptor())
             .build()
     }
 
@@ -539,7 +538,7 @@ class AniWave : Source() {
             add("X-Requested-With", "XMLHttpRequest")
         }.build()
 
-        val response = client.newCall(GET("$baseUrl/ajax/episode/list/$id?vrf=${vrfEncrypt(id)}", listHeaders)).awaitSuccess()
+        val response = client.newCall(GET("$baseUrl/ajax/episode/list/$id", listHeaders)).awaitSuccess()
         return episodeListParse(response)
     }
 

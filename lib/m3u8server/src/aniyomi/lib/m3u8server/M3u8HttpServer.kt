@@ -28,7 +28,7 @@ class M3u8HttpServer(
     private val client: OkHttpClient,
     port: Int = 0, // 0 means random port
     private val fallbackClient: OkHttpClient? = null,
-) : NanoHTTPD(port) {
+) : NanoHTTPD("127.0.0.1", port) {
 
     val port: Int
         get() = super.getListeningPort()
@@ -403,7 +403,7 @@ class M3u8HttpServer(
         referer: String? = null,
         userAgent: String? = null,
     ): String {
-        val sb = StringBuilder("http://localhost:$port/m3u8?url=")
+        val sb = StringBuilder("http://127.0.0.1:$port/m3u8?url=")
             .append(URLEncoder.encode(m3u8Url, Charsets.UTF_8.name()))
         if (!referer.isNullOrBlank()) {
             sb.append("&referer=").append(URLEncoder.encode(referer, Charsets.UTF_8.name()))
@@ -500,7 +500,7 @@ class M3u8HttpServer(
         referer: String?,
         userAgent: String?,
     ): String {
-        val sb = StringBuilder("http://localhost:$serverPort/m3u8?url=")
+        val sb = StringBuilder("http://127.0.0.1:$serverPort/m3u8?url=")
             .append(URLEncoder.encode(m3u8Url, Charsets.UTF_8.name()))
         if (!referer.isNullOrBlank()) {
             sb.append("&referer=").append(URLEncoder.encode(referer, Charsets.UTF_8.name()))
@@ -530,7 +530,7 @@ class M3u8HttpServer(
     ): String {
         val encodedUrl = URLEncoder.encode(segmentUrl, Charsets.UTF_8.name())
         return buildString {
-            append("http://localhost:$serverPort/segment?url=$encodedUrl")
+            append("http://127.0.0.1:$serverPort/segment?url=$encodedUrl")
             if (key != null) {
                 append("&key=")
                 append(URLEncoder.encode(key.url, Charsets.UTF_8.name()))
