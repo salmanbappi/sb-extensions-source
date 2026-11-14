@@ -922,12 +922,15 @@ class AV1Encodes : Source() {
                         ),
                     ).awaitSuccess().useAsJsoup()
                 }
+
                 "preparing" -> {
                     if (++reloads > MAX_PREPARE_RELOADS) throw IOException("The website is still preparing this video. Please retry shortly.")
                     delay(DOWNLOAD_PREPARE_DELAY_MS)
                     doc = client.newCall(GET(downloadPageUrl, pageHeaders, cache = CacheControl.FORCE_NETWORK)).awaitSuccess().useAsJsoup()
                 }
+
                 "adblock", "error" -> throw IOException(doc.selectFirst("#error-message")?.text() ?: "The website could not prepare this video.")
+
                 else -> return doc
             }
         }
@@ -971,6 +974,7 @@ class AV1Encodes : Source() {
                     .await().use { response ->
                         when {
                             response.code in listOf(301, 302, 303, 307, 308) -> response.header("Location")?.let { response.request.url.resolve(it) }
+
                             response.isSuccessful -> {
                                 val type = response.header("Content-Type").orEmpty()
                                 val peek = response.peekBody(HTML_PEEK_BYTES).string().trimStart()
@@ -978,6 +982,7 @@ class AV1Encodes : Source() {
                                     peek.startsWith("<!doctype html", ignoreCase = true) || peek.startsWith("<html", ignoreCase = true)
                                 return ResolvedLink(response.request.url.toString(), isHtml)
                             }
+
                             else -> return null
                         }
                     } ?: return null
