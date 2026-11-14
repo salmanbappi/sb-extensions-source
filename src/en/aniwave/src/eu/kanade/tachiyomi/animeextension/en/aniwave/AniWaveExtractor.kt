@@ -475,35 +475,19 @@ class AniWaveExtractor(private val source: AniWave) {
         return ExtractionResult(videos, true)
     }
 
-    private suspend fun proxyVideoList(videos: List<Video>): List<Video> {
-        if (!source.m3u8ServerManager.isRunning()) {
-            Log.w("AniWaveExtractor", "M3U8 server not running, falling back to direct video URLs")
-            return videos
-        }
+    private fun proxyVideoList(videos: List<Video>): List<Video> {
         return videos.map { video ->
-            val referer = video.headers?.get("Referer")
+            val referer = video.headers?.get("Referer") ?: "${source.baseUrl}/"
             val userAgent = video.headers?.get("User-Agent")
-            val processedUrl = proxyThroughM3u8Server(video.videoUrl, referer, userAgent)
-            if (processedUrl != null) {
-                Video(
-                    videoUrl = processedUrl,
-                    videoTitle = video.videoTitle,
-                    headers = video.headers,
-                    subtitleTracks = video.subtitleTracks,
-                    audioTracks = video.audioTracks,
-                )
-            } else {
-                Log.w("AniWaveExtractor", "Proxy failed for: ${video.videoTitle}, using direct URL")
-                video
-            }
+            val proxiedUrl = source.proxyServer.relay(video.videoUrl, referer, userAgent)
+            Video(
+                videoUrl = proxiedUrl,
+                videoTitle = video.videoTitle,
+                headers = video.headers,
+                subtitleTracks = video.subtitleTracks,
+                audioTracks = video.audioTracks,
+            )
         }
-    }
-
-    private fun proxyThroughM3u8Server(originalUrl: String, referer: String? = null, userAgent: String? = null): String? = try {
-        source.m3u8ServerManager.processM3u8Url(originalUrl, referer, userAgent)
-    } catch (e: Exception) {
-        Log.e("AniWaveExtractor", "Proxy process failed: ${e.message}")
-        null
     }
 
     private fun parseHostMap(html: String): Map<String, String> {

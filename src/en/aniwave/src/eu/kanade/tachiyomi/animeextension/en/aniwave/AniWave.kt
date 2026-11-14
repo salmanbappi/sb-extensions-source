@@ -6,7 +6,6 @@ import android.util.Log
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8ServerManager
 import eu.kanade.tachiyomi.animeextension.en.aniwave.AniWaveFilters.addListQueryParameter
 import eu.kanade.tachiyomi.animeextension.en.aniwave.AniWaveFilters.addQueryParameterIfNotEmpty
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -128,14 +127,7 @@ class AniWave : Source() {
 
     internal val playlistUtils by lazy { PlaylistUtils(playlistClient, headers) }
 
-    internal val m3u8Client by lazy {
-        client.newBuilder()
-            .readTimeout(30, TimeUnit.SECONDS)
-            .protocols(listOf(Protocol.HTTP_1_1))
-            .build()
-    }
-
-    internal val m3u8ServerManager by lazy { M3u8ServerManager(m3u8Client) }
+    internal val proxyServer by lazy { AniWaveProxyServer(client) }
 
     private class JunkBytesInterceptor : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
@@ -686,17 +678,8 @@ class AniWave : Source() {
         return hosters.flatMap { getVideoList(it) }
     }
 
-    private suspend fun ensureM3u8ServerRunning() {
-        if (m3u8ServerManager.isRunning()) return
-        try {
-            m3u8ServerManager.startServer()
-            val deadline = System.currentTimeMillis() + 3000L
-            while (!m3u8ServerManager.isRunning() && System.currentTimeMillis() < deadline) {
-                kotlinx.coroutines.delay(50L)
-            }
-        } catch (e: Exception) {
-            Log.e("AniWave", "M3U8 server start failed: ${e.message}")
-        }
+    private fun ensureM3u8ServerRunning() {
+        proxyServer.start()
     }
 
     // ============================ Video Sort ==============================
