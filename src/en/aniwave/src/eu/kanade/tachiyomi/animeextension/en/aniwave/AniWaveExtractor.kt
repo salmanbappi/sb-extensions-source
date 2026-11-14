@@ -475,19 +475,17 @@ class AniWaveExtractor(private val source: AniWave) {
         return ExtractionResult(videos, true)
     }
 
-    private fun proxyVideoList(videos: List<Video>): List<Video> {
-        return videos.map { video ->
-            val referer = video.headers?.get("Referer") ?: "${source.baseUrl}/"
-            val userAgent = video.headers?.get("User-Agent")
-            val proxiedUrl = source.proxyServer.relay(video.videoUrl, referer, userAgent)
-            Video(
-                videoUrl = proxiedUrl,
-                videoTitle = video.videoTitle,
-                headers = video.headers,
-                subtitleTracks = video.subtitleTracks,
-                audioTracks = video.audioTracks,
-            )
-        }
+    private fun proxyVideoList(videos: List<Video>): List<Video> = videos.map { video ->
+        val referer = video.headers?.get("Referer") ?: "${source.baseUrl}/"
+        val userAgent = video.headers?.get("User-Agent")
+        val proxiedUrl = source.proxyServer.relay(video.videoUrl, referer, userAgent)
+        Video(
+            videoUrl = proxiedUrl,
+            videoTitle = video.videoTitle,
+            headers = video.headers,
+            subtitleTracks = video.subtitleTracks,
+            audioTracks = video.audioTracks,
+        )
     }
 
     private fun parseHostMap(html: String): Map<String, String> {

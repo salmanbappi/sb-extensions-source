@@ -203,6 +203,7 @@ class AniWaveProxyServer(private val client: OkHttpClient) {
             val trimmed = line.trim()
             when {
                 trimmed.isEmpty() -> append('\n')
+
                 trimmed.startsWith("#EXT-X-KEY:") || trimmed.startsWith("#EXT-X-MEDIA:") || trimmed.startsWith("#EXT-X-MAP:") -> {
                     val rewritten = URI_ATTR_REGEX.replace(line) { match ->
                         val originalUri = match.groupValues[1]
@@ -211,7 +212,9 @@ class AniWaveProxyServer(private val client: OkHttpClient) {
                     }
                     append(rewritten).append('\n')
                 }
+
                 trimmed.startsWith("#") -> append(line).append('\n')
+
                 else -> {
                     val resolved = resolveUrl(baseHttp, trimmed)
                     append(relay(resolved, referer, userAgent)).append('\n')
@@ -220,9 +223,7 @@ class AniWaveProxyServer(private val client: OkHttpClient) {
         }
     }
 
-    private fun resolveUrl(base: okhttp3.HttpUrl?, relative: String): String {
-        return base?.resolve(relative)?.toString() ?: relative
-    }
+    private fun resolveUrl(base: okhttp3.HttpUrl?, relative: String): String = base?.resolve(relative)?.toString() ?: relative
 
     /**
      * Strips PNG disguise (IEND chunk + MPEG-TS sync scan), JPEG headers,
