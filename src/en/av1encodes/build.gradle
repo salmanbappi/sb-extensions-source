@@ -1,8 +1,9 @@
 ext {
     extName = 'AV1Encodes'
     extClass = '.AV1Encodes'
-    extVersionCode = 12
+    extVersionCode = 13
     isNsfw = false
+    isTorrent = true
 }
 
 apply from: "$rootDir/common.gradle"

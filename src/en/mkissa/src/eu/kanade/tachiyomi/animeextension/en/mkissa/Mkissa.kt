@@ -46,8 +46,6 @@ class Mkissa : Source() {
 
     override val name = "MKissa"
 
-    override val id = 4709139914729853090L
-
     override val baseUrl by lazy { "${preferences.siteUrl}/anime" }
 
     private val apiUrl by lazy { preferences.apiUrl }

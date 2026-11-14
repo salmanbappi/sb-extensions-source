@@ -42,6 +42,8 @@ android {
             archivesName = "aniyomi-${project.parent.name}.${project.name}-v$versionName"
         }
         assert extClass.startsWith(".")
+        def isTorrentVal = (project.ext.find("isTorrent") == true) || (project.ext.find("torrent") == true)
+        def cw = project.ext.find("contentWarning") != null ? project.ext.find("contentWarning") : (project.ext.find("isMixed") ? 1 : (project.ext.find("isNsfw") ? 2 : 0))
         manifestPlaceholders = [
                 appName       : "Aniyomi: $extName",
                 // Bare name for the modern 'aniyomix.name' key: the loader uses it
@@ -49,11 +51,13 @@ android {
                 extName       : extName,
                 author        : "salmanbappi",
                 extClass      : extClass,
-                nsfw          : project.ext.find("isNsfw") ? 1 : 0,
+                nsfw          : (cw > 0 || project.ext.find("isNsfw")) ? 1 : 0,
                 // Modern content rating: 0 = Safe, 1 = Mixed, 2 = NSFW.
-                contentWarning: project.ext.find("isNsfw") ? 2 : 0,
+                contentWarning: cw,
                 // Advertised extensions-lib version; per-module override: ext { libVersion = 17 }.
                 extensionLib  : project.ext.find("libVersion") ?: "16",
+                isTorrent     : isTorrentVal ? "true" : "false",
+                torrent       : isTorrentVal ? 1 : 0,
         ]
         String baseUrl = project.ext.find("baseUrl") ?: ""
         if (theme != null && !baseUrl.isEmpty()) {
