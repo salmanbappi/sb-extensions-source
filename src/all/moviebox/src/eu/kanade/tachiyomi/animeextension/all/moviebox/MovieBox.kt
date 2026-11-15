@@ -91,6 +91,7 @@ class MovieBox : Source() {
     }
 
     private val videoListCache = ConcurrentHashMap<String, Pair<Long, List<Video>>>()
+    private val detailPathCache = ConcurrentHashMap<String, String>()
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> = withContext(Dispatchers.IO) {
         val episodeUrl = episode.url
@@ -108,13 +109,19 @@ class MovieBox : Source() {
             return@withContext cached.second
         }
 
-        val subjectIds = idsString.split("~~").mapNotNull {
-            val p = it.split(":", limit = 2)
+        val subjectIds = idsString.split("~~").mapIndexedNotNull { index, item ->
+            val p = item.split(":", limit = 2)
             if (p.size == 2) {
                 val sid = p[0]
                 val langAndDp = p[1]
                 val lang = langAndDp.substringBefore("^")
-                val dp = if (langAndDp.contains("^")) langAndDp.substringAfter("^") else mainDetailPath
+                val dp = if (langAndDp.contains("^")) {
+                    langAndDp.substringAfter("^")
+                } else if (index == 0) {
+                    mainDetailPath
+                } else {
+                    ""
+                }
                 Triple(sid, lang, dp)
             } else null
         }
@@ -746,17 +753,36 @@ class MovieBox : Source() {
             ?: data["detailUrl"]?.str?.substringAfterLast("/")?.substringBefore("?")
             ?: fallbackDp
 
-        val allIds = mutableListOf<Pair<String, String>>()
-        allIds.add(Pair(mainSubjectId, subjectObj["lanName"]?.str ?: "Original"))
+        if (detailPath.isNotBlank()) {
+            detailPathCache[mainSubjectId] = detailPath
+        }
+
         val dubsArray = subjectObj["dubs"]?.arr ?: data["dubs"]?.arr
+        val mainDubItem = dubsArray?.find { it.obj?.get("subjectId")?.str == mainSubjectId }?.obj
+        val mainTitle = subjectObj["title"]?.str ?: data["title"]?.str ?: ""
+        val mainLang = mainDubItem?.get("lanName")?.str
+            ?: subjectObj["lanName"]?.str
+            ?: data["language"]?.str?.ifBlank { null }
+            ?: run {
+                val bracketTag = "\\[(.*?)\\]".toRegex().find(mainTitle)?.groupValues?.get(1)?.trim()
+                if (!bracketTag.isNullOrBlank()) "$bracketTag dub" else "Original"
+            }
+
+        val storedMainLang = if (detailPath.isNotBlank()) "$mainLang^$detailPath" else mainLang
+        val allIds = mutableListOf<Pair<String, String>>()
+        allIds.add(Pair(mainSubjectId, storedMainLang))
+
         dubsArray?.forEach {
-            val sid = it.obj?.get("subjectId")?.str
+            val sid = it.obj?.get("subjectId")?.str ?: return@forEach
             val lang = it.obj?.get("lanName")?.str ?: "Unknown"
             val dubDp = it.obj?.get("detailPath")?.str
                 ?: it.obj?.get("detailUrl")?.str?.substringAfterLast("/")?.substringBefore("?")
                 ?: ""
+            if (dubDp.isNotBlank()) {
+                detailPathCache[sid] = dubDp
+            }
             val storedLang = if (dubDp.isNotBlank()) "$lang^$dubDp" else lang
-            if (sid != null && allIds.none { p -> p.first == sid }) allIds.add(Pair(sid, storedLang))
+            if (allIds.none { p -> p.first == sid }) allIds.add(Pair(sid, storedLang))
         }
 
         val episodes = mutableListOf<SEpisode>()
@@ -863,17 +889,74 @@ class MovieBox : Source() {
 
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException("Not used")
 
+    private fun getLangSuffix(lang: String): String {
+        val cleanLang = when {
+            lang.contains("original", ignoreCase = true) -> "Original"
+            lang.contains("sub", ignoreCase = true) -> {
+                val base = lang.replace("(?i)sub(bed)?".toRegex(), "").trim()
+                if (base.isNotBlank()) "$base Sub" else "Sub"
+            }
+            lang.contains("dub", ignoreCase = true) -> {
+                val base = lang.replace("(?i)dub(bed)?".toRegex(), "").trim()
+                if (base.isNotBlank()) "$base Dub" else "Dub"
+            }
+            else -> lang.trim()
+        }
+        return if (cleanLang.isNotBlank()) " - $cleanLang" else ""
+    }
+
+    private suspend fun getDetailPathForSubject(sid: String): String {
+        detailPathCache[sid]?.let { return it }
+
+        // 1. Try movie-box.co H5 detail
+        try {
+            val url = "https://movie-box.co/wefeed-h5api-bff/detail?subjectId=$sid"
+            val req = GET(
+                url,
+                Headers.Builder()
+                    .add("User-Agent", "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36")
+                    .add("Origin", "https://movie-box.co")
+                    .add("Accept", "application/json")
+                    .build(),
+            )
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body.string()
+                    val root = json.parseToJsonElement(body).obj
+                    val dataObj = root?.get("data")?.obj
+                    val sObj = dataObj?.get("subject")?.obj ?: dataObj
+                    val dp = sObj?.get("detailPath")?.str
+                        ?: sObj?.get("detailUrl")?.str?.substringAfterLast("/")?.substringBefore("?")
+                    if (!dp.isNullOrBlank()) {
+                        detailPathCache[sid] = dp
+                        return dp
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 2. Fallback to mobile BFF
+        try {
+            val detailsJson = safeGetJsonWithHeaders("/wefeed-mobile-bff/subject-api/get?subjectId=$sid", isDetails = true)?.first
+            val sObj = detailsJson?.obj?.get("data")?.obj?.let { it["subject"]?.obj ?: it }
+            val dp = sObj?.get("detailPath")?.str
+                ?: sObj?.get("detailUrl")?.str?.substringAfterLast("/")?.substringBefore("?")
+            if (!dp.isNullOrBlank()) {
+                detailPathCache[sid] = dp
+                return dp
+            }
+        } catch (_: Exception) {}
+
+        return ""
+    }
+
     private suspend fun fetchVideosForSubject(sid: String, lang: String, se: String, ep: String, detailPath: String = ""): List<Video> {
         val enableDash = preferences.getBoolean(PREF_ENABLE_DASH_KEY, PREF_ENABLE_DASH_DEFAULT)
         val videos = mutableListOf<Video>()
         var activeDetailPath = detailPath.trim()
 
         if (activeDetailPath.isBlank()) {
-            val detailsJson = safeGetJsonWithHeaders("/wefeed-mobile-bff/subject-api/get?subjectId=$sid", isDetails = true)?.first
-            val sObj = detailsJson?.obj?.get("data")?.obj?.let { it["subject"]?.obj ?: it }
-            activeDetailPath = sObj?.get("detailPath")?.str
-                ?: sObj?.get("detailUrl")?.str?.substringAfterLast("/")?.substringBefore("?")
-                ?: ""
+            activeDetailPath = getDetailPathForSubject(sid)
         }
 
         // 1. Try web/H5 play endpoint (matches CNCVerse MovieBoxProviderIN)
@@ -906,6 +989,8 @@ class MovieBox : Source() {
                         val streams = dataObj?.get("streams")?.arr
                         val dash = dataObj?.get("dash")?.arr
 
+                        val langSuffix = getLangSuffix(lang)
+
                         // MP4 progressive streams
                         streams?.forEach { streamEl ->
                             val s = streamEl.obj ?: return@forEach
@@ -915,7 +1000,7 @@ class MovieBox : Source() {
                             val streamId = s["id"]?.str ?: ""
                             val headers = Headers.Builder()
                                 .add("Referer", "https://movie-box.co/")
-                                .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36")
+                                .add("User-Agent", MOVIEBOX_APP_UA)
                                 .build()
 
                             val subTracks = mutableListOf<Track>()
@@ -924,8 +1009,6 @@ class MovieBox : Source() {
                             }
                             val distinctSubs = subTracks.distinctBy { it.url }
 
-                            val langTag = lang.replace("dub", "").replace("dubbed", "").trim()
-                            val langSuffix = if (langTag.isNotBlank() && !langTag.equals("original", ignoreCase = true)) " - $langTag" else ""
                             res.split(",").forEach { r ->
                                 val cleanRes = r.trim()
                                 val resInt = cleanRes.toIntOrNull()
@@ -955,7 +1038,7 @@ class MovieBox : Source() {
                                 val headers = Headers.Builder()
                                     .add("Origin", subDomain)
                                     .add("Referer", "$subDomain/movies/$activeDetailPath?id=$sid&type=/movie/detail&detailSe=&detailEp=&lang=en")
-                                    .add("User-Agent", "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36")
+                                    .add("User-Agent", MOVIEBOX_APP_UA)
                                     .apply {
                                         if (!signCookie.isNullOrBlank()) {
                                             add(signHeaderKey, signCookie)
@@ -970,8 +1053,6 @@ class MovieBox : Source() {
                                 }
                                 val distinctSubs = subTracks.distinctBy { it.url }
 
-                                val langTag = lang.replace("dub", "").replace("dubbed", "").trim()
-                                val langSuffix = if (langTag.isNotBlank() && !langTag.equals("original", ignoreCase = true)) " - $langTag" else ""
                                 res.split(",").forEach { r ->
                                     val cleanRes = r.trim()
                                     val resInt = cleanRes.toIntOrNull()
@@ -1034,8 +1115,7 @@ class MovieBox : Source() {
             val isDash = resolvedUrl.endsWith(".mpd") || resolvedUrl.contains("/dash/")
             if (isDash && !enableDash) return@forEach
             val formatTag = if (isDash) "DASH" else "MP4"
-            val langTag = lang.replace("dub", "").replace("dubbed", "").trim()
-            val langSuffix = if (langTag.isNotBlank() && !langTag.equals("original", ignoreCase = true)) " - $langTag" else ""
+            val langSuffix = getLangSuffix(lang)
             res.split(",").forEach { r ->
                 val cleanRes = r.trim()
                 val resInt = cleanRes.toIntOrNull()
@@ -1066,8 +1146,7 @@ class MovieBox : Source() {
         val detectors = dataObj?.get("resourceDetectors")?.arr ?: return emptyList()
 
         val videos = mutableListOf<Video>()
-        val langTag = lang.replace("dub", "").replace("dubbed", "").trim()
-        val langSuffix = if (langTag.isNotBlank() && !langTag.equals("original", ignoreCase = true)) " - $langTag" else ""
+        val langSuffix = getLangSuffix(lang)
 
         val fallbackHeaders = Headers.Builder()
             .add("User-Agent", MOVIEBOX_APP_UA)
@@ -1216,10 +1295,12 @@ class MovieBox : Source() {
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
         val audio = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
+        val audioMatch = if (audio.contains("original", ignoreCase = true)) "Original" else audio
         return this.sortedWith(
             compareByDescending<Video> { it.videoTitle.contains("MP4", ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(audio, ignoreCase = true) }
-                .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) },
+                .thenByDescending { it.videoTitle.contains(audioMatch, ignoreCase = true) }
+                .thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) }
+                .thenByDescending { it.resolution ?: 0 },
         )
     }
 
