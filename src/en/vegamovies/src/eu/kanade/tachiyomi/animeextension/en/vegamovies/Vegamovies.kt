@@ -32,7 +32,7 @@ class Vegamovies : Source() {
 
     override val name = "Vegamovies"
 
-    override val baseUrl = "https://vegamovies9.co.in"
+    override val baseUrl = "https://vegamovies16.co.in"
 
     override val lang = "en"
 
