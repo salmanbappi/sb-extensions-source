@@ -14,13 +14,6 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
-import java.net.URLEncoder
-import java.security.MessageDigest
-import javax.crypto.Cipher
-import javax.crypto.Mac
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -35,6 +28,13 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
+import java.security.MessageDigest
+import javax.crypto.Cipher
+import javax.crypto.Mac
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
+import kotlin.time.Duration.Companion.seconds
 
 class HianimeMs : Source() {
 
@@ -194,8 +194,8 @@ class HianimeMs : Source() {
             hosterList.add(
                 Hoster(
                     hosterName = "MegaPlay (Backup)",
-                    hosterUrl = "megaplay://$token"
-                )
+                    hosterUrl = "megaplay://$token",
+                ),
             )
         }
 
@@ -204,14 +204,14 @@ class HianimeMs : Source() {
             hosterList.add(
                 Hoster(
                     hosterName = "TryEmbed",
-                    hosterUrl = "tryembed://$aniListId/$epNum"
-                )
+                    hosterUrl = "tryembed://$aniListId/$epNum",
+                ),
             )
             hosterList.add(
                 Hoster(
                     hosterName = "VidNest",
-                    hosterUrl = "https://vidnest.fun/anime/$aniListId/$epNum/sub"
-                )
+                    hosterUrl = "https://vidnest.fun/anime/$aniListId/$epNum/sub",
+                ),
             )
         }
 
@@ -225,18 +225,21 @@ class HianimeMs : Source() {
                 val token = hosterUrl.removePrefix("megaplay://")
                 extractMegaPlayVideos(token)
             }
+
             hosterUrl.startsWith("tryembed://") -> {
                 val parts = hosterUrl.removePrefix("tryembed://").split("/")
                 val aniListId = parts.getOrNull(0) ?: ""
                 val epNum = parts.getOrNull(1) ?: "1"
                 extractTryEmbedVideos(aniListId, epNum)
             }
+
             hosterUrl.startsWith("https://vidnest.fun") -> {
                 val subVideos = playlistUtils.extractFromHls(hosterUrl, hosterUrl, videoNameGen = { q -> "VidNest - $q [Sub]" })
                 val dubUrl = hosterUrl.replace("/sub", "/dub")
                 val dubVideos = playlistUtils.extractFromHls(dubUrl, dubUrl, videoNameGen = { q -> "VidNest - $q [Dub]" })
                 subVideos + dubVideos
             }
+
             else -> emptyList()
         }
     }
@@ -296,7 +299,7 @@ class HianimeMs : Source() {
                     signedMasterUrl,
                     "https://megaplay.buzz/",
                     videoNameGen = { q -> "MegaPlay - $q [${lang.uppercase()}]" },
-                    subtitleList = trackList
+                    subtitleList = trackList,
                 )
                 videoList.addAll(videos)
             }
@@ -344,8 +347,8 @@ class HianimeMs : Source() {
                         playlistUtils.extractFromHls(
                             streamUrl,
                             embedUrl,
-                            videoNameGen = { q -> "$pName - $q [SUB]" }
-                        )
+                            videoNameGen = { q -> "$pName - $q [SUB]" },
+                        ),
                     )
                 }
             }
