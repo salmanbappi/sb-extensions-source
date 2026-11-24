@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.animeextension.en.hianimems
 
 import android.util.Base64
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -13,20 +12,17 @@ import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
 import extensions.utils.Source
 import extensions.utils.asJsoup
 import keiyoushi.utils.addListPreference
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
 import okhttp3.OkHttpClient
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.net.URLEncoder
 import javax.crypto.Cipher
@@ -57,11 +53,17 @@ class HianimeMs : Source() {
     }
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-    private val m3u8Integration by lazy { M3u8Integration(client) }
+    private val proxyServer by lazy { HianimeMsProxyServer(client) }
+
+    @Volatile
+    private var megaPlayKey: ByteArray = DEFAULT_MEGAPLAY_KEY
+
+    @Volatile
+    private var megaPlayIv: ByteArray = DEFAULT_MEGAPLAY_IV
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
-        .add("Referer", "$baseUrl/")
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .set("Referer", "$baseUrl/")
+        .set("User-Agent", USER_AGENT)
 
     // ============================== Popular ===============================
     override suspend fun getPopularAnime(page: Int): AnimesPage {
@@ -144,19 +146,29 @@ class HianimeMs : Source() {
                     val rawHref = element.attr("href").trim()
                     setUrlWithoutDomain(rawHref.ifBlank { "${anime.url}#ep=${idx + 1}" })
 
-                    val epNum = element.attr("data-ep").toFloatOrNull() ?: (idx + 1).toFloat()
+                    val epNumRaw = element.attr("data-ep").trim()
+                    val epNum = epNumRaw.toFloatOrNull() ?: (idx + 1).toFloat()
                     episode_number = epNum
 
-                    val epName = element.attr("data-name").takeIf { it.isNotBlank() }
-                        ?: element.attr("title").takeIf { it.isNotBlank() }
-                        ?: "Episode $epNum"
-                    name = epName
+                    val epLabelNum = epNumRaw.ifBlank { (idx + 1).toString() }
+                    val rawTitle = element.attr("title").trim()
+                    val rawDataName = element.attr("data-name").trim()
+                    name = when {
+                        rawTitle.isNotBlank() -> rawTitle
+                        rawDataName.isNotBlank() -> "Episode $epLabelNum: $rawDataName"
+                        else -> "Episode $epLabelNum"
+                    }
 
-                    if (element.hasClass("hk-ep--filler")) {
-                        scanlator = "Filler"
+                    val isFiller = element.hasClass("hk-ep--filler")
+                    val hasDub = element.selectFirst("span.hk-ep__dub") != null
+                    scanlator = when {
+                        isFiller && hasDub -> "Filler • Sub / Dub"
+                        isFiller -> "Filler"
+                        hasDub -> "Sub / Dub"
+                        else -> "Sub"
                     }
                 }
-            }
+            }.sortedByDescending { it.episode_number }
         }
 
         // Movie handling
@@ -183,67 +195,35 @@ class HianimeMs : Source() {
         val watchData = runCatching { json.parseToJsonElement(watchJsonRaw).jsonObject }.getOrNull()
             ?: return emptyList()
 
-        val token = watchData["token"]?.jsonPrimitive?.contentOrNull ?: ""
-        val aniListId = watchData["al"]?.jsonPrimitive?.intOrNull ?: 0
-        val epNum = watchData["ep"]?.jsonPrimitive?.intOrNull ?: episode.episode_number.toInt()
+        val token = watchData["token"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        if (token.isBlank()) return emptyList()
 
-        val hosterList = mutableListOf<Hoster>()
+        val versions = doc.select("button.hk-srv[data-server=backup]")
+            .mapNotNull { it.attr("data-version").trim().lowercase().takeIf { v -> v == "sub" || v == "dub" } }
+            .distinct()
+            .ifEmpty { listOf("sub", "dub") }
+            .joinToString(",")
 
-        // 1. Primary: MegaPlay / Backup
-        if (token.isNotBlank()) {
-            hosterList.add(
-                Hoster(
-                    hosterName = "MegaPlay (Backup)",
-                    hosterUrl = "megaplay://$token",
-                ),
-            )
-        }
-
-        // 2. TryEmbed & VidNest mirrors
-        if (aniListId > 0) {
-            hosterList.add(
-                Hoster(
-                    hosterName = "TryEmbed",
-                    hosterUrl = "tryembed://$aniListId/$epNum",
-                ),
-            )
-            hosterList.add(
-                Hoster(
-                    hosterName = "VidNest",
-                    hosterUrl = "https://vidnest.fun/anime/$aniListId/$epNum/sub",
-                ),
-            )
-        }
-
-        val prefServer = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
-        return hosterList.sortedByDescending { it.hosterName.contains(prefServer, ignoreCase = true) }
+        return listOf(
+            Hoster(
+                hosterName = "MegaPlay (Ryu)",
+                hosterUrl = "megaplay://$token?versions=$versions",
+            ),
+        )
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
         val hosterUrl = hoster.hosterUrl
-        val videos = when {
-            hosterUrl.startsWith("megaplay://") -> {
-                val token = hosterUrl.removePrefix("megaplay://")
-                extractMegaPlayVideos(token)
-            }
+        if (!hosterUrl.startsWith("megaplay://")) return emptyList()
 
-            hosterUrl.startsWith("tryembed://") -> {
-                val parts = hosterUrl.removePrefix("tryembed://").split("/")
-                val aniListId = parts.getOrNull(0) ?: ""
-                val epNum = parts.getOrNull(1) ?: "1"
-                extractTryEmbedVideos(aniListId, epNum)
-            }
+        val payload = hosterUrl.removePrefix("megaplay://")
+        val token = payload.substringBefore("?")
+        val versions = payload.substringAfter("versions=", "sub,dub")
+            .split(",")
+            .filter { it.isNotBlank() }
+            .ifEmpty { listOf("sub", "dub") }
 
-            hosterUrl.startsWith("https://vidnest.fun") -> {
-                val subVideos = playlistUtils.extractFromHls(hosterUrl, hosterUrl, videoNameGen = { q -> "VidNest - $q [SUB]" })
-                val dubUrl = hosterUrl.replace("/sub", "/dub")
-                val dubVideos = playlistUtils.extractFromHls(dubUrl, dubUrl, videoNameGen = { q -> "VidNest - $q [DUB]" })
-                subVideos + dubVideos
-            }
-
-            else -> emptyList()
-        }
-        return videos.sortVideos()
+        return extractMegaPlayVideos(token, versions).sortVideos()
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
@@ -257,14 +237,6 @@ class HianimeMs : Source() {
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        screen.addListPreference(
-            key = PREF_SERVER_KEY,
-            default = PREF_SERVER_DEFAULT,
-            title = "Preferred server",
-            summary = "%s",
-            entries = listOf("MegaPlay (Backup)", "TryEmbed", "VidNest"),
-            entryValues = listOf("megaplay", "tryembed", "vidnest"),
-        )
         screen.addListPreference(
             key = PREF_AUDIO_KEY,
             default = PREF_AUDIO_DEFAULT,
@@ -285,22 +257,22 @@ class HianimeMs : Source() {
 
     // ============================ Extractors ==============================
 
-    private fun extractMegaPlayVideos(token: String): List<Video> {
+    private fun extractMegaPlayVideos(token: String, versions: List<String>): List<Video> {
         val videoList = mutableListOf<Video>()
-        for (lang in listOf("sub", "dub")) {
+        for (lang in versions) {
             runCatching {
                 val streamUrl = "$baseUrl/stream/$token/$lang"
-                val req = GET(streamUrl, headers)
-                val resp = client.newCall(req).execute()
+                val resp = client.newCall(GET(streamUrl, headers)).execute()
                 val finalUrl = resp.request.url.toString()
+                val html = resp.body.string()
                 if (!finalUrl.contains("megaplay.buzz")) return@runCatching
 
-                val html = resp.body.string()
-                val fileIdMatch = Regex("""File\s+(\d+)\s+-\s+MegaPlay""").find(html)
-                    ?: Regex(""""cid"\s*:\s*"?(\d+)""").find(html)
-                val fileId = fileIdMatch?.groupValues?.get(1) ?: return@runCatching
+                val fileId = FILE_ID_REGEX.find(html)?.groupValues?.get(1)
+                    ?: DATA_ID_REGEX.find(html)?.groupValues?.get(1)
+                    ?: CID_REGEX.find(html)?.groupValues?.get(1)
+                    ?: return@runCatching
 
-                val sourcesUrl = "https://megaplay.buzz/stream/getSources?id=$fileId"
+                val sourcesUrl = "$MEGAPLAY_ORIGIN/stream/getSources?id=$fileId&id=$fileId"
                 val sourcesHeaders = headers.newBuilder()
                     .set("Referer", finalUrl)
                     .set("X-Requested-With", "XMLHttpRequest")
@@ -309,103 +281,62 @@ class HianimeMs : Source() {
                 val sourcesResp = client.newCall(GET(sourcesUrl, sourcesHeaders)).execute()
                 val sourcesJson = json.parseToJsonElement(sourcesResp.body.string()).jsonObject
 
-                val enc = sourcesJson["enc"]?.jsonPrimitive?.contentOrNull ?: return@runCatching
-                val decrypted = decryptMegaPlayEnc(enc)
-                val decJson = json.parseToJsonElement(decrypted).jsonObject
-                val masterUrl = decJson["file"]?.jsonPrimitive?.contentOrNull ?: return@runCatching
+                val plainFile = sourcesJson["sources"]?.jsonObject?.get("file")?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.startsWith("http") }
+
+                val masterUrl = plainFile ?: run {
+                    val enc = sourcesJson["enc"]?.jsonPrimitive?.contentOrNull ?: return@runCatching
+                    val decrypted = decryptMegaPlayWithFallback(enc) ?: return@runCatching
+                    json.parseToJsonElement(decrypted).jsonObject["file"]?.jsonPrimitive?.contentOrNull
+                        ?: return@runCatching
+                }
 
                 val cdnToken = generateMegaPlayToken(masterUrl)
                 val signedMasterUrl = if (cdnToken.isNotBlank()) {
-                    "$masterUrl?t=$lang&token=${URLEncoder.encode(cdnToken, "UTF-8")}"
+                    val sep = if ("?" in masterUrl) "&" else "?"
+                    "$masterUrl${sep}t=$lang&token=${URLEncoder.encode(cdnToken, "UTF-8")}"
                 } else {
                     masterUrl
                 }
 
-                // Subtitle tracks
                 val trackList = mutableListOf<Track>()
                 sourcesJson["tracks"]?.jsonArray?.forEach { trackElem ->
                     val tObj = trackElem.jsonObject
+                    val kind = tObj["kind"]?.jsonPrimitive?.contentOrNull
+                    if (kind.equals("thumbnails", ignoreCase = true)) return@forEach
                     val trackFile = tObj["file"]?.jsonPrimitive?.contentOrNull ?: return@forEach
                     val trackLabel = tObj["label"]?.jsonPrimitive?.contentOrNull ?: "Subtitle"
                     trackList.add(Track(trackFile, trackLabel))
                 }
 
-                // MegaPlay segments carry fake .jpg/.html/.js extensions; route through local M3U8 proxy.
-                val megaHeaders = headers.newBuilder()
-                    .set("Referer", "https://megaplay.buzz/")
+                // Route through our dedicated ServerSocket loopback proxy so ExoPlayer/MPV
+                // receives clean .m3u8/.ts URLs, proper MIME types, and unmasked segments.
+                val proxiedMasterUrl = proxyServer.relay(signedMasterUrl, "$MEGAPLAY_ORIGIN/", USER_AGENT)
+                val localHeaders = headers.newBuilder()
+                    .set("Referer", "$MEGAPLAY_ORIGIN/")
                     .build()
 
-                val videos = playlistUtils.extractFromHls(
-                    playlistUrl = signedMasterUrl,
-                    referer = "https://megaplay.buzz/",
-                    masterHeaders = megaHeaders,
-                    videoHeaders = megaHeaders,
-                    videoNameGen = { q -> "MegaPlay - $q [${lang.uppercase()}]" },
-                    subtitleList = trackList,
-                )
-                videoList.addAll(m3u8Integration.processVideoList(videos))
-            }
-        }
-        return videoList
-    }
-
-    private fun extractTryEmbedVideos(alId: String, epNum: String): List<Video> {
-        val videoList = mutableListOf<Video>()
-        for (lang in listOf("sub", "dub")) {
-            val embedUrl = "https://tryembed.us.cc/embed/anime/$alId/$epNum/$lang"
-            runCatching {
-                val req = GET(embedUrl, headers.newBuilder().set("Referer", "$baseUrl/").build())
-                val resp = client.newCall(req).execute()
-                val cookies = resp.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
-                val html = resp.body.string()
-
-                val keyMatch = Regex("""__TE_KEY="([a-f0-9]{64})"""").find(html) ?: return@runCatching
-                val ticketMatch = Regex("""BOOTSTRAP_TICKET="([^"]+)"""").find(html) ?: return@runCatching
-                val teKey = keyMatch.groupValues[1]
-                val ticket = ticketMatch.groupValues[1]
-
-                val bootstrapUrl = "https://tryembed.us.cc/api/bootstrap"
-                val bootstrapHeadersBuilder = headers.newBuilder()
-                    .set("Referer", embedUrl)
-                    .set("X-TryEmbed-Bootstrap", ticket)
-                if (cookies.isNotBlank()) {
-                    bootstrapHeadersBuilder.set("Cookie", cookies)
+                val audioTag = lang.uppercase()
+                val extracted = runCatching {
+                    playlistUtils.extractFromHls(
+                        playlistUrl = proxiedMasterUrl,
+                        referer = "$MEGAPLAY_ORIGIN/",
+                        masterHeaders = localHeaders,
+                        videoHeaders = localHeaders,
+                        videoNameGen = { q -> "MegaPlay - $q [$audioTag]" },
+                        subtitleList = trackList,
+                    )
+                }.getOrElse {
+                    listOf(
+                        Video(
+                            videoUrl = proxiedMasterUrl,
+                            videoTitle = "MegaPlay - Auto [$audioTag]",
+                            headers = localHeaders,
+                            subtitleTracks = trackList,
+                        ),
+                    )
                 }
-
-                val bootResp = client.newCall(POST(bootstrapUrl, bootstrapHeadersBuilder.build(), "".toRequestBody())).execute()
-                val bootJson = json.parseToJsonElement(bootResp.body.string()).jsonObject
-
-                val iv = bootJson["iv"]?.jsonPrimitive?.contentOrNull ?: return@runCatching
-                val data = bootJson["data"]?.jsonPrimitive?.contentOrNull ?: return@runCatching
-
-                val decJsonStr = decryptTryEmbed(teKey, iv, data)
-                val decObj = json.parseToJsonElement(decJsonStr).jsonObject
-                val providers = decObj["providers"]?.jsonArray ?: return@runCatching
-
-                val streamHeadersBuilder = headers.newBuilder().set("Referer", embedUrl)
-                if (cookies.isNotBlank()) {
-                    streamHeadersBuilder.set("Cookie", cookies)
-                }
-                val streamHeaders = streamHeadersBuilder.build()
-
-                providers.forEach { pElem ->
-                    val pObj = pElem.jsonObject
-                    val pName = pObj["name"]?.jsonPrimitive?.contentOrNull ?: "TryEmbed"
-                    pObj["qualities"]?.jsonArray?.forEach { qElem ->
-                        val qObj = qElem.jsonObject
-                        val token = qObj["token"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-                        val streamUrl = "https://tryembed.us.cc/s/$token.m3u8"
-                        videoList.addAll(
-                            playlistUtils.extractFromHls(
-                                playlistUrl = streamUrl,
-                                referer = embedUrl,
-                                masterHeaders = streamHeaders,
-                                videoHeaders = streamHeaders,
-                                videoNameGen = { q -> "$pName - $q [${lang.uppercase()}]" },
-                            ),
-                        )
-                    }
-                }
+                videoList.addAll(extracted)
             }
         }
         return videoList
@@ -413,45 +344,65 @@ class HianimeMs : Source() {
 
     // ============================ Cryptography Helpers ====================
 
-    private fun decryptMegaPlayEnc(enc: String): String {
-        val key = "i?LMTAx0Q6,:}50U".toByteArray(Charsets.UTF_8).copyOf(32)
-        val iv = "W0;27ToaUpl_P%'c".toByteArray(Charsets.UTF_8).copyOf(16)
+    private fun decryptMegaPlayWithFallback(enc: String): String? {
+        runCatching { decryptMegaPlayEnc(enc, megaPlayKey, megaPlayIv) }.getOrNull()?.let { return it }
+        refreshMegaPlayKeys()
+        return runCatching { decryptMegaPlayEnc(enc, megaPlayKey, megaPlayIv) }.getOrNull()
+    }
+
+    private fun refreshMegaPlayKeys() = runCatching {
+        val js = client.newCall(GET("$MEGAPLAY_ORIGIN/lib/newclient.min.js", headers)).execute()
+            .use { it.body.string() }
+        KEY_REGEX.find(js)?.let { m ->
+            val literal = m.groupValues[1].ifEmpty { m.groupValues[2] }
+            if (literal.isNotBlank()) megaPlayKey = literal.toByteArray(Charsets.UTF_8).copyOf(32)
+        }
+        IV_REGEX.find(js)?.let { m ->
+            val literal = m.groupValues[1].ifEmpty { m.groupValues[2] }
+            val bytes = literal.toByteArray(Charsets.UTF_8)
+            if (bytes.size == 16) megaPlayIv = bytes
+        }
+    }.let { }
+
+    private fun decryptMegaPlayEnc(enc: String, key: ByteArray, iv: ByteArray): String {
         val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding").apply {
             init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
         }
-        val safeBase64 = enc.replace("-", "+").replace("_", "/")
-        val decoded = Base64.decode(safeBase64, Base64.DEFAULT)
+        val clean = enc.replace("-", "+").replace("_", "/")
+        val pad = (4 - (clean.length % 4)) % 4
+        val decoded = Base64.decode(clean + "=".repeat(pad), Base64.DEFAULT)
         return String(cipher.doFinal(decoded), Charsets.UTF_8)
     }
 
     private fun generateMegaPlayToken(masterUrl: String): String {
-        val regex = Regex("""/([a-f0-9]{32})/([a-f0-9]{32})/""")
-        val match = regex.find(masterUrl) ?: return ""
+        val match = HASH_PATH_REGEX.find(masterUrl) ?: return ""
         val pathKey = "${match.groupValues[1].lowercase()}/${match.groupValues[2].lowercase()}"
         val exp = (System.currentTimeMillis() / 1000) + 90
         val payload = "$exp|$pathKey"
-        val secret = "MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s"
         val mac = Mac.getInstance("HmacSHA256").apply {
-            init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+            init(SecretKeySpec(MEGAPLAY_CDN_SECRET.toByteArray(Charsets.UTF_8), "HmacSHA256"))
         }
         val hmac = mac.doFinal(payload.toByteArray(Charsets.UTF_8))
         fun b64(b: ByteArray) = Base64.encodeToString(b, Base64.NO_WRAP or Base64.URL_SAFE).trimEnd('=')
         return "${b64(payload.toByteArray(Charsets.UTF_8))}.${b64(hmac)}"
     }
 
-    private fun decryptTryEmbed(keyHex: String, ivB64: String, dataB64: String): String {
-        val keyBytes = keyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        val ivBytes = Base64.decode(ivB64, Base64.DEFAULT)
-        val cipherBytes = Base64.decode(dataB64, Base64.DEFAULT)
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding").apply {
-            init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(ivBytes))
-        }
-        return String(cipher.doFinal(cipherBytes), Charsets.UTF_8)
-    }
-
     private companion object {
-        const val PREF_SERVER_KEY = "preferred_server"
-        const val PREF_SERVER_DEFAULT = "megaplay"
+        const val MEGAPLAY_ORIGIN = "https://megaplay.buzz"
+        const val USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+        val DEFAULT_MEGAPLAY_KEY: ByteArray = "i?LMTAx0Q6,:}50U".toByteArray(Charsets.UTF_8).copyOf(32)
+        val DEFAULT_MEGAPLAY_IV: ByteArray = "W0;27ToaUpl_P%'c".toByteArray(Charsets.UTF_8).copyOf(16)
+        const val MEGAPLAY_CDN_SECRET = "MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s"
+
+        val FILE_ID_REGEX = Regex("""File\s+(\d+)\s+-\s+MegaPlay""")
+        val DATA_ID_REGEX = Regex("""data-id=["'](\d+)["']""")
+        val CID_REGEX = Regex(""""cid"\s*:\s*"?(\d+)""")
+        val HASH_PATH_REGEX = Regex("""/([a-f0-9]{32})/([a-f0-9]{32})/""")
+        val KEY_REGEX = Regex("""\[\s*["']trustAesKey["']\s*,\s*["']TRUST_AES_KEY["']\s*\]\s*,\s*(?:"([^"]*)"|'([^']*)')""")
+        val IV_REGEX = Regex("""\[\s*["']trustAesIv["']\s*,\s*["']TRUST_AES_IV["']\s*\]\s*,\s*(?:"([^"]*)"|'([^']*)')""")
+
         const val PREF_AUDIO_KEY = "preferred_audio"
         const val PREF_AUDIO_DEFAULT = "SUB"
         const val PREF_QUALITY_KEY = "preferred_quality"
