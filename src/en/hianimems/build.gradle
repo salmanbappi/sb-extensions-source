@@ -1,0 +1,12 @@
+ext {
+    extName = 'HiAnime (ms)'
+    extClass = '.HianimeMs'
+    extVersionCode = 1
+    isNsfw = false
+}
+
+apply from: "$rootDir/common.gradle"
+
+dependencies {
+    implementation(project(":lib:playlist-utils"))
+}
