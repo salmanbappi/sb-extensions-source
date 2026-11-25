@@ -18,8 +18,34 @@ REPO_BADGE = "SB"
 REPO_SHORT_NAME = "salmanbappi"
 REPO_WEBSITE = "https://github.com/salmanbappi/extensions-repo"
 COMMUNITY_DISCORD = "https://discord.gg/G6g4vBmcXp"
-BASE_URL = "https://cdn.jsdelivr.net/gh/salmanbappi/extensions-repo@repo"
-INDEX_PB_URL = f"{BASE_URL}/index.pb"
+# Serve mutable index files from GitHub raw (max-age=300) and immutable
+# version-stamped APKs/icons from jsDelivr CDN, matching Yuzono/Secozzi.
+RAW_BASE_URL = "https://raw.githubusercontent.com/salmanbappi/extensions-repo/repo"
+CDN_BASE_URL = "https://cdn.jsdelivr.net/gh/salmanbappi/extensions-repo@repo"
+BASE_URL = CDN_BASE_URL
+INDEX_PB_URL = f"{RAW_BASE_URL}/index.pb"
+
+
+def load_existing_pb_metadata(pb_path: Path) -> dict[str, dict]:
+    """Extract fields from existing index.pb that legacy index.min.json omits."""
+    if not pb_path.exists():
+        return {}
+    try:
+        raw_bytes = gzip.decompress(pb_path.read_bytes())
+        existing_index = index_pb2.Index()
+        existing_index.ParseFromString(raw_bytes)
+    except Exception as exc:
+        print(f"Warning: could not read existing {pb_path.name}: {exc}")
+        return {}
+
+    meta_by_pkg: dict[str, dict] = {}
+    for ext in existing_index.extensionList.extensions:
+        meta_by_pkg[ext.packageName] = {
+            "extensionLib": ext.extensionLib,
+            "contentRating": int(ext.contentWarning),
+            "mirrorUrlsBySourceId": {str(s.id): list(s.mirrorUrls) for s in ext.sources if s.mirrorUrls},
+        }
+    return meta_by_pkg
 
 
 def normalize_extension_dict(entry: dict, base_url: str = BASE_URL) -> dict:
@@ -44,7 +70,11 @@ def normalize_extension_dict(entry: dict, base_url: str = BASE_URL) -> dict:
     version_code = int(entry.get("versionCode") or entry.get("code") or 0)
 
     # Content warning: UNSPECIFIED=0, SAFE=1, MIXED=2, NSFW=3
-    content_warning = int(entry.get("contentRating") or (3 if entry.get("nsfw") == 1 else 1))
+    content_warning = int(
+        entry.get("contentRating")
+        or entry.get("contentWarning")
+        or (3 if entry.get("nsfw") == 1 else 1)
+    )
 
     # isTorrent flag
     is_torrent = bool(entry.get("isTorrent") or entry.get("torrent") or False)
@@ -168,6 +198,26 @@ def main():
     ]
     merged_raw.extend(local_index)
     merged_raw.sort(key=lambda x: x.get("pkg") or x.get("packageName", ""))
+
+    # Backfill fields omitted by legacy index.min.json for carried-over entries
+    existing_pb_meta = load_existing_pb_metadata(remote_repo.joinpath("index.pb"))
+    for item in merged_raw:
+        pkg = item.get("pkg") or item.get("packageName")
+        if not pkg or pkg in local_pkgs:
+            continue
+        pb_meta = existing_pb_meta.get(pkg)
+        if not pb_meta:
+            continue
+        if not item.get("extensionLib") and pb_meta.get("extensionLib"):
+            item["extensionLib"] = pb_meta["extensionLib"]
+        if not item.get("contentRating") and pb_meta.get("contentRating"):
+            item["contentRating"] = pb_meta["contentRating"]
+        mirrors_by_id = pb_meta.get("mirrorUrlsBySourceId", {})
+        for source in item.get("sources", []):
+            if not source.get("mirrorUrls"):
+                mirrors = mirrors_by_id.get(str(source.get("id", "")))
+                if mirrors:
+                    source["mirrorUrls"] = mirrors
 
     # Normalize entries
     normalized_entries = [normalize_extension_dict(item) for item in merged_raw]

@@ -6,7 +6,7 @@ A collection of extension catalogues for compatible Android anime players.
 
 | Install Repo | Build Status | Discord |
 |:------------:|:------------:|:-------:|
-| [![Install](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=flat&labelColor=red)](https://intradeus.github.io/http-protocol-redirector/?r=anizen://add-repo?url=https://raw.githubusercontent.com/salmanbappi/extensions-repo/main/index.min.json) | ![CI](https://github.com/salmanbappi/sb-extensions-source/actions/workflows/build_push.yml/badge.svg) | [![Discord](https://img.shields.io/discord/1377136877491982366.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/85MZhUX688) |
+| [![Install](https://img.shields.io/badge/Click%20here%20to%20install%20repo-gray?style=flat&labelColor=red)](https://intradeus.github.io/http-protocol-redirector/?r=anizen://add-repo?url=https://raw.githubusercontent.com/salmanbappi/extensions-repo/repo/index.pb) | ![CI](https://github.com/salmanbappi/sb-extensions-source/actions/workflows/build_push.yml/badge.svg) | [![Discord](https://img.shields.io/discord/1377136877491982366.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/85MZhUX688) |
 
 ![Visitor Count](https://count.getloli.com/get/@salmanbappi?theme=capoo-2)
 
@@ -25,7 +25,13 @@ Click the **"Click here to install repo"** button in the table above if you are 
 Copy and paste the repository URL into your app's extension settings:
 
 ```text
-https://raw.githubusercontent.com/salmanbappi/extensions-repo/main/index.min.json
+https://raw.githubusercontent.com/salmanbappi/extensions-repo/repo/index.pb
+```
+
+For older clients that do not support Extension Store V2 (`index.pb`), use the legacy V1 link:
+
+```text
+https://raw.githubusercontent.com/salmanbappi/extensions-repo/repo/index.min.json
 ```
 
 ### Option 3: Direct APK Download

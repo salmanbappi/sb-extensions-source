@@ -239,20 +239,6 @@ jobs:
           git commit --amend -m "$COMMIT_MESSAGE" --no-sign --allow-empty || echo "No changes to commit"
           git push origin HEAD:main HEAD:repo --force
 
-      - name: Purge cached index on jsDelivr
-        run: |
-          sleep 5
-          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.json || true
-          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.min.json || true
-          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.html || true
-          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/index.pb || true
-          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@main/repo.json || true
-          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.json || true
-          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.min.json || true
-          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.html || true
-          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/index.pb || true
-          curl -fsS --retry 3 https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@repo/repo.json || true
-
       - name: Create GitHub Release
         working-directory: ${{ github.ref_name }}
         env:
@@ -263,3 +249,29 @@ jobs:
           else
             echo "No APKs found to release"
           fi
+
+      - name: Purge cached mutable assets on jsDelivr
+        run: |
+          sleep 10
+          purge_paths=(
+            "index.json"
+            "index.min.json"
+            "index.html"
+            "index.pb"
+            "repo.json"
+          )
+          for icon in "${{ github.ref_name }}"/repo/icon/*.png; do
+            [ -e "$icon" ] && purge_paths+=("icon/$(basename "$icon")")
+          done
+          for ref in main repo; do
+            for path in "${purge_paths[@]}"; do
+              url="https://purge.jsdelivr.net/gh/salmanbappi/extensions-repo@${ref}/${path}"
+              resp="$(curl -sS --retry 3 --retry-delay 5 -w "\n%{http_code}" "$url" || true)"
+              code="$(printf '%s\n' "$resp" | tail -n1)"
+              body="$(printf '%s\n' "$resp" | sed '$d')"
+              echo "Purge ${url} -> HTTP ${code}: ${body}"
+              if [[ ! "$code" =~ ^2[0-9][0-9]$ ]]; then
+                echo "::warning::jsDelivr purge failed for ${url} (HTTP ${code})"
+              fi
+            done
+          done
