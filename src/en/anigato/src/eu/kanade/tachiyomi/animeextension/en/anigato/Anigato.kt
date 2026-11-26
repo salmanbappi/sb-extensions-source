@@ -311,8 +311,7 @@ class Anigato : Source() {
 
     // ============================== Helpers ===============================
 
-    private fun titlePref(): String =
-        preferences.getString(PREF_TITLE_KEY, PREF_TITLE_DEFAULT) ?: PREF_TITLE_DEFAULT
+    private fun titlePref(): String = preferences.getString(PREF_TITLE_KEY, PREF_TITLE_DEFAULT) ?: PREF_TITLE_DEFAULT
 
     private fun toAbsoluteUrl(url: String): String = when {
         url.startsWith("http://") || url.startsWith("https://") -> url
@@ -343,10 +342,9 @@ class Anigato : Source() {
         private const val PREF_MACHINE_SUBS_KEY = "pref_machine_subs"
 
         private val ISO_DATE_FORMAT = object : ThreadLocal<SimpleDateFormat>() {
-            override fun initialValue(): SimpleDateFormat =
-                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-                    timeZone = TimeZone.getTimeZone("UTC")
-                }
+            override fun initialValue(): SimpleDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
         }
     }
 }
