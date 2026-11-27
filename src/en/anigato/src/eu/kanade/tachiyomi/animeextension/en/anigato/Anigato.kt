@@ -280,24 +280,24 @@ class Anigato : Source() {
         screen.addListPreference(
             key = PREF_QUALITY_KEY,
             title = "Preferred quality",
-            entries = arrayOf("1080p", "720p", "480p", "360p"),
-            entryValues = arrayOf("1080", "720", "480", "360"),
+            entries = listOf("1080p", "720p", "480p", "360p"),
+            entryValues = listOf("1080", "720", "480", "360"),
             default = PREF_QUALITY_DEFAULT,
             summary = "%s",
         )
         screen.addListPreference(
             key = PREF_AUDIO_KEY,
             title = "Preferred audio",
-            entries = arrayOf("Sub & Dub (Sub first)", "Sub & Dub (Dub first)", "Sub only", "Dub only"),
-            entryValues = arrayOf("both", "dub_first", "sub", "dub"),
+            entries = listOf("Sub & Dub (Sub first)", "Sub & Dub (Dub first)", "Sub only", "Dub only"),
+            entryValues = listOf("both", "dub_first", "sub", "dub"),
             default = PREF_AUDIO_DEFAULT,
             summary = "%s",
         )
         screen.addListPreference(
             key = PREF_TITLE_KEY,
             title = "Preferred title language",
-            entries = arrayOf("English", "Romaji", "Native"),
-            entryValues = arrayOf("english", "romaji", "native"),
+            entries = listOf("English", "Romaji", "Native"),
+            entryValues = listOf("english", "romaji", "native"),
             default = PREF_TITLE_DEFAULT,
             summary = "%s",
         )
