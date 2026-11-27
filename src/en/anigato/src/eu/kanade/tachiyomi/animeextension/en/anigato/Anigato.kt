@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.en.anigato
 
+import android.util.Base64
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.m3u8server.M3u8ServerManager
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -19,12 +21,20 @@ import extensions.utils.parseAs
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.jsoup.Jsoup
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
+import javax.crypto.Cipher
+import javax.crypto.Mac
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import kotlin.time.Duration.Companion.seconds
 
 class Anigato : Source() {
@@ -40,6 +50,7 @@ class Anigato : Source() {
     override val client: OkHttpClient by lazy {
         network.client.newBuilder()
             .rateLimit(permits = 4, period = 1.seconds)
+            .addInterceptor(selfPlaylistInterceptor())
             .build()
     }
 
@@ -49,6 +60,8 @@ class Anigato : Source() {
         .set("Accept", "application/json, text/plain, */*")
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+
+    private val m3u8Server by lazy { M3u8ServerManager(client) }
 
     // ============================== Popular ===============================
 
@@ -187,7 +200,8 @@ class Anigato : Source() {
             else -> listOf("sub", "dub")
         }
 
-        val hosters = mutableListOf<Hoster>()
+        // Group sub & dub streams under one Hoster per server so servers don't appear twice
+        val grouped = linkedMapOf<String, MutableList<HosterStreamData>>()
         for (mode in modes) {
             val watchUrl = "$baseUrl/api/watch/${data.id}/$mode/${data.number}".toHttpUrl().newBuilder()
                 .addQueryParameter("title", data.title)
@@ -200,26 +214,30 @@ class Anigato : Source() {
             for (stream in watchDto.streams.orEmpty()) {
                 val rawUrl = stream.url?.takeIf { it.isNotBlank() } ?: continue
                 val absUrl = toAbsoluteUrl(rawUrl)
-                val serverLabel = listOfNotNull(
-                    stream.serverName?.takeIf { it.isNotBlank() },
-                    stream.name?.takeIf { it.isNotBlank() && !it.equals(stream.serverName, ignoreCase = true) },
-                ).joinToString(" - ").ifBlank { "Server" }
+                val serverLabel = stream.name?.takeIf { it.isNotBlank() }
+                    ?: stream.serverName?.takeIf { it.isNotBlank() }
+                    ?: "Server"
+                val key = serverLabel.lowercase()
 
-                hosters.add(
-                    Hoster(
-                        hosterName = "$serverLabel [${mode.uppercase()}]",
-                        hosterUrl = json.encodeToString(
-                            HosterData(
-                                url = absUrl,
-                                headers = stream.headers,
-                                subtitles = stream.subtitles.orEmpty(),
-                            ),
-                        ),
+                grouped.getOrPut(key) { mutableListOf() }.add(
+                    HosterStreamData(
+                        displayName = serverLabel,
+                        audio = mode.uppercase(),
+                        url = absUrl,
+                        headers = stream.headers,
+                        subtitles = stream.subtitles.orEmpty(),
                     ),
                 )
             }
         }
-        return hosters
+
+        return grouped.values.map { entries ->
+            val hosterName = entries.first().displayName
+            Hoster(
+                hosterName = hosterName,
+                hosterUrl = json.encodeToString(HosterData(streams = entries)),
+            )
+        }
     }
 
     override suspend fun getVideoList(hoster: Hoster): List<Video> {
@@ -227,50 +245,96 @@ class Anigato : Source() {
             ?: return emptyList()
 
         val includeMachineSubs = preferences.getBoolean(PREF_MACHINE_SUBS_KEY, false)
-        val tracks = data.subtitles
-            .filter { includeMachineSubs || it.machine != true }
-            .mapNotNull { sub ->
-                val subUrl = sub.url?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                val label = sub.label?.takeIf { it.isNotBlank() }
-                    ?: sub.lang?.takeIf { it.isNotBlank() }
-                    ?: "Subtitle"
-                Track(toAbsoluteUrl(subUrl), label)
+        val allVideos = mutableListOf<Video>()
+
+        for (entry in data.streams) {
+            if (entry.url.isBlank()) continue
+
+            val tracks = entry.subtitles
+                .filter { includeMachineSubs || it.machine != true }
+                .mapNotNull { sub ->
+                    val subUrl = sub.url?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    val label = sub.label?.takeIf { it.isNotBlank() }
+                        ?: sub.lang?.takeIf { it.isNotBlank() }
+                        ?: "Subtitle"
+                    Track(toAbsoluteUrl(subUrl), label)
+                }
+
+            val streamHeadersBuilder = headers.newBuilder()
+            entry.headers?.forEach { (k, v) ->
+                streamHeadersBuilder.set(k, v)
+            }
+            val streamHeaders = streamHeadersBuilder.build()
+
+            val audioPrefix = entry.audio.takeIf { it.isNotBlank() }?.let { "[$it] " }.orEmpty()
+            val extracted = runCatching {
+                playlistUtils.extractFromHls(
+                    playlistUrl = entry.url,
+                    referer = "$baseUrl/",
+                    masterHeaders = streamHeaders,
+                    videoHeaders = streamHeaders,
+                    subtitleList = tracks,
+                    videoNameGen = { quality -> "$audioPrefix$quality" },
+                )
+            }.getOrDefault(emptyList())
+
+            val videos = extracted.ifEmpty {
+                listOf(
+                    Video(
+                        videoUrl = entry.url,
+                        videoTitle = "${audioPrefix}Auto",
+                        headers = streamHeaders,
+                        subtitleTracks = tracks,
+                    ),
+                )
             }
 
-        val streamHeadersBuilder = headers.newBuilder()
-        data.headers?.forEach { (k, v) ->
-            streamHeadersBuilder.set(k, v)
+            // /api/stream/proxy serves segments with fake 252-byte PNG headers that break ExoPlayer
+            val finalVideos = if (entry.url.contains("/api/stream/")) {
+                videos.viaLocalProxy("$baseUrl/")
+            } else {
+                videos
+            }
+            allVideos.addAll(finalVideos)
         }
-        val streamHeaders = streamHeadersBuilder.build()
 
-        val videos = runCatching {
-            playlistUtils.extractFromHls(
-                playlistUrl = data.url,
-                referer = "$baseUrl/",
-                masterHeaders = streamHeaders,
-                videoHeaders = streamHeaders,
-                subtitleList = tracks,
-                videoNameGen = { quality -> quality },
-            )
-        }.getOrDefault(emptyList())
+        return allVideos.sortVideos()
+    }
 
-        val result = videos.ifEmpty {
-            listOf(
-                Video(
-                    videoUrl = data.url,
-                    videoTitle = "Auto",
-                    headers = streamHeaders,
-                    subtitleTracks = tracks,
-                ),
+    private fun List<Video>.viaLocalProxy(referer: String): List<Video> {
+        if (isEmpty()) return this
+        runCatching { if (!m3u8Server.isRunning()) m3u8Server.startServer() }
+        if (!m3u8Server.isRunning()) return this
+
+        val userAgent = headers["User-Agent"]
+        return map { video ->
+            val proxied = runCatching {
+                m3u8Server.processM3u8Url(video.videoUrl, referer, userAgent)
+            }.getOrNull() ?: return@map video
+
+            Video(
+                videoUrl = proxied,
+                videoTitle = video.videoTitle,
+                headers = video.headers,
+                subtitleTracks = video.subtitleTracks,
+                audioTracks = video.audioTracks,
             )
         }
-        return result.sortVideos()
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
+        val audioPref = preferences.getString(PREF_AUDIO_KEY, PREF_AUDIO_DEFAULT) ?: PREF_AUDIO_DEFAULT
+        val preferDub = audioPref == "dub" || audioPref == "dub_first"
+
         return sortedWith(
-            compareByDescending<Video> { it.videoTitle.contains(quality, ignoreCase = true) },
+            compareByDescending<Video> { video ->
+                if (preferDub) {
+                    video.videoTitle.startsWith("[DUB]")
+                } else {
+                    video.videoTitle.startsWith("[SUB]")
+                }
+            }.thenByDescending { it.videoTitle.contains(quality, ignoreCase = true) },
         )
     }
 
@@ -311,7 +375,57 @@ class Anigato : Source() {
 
     // ============================== Helpers ===============================
 
-    private fun titlePref(): String = preferences.getString(PREF_TITLE_KEY, PREF_TITLE_DEFAULT) ?: PREF_TITLE_DEFAULT
+    private fun selfPlaylistInterceptor(): Interceptor = Interceptor { chain ->
+        val request = chain.request()
+        val response = chain.proceed(request)
+        if (!response.isSuccessful || !request.url.encodedPath.endsWith("/master.m3u8")) {
+            return@Interceptor response
+        }
+
+        val body = response.body
+        val contentType = body.contentType()
+        val rawText = body.string()
+        if (!rawText.startsWith(SELFP1_PREFIX)) {
+            return@Interceptor response.newBuilder()
+                .body(rawText.toResponseBody(contentType))
+                .build()
+        }
+
+        val decrypted = runCatching {
+            decryptSelfPlaylist(rawText, request.url)
+        }.getOrNull() ?: rawText
+
+        val outType = if (decrypted.startsWith("#EXTM3U")) {
+            "application/vnd.apple.mpegurl".toMediaType()
+        } else {
+            contentType
+        }
+
+        response.newBuilder()
+            .body(decrypted.toResponseBody(outType))
+            .build()
+    }
+
+    private fun decryptSelfPlaylist(payload: String, url: HttpUrl): String {
+        val token = url.queryParameter("t").orEmpty()
+        val raw = Base64.decode(payload.removePrefix(SELFP1_PREFIX), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        require(raw.size >= 28) { "SELFP1 payload truncated" }
+
+        val keyBytes = Mac.getInstance("HmacSHA256").run {
+            init(SecretKeySpec(token.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+            doFinal("selfplay|${url.encodedPath}".toByteArray(Charsets.UTF_8))
+        }
+
+        val iv = raw.copyOfRange(0, 12)
+        val ciphertext = raw.copyOfRange(12, raw.size)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), GCMParameterSpec(128, iv))
+        }
+        return String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+    }
+
+    private fun titlePref(): String =
+        preferences.getString(PREF_TITLE_KEY, PREF_TITLE_DEFAULT) ?: PREF_TITLE_DEFAULT
 
     private fun toAbsoluteUrl(url: String): String = when {
         url.startsWith("http://") || url.startsWith("https://") -> url
@@ -329,6 +443,7 @@ class Anigato : Source() {
 
     companion object {
         private const val PER_PAGE = 24
+        private const val SELFP1_PREFIX = "SELFP1."
 
         private const val PREF_QUALITY_KEY = "pref_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
@@ -342,9 +457,10 @@ class Anigato : Source() {
         private const val PREF_MACHINE_SUBS_KEY = "pref_machine_subs"
 
         private val ISO_DATE_FORMAT = object : ThreadLocal<SimpleDateFormat>() {
-            override fun initialValue(): SimpleDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("UTC")
-            }
+            override fun initialValue(): SimpleDateFormat =
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }
         }
     }
 }
@@ -470,8 +586,15 @@ data class SubtitleDto(
 )
 
 @Serializable
-data class HosterData(
+data class HosterStreamData(
+    val displayName: String = "",
+    val audio: String = "",
     val url: String = "",
     val headers: Map<String, String>? = null,
     val subtitles: List<SubtitleDto> = emptyList(),
+)
+
+@Serializable
+data class HosterData(
+    val streams: List<HosterStreamData> = emptyList(),
 )
